@@ -238,3 +238,13 @@ describe('prompt', () => {
     expect(buildMessages(seedStage, 'build', {}, [], ['read_doc'])[0].content).not.toContain('propose_decision');
   });
 });
+
+describe('source websites', () => {
+  it('lists the sources for everyone, wired ones first, and nothing when there are none', () => {
+    const cards: Stage = { ...stage, cards: [{ id: 's1', kind: 'source', url: 'https://startups.rip/', about: 'startup case studies', title: 'Startups RIP', x: 0, y: 0, w: 1, h: 1 }, { id: 's2', kind: 'source', url: 'https://www.indiehackers.com/', about: 'founder interviews', x: 0, y: 0, w: 1, h: 1 }],
+      wires: [...stage.wires, { id: 'w', from: 'marketing', to: 's2', fromHandle: 'r', toHandle: 'l' }] };
+    const system = buildMessages(cards, 'marketing', {}, [], ['search_source'])[0].content as string;
+    expect(system).toContain('Websites the founder trusts. Search inside one with search_source when its description fits the question, then read the pages with web_fetch:\n- indiehackers.com: founder interviews (connected to you: try it first)\n- Startups RIP (startups.rip): startup case studies');
+    expect(buildMessages(stage, 'marketing', {}, [], ['search_source'])[0].content).not.toContain('Websites the founder trusts');
+  });
+});

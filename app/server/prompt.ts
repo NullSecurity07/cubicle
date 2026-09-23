@@ -1,5 +1,6 @@
 import { playbookOf } from '../shared/apps.ts';
 import { STANCE, type ChatMessage, type Stage } from '../shared/model.ts';
+import { safeHost, sourceCards } from '../shared/sources.ts';
 import { dayKey, fullDay, shortDay, weekDay, zoneName } from './clock.ts';
 import { recent, type Memory } from './memory.ts';
 
@@ -93,6 +94,16 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
   const mine = wiredDocIds(stage, roomId);
   const docsWired = mine.map(block);
   const pinned = stage.docs.filter((doc) => doc.pinned && !mine.includes(doc.id)).map((doc) => block(doc.id));
+  // Every person knows the websites the founder trusts, wired or not. The ones wired to this person come first,
+  // because the founder drew that wire to say which sites are theirs to try first. Only offered with the tool itself.
+  const trusted = sourceCards(stage.cards);
+  const wiredSources = new Set(wired(stage, roomId, trusted.map((card) => card.id)));
+  const sourceLines = toolNames.includes('search_source') ? [...trusted].sort((a, b) => Number(wiredSources.has(b.id)) - Number(wiredSources.has(a.id))).flatMap((card) => {
+    const host = safeHost(card.url);
+    if (!host) return [];
+    const name = card.title?.trim() ? `${card.title.trim()} (${host})` : host;
+    return [`- ${name}: ${card.about.replace(/\s+/g, ' ').trim()}${wiredSources.has(card.id) ? ' (connected to you: try it first)' : ''}`];
+  }) : [];
   // Wired colleagues: who they are and the last things said in their room, so a consult starts from common ground.
   // Each line says which day it is from: four lines out of a room nobody has opened in a month read exactly like
   // four from this morning, and "lately" is the word that turns that into a lie.
@@ -156,6 +167,7 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
         + 'it never reaches the founder\'s list or the log. After the call, say in a line or two what you proposed and that it waits in their list. Never treat a proposal as decided.'
       : '',
     pinned.length ? `Company documents every person reads:\n\n${pinned.join('\n\n')}` : '',
+    sourceLines.length ? `Websites the founder trusts. Search inside one with search_source when its description fits the question, then read the pages with web_fetch:\n${sourceLines.join('\n')}` : '',
     docsWired.length
       ? `The founder has connected these documents to your room. Treat them as what the founder wants you to know.\n\n${docsWired.join('\n\n')}`
       : pinned.length ? '' : 'No documents are connected to your room, so you have no written background on the product yet.',
