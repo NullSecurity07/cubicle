@@ -125,10 +125,16 @@ export function Dock() {
         </button>
         {more && !anyApp && (
           <div className="dock__menu" role="menu" aria-label="More cards">
-            {MORE.map(([kind, label, hint]) => <button key={kind} type="button" role="menuitem" aria-label={`Add ${label.toLowerCase()}`} onClick={() => add(kind)}><b>{label}</b><small>{hint}</small></button>)}
-            <h6 role="presentation">Apps, signed in as you</h6>
-            {APPS.map(([key, label, hint]) => <button key={key} type="button" role="menuitem" aria-label={`Add ${label}`} onClick={() => addApp(key)}><b>{label}</b><small>{hint}</small></button>)}
-            <button type="button" role="menuitem" aria-label="Add any app" onClick={() => setAnyApp(true)}><b>Any app</b><small>A site you name, opened as you</small></button>
+            {/* Two columns, so every row is in view at once: nothing waits below a scroll. */}
+            <div className="dock__group">
+              <h6 role="presentation">Cards</h6>
+              {MORE.map(([kind, label, hint]) => <button key={kind} type="button" role="menuitem" aria-label={`Add ${label.toLowerCase()}`} onClick={() => add(kind)}><b>{label}</b><small>{hint}</small></button>)}
+            </div>
+            <div className="dock__group dock__group--apps">
+              <h6 role="presentation">Apps, signed in as you</h6>
+              {APPS.map(([key, label, hint]) => <button key={key} type="button" role="menuitem" aria-label={`Add ${label}`} onClick={() => addApp(key)}><b>{label}</b><small>{hint}</small></button>)}
+              <button type="button" role="menuitem" aria-label="Add any app" onClick={() => setAnyApp(true)}><b>Any app</b><small>A site you name, opened as you</small></button>
+            </div>
           </div>
         )}
         {more && anyApp && <AnyApp onAdd={(name, home) => addApp('custom', name, home)} />}
