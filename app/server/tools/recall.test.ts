@@ -41,7 +41,8 @@ describe('what recall hands back', () => {
     expect(found.text).toContain('charged for what they use');
     expect(found.text).toContain('said on 14 Jul 2026');
     // The party was booked in September. A conversation held in July must not come back wearing September's date.
-    expect(found.text).not.toContain('3 Sept 2026');
+    // A word boundary, because a date like 23 Sept contains the 3 Sept substring.
+    expect(found.text).not.toMatch(/\b3 Sept 2026/);
   });
 
   it('dates a decision by the day it was decided, and a document by the day it was last written', async () => {
