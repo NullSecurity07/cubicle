@@ -273,3 +273,24 @@ describe('outward words that are not outward', () => {
     expect(await browser.outward('card-c', 'click', { ref: 'e4' })).toBeNull();
   });
 });
+
+describe('byHand', () => {
+  it('opens the founder\'s Chrome once per profile while it is open, and says when it has closed', async () => {
+    const launched: string[] = [];
+    let close = () => {};
+    const hand = (profile: string) => { launched.push(profile); return new Promise<void>((done) => { close = done; }); };
+    const browser = createBrowser(fakeRunner, undefined, undefined, hand);
+    const first = browser.byHand('/tmp/profile-a', 'https://www.linkedin.com/feed/');
+    expect(browser.handOpen('/tmp/profile-a')).toBe(true);
+    expect(browser.handOpen('/tmp/profile-b')).toBe(false);
+    const second = browser.byHand('/tmp/profile-a', 'https://www.linkedin.com/feed/');
+    expect(second).toBe(first);
+    expect(launched).toEqual(['/tmp/profile-a']);
+    close();
+    await first;
+    expect(browser.handOpen('/tmp/profile-a')).toBe(false);
+    void browser.byHand('/tmp/profile-a', 'https://www.linkedin.com/feed/');
+    expect(launched).toEqual(['/tmp/profile-a', '/tmp/profile-a']);
+    close();
+  });
+});

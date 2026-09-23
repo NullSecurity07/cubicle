@@ -87,18 +87,25 @@ test('an app card is a browser signed in as the founder', async ({ page }) => {
   await card.hover();
   await expect(card.getByRole('button', { name: 'Sign in' })).toBeVisible();
   await expect(card.locator('.browser__status')).toHaveText('Not signed in');
-  await expect(card).toContainText('Press Sign in to sign in to LinkedIn in a real window, once.');
+  await expect(card).toContainText('Press Sign in: your own Chrome opens on LinkedIn with this card\'s profile.');
 
-  // Sign in opens the window on the app itself, not on a blank page.
+  // Sign in opens the founder's own Chrome on the card's profile; the card waits for it to close, then looks again.
+  await card.getByRole('button', { name: 'Sign in' }).click();
+  await expect(card.getByRole('button', { name: 'Chrome is open' })).toBeDisabled();
+  await expect(card.locator('.browser__status')).toHaveText('Sign in there, then close it');
+  await expect(card.locator('.browser__status')).toHaveText('Not signed in', { timeout: 10_000 });
+  await expect(card.getByRole('button', { name: 'Sign in' })).toBeEnabled();
+
+  // The live window stays one click away, for a human check mid-task, and opens on the app itself.
   // The window restarts the session; wait for that, or the address read below is the one from before it.
   const restarted = page.waitForResponse((response) => response.url().endsWith(`/api/browsers/${linkedin}/restart`));
-  await card.getByRole('button', { name: 'Sign in' }).click();
+  await card.getByRole('button', { name: 'Show the live window' }).click();
   await restarted;
-  await expect(card.getByRole('button', { name: 'Window shown' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(card.getByRole('button', { name: 'Hide the live window' })).toHaveAttribute('aria-pressed', 'true');
   await expect.poll(async () => (await (await page.request.get(`/api/browsers/${linkedin}`)).json()).url).toBe('https://www.linkedin.com/login');
   // Closing the window looks again: still not signed in, since nobody signed in.
-  await card.getByRole('button', { name: 'Window shown' }).click();
-  await expect(card.getByRole('button', { name: 'Sign in' })).toHaveAttribute('aria-pressed', 'false');
+  await card.getByRole('button', { name: 'Hide the live window' }).click();
+  await expect(card.getByRole('button', { name: 'Show the live window' })).toHaveAttribute('aria-pressed', 'false');
   await expect(card.locator('.browser__status')).toHaveText('Not signed in');
 
   // A wired person drives it by name; the receipt shows the step.

@@ -1,4 +1,4 @@
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { lookup } from 'node:dns/promises';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -152,6 +152,23 @@ export const fakeRunner: Runner = async (session, args) => {
   return '✓ done\n';
 };
 
+// Opens the founder's own Chrome, not automated, on a card's profile folder at the app's home address, and settles when
+// that Chrome exits. Sites such as Google refuse sign-in in an automated browser, and this one is not.
+export type Hand = (profile: string, home: string) => Promise<void>;
+export function chromeByHand(env: NodeJS.ProcessEnv = process.env): Hand {
+  return (profile, home) => new Promise((done, fail) => {
+    const chrome = env.AGENT_BROWSER_EXECUTABLE_PATH ?? CHROMES.find((path) => existsSync(path));
+    if (!chrome) return fail(new Error('no Chrome was found on this machine'));
+    // Not detached, so its exit is seen and the card can read its sign-in status again.
+    const child = spawn(chrome, [`--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--new-window', webUrl(home)], { stdio: 'ignore' });
+    child.once('error', fail);
+    child.once('exit', () => done());
+  });
+}
+// Stand-in for journeys: records what would have opened and "closes" after a moment.
+export const fakeHands: { profile: string; home: string }[] = [];
+export const fakeHand: Hand = (profile, home) => { fakeHands.push({ profile, home }); return new Promise((done) => setTimeout(done, 300)); };
+
 // Jina's public reader fetches a page from their side and returns markdown. Only the address leaves the machine. No key.
 export const jinaReader: Reader = async (url) => {
   const response = await fetch(`https://r.jina.ai/${url}`, { headers: { 'x-return-format': 'markdown' }, signal: AbortSignal.timeout(30_000) }).catch(() => null);
@@ -173,8 +190,10 @@ export const nameOfRef = (tree: string, ref: string) => { const found = new RegE
 // `direct` readers know a site's feed or API and go first; `fallback` readers are asked, in order, when the local browser got nothing.
 export type Readers = { direct: Reader[]; fallback: Reader[] };
 
-export function createBrowser(run: Runner, readers: Readers = { direct: [], fallback: [] }, resolveHost?: Resolve) {
+export function createBrowser(run: Runner, readers: Readers = { direct: [], fallback: [] }, resolveHost?: Resolve, hand: Hand = chromeByHand()) {
   const outer = run;
+  // The founder's own Chrome per profile folder while it is open, so a second press does not start another.
+  const hands = new Map<string, Promise<void>>();
   const seen = new Map<string, { tree: string; address: string }>();
   // Each session is a Chrome tab set with its own memory; only a few run at once, the rest wait their turn.
   let active = 0;
@@ -337,5 +356,14 @@ export function createBrowser(run: Runner, readers: Readers = { direct: [], fall
     // Where a card's browser is sitting right now, without opening anything: nothing when it is not running.
     where: (session: string) => run(session, ['get', 'url']).then((printed) => printed.trim() || null, () => null),
     close: (session: string) => run(session, ['close']).then(() => {}, () => {}),
+    // The caller closes the card's session first: a second Chrome on the same folder would only hand the address to it.
+    byHand(profile: string, home: string): Promise<void> {
+      const open = hands.get(profile);
+      if (open) return open;
+      const going = hand(profile, home).finally(() => hands.delete(profile));
+      hands.set(profile, going);
+      return going;
+    },
+    handOpen: (profile: string) => hands.has(profile),
   };
 }

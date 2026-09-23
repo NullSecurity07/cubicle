@@ -236,6 +236,8 @@ div.msg--assistant:has(.approval) { align-self: stretch; max-width: none; }
 .card:hover .browser__window, .browser__window.is-on, .browser__window:focus-visible { opacity: 1; }
 .browser__window:hover { color: var(--text); }
 .browser__window.is-on { color: #f0b35a; border-color: rgba(240, 179, 90, 0.5); }
+.browser__window:disabled { cursor: default; }
+.browser__window--icon { display: inline-flex; align-items: center; padding: 3px 5px; }
 /* An app card is named, not addressed: the name reads like a title, the address waits in the tooltip. */
 .browser__address--app { color: var(--text); font-weight: 600; }
 /* Whether the founder is signed in: amber until they are, green once they are. Always shown, unlike the window button. */

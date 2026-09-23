@@ -17,7 +17,7 @@ import { guard } from './guard.ts';
 import { createGuards } from './guards.ts';
 import { installSlices, lateRuns, loadSlices } from './install.ts';
 import { tidyLapsed } from './lapsed.ts';
-import { createBrowser, dnsResolve, fakeRunner, jinaReader, realRunner } from './browser.ts';
+import { createBrowser, dnsResolve, fakeHand, fakeRunner, jinaReader, realRunner } from './browser.ts';
 import { archiveCopy, redditFeed, stackExchange } from './readers.ts';
 import { runTurn } from './loop.ts';
 import { createMail, fakeMailHttp } from './mail.ts';
@@ -84,7 +84,7 @@ const roomFeed = createRoomFeed();
 const store = createStore(workspace, (roomId) => roomFeed.tell({ roomId, chat: 'changed' }));
 const usage = createUsage(resolve(workspace, 'usage.json'));
 await usage.load();
-const browser = fake ? createBrowser(fakeRunner) : createBrowser(realRunner(), { direct: [redditFeed(), stackExchange()], fallback: process.env.STAGE_NO_READER === '1' ? [] : [jinaReader, archiveCopy()] }, dnsResolve);
+const browser = fake ? createBrowser(fakeRunner, undefined, undefined, fakeHand) : createBrowser(realRunner(), { direct: [redditFeed(), stackExchange()], fallback: process.env.STAGE_NO_READER === '1' ? [] : [jinaReader, archiveCopy()] }, dnsResolve);
 const approvals = createApprovals();
 // Summaries go to a model with room to spare: the last configured providers are the large free ones.
 const memory = createMemory(store, async (messages) => {
@@ -624,8 +624,19 @@ createServer(async (req, res) => {
       const card = (await store.loadStage()).cards?.find((one) => one.id === checked);
       if (!card || card.kind !== 'browser') return json(res, 404, { error: 'unknown browser' });
       if (!card.app) return json(res, 200, { signedIn: null, landedOn: '' });
+      // The founder's own Chrome holds the profile; starting the card's session now would fight it for the folder.
+      if (browser.handOpen(store.browserProfile(checked))) return json(res, 200, { signedIn: null, landedOn: '', byHand: true });
       const landedOn = await browser.landing(browserSession(checked), card.app.home, { profile: store.browserProfile(checked), headed: isHeaded(card) });
       return json(res, 200, { signedIn: signedIn(card.app, landedOn), landedOn });
+    }
+    // Sign in on an app card: the founder's own Chrome, not automated, on the card's profile, since Google refuses automated ones.
+    const signing = /^\/api\/browsers\/([^/]+)\/sign-in$/.exec(path)?.[1];
+    if (signing && req.method === 'POST') {
+      const card = (await store.loadStage()).cards?.find((one) => one.id === signing);
+      if (!card || card.kind !== 'browser' || !card.app) return json(res, 404, { error: 'unknown app card' });
+      await browser.close(browserSession(signing));
+      void browser.byHand(store.browserProfile(signing), card.app.home).catch((error: Error) => console.error(`sign-in window for ${card.app?.name}: ${error.message}`));
+      return json(res, 200, { started: true });
     }
     const watched = /^\/api\/browsers\/([^/]+)$/.exec(path)?.[1];
     if (watched && req.method === 'GET') {
