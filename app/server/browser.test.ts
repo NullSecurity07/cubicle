@@ -212,3 +212,30 @@ describe('app cards', () => {
     expect(stamps[1] - again).toBeLessThan(30);
   });
 });
+
+describe('landing', () => {
+  it('reads where a running session is without moving it, and opens the home address only when nothing runs', async () => {
+    const opened: string[] = [];
+    let running = false;
+    const runner: Runner = async (_s, args) => {
+      if (args[0] === 'open') { running = true; opened.push(args[1]); return '✓\n'; }
+      if (args[0] === 'get') return running ? 'https://www.linkedin.com/login\n' : '';
+      return '✓\n';
+    };
+    const browser = createBrowser(runner);
+    expect(await browser.landing('card-a', 'https://www.linkedin.com/feed/')).toBe('https://www.linkedin.com/login');
+    expect(opened).toEqual(['https://www.linkedin.com/feed/']);
+    expect(await browser.landing('card-a', 'https://www.linkedin.com/feed/')).toBe('https://www.linkedin.com/login');
+    expect(opened).toHaveLength(1);
+  });
+  it('answers the fake login page only for a session last sent to LinkedIn, and nothing for one that is not running', async () => {
+    await fakeRunner('card-li', ['open', 'https://www.linkedin.com/feed/']);
+    await fakeRunner('card-web', ['open', 'https://example.com/']);
+    expect(await fakeRunner('card-li', ['get', 'url'])).toBe('https://www.linkedin.com/login\n');
+    expect(await fakeRunner('card-web', ['get', 'url'])).toBe('https://example.com/\n');
+    // A session nobody has opened is not running, so a new app card is sent to its home address before it is judged.
+    expect(await fakeRunner('card-never', ['get', 'url'])).toBe('');
+    await fakeRunner('card-web', ['close']);
+    expect(await fakeRunner('card-web', ['get', 'url'])).toBe('');
+  });
+});

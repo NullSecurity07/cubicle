@@ -120,8 +120,17 @@ export function realRunner(env: NodeJS.ProcessEnv = process.env): Runner {
   });
 }
 
-// Stand-in for browser journeys: no Chrome, fixed answers.
-export const fakeRunner: Runner = async (_session, args) => {
+// Stand-in for browser journeys: no Chrome, fixed answers. It remembers where each session was last sent, so a card
+// sent to LinkedIn lands on its sign-in page and a journey can see a card that is not signed in. A session never sent
+// anywhere is not running, and says nothing, as a real one does; otherwise a new app card would read as signed in.
+const fakeOpened = new Map<string, string>();
+export const fakeRunner: Runner = async (session, args) => {
+  if (args[0] === 'open') fakeOpened.set(session, args[1] ?? '');
+  if (args[0] === 'close') fakeOpened.delete(session);
+  if (args[0] === 'get' && args[1] === 'url') {
+    const last = fakeOpened.get(session);
+    return last === undefined ? '' : /linkedin\.com/i.test(last) ? 'https://www.linkedin.com/login\n' : 'https://example.com/\n';
+  }
   if (args[0] === 'eval' && ENGINES.some((engine) => engine.read === args[1])) return JSON.stringify(JSON.stringify([{ title: 'Example result', url: 'https://www.bing.com/ck/a?u=a1aHR0cHM6Ly9leGFtcGxlLmNvbS8', snippet: 'An example.' }]));
   if (args[0] === 'eval') return JSON.stringify(JSON.stringify({ title: 'Example Domain', url: 'https://example.com/', text: `This domain is for use in examples. ${'It is reserved for documentation and may be used without asking. '.repeat(3)}`.trim() }));
   if (args[0] === 'snapshot') return '- heading "Example Domain" [ref=e1]\n- link "More information" [ref=e2]\n';
@@ -299,6 +308,15 @@ export function createBrowser(run: Runner, readers: Readers = { direct: [], fall
       const port = Number(/ws:\/\/[^:]+:(\d+)/.exec(status)?.[1]);
       if (!port) throw new Error('the browser did not offer a live view');
       return { port, url: (await run(session, ['get', 'url']).catch(() => '')).trim() };
+    },
+    // Where an app card is, to tell whether the founder is signed in. A running session is read where it stands, so a
+    // page a person is on does not move; only a session that is not running is sent to the app's home address.
+    // Every call carries the card's launch, so its own profile and its logins are the ones asked.
+    async landing(session: string, home: string, launch?: Launch): Promise<string> {
+      const now = (await run(session, ['get', 'url'], launch).catch(() => '')).trim();
+      if (now && !/^about:/.test(now)) return now;
+      await run(session, ['open', webUrl(home)], launch);
+      return (await run(session, ['get', 'url'], launch).catch(() => '')).trim();
     },
     // Where a card's browser is sitting right now, without opening anything: nothing when it is not running.
     where: (session: string) => run(session, ['get', 'url']).then((printed) => printed.trim() || null, () => null),

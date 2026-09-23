@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { resolve } from 'node:path';
+import { signedIn } from '../shared/apps.ts';
 import { MEDIA_KINDS, isHeaded, newMessageId, newTurnId, studioBehind, type Attachment, type ChatEvent, type ChatVia, type MediaKind, type Stage } from '../shared/model.ts';
 import { createApprovals } from './approvals.ts';
 import { boardAttention, createAttention } from './attention.ts';
@@ -606,6 +607,15 @@ createServer(async (req, res) => {
       const page = { url: card.url, ...(await browser.page(card.url)) };
       await store.writePage(linked, page);
       return json(res, 200, { title: page.title, preview: page.text.slice(0, 280) });
+    }
+    // Whether the founder is signed in to an app card. A plain browser card has no rule, so nothing is claimed for it.
+    const checked = /^\/api\/browsers\/([^/]+)\/signed-in$/.exec(path)?.[1];
+    if (checked && req.method === 'GET') {
+      const card = (await store.loadStage()).cards?.find((one) => one.id === checked);
+      if (!card || card.kind !== 'browser') return json(res, 404, { error: 'unknown browser' });
+      if (!card.app) return json(res, 200, { signedIn: null, landedOn: '' });
+      const landedOn = await browser.landing(browserSession(checked), card.app.home, { profile: store.browserProfile(checked), headed: isHeaded(card) });
+      return json(res, 200, { signedIn: signedIn(card.app, landedOn), landedOn });
     }
     const watched = /^\/api\/browsers\/([^/]+)$/.exec(path)?.[1];
     if (watched && req.method === 'GET') {
