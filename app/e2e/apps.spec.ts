@@ -89,6 +89,18 @@ test('an app card is a browser signed in as the founder', async ({ page }) => {
   await expect(card.locator('.browser__status')).toHaveText('Not signed in');
   await expect(card).toContainText('Press Sign in to sign in to LinkedIn in a real window, once.');
 
+  // Sign in opens the window on the app itself, not on a blank page.
+  // The window restarts the session; wait for that, or the address read below is the one from before it.
+  const restarted = page.waitForResponse((response) => response.url().endsWith(`/api/browsers/${linkedin}/restart`));
+  await card.getByRole('button', { name: 'Sign in' }).click();
+  await restarted;
+  await expect(card.getByRole('button', { name: 'Window shown' })).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(async () => (await (await page.request.get(`/api/browsers/${linkedin}`)).json()).url).toBe('https://www.linkedin.com/login');
+  // Closing the window looks again: still not signed in, since nobody signed in.
+  await card.getByRole('button', { name: 'Window shown' }).click();
+  await expect(card.getByRole('button', { name: 'Sign in' })).toHaveAttribute('aria-pressed', 'false');
+  await expect(card.locator('.browser__status')).toHaveText('Not signed in');
+
   // A wired person drives it by name; the receipt shows the step.
   await wire(page, PERSON, linkedin);
   await send(page, PERSON, '/tool browse {"action":"open","url":"https://www.linkedin.com/feed/","app":"LinkedIn"}');

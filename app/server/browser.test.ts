@@ -160,6 +160,19 @@ describe('browser', () => {
     expect(launches.at(-1)).toBeUndefined();
   });
 
+  it('opens an app card at its home address when the live view has to start it, and a plain card on a blank page', async () => {
+    const opened: string[] = []; const streaming = new Set<string>();
+    const run: Runner = async (session, args) => {
+      if (args[0] === 'open') opened.push(args[1] ?? '');
+      if (args[0] === 'stream' && args[1] === 'status') { if (streaming.has(session)) return 'ws://127.0.0.1:1\n'; streaming.add(session); return ''; }
+      return fakeRunner(session, args);
+    };
+    const browser = createBrowser(run);
+    await browser.watch('card-z', {}, 'https://www.linkedin.com/feed/');
+    await browser.watch('card-y', {});
+    expect(opened).toEqual(['https://www.linkedin.com/feed/', 'about:blank']);
+  });
+
   it('asks the founder before a click that sends, posts, pays or deletes, and before Enter in webmail; plain browsing is free', async () => {
     const tree = '- link "Inbox" [ref=e1]\n- textbox "To" [ref=e2]\n  - button "Send \u202a(Ctrl-Enter)\u202c" [ref=e3]\n- button "Delete forever" [ref=e4]\n- button [ref=e5]';
     expect(nameOfRef(tree, 'e3')).toContain('Send');

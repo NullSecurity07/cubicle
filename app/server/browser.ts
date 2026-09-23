@@ -134,6 +134,8 @@ export const fakeRunner: Runner = async (session, args) => {
   if (args[0] === 'eval' && ENGINES.some((engine) => engine.read === args[1])) return JSON.stringify(JSON.stringify([{ title: 'Example result', url: 'https://www.bing.com/ck/a?u=a1aHR0cHM6Ly9leGFtcGxlLmNvbS8', snippet: 'An example.' }]));
   if (args[0] === 'eval') return JSON.stringify(JSON.stringify({ title: 'Example Domain', url: 'https://example.com/', text: `This domain is for use in examples. ${'It is reserved for documentation and may be used without asking. '.repeat(3)}`.trim() }));
   if (args[0] === 'snapshot') return '- heading "Example Domain" [ref=e1]\n- link "More information" [ref=e2]\n';
+  // A session that is not running has no live view either, so watching it has to open a page first.
+  if (args[0] === 'stream' && args[1] === 'status' && !fakeOpened.has(session)) return '';
   if (args[0] === 'stream') return 'Streaming enabled on ws://127.0.0.1:1\n';
   if (args[0] === 'get') return 'https://example.com/\n';
   return '✓ done\n';
@@ -302,10 +304,11 @@ export function createBrowser(run: Runner, readers: Readers = { direct: [], fall
       return OUTWARD.test(name.trim()) && !COOKIE.test(name) ? `Click "${name}" on ${where}? Look at the browser card first: it shows exactly what will go out.` : null;
     },
     // Where a browser card can watch its session live. Opens the session if nobody has used it yet.
-    async watch(session: string, launch?: Launch): Promise<{ port: number; url: string }> {
+    // An app card that has to be started opens on its own site, so Sign in shows the founder the page to sign in on.
+    async watch(session: string, launch?: Launch, home?: string): Promise<{ port: number; url: string }> {
       const run: Runner = (name, args) => outer(name, args, launch);
       let status = await run(session, ['stream', 'status']).catch(() => '');
-      if (!/ws:\/\//.test(status)) { await run(session, ['open', 'about:blank']); status = await run(session, ['stream', 'status']).catch(() => ''); }
+      if (!/ws:\/\//.test(status)) { await run(session, ['open', home ? webUrl(home) : 'about:blank']); status = await run(session, ['stream', 'status']).catch(() => ''); }
       if (!/ws:\/\//.test(status)) status = await run(session, ['stream', 'enable']);
       const port = Number(/ws:\/\/[^:]+:(\d+)/.exec(status)?.[1]);
       if (!port) throw new Error('the browser did not offer a live view');
