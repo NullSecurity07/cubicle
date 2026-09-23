@@ -1,4 +1,5 @@
-import { isHeaded } from '../../shared/model.ts';
+import { appName } from '../../shared/apps.ts';
+import type { Card, Stage } from '../../shared/model.ts';
 import type { Browser, Launch, Recent } from '../browser.ts';
 import { wired } from '../prompt.ts';
 import type { Tool } from './registry.ts';
@@ -42,7 +43,19 @@ export function yearless(queries: string[], asked: string, year: number): string
 
 export const browserSession = (cardId: string) => `card-${cardId}`;
 
-export function webTools(browser: Browser, launchFor: (cardId: string, headed: boolean) => Launch = () => ({}), now: () => number = Date.now): Tool[] {
+// Which browser card a step goes to. One wired card is the answer whatever the person wrote in "app": small models
+// hand over stale names. Two or more, and the person has to say which by name.
+export function pickBrowserCard(stage: Stage, roomId: string, app?: string): { id: string; name: string; card: Card } {
+  const cards = (stage.cards ?? []).filter((one) => one.kind === 'browser');
+  const mine = wired(stage, roomId, cards.map((one) => one.id)).map((id) => cards.find((one) => one.id === id)!);
+  if (!mine.length) throw new Error('no browser card is connected to your room. Ask the founder to add one from the dock and draw a wire to it.');
+  const named = mine.length === 1 ? mine[0] : mine.find((one) => appName(one).toLowerCase() === (app ?? '').trim().toLowerCase());
+  if (!named) throw new Error(`Name the card in "app": ${mine.map((one) => appName(one)).join(', ')}`);
+  return { id: named.id, name: named.kind === 'browser' && named.app ? named.app.name : '', card: named };
+}
+
+// `launchFor` is handed the whole card, so the caller decides its profile, whether it shows a window and its pace.
+export function webTools(browser: Browser, launchFor: (cardId: string, card: Card | undefined) => Launch = () => ({}), now: () => number = Date.now): Tool[] {
   return [
     {
       name: 'web_search',
@@ -82,28 +95,28 @@ export function webTools(browser: Browser, launchFor: (cardId: string, headed: b
       description: 'Drive the browser card connected to your room, one step at a time; the founder watches it live. Each step returns the page as a list of elements with refs like e12; refs are for your next step only, never show them to the founder. '
         + 'Actions: open (url), look, click (ref), fill (ref, text), press (key, for example Enter), scroll (direction up or down), back. Use web_fetch instead when you only need to read a page. '
         + 'Email: when the card is signed in to webmail, write mail there (compose, fill the fields, click Send). Steps that send, post, pay or delete wait for the founder\'s yes. '
-        + 'The card keeps its logins. Never create an account, type a password or pass a human check yourself: ask the founder, who does it by hand in the card\'s window.',
+        + 'The card keeps its logins. Never create an account, type a password or pass a human check yourself: ask the founder, who does it by hand in the card\'s window. '
+        + 'When more than one browser or app card is connected to your room, say which in "app". An app card is the founder\'s own account: act as they would, one careful step at a time.',
       parameters: {
         type: 'object',
         properties: {
           action: { type: 'string', enum: ['open', 'look', 'click', 'fill', 'press', 'scroll', 'back'] },
           url: { type: 'string' }, ref: { type: 'string' }, text: { type: 'string' }, key: { type: 'string' }, direction: { type: 'string', enum: ['up', 'down'] },
+          app: { type: 'string', description: 'Which browser or app card to drive, by its name (LinkedIn, X, Gmail, Browser). Needed only when more than one is connected.' },
         },
         required: ['action'],
       },
       // Plain browsing is free. A click that sends, posts, pays or deletes, and Enter inside webmail, wait for the founder.
+      // A card that cannot be picked asks nothing here: the run then fails with the same words for the person to read.
       async approval(args, context) {
-        const [card] = wired(context.stage, context.roomId, (context.stage.cards ?? []).filter((one) => one.kind === 'browser').map((one) => one.id));
-        if (!card) return null;
-        const headed = isHeaded(context.stage.cards?.find((one) => one.id === card));
-        return browser.outward(browserSession(card), String(args.action ?? ''), args as Record<string, string>, launchFor(card, headed));
+        let picked: ReturnType<typeof pickBrowserCard>;
+        try { picked = pickBrowserCard(context.stage, context.roomId, typeof args.app === 'string' ? args.app : undefined); } catch { return null; }
+        return browser.outward(browserSession(picked.id), String(args.action ?? ''), args as Record<string, string>, launchFor(picked.id, picked.card), picked.name || undefined);
       },
       async run(args, context) {
-        const [card] = wired(context.stage, context.roomId, (context.stage.cards ?? []).filter((one) => one.kind === 'browser').map((one) => one.id));
-        if (!card) throw new Error('no browser card is connected to your room. Ask the founder to add one from the dock and draw a wire to it.');
-        const headed = isHeaded(context.stage.cards?.find((one) => one.id === card));
-        const page = await browser.act(browserSession(card), String(args.action ?? ''), args as Record<string, string>, launchFor(card, headed));
-        return { text: UNTRUSTED + page, effect: { kind: 'browser-moved', id: card } };
+        const picked = pickBrowserCard(context.stage, context.roomId, typeof args.app === 'string' ? args.app : undefined);
+        const page = await browser.act(browserSession(picked.id), String(args.action ?? ''), args as Record<string, string>, launchFor(picked.id, picked.card));
+        return { text: UNTRUSTED + page, effect: { kind: 'browser-moved', id: picked.id } };
       },
     },
   ];

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { seedStage } from '../../shared/model.ts';
-import type { Browser } from '../browser.ts';
+import { preset, type AppPreset } from '../../shared/apps.ts';
+import { seedStage, type Card, type Stage } from '../../shared/model.ts';
+import type { Browser, Launch } from '../browser.ts';
 import type { Store } from '../store.ts';
 import { webTools, yearless } from './web.ts';
 
@@ -62,5 +63,47 @@ describe('web_search', () => {
     expect(yearless(['prices 2022', 'prices 2023'], '', 2026)).toEqual(['prices']);
     // A query that is nothing but a year has nothing left to search for.
     expect(yearless(['2019'], '', 2026)).toEqual([]);
+  });
+});
+
+describe('browse', () => {
+  const card = (id: string, app?: AppPreset): Card => ({ id, kind: 'browser', x: 0, y: 0, w: 1, h: 1, ...(app ? { app } : {}) });
+  const wire = (from: string, to: string) => ({ id: `${from}-${to}`, from, fromHandle: 'r', to, toHandle: 'l' });
+  const acting = () => {
+    const acted: { session: string; launch?: Launch }[] = [];
+    const browser = {
+      act: async (session: string, _a: string, _i: unknown, launch?: Launch) => { acted.push({ session, launch }); return 'Now at https://example.com/\n- link "x" [ref=e1]'; },
+      outward: async (_s: string, _a: string, _i: unknown, _l?: Launch, appName?: string) => `on ${appName}`,
+    } as unknown as Browser;
+    const browse = webTools(browser, (id, one) => ({ profile: `p-${id}`, ...(one?.kind === 'browser' && one.app ? { pace: [0, 0] as [number, number] } : {}) })).find((tool) => tool.name === 'browse')!;
+    return { acted, browse };
+  };
+  const stageWith = (cards: Card[], wires = cards.map((one) => wire('marketing', one.id))): Stage => ({ ...seedStage, cards, wires: [...seedStage.wires, ...wires] });
+  const ctx = (stage: Stage) => ({ stage, roomId: 'marketing', store: {} as Store, granted: new Map<string, string>() });
+
+  it('drives the one wired card whatever "app" says, and paces only an app card', async () => {
+    const { acted, browse } = acting();
+    await browse.run({ action: 'look', app: 'Nonsense' }, ctx(stageWith([card('b1')])));
+    expect(acted).toEqual([{ session: 'card-b1', launch: { profile: 'p-b1' } }]);
+    await browse.run({ action: 'look' }, ctx(stageWith([card('b2', preset('linkedin'))])));
+    expect(acted[1]).toEqual({ session: 'card-b2', launch: { profile: 'p-b2', pace: [0, 0] } });
+  });
+  it('asks for a name when two cards are wired, and takes the named one', async () => {
+    const { acted, browse } = acting();
+    const stage = stageWith([card('b1', preset('linkedin')), card('b2', preset('x')), card('b3')]);
+    await expect(browse.run({ action: 'look' }, ctx(stage))).rejects.toThrow('Name the card in "app": LinkedIn, X, Browser');
+    await browse.run({ action: 'look', app: 'x' }, ctx(stage));
+    expect(acted.at(-1)?.session).toBe('card-b2');
+    await browse.run({ action: 'look', app: 'Browser' }, ctx(stage));
+    expect(acted.at(-1)?.session).toBe('card-b3');
+  });
+  it('says which card to wire when none is', async () => {
+    const { browse } = acting();
+    await expect(browse.run({ action: 'look' }, ctx(stageWith([card('b1')], [])))).rejects.toThrow('no browser card is connected to your room');
+  });
+  it('passes the app name to the approval question', async () => {
+    const { browse } = acting();
+    expect(await (browse.approval as Function)({ action: 'click', ref: 'e1' }, ctx(stageWith([card('b1', preset('linkedin'))])))).toBe('on LinkedIn');
+    expect(await (browse.approval as Function)({ action: 'click', ref: 'e1' }, ctx(stageWith([card('b1')])))).toBe('on undefined');
   });
 });
