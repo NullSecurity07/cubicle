@@ -108,7 +108,15 @@ export function LinkNode({ id, data, selected }: NodeProps<LinkNodeType>) {
 // A website the founder trusts. Nobody has to be wired to it: every person may search inside it when the founder's
 // line about it fits their question, and the founder watches that search live under the two fields.
 export function SourceNode({ id, data, selected }: NodeProps<SourceNodeType>) {
-  const { updateNodeData } = useReactFlow();
+  const { updateNodeData, updateNode } = useReactFlow();
+  // A card saved before it had a live picture was too short to show one, so it grows once to the new size.
+  useEffect(() => {
+    updateNode(id, (node) => {
+      const [width, height] = [node.width ?? node.measured?.width ?? 0, node.height ?? node.measured?.height ?? 0];
+      if (height >= 300 && width >= 360) return {};
+      return { width: Math.max(width, 360), height: height < 300 ? 320 : height };
+    });
+  }, [id, updateNode]);
   const flushStage = useFlushStage();
   const [draft, setDraft] = useState(data.url);
   const [state, setState] = useState<{ reading?: boolean; problem?: string }>({});
