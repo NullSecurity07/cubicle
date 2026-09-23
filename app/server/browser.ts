@@ -150,7 +150,9 @@ export const jinaReader: Reader = async (url) => {
 };
 
 // Clicks that send, publish, pay or destroy something. Browsing is free; these wait for the founder.
-const OUTWARD = /^(send|reply|forward|post|publish|tweet|submit|share|comment|pay|buy|purchase|order|checkout|place order|subscribe|confirm|delete|remove|unsubscribe|sign up|create account|register|connect|follow|unfollow|like|repost|retweet|endorse|apply|message|accept|invite)\b/i;
+const OUTWARD = /^(send|reply|forward|post|publish|tweet|submit|share|comment|pay|buy|purchase|order|checkout|place order|subscribe|confirm|delete|remove|unsubscribe|sign up|create account|register|connect|follow|unfollow|like|repost|retweet|endorse|message|accept|invite)\b/i;
+// A cookie banner is not the founder speaking to anyone, whatever its button starts with.
+const COOKIE = /cookie/i;
 const MAIL_HOSTS = /(^|\.)(mail\.google\.com|outlook\.live\.com|outlook\.office\.com|outlook\.office365\.com|mail\.proton\.me|mail\.yahoo\.com|app\.fastmail\.com|mail\.zoho\.com|app\.tuta\.com)$/;
 // The accessible name of a ref in a snapshot line such as `- button "Send" [ref=e44]`: '' for an element without one, null for a ref that is not on the page.
 export const nameOfRef = (tree: string, ref: string) => { const found = new RegExp(`^\\s*- \\w+(?: "((?:[^"\\\\]|\\\\.)*)")?[^\\n]*\\[ref=${ref.replace(/^@/, '')}\\]`, 'm').exec(tree); return found ? found[1] ?? '' : null; };
@@ -297,7 +299,7 @@ export function createBrowser(run: Runner, readers: Readers = { direct: [], fall
       if (name === null) return `Click ${input.ref} on ${where}? I could not read what that element is.`;
       // An icon with no name could be anything; inside webmail that is reason enough to ask.
       if (!name.trim()) return MAIL_HOSTS.test(host) ? `Click an unnamed button (${input.ref}) on ${where}? Look at the browser card first.` : null;
-      return OUTWARD.test(name.trim()) ? `Click "${name}" on ${where}? Look at the browser card first: it shows exactly what will go out.` : null;
+      return OUTWARD.test(name.trim()) && !COOKIE.test(name) ? `Click "${name}" on ${where}? Look at the browser card first: it shows exactly what will go out.` : null;
     },
     // Where a browser card can watch its session live. Opens the session if nobody has used it yet.
     async watch(session: string, launch?: Launch): Promise<{ port: number; url: string }> {

@@ -239,3 +239,16 @@ describe('landing', () => {
     expect(await fakeRunner('card-web', ['get', 'url'])).toBe('');
   });
 });
+
+describe('outward words that are not outward', () => {
+  it('lets a cookie banner and a filter button through, and still asks before a bare Accept', async () => {
+    const tree = '- button "Accept all cookies" [ref=e1]\n- button "Accept" [ref=e2]\n- button "Apply filters" [ref=e3]\n- button "Apply" [ref=e4]\n';
+    const runner: Runner = async (_s, args) => (args[0] === 'snapshot' ? tree : args[0] === 'get' && args[1] === 'url' ? 'https://www.linkedin.com/mynetwork/\n' : '✓\n');
+    const browser = createBrowser(runner);
+    await browser.act('card-c', 'look', {});
+    expect(await browser.outward('card-c', 'click', { ref: 'e1' })).toBeNull();
+    expect(await browser.outward('card-c', 'click', { ref: 'e2' })).toMatch(/^Click "Accept"/);
+    expect(await browser.outward('card-c', 'click', { ref: 'e3' })).toBeNull();
+    expect(await browser.outward('card-c', 'click', { ref: 'e4' })).toBeNull();
+  });
+});
