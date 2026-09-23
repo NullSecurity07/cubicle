@@ -25,6 +25,9 @@ export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean; 
   // A note out of the founder's library. The words live in `<workspace>/library`; the card only says which note it is,
   // and a person wired to it is given the passages of that note which answer the question in front of them.
   | { kind: 'library'; noteId: string }
+  // A website the founder trusts, with a line on what it holds. Every person knows the list and searches inside one
+  // with search_source when the line fits the question.
+  | { kind: 'source'; url: string; about: string; title?: string }
   // Studios: the founder, or a wired person, says what they want and the server makes it. Only what was asked for lives
   // on the card; what came out lives in a sidecar the server owns.
   | { kind: 'imagegen'; prompt?: string; shape?: Shape } | { kind: 'voicegen'; text?: string; voice?: string }
