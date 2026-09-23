@@ -66,6 +66,30 @@ describe('web_search', () => {
   });
 });
 
+describe('web_fetch', () => {
+  const source = (id: string, url: string): Card => ({ id, kind: 'source', url, about: 'case studies', x: 0, y: 0, w: 1, h: 1 });
+  const reading = () => {
+    const reads: { urls: string[]; session?: string }[] = [];
+    const browser = { read: async (urls: string[], session?: string) => { reads.push({ urls, session }); return urls.map((url) => `## ${url}`).join('\n\n---\n\n'); } } as unknown as Browser;
+    return { reads, fetch: webTools(browser).find((tool) => tool.name === 'web_fetch')! };
+  };
+  const ctx = (cards: Card[]) => ({ stage: { ...seedStage, cards }, roomId: 'marketing', store: {} as Store, granted: new Map<string, string>() });
+
+  it('reads a page on a source website in that source\'s session and tells its card to show it', async () => {
+    const { reads, fetch } = reading();
+    const { text, effect } = await fetch.run({ urls: ['https://www.startups.rip/quibi', 'https://example.com/'] }, ctx([source('s1', 'https://startups.rip/')]));
+    expect(reads).toEqual([{ urls: ['https://www.startups.rip/quibi'], session: 'card-s1' }, { urls: ['https://example.com/'], session: undefined }]);
+    expect(effect).toEqual({ kind: 'browser-moved', id: 's1' });
+    expect(text).toContain('## https://example.com/');
+  });
+  it('keeps a page off every source in a throwaway session', async () => {
+    const { reads, fetch } = reading();
+    const { effect } = await fetch.run({ urls: ['https://example.com/'] }, ctx([source('s1', 'https://startups.rip/')]));
+    expect(reads).toEqual([{ urls: ['https://example.com/'], session: undefined }]);
+    expect(effect).toBeUndefined();
+  });
+});
+
 describe('browse', () => {
   const card = (id: string, app?: AppPreset): Card => ({ id, kind: 'browser', x: 0, y: 0, w: 1, h: 1, ...(app ? { app } : {}) });
   const wire = (from: string, to: string) => ({ id: `${from}-${to}`, from, fromHandle: 'r', to, toHandle: 'l' });

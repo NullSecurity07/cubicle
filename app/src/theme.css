@@ -383,7 +383,9 @@ div.msg--user { position: relative; white-space: pre-wrap; }
 .link p { margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--muted); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; }
 .link__open { flex: none; font-size: 11px; color: var(--accent); text-decoration: none; }
 /* A source website: the link card's sibling, with the site's own small icon laid over a globe and a second line. */
-.source { gap: 7px; }
+.source { flex: none; gap: 7px; }
+/* The live picture under a source's fields fills what is left of the card. */
+.browser--source { min-height: 110px; align-items: center; justify-content: center; }
 .source p { -webkit-line-clamp: 3; }
 .source p.msg--problem { color: #f0968e; }
 .source__icon { flex: none; display: flex; width: 15px; height: 15px; color: var(--muted); }

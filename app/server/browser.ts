@@ -216,11 +216,18 @@ export function createBrowser(run: Runner, readers: Readers = { direct: [], fall
   });
   const settled = async <T>(jobs: Promise<T>[], label: (index: number) => string) => (await Promise.allSettled(jobs))
     .map((result, index) => (result.status === 'fulfilled' ? result.value : `## ${label(index)}\nFailed: ${(result.reason as Error).message}`));
+  // One lasting session, one item after another, each failure said in its own block; the session is left open.
+  const inOrder = async (session: string, items: string[], job: (session: string, item: string) => Promise<string>) => {
+    const blocks: string[] = [];
+    for (const item of items) blocks.push(await slot(() => job(session, item)).catch((error: Error) => `## ${item}\nFailed: ${error.message}`));
+    return blocks;
+  };
 
   return {
     // All queries at once, each in its own throwaway session. `recent` asks for the last day, week, month or year.
-    async search(queries: string[], recent?: Recent): Promise<string> {
-      const blocks = await settled(queries.map((query) => scratch(async (session) => {
+    // Given a lasting `session`, such as a source card's, they run there one after another, and it stays open to be watched.
+    async search(queries: string[], recent?: Recent, session?: string): Promise<string> {
+      const one = async (session: string, query: string) => {
         for (const engine of ENGINES) {
           const found = await run(session, ['open', engine.url(query, recent)]).then(() => run(session, ['eval', engine.read])).then((printed) => unwrap<SearchHit[]>(printed).filter((hit) => hit.url), () => []);
           if (!found.length) continue;
@@ -231,7 +238,8 @@ export function createBrowser(run: Runner, readers: Readers = { direct: [], fall
           return `## ${query}\n${lines.join('\n')}${wide}`;
         }
         return `## ${query}\nNo results: every search engine refused or came back empty.`;
-      })), (index) => queries[index]);
+      };
+      const blocks = session ? await inOrder(session, queries, one) : await settled(queries.map((query) => scratch((scratched) => one(scratched, query))), (index) => queries[index]);
       return blocks.join('\n\n');
     },
     // One page as title and text, for a link card. Same path as `read`: local browser, then the reader service; a wall is said plainly.
@@ -241,8 +249,9 @@ export function createBrowser(run: Runner, readers: Readers = { direct: [], fall
       return { title: head.replace(/^## /, '').slice(0, 160), text: rest.join('\n').trim().slice(0, 5000) || block.slice(0, 600) };
     },
     // All pages at once: the readable text of each, cut to a size a model can afford.
-    async read(urls: string[]): Promise<string> {
-      const blocks = await settled(urls.map((raw) => scratch(async (session) => {
+    // Given a lasting `session`, they load there one after another, since one window shows one page at a time.
+    async read(urls: string[], session?: string): Promise<string> {
+      const one = async (session: string, raw: string) => {
         const address = await publicUrl(raw, resolveHost);
         // A site with a feed or an official API is read through it: faster, and it works where the site walls browsers.
         for (const reader of readers.direct) {
@@ -268,7 +277,8 @@ export function createBrowser(run: Runner, readers: Readers = { direct: [], fall
         if (page.text.length < 150) return `## ${raw}\nThis page came back almost empty (a silent bot wall or a login page). Do not guess what it says; try another source.`;
         const cut = page.text.length > PAGE_CHARS ? `${page.text.slice(0, PAGE_CHARS)}\n… (cut at ${PAGE_CHARS} of ${page.text.length} characters)` : page.text;
         return `## ${page.title || page.url}\n${page.url}\n\n${cut || '(no readable text)'}`;
-      })), (index) => urls[index]);
+      };
+      const blocks = session ? await inOrder(session, urls, one) : await settled(urls.map((raw) => scratch((scratched) => one(scratched, raw))), (index) => urls[index]);
       return blocks.join('\n\n---\n\n');
     },
     // A product's own screens, as pictures, for a film to be cut from. One session, one viewport, the page opened

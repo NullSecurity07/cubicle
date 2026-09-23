@@ -209,6 +209,32 @@ describe('browser', () => {
   });
 });
 
+describe('a lasting session', () => {
+  // A source card's session is watched live, so its queries and pages go through it one at a time and it stays open.
+  const recording = () => {
+    const calls: { session: string; args: string[] }[] = [];
+    const run: Runner = async (session, args) => { calls.push({ session, args }); return fakeRunner(session, args); };
+    return { calls, run };
+  };
+  it('runs every query of a search in that session, in order, and leaves it open', async () => {
+    const { calls, run } = recording();
+    const text = await createBrowser(run).search(['site:startups.rip one', 'site:startups.rip two'], undefined, 'card-s1');
+    expect(new Set(calls.map((call) => call.session))).toEqual(new Set(['card-s1']));
+    const opened = calls.filter((call) => call.args[0] === 'open').map((call) => new URL(call.args[1]).searchParams.get('q'));
+    expect(opened).toEqual(['site:startups.rip one', 'site:startups.rip two']);
+    expect(calls.some((call) => call.args[0] === 'close')).toBe(false);
+    expect(text.match(/^## /gm)).toHaveLength(2);
+  });
+  it('reads every page in that session, in order, and leaves it open', async () => {
+    const { calls, run } = recording();
+    const text = await createBrowser(run).read(['https://startups.rip/a', 'https://startups.rip/b'], 'card-s1');
+    expect(new Set(calls.map((call) => call.session))).toEqual(new Set(['card-s1']));
+    expect(calls.filter((call) => call.args[0] === 'open').map((call) => call.args[1])).toEqual(['https://startups.rip/a', 'https://startups.rip/b']);
+    expect(calls.some((call) => call.args[0] === 'close')).toBe(false);
+    expect(text).toContain('Example Domain');
+  });
+});
+
 describe('app cards', () => {
   it('treats connect, follow, like and message as outward, and names the app in the question', async () => {
     const tree = '- button "Connect" [ref=e1]\n- button "Follow" [ref=e2]\n- button "Like" [ref=e3]\n- button "Message" [ref=e4]\n- link "About" [ref=e5]\n';

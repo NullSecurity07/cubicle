@@ -11,8 +11,12 @@ const fakeSources = { propose: async () => { throw new Error('unused'); }, list:
 describe('search_source', () => {
   const searching = (answer: (queries: string[]) => string, home = '') => {
     const ran: string[][] = [];
-    const browser = { search: async (queries: string[]) => { ran.push(queries); return answer(queries); }, read: async () => home };
-    return { ran, search: sourceTools(browser, fakeSources).find((tool) => tool.name === 'search_source')! };
+    const sessions: (string | undefined)[] = [];
+    const browser = {
+      search: async (queries: string[], _recent?: string, session?: string) => { ran.push(queries); sessions.push(session); return answer(queries); },
+      read: async (_urls: string[], session?: string) => { sessions.push(session); return home; },
+    };
+    return { ran, sessions, search: sourceTools(browser, fakeSources).find((tool) => tool.name === 'search_source')! };
   };
   it('searches inside the host and drops hits from elsewhere', async () => {
     const { ran, search } = searching((queries) => `## ${queries[0]}\n1. Why we died\n   https://www.startups.rip/post/why\n   A post.\n2. Elsewhere\n   https://medium.com/x\n   Not here.`);
@@ -29,6 +33,12 @@ describe('search_source', () => {
     const { text } = await search.run({ source: 'Startups RIP', queries: ['quibi'] }, ctx(stageWith([source('s1', 'https://startups.rip/', 'case studies', 'Startups RIP')])));
     expect(text).toContain('https://startups.rip/quibi');
     expect(text).not.toContain('/about');
+  });
+  it('runs in the source card\'s own session and tells its card to show it', async () => {
+    const { sessions, search } = searching(() => '## q\nNo results: every search engine refused or came back empty.', '## Home\nhttps://startups.rip/');
+    const { effect } = await search.run({ source: 'startups.rip', queries: ['quibi'] }, ctx(stageWith([source('s1', 'https://startups.rip/', 'case studies')])));
+    expect(sessions).toEqual(['card-s1', 'card-s1']);
+    expect(effect).toEqual({ kind: 'browser-moved', id: 's1' });
   });
   it('refuses a source it does not know, naming the ones it does', async () => {
     const { search } = searching(() => '');

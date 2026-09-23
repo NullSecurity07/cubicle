@@ -1,5 +1,6 @@
 import { appName } from '../../shared/apps.ts';
 import type { Card, Stage } from '../../shared/model.ts';
+import { safeHost, sourceCards } from '../../shared/sources.ts';
 import type { Browser, Launch, Recent } from '../browser.ts';
 import { wired } from '../prompt.ts';
 import type { Tool } from './registry.ts';
@@ -88,7 +89,17 @@ export function webTools(browser: Browser, launchFor: (cardId: string, card: Car
       description: `Read web pages as text. Give every address you need at once (up to ${MAX_EACH}); they load in parallel. `
         + 'Look for when the page was written or last updated, and say how old a figure is whenever you quote one.',
       parameters: { type: 'object', properties: { urls: { type: 'array', items: { type: 'string' } } }, required: ['urls'] },
-      run: async (args) => ({ text: UNTRUSTED + await browser.read(list(args, 'urls')) }),
+      async run(args, context) {
+        const urls = list(args, 'urls');
+        // A page on a source website loads in that source's session, so its card shows it. A call carries one effect, so
+        // only the first source hit is shown; pages on any other source stay in throwaway sessions.
+        const source = urls.map((url) => sourceCards(context.stage.cards).find((card) => safeHost(card.url) && safeHost(card.url) === safeHost(url))).find(Boolean);
+        const mine = source ? urls.filter((url) => safeHost(url) === safeHost(source.url)) : [];
+        const rest = urls.filter((url) => !mine.includes(url));
+        const [shown, others] = await Promise.all([mine.length ? browser.read(mine, browserSession(source!.id)) : '', rest.length ? browser.read(rest) : '']);
+        const text = UNTRUSTED + [shown, others].filter(Boolean).join('\n\n---\n\n');
+        return source ? { text, effect: { kind: 'browser-moved', id: source.id } } : { text };
+      },
     },
     {
       name: 'browse',

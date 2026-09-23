@@ -3,7 +3,7 @@ import { findSource, safeHost, sourceCards } from '../../shared/sources.ts';
 import { webUrl, type Browser } from '../browser.ts';
 import type { Sources } from '../sources.ts';
 import { text, type Tool } from './registry.ts';
-import { howFar, list, MAX_EACH, RECENT, SNIPPETS, UNTRUSTED } from './web.ts';
+import { browserSession, howFar, list, MAX_EACH, RECENT, SNIPPETS, UNTRUSTED } from './web.ts';
 
 export { findSource, hostOf } from '../../shared/sources.ts';
 
@@ -87,9 +87,11 @@ export function sourceTools(browser: Pick<Browser, 'search' | 'read'>, sources: 
         }
         const queries = list(args, 'queries');
         const host = safeHost(card.url);
-        const found = onHost(await browser.search(queries.map((query) => `site:${host} ${query}`), howFar(args)), host);
-        const body = found.any ? found.text : homeLinks(await browser.read([card.url]), host, queries);
-        return { text: UNTRUSTED + body + SNIPPETS };
+        // The source card's own session, so the founder can watch the search on the card.
+        const session = browserSession(card.id);
+        const found = onHost(await browser.search(queries.map((query) => `site:${host} ${query}`), howFar(args), session), host);
+        const body = found.any ? found.text : homeLinks(await browser.read([card.url], session), host, queries);
+        return { text: UNTRUSTED + body + SNIPPETS, effect: { kind: 'browser-moved', id: card.id } };
       },
     },
     {

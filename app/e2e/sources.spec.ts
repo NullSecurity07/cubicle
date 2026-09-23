@@ -48,12 +48,20 @@ test('a source website is searched by anyone when it fits, and people may propos
   await expect(card).toContainText('Example Domain');
   await expect.poll(async () => (await (await page.request.get('/api/stage')).json()).cards?.[0]?.about).toBe('startup case studies');
 
+  // Its live area waits quietly until a person searches the site.
+  const live = card.locator('.browser--source');
+  await expect(live).toContainText('When a person searches this site, you watch it here.');
+  await expect(card.getByRole('button', { name: 'Open large' })).toHaveCount(1);
+
   // Nobody is wired to it; a person searches it anyway.
   await send(page, PERSON, '/tool search_source {"source":"startups.rip","queries":["why subscriptions die"]}');
   const searched = node(page, PERSON).locator('.chip--ok').last();
   await expect(searched.locator('summary')).toHaveText('Searched startups.rip: why subscriptions die');
   await searched.locator('summary').click();
   await expect(searched.locator('pre')).toContainText('https://startups.rip/a-page');
+  // The search ran in the card's own session, so its live area starts; the fake runner streams no frames, so it says the view dropped.
+  await expect(live).toHaveAttribute('data-live', 'problem');
+  await expect(live).toContainText('The live view dropped. It returns the next time a person searches this site.');
 
   // A person proposes another; the founder accepts it from Needs you and a card lands.
   await send(page, PERSON, '/tool propose_source {"url":"https://indiehackers.com/","about":"founder interviews","why":"they answer pricing questions"}');

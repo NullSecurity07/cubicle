@@ -6,6 +6,7 @@ import { safeHost } from '../../shared/sources';
 import type { ImageNodeType, LinkNodeType, NoteNodeType, SourceNodeType } from '../stage';
 import { useFlushStage } from '../sync';
 import { CardActions, Frame } from './Frame';
+import { LivePicture, OpenLarge } from './LivePicture';
 
 const COLORS = ['#f0b35a', '#ee8a72', '#6fcf97', '#4e8cff', '#b58cff'];
 
@@ -105,7 +106,7 @@ export function LinkNode({ id, data, selected }: NodeProps<LinkNodeType>) {
 }
 
 // A website the founder trusts. Nobody has to be wired to it: every person may search inside it when the founder's
-// line about it fits their question.
+// line about it fits their question, and the founder watches that search live under the two fields.
 export function SourceNode({ id, data, selected }: NodeProps<SourceNodeType>) {
   const { updateNodeData } = useReactFlow();
   const flushStage = useFlushStage();
@@ -134,7 +135,7 @@ export function SourceNode({ id, data, selected }: NodeProps<SourceNodeType>) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
   return (
-    <Frame selected={!!selected} minWidth={260} minHeight={150}>
+    <Frame selected={!!selected} minWidth={260} minHeight={260}>
       <header className="card__header card__header--doc">
         {/* Only the site's name goes out, to fetch its small icon; until it arrives, or when a site has none, a globe. */}
         <span className="source__icon" aria-hidden="true">
@@ -143,6 +144,7 @@ export function SourceNode({ id, data, selected }: NodeProps<SourceNodeType>) {
         </span>
         <div className="card__name">{data.title || host || 'Source website'}</div>
         {data.url && <a className="link__open nodrag" href={data.url} target="_blank" rel="noreferrer" title="Open in your browser">open</a>}
+        <OpenLarge id={id} />
         <CardActions id={id} what="this website" />
       </header>
       <form className="link source nodrag" onSubmit={(event) => { event.preventDefault(); void read(draft.trim()); }}>
@@ -151,6 +153,7 @@ export function SourceNode({ id, data, selected }: NodeProps<SourceNodeType>) {
         <input aria-label="What people find here" placeholder="What people find here, in a line" value={data.about} onChange={(event) => updateNodeData(id, { about: event.target.value })} />
         <p className={state.problem ? 'msg--problem' : undefined}>{state.reading ? 'Looking at the site…' : state.problem ?? 'Every person may search inside this site when your line fits their question.'}</p>
       </form>
+      <LivePicture id={id} kind="source" idle={<p className="chat__empty">When a person searches this site, you watch it here.</p>} />
     </Frame>
   );
 }

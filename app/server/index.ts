@@ -434,7 +434,7 @@ createServer(async (req, res) => {
       await store.saveStage(next);
       // The window's one feed follows the stage: a board card put down here is live before this answer goes back.
       events.restage(next);
-      // A browser card that left the stage takes its Chrome session with it.
+      // A browser or source card that left the stage takes its Chrome session with it.
       for (const card of before.cards ?? []) if (!next.cards?.some((kept) => kept.id === card.id)) void browser.close(browserSession(card.id));
       if ((before.cards ?? []).length !== (next.cards ?? []).length) void attention.refresh();
       return json(res, 200, { ok: true });
@@ -643,8 +643,10 @@ createServer(async (req, res) => {
     if (finishing && req.method === 'POST') return json(res, 200, { ok: browser.endHand(store.browserProfile(finishing)) });
     const watched = /^\/api\/browsers\/([^/]+)$/.exec(path)?.[1];
     if (watched && req.method === 'GET') {
-      if (!(await store.loadStage()).cards?.some((card) => card.id === watched && card.kind === 'browser')) return json(res, 404, { error: 'unknown browser' });
-      const card = (await store.loadStage()).cards!.find((one) => one.id === watched)!;
+      const card = (await store.loadStage()).cards?.find((one) => one.id === watched && (one.kind === 'browser' || one.kind === 'source'));
+      if (!card) return json(res, 404, { error: 'unknown browser' });
+      // A source card's session holds no logins, so it is watched with no profile and no home.
+      if (card.kind === 'source') return json(res, 200, await browser.watch(browserSession(watched)));
       return json(res, 200, await browser.watch(browserSession(watched), { profile: store.browserProfile(watched), headed: isHeaded(card) }, card.kind === 'browser' ? card.app?.home : undefined));
     }
     // "Show window" changed: Chrome reads that only at start, so end the session and start it again the new way.
