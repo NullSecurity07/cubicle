@@ -169,7 +169,7 @@ attention.source(decisionAttention(decisions));
 decisions.onChange(() => { void attention.refresh(); });
 // Websites people proposed as sources, each waiting for the founder in Needs you.
 const sources = createSources(workspace);
-attention.source(sourceAttention(sources));
+attention.source(sourceAttention(sources, () => store.loadStage()));
 sources.onChange(() => { void attention.refresh(); });
 // The one playbook everybody shares, and the one page everybody has read about the founder.
 const skills = createSkills(workspace);

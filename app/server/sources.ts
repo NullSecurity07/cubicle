@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Attention } from '../shared/model.ts';
-import { hostOf } from '../shared/sources.ts';
+import type { Attention, Stage } from '../shared/model.ts';
+import { hostOf, safeHost, sourceCards } from '../shared/sources.ts';
 
 // A website a person proposed as a source. It waits for the founder in Needs you until they add it or drop it.
 export type Proposed = { id: string; url: string; about: string; why: string; by: string; at: number };
@@ -56,7 +56,12 @@ export function createSources(dir: string, now: () => number = Date.now): Source
   };
 }
 
-// Each proposal is one thing the founder is asked about: add the site to the stage, or drop it.
-export const sourceAttention = (sources: Sources) => async (): Promise<Attention[]> => (await sources.list()).map((one) => ({
-  id: `proposed-source:${one.id}`, kind: 'proposed-source', title: hostOf(one.url), detail: `${one.about}. ${one.why}`, who: one.by, at: one.at, sourceId: one.id, url: one.url, about: one.about,
-}));
+// Each proposal is one thing the founder is asked about: add the site to the stage, or drop it. A site that is already
+// a source card has been answered, however it got there, so its proposal is no longer shown.
+export const sourceAttention = (sources: Sources, loadStage: () => Promise<Stage>) => async (): Promise<Attention[]> => {
+  const [proposed, stage] = await Promise.all([sources.list(), loadStage()]);
+  const onStage = new Set(sourceCards(stage.cards).map((card) => safeHost(card.url)).filter(Boolean));
+  return proposed.filter((one) => !onStage.has(hostOf(one.url))).map((one): Attention => ({
+    id: `proposed-source:${one.id}`, kind: 'proposed-source', title: hostOf(one.url), detail: `${one.about}. ${one.why}`, who: one.by, at: one.at, sourceId: one.id, url: one.url, about: one.about,
+  }));
+};

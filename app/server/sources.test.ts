@@ -2,7 +2,10 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { seedStage, type Stage } from '../shared/model.ts';
 import { createSources, sourceAttention } from './sources.ts';
+
+const empty = async (): Promise<Stage> => ({ ...seedStage, cards: [] });
 
 let dir = '';
 beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'sources-')); });
@@ -17,12 +20,19 @@ describe('proposed sources', () => {
     await expect(sources.propose({ url: 'https://indiehackers.com/', about: 'a', why: 'b', by: 'Maya' }, ['indiehackers.com'])).rejects.toThrow('already a source');
     await sources.drop(first.id);
     expect(await sources.list()).toEqual([]);
-    expect((await sourceAttention(createSources(dir))())).toEqual([]);
+    expect((await sourceAttention(createSources(dir), empty)())).toEqual([]);
   });
   it('shows a proposal as something that needs the founder', async () => {
     const sources = createSources(dir, () => 7);
     const one = await sources.propose({ url: 'https://startups.rip/', about: 'case studies', why: 'it had the answer', by: 'Maya' }, []);
-    expect(await sourceAttention(sources)()).toEqual([{ id: `proposed-source:${one.id}`, kind: 'proposed-source', title: 'startups.rip', detail: 'case studies. it had the answer', who: 'Maya', at: 7, sourceId: one.id, url: 'https://startups.rip/', about: 'case studies' }]);
+    expect(await sourceAttention(sources, empty)()).toEqual([{ id: `proposed-source:${one.id}`, kind: 'proposed-source', title: 'startups.rip', detail: 'case studies. it had the answer', who: 'Maya', at: 7, sourceId: one.id, url: 'https://startups.rip/', about: 'case studies' }]);
+  });
+  it('leaves out a proposal whose site is already on the stage', async () => {
+    const sources = createSources(dir, () => 3);
+    await sources.propose({ url: 'https://startups.rip/', about: 'case studies', why: 'it had the answer', by: 'Maya' }, []);
+    const other = await sources.propose({ url: 'https://indiehackers.com/', about: 'founder interviews', why: 'it answered too', by: 'Dev' }, []);
+    const stage = async (): Promise<Stage> => ({ ...seedStage, cards: [{ id: 's1', kind: 'source', url: 'https://www.startups.rip/', about: 'case studies', x: 0, y: 0, w: 1, h: 1 }] });
+    expect((await sourceAttention(sources, stage)()).map((entry) => entry.sourceId)).toEqual([other.id]);
   });
   it('tells whoever watches when the list changes', async () => {
     const sources = createSources(dir, () => 1);
