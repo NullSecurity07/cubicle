@@ -1,3 +1,4 @@
+import type { AppPreset } from './apps.ts';
 import type { Gender } from './voices.ts';
 
 // The plain model both sides agree on. The client maps it to React Flow; the server stores it.
@@ -16,7 +17,8 @@ export type Room = Box & {
 export type Doc = Box & { id: string; title: string; pinned?: boolean };
 // Resource cards that are not docs. `browser` is a live browser a wired person can drive; `project` is a code folder a wired person may hand to a coding agent; `board` holds tasks that wired people may propose and the founder runs.
 // `headed` shows the card's Chrome as a real window, for the founder to sign in or pass a human check by hand.
-export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean } | { kind: 'project'; path: string } | { kind: 'board' }
+// `app` makes the card a named app the founder is signed in to, such as LinkedIn; a plain browser card has none.
+export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean; app?: AppPreset } | { kind: 'project'; path: string } | { kind: 'board' }
   // Small things that are context when wired to a person: a note's words, a picture (for models that can see), a web page's text.
   // A picture card starts empty — the founder drops a file on it, or wires it to the studio whose work it shows.
   | { kind: 'note'; text: string; color?: string } | { kind: 'image'; path?: string } | { kind: 'link'; url: string; title?: string }
