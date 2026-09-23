@@ -1,5 +1,6 @@
 import { Panel } from '@xyflow/react';
 import { useEffect, useState } from 'react';
+import { preset, type AppKey } from '../shared/apps';
 import type { ModelInfo } from '../shared/model';
 import { getModels } from './api';
 import { listen } from './bus';
@@ -59,6 +60,32 @@ const MORE: [kind: CardKind, label: string, hint: string][] = [
   ['board', 'Task board', 'People propose, you run'],
 ];
 
+// Sites the founder is already signed in to: a browser card that opens as them. "Any app" asks for a name and an address.
+const APPS: [key: Exclude<AppKey, 'custom'>, label: string, hint: string][] = [
+  ['linkedin', 'LinkedIn', 'People, companies and your feed'],
+  ['x', 'X', 'Posts, people and your timeline'],
+  ['gmail', 'Gmail', 'Your inbox, read and drafted in'],
+];
+
+// The small form behind "Add any app": the founder names the site and says where it lives.
+function AnyApp({ onAdd }: { onAdd: (name: string, home: string) => void }) {
+  const [name, setName] = useState('');
+  const [home, setHome] = useState('');
+  const [error, setError] = useState('');
+  return (
+    <form className="dock__menu dock__app" aria-label="Add any app" onSubmit={(event) => {
+      event.preventDefault();
+      try { onAdd(name, home); } catch (problem) { setError((problem as Error).message); }
+    }}>
+      <h6>Any app, signed in as you</h6>
+      <label>App name<input autoFocus value={name} placeholder="Notion" onChange={(event) => { setName(event.target.value); setError(''); }} /></label>
+      <label>App address<input value={home} placeholder="notion.so" onChange={(event) => { setHome(event.target.value); setError(''); }} /></label>
+      {error && <p className="dock__error" role="alert">{error[0].toUpperCase() + error.slice(1)}.</p>}
+      <button type="submit" className="dock__submit">Add app</button>
+    </form>
+  );
+}
+
 // The bell: how many things wait for the founder, in the one colour that means "needs you". The window title carries the count too.
 function Needs() {
   const count = useAttention().length;
@@ -75,8 +102,13 @@ function Needs() {
 export function Dock() {
   const addCard = useAddCard();
   const [more, setMore] = useState(false);
+  // The menu either lists cards or, after "Add any app", is the small form for one.
+  const [anyApp, setAnyApp] = useState(false);
+  const close = () => { setMore(false); setAnyApp(false); };
   // A note is picked, not made: the library opens, and the card lands once the founder has chosen or added one.
-  const add = (kind: CardKind) => { setMore(false); if (kind === 'library') openLibrary(); else addCard(kind); };
+  const add = (kind: CardKind) => { close(); if (kind === 'library') openLibrary(); else addCard(kind); };
+  // preset() throws on a missing name or address; the form shows that and stays open.
+  const addApp = (key: AppKey, name?: string, home?: string) => { const app = preset(key, name, home); close(); addCard('browser', { app }); };
 
   return (
     <Panel position="bottom-center" className="dock">
@@ -86,17 +118,21 @@ export function Dock() {
       <button type="button" aria-label="Add doc" title="Add doc" onClick={() => add('doc')}>
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.5 2.5h6L15 6v11.5H5.5zM11.5 2.5V6H15M8 10h4.5M8 13h4.5" /></svg>
       </button>
-      <div className="dock__more" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setMore(false); }} onKeyDown={(event) => { if (event.key === 'Escape') setMore(false); }}>
-        <button type="button" aria-label="More cards" aria-expanded={more} title="More cards" onClick={() => setMore(!more)}>
+      <div className="dock__more" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) close(); }} onKeyDown={(event) => { if (event.key === 'Escape') close(); }}>
+        <button type="button" aria-label="More cards" aria-expanded={more} title="More cards" onClick={() => (more ? close() : setMore(true))}>
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.500v11M4.500 10h11" /></svg>
         </button>
-        {more && (
+        {more && !anyApp && (
           <div className="dock__menu" role="menu" aria-label="More cards">
             {MORE.map(([kind, label, hint]) => <button key={kind} type="button" role="menuitem" aria-label={`Add ${label.toLowerCase()}`} onClick={() => add(kind)}><b>{label}</b><small>{hint}</small></button>)}
+            <h6 role="presentation">Apps, signed in as you</h6>
+            {APPS.map(([key, label, hint]) => <button key={key} type="button" role="menuitem" aria-label={`Add ${label}`} onClick={() => addApp(key)}><b>{label}</b><small>{hint}</small></button>)}
+            <button type="button" role="menuitem" aria-label="Add any app" onClick={() => setAnyApp(true)}><b>Any app</b><small>A site you name, opened as you</small></button>
           </div>
         )}
+        {more && anyApp && <AnyApp onAdd={(name, home) => addApp('custom', name, home)} />}
       </div>
-      <button type="button" aria-label="Frameworks" title="Frameworks: teams that land ready to work" onClick={() => { setMore(false); openFrameworks(); }}>
+      <button type="button" aria-label="Frameworks" title="Frameworks: teams that land ready to work" onClick={() => { close(); openFrameworks(); }}>
         <BlocksIcon />
       </button>
       <span className="dock__gap" aria-hidden="true" />

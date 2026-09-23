@@ -19,7 +19,7 @@ async function drag(page: Page, from: { x: number; y: number }, to: { x: number;
 // Browser, project, board, note, picture and link cards sit behind the dock's plus button.
 async function addCard(page: Page, name: string) {
   await page.getByRole('button', { name: 'More cards' }).click();
-  await page.getByRole('menuitem', { name }).click();
+  await page.getByRole('menuitem', { name, exact: true }).click();
 }
 
 // Journeys share one workspace, so the stage fills up. A journey that draws wires starts from the four seed cards again

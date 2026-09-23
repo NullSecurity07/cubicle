@@ -236,6 +236,11 @@ div.msg--assistant:has(.approval) { align-self: stretch; max-width: none; }
 .card:hover .browser__window, .browser__window.is-on, .browser__window:focus-visible { opacity: 1; }
 .browser__window:hover { color: var(--text); }
 .browser__window.is-on { color: #f0b35a; border-color: rgba(240, 179, 90, 0.5); }
+/* An app card is named, not addressed: the name reads like a title, the address waits in the tooltip. */
+.browser__address--app { color: var(--text); font-weight: 600; }
+/* Whether the founder is signed in: amber until they are, green once they are. Always shown, unlike the window button. */
+.browser__status { flex: none; padding: 2px 8px; border-radius: 999px; border: 1px solid rgba(240, 179, 90, 0.35); background: rgba(240, 179, 90, 0.1); color: #f0b35a; font-size: 10.5px; font-weight: 600; letter-spacing: 0.01em; white-space: nowrap; }
+.browser__status.is-in { border-color: rgba(111, 207, 151, 0.35); background: rgba(111, 207, 151, 0.1); color: #6fcf97; }
 
 /* Project card: folder path, then the coding agent's steps. */
 .project__path { flex: none; margin: 8px 10px 0; border: 1px solid var(--card-border); border-radius: 8px; padding: 6px 8px; outline: 0; background: rgba(0, 0, 0, 0.25); color: var(--text); font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace; font-size: 11.5px; }
@@ -335,10 +340,20 @@ div.msg--user { position: relative; white-space: pre-wrap; }
 
 /* Dock menu for the less common cards. */
 .dock__more { position: relative; display: flex; }
-.dock .dock__menu { position: absolute; bottom: calc(100% + 14px); left: 50%; transform: translateX(-50%); width: 260px; padding: 6px; display: flex; flex-direction: column; gap: 2px; border-radius: 14px; border: 1px solid var(--card-border); background: rgba(16, 17, 20, 0.94); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45); }
+.dock .dock__menu { position: absolute; bottom: calc(100% + 14px); left: 50%; transform: translateX(-50%); width: 260px; padding: 6px; display: flex; flex-direction: column; gap: 2px; border-radius: 14px; border: 1px solid var(--card-border); background: rgba(16, 17, 20, 0.94); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45); max-height: calc(100vh - 110px); overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
 .dock .dock__menu button { width: 100%; height: auto; padding: 7px 10px; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; border-radius: 9px; text-align: left; font: inherit; }
 .dock__menu b { font-size: 12.5px; font-weight: 600; }
 .dock__menu small { font-size: 11px; color: var(--muted); }
+/* A group inside the menu: a quiet label under a hairline, in the same small capitals as a message's sender. */
+.dock__menu h6 { margin: 6px 4px 2px; padding: 8px 6px 2px; border-top: 1px solid var(--card-border); font-size: 10.5px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--muted); }
+.dock__app h6 { margin-top: 0; padding-top: 4px; border-top: 0; }
+.dock__app { gap: 8px; padding: 10px; }
+.dock__app label { display: flex; flex-direction: column; gap: 4px; padding: 0 2px; font-size: 11px; color: var(--muted); }
+.dock__app input { border: 1px solid var(--card-border); border-radius: 8px; padding: 6px 8px; outline: 0; background: rgba(0, 0, 0, 0.25); color: var(--text); font: inherit; font-size: 12.5px; }
+.dock__app input:focus { border-color: rgba(78, 140, 255, 0.7); }
+.dock__error { margin: 0; padding: 0 2px; font-size: 11px; color: #f0b35a; }
+.dock .dock__app .dock__submit { align-items: center; padding: 7px 10px; background: var(--accent); color: #fff; font-weight: 600; font-size: 12.5px; }
+.dock .dock__app .dock__submit:hover { background: var(--accent-soft); color: #0a0a0a; }
 
 /* Sticky note, picture, link. */
 .note { flex: 1; min-height: 0; display: flex; flex-direction: column; border-radius: inherit; background: color-mix(in srgb, var(--note) 16%, transparent); }

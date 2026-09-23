@@ -29,7 +29,7 @@ export type CardKind = keyof typeof NEW;
 // the middle of the window: where a file was let go of.
 export function useAddCard() {
   const { getNodes, setNodes, screenToFlowPosition, setCenter, getZoom } = useReactFlow<StageNode>();
-  return useCallback((kind: CardKind, extra: Record<string, string> = {}, at?: { x: number; y: number }) => {
+  return useCallback((kind: CardKind, extra: Record<string, unknown> = {}, at?: { x: number; y: number }) => {
     const nodes = getNodes();
     const { size: [width, height], data } = NEW[kind];
     const centre = at ?? screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
