@@ -1,3 +1,4 @@
+import { playbookOf } from '../shared/apps.ts';
 import { STANCE, type ChatMessage, type Stage } from '../shared/model.ts';
 import { dayKey, fullDay, shortDay, weekDay, zoneName } from './clock.ts';
 import { recent, type Memory } from './memory.ts';
@@ -119,6 +120,8 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
         ? ' To put a picture in a film, draw it first with generate_image and pass the path it hands back in generate_video\'s "images"; a picture with somebody in it becomes the person on camera.'
           + ' Pictures already in an image studio wired to you are used without being asked for, so there is nothing to do when the founder has drawn one already.'
         : '')
+    // An app card is the founder's own account on a named site: the person is told so, and how that site is laid out.
+    : card.kind === 'browser' && card.app ? `- ${card.app.name}, an app the founder is signed in to with their own account. Act as they would, one careful step at a time, with browse (app "${card.app.name}"). ${playbookOf(card.app)}`
     : '- A browser card the founder watches live. Use browse for anything that needs clicking, typing or being signed in.'));
   // Of the things a room can be given, the ones nobody gave this one: worked out from the tools really offered, so
   // it stays true whoever narrowed the list. Nothing is said to somebody who was offered no tools at all.

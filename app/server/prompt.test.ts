@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { preset } from '../shared/apps.ts';
 import { STANCE, seedStage, type ChatMessage, type Stage } from '../shared/model.ts';
 import { buildMessages, colleagueIds, readableDocIds, todayBlock, wiredDocIds } from './prompt.ts';
 
@@ -113,6 +114,14 @@ describe('prompt', () => {
     expect(system).toContain('never write project code into them');
     expect(system).toContain('A browser card');
     expect(buildMessages(withCards, 'marketing', docs, [], ['delegate_coding'])[0].content).not.toContain('Also connected');
+  });
+
+  it('tells a person what an app card is and how the site is laid out; a plain browser card reads as before', () => {
+    const withApp: Stage = { ...stage, cards: [{ id: 'li', kind: 'browser', app: preset('linkedin'), x: 0, y: 0, w: 1, h: 1 }, { id: 'web', kind: 'browser', x: 0, y: 0, w: 1, h: 1 }],
+      wires: [...stage.wires, { id: 'w1', from: 'marketing', to: 'li', fromHandle: 'r', toHandle: 'l' }, { id: 'w2', from: 'marketing', to: 'web', fromHandle: 'r', toHandle: 'l' }] };
+    const system = buildMessages(withApp, 'marketing', {}, [], ['browse'])[0].content as string;
+    expect(system).toContain('- LinkedIn, an app the founder is signed in to with their own account. Act as they would, one careful step at a time, with browse (app "LinkedIn"). Search people at');
+    expect(system).toContain('- A browser card the founder watches live.');
   });
 
   it('tells only a wired person that an image studio is theirs to draw in', () => {
