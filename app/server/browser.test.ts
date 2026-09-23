@@ -187,3 +187,28 @@ describe('browser', () => {
     await expect(createBrowser(run).act('card-b1', 'dance', {})).rejects.toThrow(/unknown action/);
   });
 });
+
+describe('app cards', () => {
+  it('treats connect, follow, like and message as outward, and names the app in the question', async () => {
+    const tree = '- button "Connect" [ref=e1]\n- button "Follow" [ref=e2]\n- button "Like" [ref=e3]\n- button "Message" [ref=e4]\n- link "About" [ref=e5]\n';
+    const runner: Runner = async (_s, args) => (args[0] === 'snapshot' ? tree : args[0] === 'get' && args[1] === 'url' ? 'https://www.linkedin.com/in/someone/\n' : '✓\n');
+    const browser = createBrowser(runner);
+    await browser.act('card-a', 'look', {});
+    expect(await browser.outward('card-a', 'click', { ref: 'e1' }, undefined, 'LinkedIn')).toBe('Click "Connect" on LinkedIn? Look at the browser card first: it shows exactly what will go out.');
+    for (const ref of ['e2', 'e3', 'e4']) expect(await browser.outward('card-a', 'click', { ref }, undefined, 'LinkedIn')).toMatch(/^Click "/);
+    expect(await browser.outward('card-a', 'click', { ref: 'e5' }, undefined, 'LinkedIn')).toBeNull();
+    // Without an app name the host is named, as before.
+    expect(await browser.outward('card-a', 'click', { ref: 'e1' })).toContain('on www.linkedin.com?');
+  });
+  it('pauses before a step only when a pace is given', async () => {
+    const stamps: number[] = [];
+    const runner: Runner = async (_s, args) => { if (args[0] === 'click') stamps.push(Date.now()); return args[0] === 'snapshot' ? '- button "Ok" [ref=e1]\n' : '✓\n'; };
+    const browser = createBrowser(runner);
+    const before = Date.now();
+    await browser.act('card-b', 'click', { ref: 'e1' }, { pace: [40, 40] });
+    expect(stamps[0] - before).toBeGreaterThanOrEqual(35);
+    const again = Date.now();
+    await browser.act('card-b', 'click', { ref: 'e1' }, { pace: [0, 0] });
+    expect(stamps[1] - again).toBeLessThan(30);
+  });
+});

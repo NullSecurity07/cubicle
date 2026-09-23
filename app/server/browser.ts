@@ -6,7 +6,8 @@ import type { Reader } from './readers.ts';
 
 // How a browser card's Chrome starts: `profile` is a folder that keeps its logins between runs, `headed` opens a real
 // window on the founder's desktop. Both take effect when the session starts, so changing them means closing it first.
-export type Launch = { profile?: string; headed?: boolean };
+// `pace` is the pause before each step, in milliseconds between a least and a most; there is none when it is absent.
+export type Launch = { profile?: string; headed?: boolean; pace?: [number, number] };
 // Runs one agent-browser command in a named session and returns what it printed.
 export type Runner = (session: string, args: string[], launch?: Launch) => Promise<string>;
 export type SearchHit = { title: string; url: string; snippet: string; date?: string };
@@ -140,7 +141,7 @@ export const jinaReader: Reader = async (url) => {
 };
 
 // Clicks that send, publish, pay or destroy something. Browsing is free; these wait for the founder.
-const OUTWARD = /^(send|reply|forward|post|publish|tweet|submit|share|comment|pay|buy|purchase|order|checkout|place order|subscribe|confirm|delete|remove|unsubscribe|sign up|create account|register)\b/i;
+const OUTWARD = /^(send|reply|forward|post|publish|tweet|submit|share|comment|pay|buy|purchase|order|checkout|place order|subscribe|confirm|delete|remove|unsubscribe|sign up|create account|register|connect|follow|unfollow|like|repost|retweet|endorse|apply|message|accept|invite)\b/i;
 const MAIL_HOSTS = /(^|\.)(mail\.google\.com|outlook\.live\.com|outlook\.office\.com|outlook\.office365\.com|mail\.proton\.me|mail\.yahoo\.com|app\.fastmail\.com|mail\.zoho\.com|app\.tuta\.com)$/;
 // The accessible name of a ref in a snapshot line such as `- button "Send" [ref=e44]`: '' for an element without one, null for a ref that is not on the page.
 export const nameOfRef = (tree: string, ref: string) => { const found = new RegExp(`^\\s*- \\w+(?: "((?:[^"\\\\]|\\\\.)*)")?[^\\n]*\\[ref=${ref.replace(/^@/, '')}\\]`, 'm').exec(tree); return found ? found[1] ?? '' : null; };
@@ -261,6 +262,9 @@ export function createBrowser(run: Runner, readers: Readers = { direct: [], fall
       return slot(async () => {
         const args = steps[action]();
         if (action === 'open') await publicUrl(args[1], resolveHost);
+        // An app card runs at a person's pace: a step every couple of seconds on the founder's own account, not a burst.
+        const pace = launch?.pace;
+        if (pace && args.length) await new Promise((settle) => setTimeout(settle, pace[0] + Math.random() * Math.max(0, pace[1] - pace[0])));
         if (args.length) await go(session, args);
         const address = (await go(session, ['get', 'url']).catch(() => '')).trim();
         if (address && !/^about:/.test(address)) webUrl(address);
@@ -272,17 +276,19 @@ export function createBrowser(run: Runner, readers: Readers = { direct: [], fall
       });
     },
     // The question for the founder when a step would send, publish, pay or delete; null when the step is plain browsing.
-    async outward(session: string, action: string, input: { ref?: string; key?: string }, launch?: Launch): Promise<string | null> {
+    // An app card is named by its app, which the founder knows better than a host name.
+    async outward(session: string, action: string, input: { ref?: string; key?: string }, launch?: Launch, appName?: string): Promise<string | null> {
       let page = seen.get(session);
       const host = (() => { try { return new URL(page?.address ?? '').hostname; } catch { return ''; } })();
-      if (action === 'press') return /enter/i.test(input.key ?? '') && MAIL_HOSTS.test(host) ? `Press ${input.key} on ${host}? In webmail this can send the message.` : null;
+      const where = appName || host || 'this page';
+      if (action === 'press') return /enter/i.test(input.key ?? '') && MAIL_HOSTS.test(host) ? `Press ${input.key} on ${where}? In webmail this can send the message.` : null;
       if (action !== 'click' || !input.ref) return null;
       if (!page) { const tree = await run(session, ['snapshot', '-i'], launch).catch(() => ''); page = { tree, address: '' }; }
       const name = nameOfRef(page.tree, input.ref);
-      if (name === null) return `Click ${input.ref} on ${host || 'this page'}? I could not read what that element is.`;
+      if (name === null) return `Click ${input.ref} on ${where}? I could not read what that element is.`;
       // An icon with no name could be anything; inside webmail that is reason enough to ask.
-      if (!name.trim()) return MAIL_HOSTS.test(host) ? `Click an unnamed button (${input.ref}) on ${host}? Look at the browser card first.` : null;
-      return OUTWARD.test(name.trim()) ? `Click "${name}" on ${host || 'this page'}? Look at the browser card first: it shows exactly what will go out.` : null;
+      if (!name.trim()) return MAIL_HOSTS.test(host) ? `Click an unnamed button (${input.ref}) on ${where}? Look at the browser card first.` : null;
+      return OUTWARD.test(name.trim()) ? `Click "${name}" on ${where}? Look at the browser card first: it shows exactly what will go out.` : null;
     },
     // Where a browser card can watch its session live. Opens the session if nobody has used it yet.
     async watch(session: string, launch?: Launch): Promise<{ port: number; url: string }> {
