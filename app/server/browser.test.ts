@@ -46,6 +46,14 @@ describe('browser', () => {
     expect(text).toContain('https://example.com/');
   });
 
+  // Fake journeys search inside a source website, so the stand-in has to answer with a page on that site.
+  it('answers a site: search in fake mode with a page on that site, and any other search as before', async () => {
+    const inside = await createBrowser(fakeRunner).search(['site:startups.rip why subscriptions die']);
+    expect(inside).toContain('https://startups.rip/a-page');
+    expect(inside).not.toContain('example.com');
+    expect(await createBrowser(fakeRunner).search(['why subscriptions die'])).toContain('https://example.com/');
+  });
+
   // A search that cannot be narrowed is the whole reason a person answered about this year with last year's figures.
   it('narrows the search where the engine can, and says plainly where it cannot', async () => {
     const opened: string[] = [];

@@ -611,7 +611,9 @@ createServer(async (req, res) => {
     const linked = /^\/api\/links\/([^/]+)$/.exec(path)?.[1];
     if (linked && req.method === 'POST') {
       const card = (await store.loadStage()).cards?.find((one) => one.id === linked);
-      if (!card || card.kind !== 'link' || !card.url) return json(res, 404, { error: 'unknown link' });
+      if (!card || (card.kind !== 'link' && card.kind !== 'source') || !card.url) return json(res, 404, { error: 'unknown link' });
+      // A source is searched when it fits, never read into anyone's background, so only its name is kept.
+      if (card.kind === 'source') return json(res, 200, { title: (await browser.page(card.url)).title, preview: '' });
       const page = { url: card.url, ...(await browser.page(card.url)) };
       await store.writePage(linked, page);
       return json(res, 200, { title: page.title, preview: page.text.slice(0, 280) });

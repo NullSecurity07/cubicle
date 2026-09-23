@@ -124,6 +124,12 @@ export function realRunner(env: NodeJS.ProcessEnv = process.env): Runner {
 // sent to LinkedIn lands on its sign-in page and a journey can see a card that is not signed in. A session never sent
 // anywhere is not running, and says nothing, as a real one does; otherwise a new app card would read as signed in.
 const fakeOpened = new Map<string, string>();
+// The site a search address was narrowed to with `site:`, or nothing.
+const fakeSiteOf = (address: string): string => {
+  let query = '';
+  try { query = new URL(address).searchParams.get('q') ?? ''; } catch { return ''; }
+  return /(?:^|\s)site:(\S+)/.exec(query)?.[1] ?? '';
+};
 export const fakeRunner: Runner = async (session, args) => {
   if (args[0] === 'open') fakeOpened.set(session, args[1] ?? '');
   if (args[0] === 'close') fakeOpened.delete(session);
@@ -131,7 +137,12 @@ export const fakeRunner: Runner = async (session, args) => {
     const last = fakeOpened.get(session);
     return last === undefined ? '' : /linkedin\.com/i.test(last) ? 'https://www.linkedin.com/login\n' : 'https://example.com/\n';
   }
-  if (args[0] === 'eval' && ENGINES.some((engine) => engine.read === args[1])) return JSON.stringify(JSON.stringify([{ title: 'Example result', url: 'https://www.bing.com/ck/a?u=a1aHR0cHM6Ly9leGFtcGxlLmNvbS8', snippet: 'An example.' }]));
+  if (args[0] === 'eval' && ENGINES.some((engine) => engine.read === args[1])) {
+    // A search inside one site answers with a page on that site, as a real engine would; anything else, the old example.
+    const host = fakeSiteOf(fakeOpened.get(session) ?? '');
+    if (host) return JSON.stringify(JSON.stringify([{ title: `A page on ${host}`, url: `https://${host}/a-page`, snippet: 'An example.' }]));
+    return JSON.stringify(JSON.stringify([{ title: 'Example result', url: 'https://www.bing.com/ck/a?u=a1aHR0cHM6Ly9leGFtcGxlLmNvbS8', snippet: 'An example.' }]));
+  }
   if (args[0] === 'eval') return JSON.stringify(JSON.stringify({ title: 'Example Domain', url: 'https://example.com/', text: `This domain is for use in examples. ${'It is reserved for documentation and may be used without asking. '.repeat(3)}`.trim() }));
   if (args[0] === 'snapshot') return '- heading "Example Domain" [ref=e1]\n- link "More information" [ref=e2]\n';
   // A session that is not running has no live view either, so watching it has to open a page first.
