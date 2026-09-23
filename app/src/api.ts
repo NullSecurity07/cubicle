@@ -23,6 +23,7 @@ export const answerApproval = (id: string, ok: boolean, args?: Record<string, st
 export const restartBrowser = (id: string) => request<{ port: number; url: string }>(`/api/browsers/${id}/restart`, { method: 'POST' });
 export const signedInBrowser = (id: string) => request<{ signedIn: boolean | null; landedOn: string; byHand?: boolean }>(`/api/browsers/${id}/signed-in`);
 export const signInBrowser = (id: string) => request<{ started: boolean }>(`/api/browsers/${id}/sign-in`, { method: 'POST' });
+export const signInDoneBrowser = (id: string) => request<{ ok: boolean }>(`/api/browsers/${id}/sign-in/done`, { method: 'POST' });
 export const getMemory = (roomId: string) => request<{ notes: string; summary: string }>(`/api/rooms/${roomId}/memory`);
 export const putMemory = (roomId: string, memory: { notes: string; summary: string }) => request(`/api/rooms/${roomId}/memory`, put(memory));
 export const getChat = (roomId: string) => request<ChatMessage[]>(`/api/rooms/${roomId}/chat`);

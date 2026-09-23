@@ -638,6 +638,9 @@ createServer(async (req, res) => {
       void browser.byHand(store.browserProfile(signing), card.app.home).catch((error: Error) => console.error(`sign-in window for ${card.app?.name}: ${error.message}`));
       return json(res, 200, { started: true });
     }
+    // The founder has signed in: their Chrome may outlive its window, so the stage closes it for them.
+    const finishing = /^\/api\/browsers\/([^/]+)\/sign-in\/done$/.exec(path)?.[1];
+    if (finishing && req.method === 'POST') return json(res, 200, { ok: browser.endHand(store.browserProfile(finishing)) });
     const watched = /^\/api\/browsers\/([^/]+)$/.exec(path)?.[1];
     if (watched && req.method === 'GET') {
       if (!(await store.loadStage()).cards?.some((card) => card.id === watched && card.kind === 'browser')) return json(res, 404, { error: 'unknown browser' });

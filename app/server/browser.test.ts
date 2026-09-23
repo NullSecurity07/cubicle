@@ -278,7 +278,7 @@ describe('byHand', () => {
   it('opens the founder\'s Chrome once per profile while it is open, and says when it has closed', async () => {
     const launched: string[] = [];
     let close = () => {};
-    const hand = (profile: string) => { launched.push(profile); return new Promise<void>((done) => { close = done; }); };
+    const hand = (profile: string) => { launched.push(profile); return { done: new Promise<void>((done) => { close = done; }), end: () => {} }; };
     const browser = createBrowser(fakeRunner, undefined, undefined, hand);
     const first = browser.byHand('/tmp/profile-a', 'https://www.linkedin.com/feed/');
     expect(browser.handOpen('/tmp/profile-a')).toBe(true);
@@ -292,5 +292,18 @@ describe('byHand', () => {
     void browser.byHand('/tmp/profile-a', 'https://www.linkedin.com/feed/');
     expect(launched).toEqual(['/tmp/profile-a', '/tmp/profile-a']);
     close();
+  });
+
+  it('ends a Chrome that would never close on its own, and forgets it once it has', async () => {
+    let ended = 0;
+    const hand = () => { let end = () => {}; const done = new Promise<void>((settle) => { end = () => { ended += 1; settle(); }; }); return { done, end }; };
+    const browser = createBrowser(fakeRunner, undefined, undefined, hand);
+    expect(browser.endHand('/tmp/profile-a')).toBe(false);
+    const open = browser.byHand('/tmp/profile-a', 'https://mail.google.com/');
+    expect(browser.handOpen('/tmp/profile-a')).toBe(true);
+    expect(browser.endHand('/tmp/profile-a')).toBe(true);
+    await open;
+    expect(ended).toBe(1);
+    expect(browser.handOpen('/tmp/profile-a')).toBe(false);
   });
 });

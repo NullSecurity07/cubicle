@@ -96,6 +96,13 @@ test('an app card is a browser signed in as the founder', async ({ page }) => {
   await expect(card.locator('.browser__status')).toHaveText('Not signed in', { timeout: 10_000 });
   await expect(card.getByRole('button', { name: 'Sign in' })).toBeEnabled();
 
+  // Chrome can outlive its window, so the founder can say they are done and the stage closes it.
+  await card.getByRole('button', { name: 'Sign in' }).click();
+  await expect(card.getByRole('button', { name: 'Chrome is open' })).toBeDisabled();
+  await card.getByRole('button', { name: 'I have signed in' }).click();
+  await expect(card.locator('.browser__status')).toHaveText('Not signed in', { timeout: 10_000 });
+  await expect(card.getByRole('button', { name: 'I have signed in' })).toHaveCount(0);
+
   // The live window stays one click away, for a human check mid-task, and opens on the app itself.
   // The window restarts the session; wait for that, or the address read below is the one from before it.
   const restarted = page.waitForResponse((response) => response.url().endsWith(`/api/browsers/${linkedin}/restart`));

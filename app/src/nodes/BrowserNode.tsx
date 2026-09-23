@@ -1,7 +1,7 @@
 import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { AppKey } from '../../shared/apps';
-import { getBrowser, restartBrowser, signedInBrowser, signInBrowser } from '../api';
+import { getBrowser, restartBrowser, signedInBrowser, signInBrowser, signInDoneBrowser } from '../api';
 import { listen } from '../bus';
 import type { BrowserNodeType } from '../stage';
 import { useFlushStage } from '../sync';
@@ -33,12 +33,18 @@ export function BrowserNode({ id, data, selected }: NodeProps<BrowserNodeType>) 
   // True while the founder's own Chrome is open on this card's profile to sign in.
   const [hand, setHand] = useState(false);
 
+  // A signed-in card shows where its session is from the start; one that is not stays quiet and shows its copy.
+  function heard(signedIn: boolean | null) {
+    setStatus(signedIn);
+    if (signedIn === true && socket.current?.readyState !== WebSocket.OPEN) void watchNow.current?.();
+  }
+
   // Looked at once the card is on the stage, and again when the founder closes the window they signed in with.
   // A card just added from the dock is saved first, or the server would not know it yet.
   useEffect(() => {
     if (!app || data.headed) return;
     let gone = false;
-    flushStage().then(() => signedInBrowser(id)).then((answer) => { if (!gone) { setStatus(answer.signedIn); setHand(!!answer.byHand); } }, () => { if (!gone) setStatus(null); });
+    flushStage().then(() => signedInBrowser(id)).then((answer) => { if (!gone) { heard(answer.signedIn); setHand(!!answer.byHand); } }, () => { if (!gone) setStatus(null); });
     return () => { gone = true; };
   }, [id, app, data.headed, flushStage]);
 
@@ -46,7 +52,7 @@ export function BrowserNode({ id, data, selected }: NodeProps<BrowserNodeType>) 
   useEffect(() => {
     if (!hand) return;
     const timer = setInterval(() => {
-      signedInBrowser(id).then((answer) => { if (!answer.byHand) { setHand(false); setStatus(answer.signedIn); } }, () => {});
+      signedInBrowser(id).then((answer) => { if (!answer.byHand) { setHand(false); heard(answer.signedIn); } }, () => {});
     }, 2000);
     return () => clearInterval(timer);
   }, [id, hand]);
@@ -112,6 +118,7 @@ export function BrowserNode({ id, data, selected }: NodeProps<BrowserNodeType>) 
             <button type="button" className={`browser__window nodrag${hand ? ' is-on' : ''}`} disabled={hand} title={`Open ${app.name} in your own Chrome with this card's profile and sign in there`} onClick={() => void signIn()}>
               {hand ? 'Chrome is open' : 'Sign in'}
             </button>
+            {hand && <button type="button" className="browser__window nodrag" aria-label="I have signed in" title="Close that Chrome for you and check the sign-in" onClick={() => void signInDoneBrowser(id).catch(() => {})}>I have signed in</button>}
             <button type="button" className={`browser__window browser__window--icon nodrag${data.headed ? ' is-on' : ''}`} aria-pressed={!!data.headed} aria-label={data.headed ? 'Hide the live window' : 'Show the live window'} title="Show this card's own Chrome as a window, for a human check mid-task" disabled={hand} onClick={() => void showWindow(!data.headed)}>
               {WINDOW}
             </button>

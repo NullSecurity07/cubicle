@@ -154,20 +154,26 @@ export const fakeRunner: Runner = async (session, args) => {
 
 // Opens the founder's own Chrome, not automated, on a card's profile folder at the app's home address, and settles when
 // that Chrome exits. Sites such as Google refuse sign-in in an automated browser, and this one is not.
-export type Hand = (profile: string, home: string) => Promise<void>;
+// `end` closes it for the founder, since Chrome can keep running after its last window closes.
+export type Hand = (profile: string, home: string) => { done: Promise<void>; end: () => void };
 export function chromeByHand(env: NodeJS.ProcessEnv = process.env): Hand {
-  return (profile, home) => new Promise((done, fail) => {
+  return (profile, home) => {
     const chrome = env.AGENT_BROWSER_EXECUTABLE_PATH ?? CHROMES.find((path) => existsSync(path));
-    if (!chrome) return fail(new Error('no Chrome was found on this machine'));
-    // Not detached, so its exit is seen and the card can read its sign-in status again.
-    const child = spawn(chrome, [`--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--new-window', webUrl(home)], { stdio: 'ignore' });
-    child.once('error', fail);
-    child.once('exit', () => done());
-  });
+    if (!chrome) return { done: Promise.reject(new Error('no Chrome was found on this machine')), end: () => {} };
+    // Not detached, so its exit is seen; no background mode, so closing the last window ends it.
+    const child = spawn(chrome, [`--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', '--disable-background-mode', '--new-window', webUrl(home)], { stdio: 'ignore' });
+    const done = new Promise<void>((settle, fail) => { child.once('error', fail); child.once('exit', () => settle()); });
+    return { done, end: () => { child.kill('SIGTERM'); } };
+  };
 }
-// Stand-in for journeys: records what would have opened and "closes" after a moment.
+// Stand-in for journeys: records what would have opened and "closes" after a moment or when ended, whichever comes first.
 export const fakeHands: { profile: string; home: string }[] = [];
-export const fakeHand: Hand = (profile, home) => { fakeHands.push({ profile, home }); return new Promise((done) => setTimeout(done, 300)); };
+export const fakeHand: Hand = (profile, home) => {
+  fakeHands.push({ profile, home });
+  let end = () => {};
+  const done = new Promise<void>((settle) => { const timer = setTimeout(settle, 300); end = () => { clearTimeout(timer); settle(); }; });
+  return { done, end };
+};
 
 // Jina's public reader fetches a page from their side and returns markdown. Only the address leaves the machine. No key.
 export const jinaReader: Reader = async (url) => {
@@ -193,7 +199,7 @@ export type Readers = { direct: Reader[]; fallback: Reader[] };
 export function createBrowser(run: Runner, readers: Readers = { direct: [], fallback: [] }, resolveHost?: Resolve, hand: Hand = chromeByHand()) {
   const outer = run;
   // The founder's own Chrome per profile folder while it is open, so a second press does not start another.
-  const hands = new Map<string, Promise<void>>();
+  const hands = new Map<string, { done: Promise<void>; end: () => void }>();
   const seen = new Map<string, { tree: string; address: string }>();
   // Each session is a Chrome tab set with its own memory; only a few run at once, the rest wait their turn.
   let active = 0;
@@ -359,11 +365,18 @@ export function createBrowser(run: Runner, readers: Readers = { direct: [], fall
     // The caller closes the card's session first: a second Chrome on the same folder would only hand the address to it.
     byHand(profile: string, home: string): Promise<void> {
       const open = hands.get(profile);
-      if (open) return open;
-      const going = hand(profile, home).finally(() => hands.delete(profile));
+      if (open) return open.done;
+      const opened = hand(profile, home);
+      const going = { done: opened.done.finally(() => hands.delete(profile)), end: opened.end };
       hands.set(profile, going);
-      return going;
+      return going.done;
     },
     handOpen: (profile: string) => hands.has(profile),
+    // The founder says they are done: their Chrome closes, and its exit clears the entry above.
+    endHand(profile: string): boolean {
+      const open = hands.get(profile);
+      open?.end();
+      return !!open;
+    },
   };
 }
