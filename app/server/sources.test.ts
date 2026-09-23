@@ -25,7 +25,7 @@ describe('proposed sources', () => {
   it('shows a proposal as something that needs the founder', async () => {
     const sources = createSources(dir, () => 7);
     const one = await sources.propose({ url: 'https://startups.rip/', about: 'case studies', why: 'it had the answer', by: 'Maya' }, []);
-    expect(await sourceAttention(sources, empty)()).toEqual([{ id: `proposed-source:${one.id}`, kind: 'proposed-source', title: 'startups.rip', detail: 'case studies. it had the answer', who: 'Maya', at: 7, sourceId: one.id, url: 'https://startups.rip/', about: 'case studies' }]);
+    expect(await sourceAttention(sources, empty)()).toEqual([{ id: `proposed-source:${one.id}`, kind: 'proposed-source', title: 'startups.rip', detail: 'case studies. It had the answer', who: 'Maya', at: 7, sourceId: one.id, url: 'https://startups.rip/', about: 'case studies' }]);
   });
   it('leaves out a proposal whose site is already on the stage', async () => {
     const sources = createSources(dir, () => 3);

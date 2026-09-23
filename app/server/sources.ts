@@ -62,6 +62,7 @@ export const sourceAttention = (sources: Sources, loadStage: () => Promise<Stage
   const [proposed, stage] = await Promise.all([sources.list(), loadStage()]);
   const onStage = new Set(sourceCards(stage.cards).map((card) => safeHost(card.url)).filter(Boolean));
   return proposed.filter((one) => !onStage.has(hostOf(one.url))).map((one): Attention => ({
-    id: `proposed-source:${one.id}`, kind: 'proposed-source', title: hostOf(one.url), detail: `${one.about}. ${one.why}`, who: one.by, at: one.at, sourceId: one.id, url: one.url, about: one.about,
+    // The why is its own sentence under the line, so it starts with a capital.
+    id: `proposed-source:${one.id}`, kind: 'proposed-source', title: hostOf(one.url), detail: `${one.about}. ${one.why.charAt(0).toUpperCase()}${one.why.slice(1)}`, who: one.by, at: one.at, sourceId: one.id, url: one.url, about: one.about,
   }));
 };
