@@ -2,7 +2,8 @@ import { useReactFlow } from '@xyflow/react';
 import { useState } from 'react';
 import type { Lapsed } from '../../shared/lapsed';
 import type { Attention } from '../../shared/model';
-import { changeTask, dismissAttention, removeTask } from '../api';
+import { useAddCard } from '../addCard';
+import { changeTask, dismissAttention, dropSource, removeTask } from '../api';
 import { emit } from '../bus';
 import { Approval, asked } from '../nodes/Approval';
 import { useAttention } from './attention';
@@ -27,6 +28,7 @@ const again = (title: string) => `Go ahead with what you asked me about: "${titl
 export function NeedsPanel() {
   const list = useAttention() as Lapsed[];
   const { fitView, setNodes } = useReactFlow();
+  const addCard = useAddCard();
   const [problem, setProblem] = useState('');
   const attempt = (work: Promise<unknown>) => { setProblem(''); work.catch((error: Error) => setProblem(error.message)); };
 
@@ -43,6 +45,13 @@ export function NeedsPanel() {
     overlay.close({ kind: 'panel', name: 'needs' });
     overlay.open({ kind: 'focus', id: entry.roomId });
     emit('ask', { roomId: entry.roomId, text: again(said) });
+  }
+
+  // The website lands on the stage and the panel steps aside, so the founder sees where the new card went.
+  function accept(entry: Lapsed) {
+    addCard('source', { url: entry.url ?? '', about: entry.about ?? '' });
+    attempt(dropSource(entry.sourceId!));
+    overlay.close({ kind: 'panel', name: 'needs' });
   }
 
   return (
@@ -73,6 +82,10 @@ export function NeedsPanel() {
                 {entry.kind === 'proposed-task' && entry.cardId && entry.taskId && <>
                   <button type="button" onClick={() => attempt(removeTask(entry.cardId!, entry.taskId!))}>Decline</button>
                   <button type="button" className="primary" onClick={() => attempt(changeTask(entry.cardId!, entry.taskId!, { column: 'todo' }))}>Accept</button>
+                </>}
+                {entry.kind === 'proposed-source' && entry.sourceId && <>
+                  <button type="button" onClick={() => attempt(dropSource(entry.sourceId!))}>Decline</button>
+                  <button type="button" className="primary" onClick={() => accept(entry)}>Accept</button>
                 </>}
                 {entry.decisionId && <button type="button" className="primary" onClick={() => { showDecision(entry.decisionId!); overlay.open({ kind: 'panel', name: 'decisions' }); }}>{entry.kind === 'review-due' ? 'Look at it' : 'Decide'}</button>}
                 {(entry.lapsed || entry.kind === 'run-failed' || entry.kind === 'missed' || entry.kind === 'review-due') && <button type="button" onClick={() => attempt(dismissAttention(entry.id))}>Dismiss</button>}

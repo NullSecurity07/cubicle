@@ -17,6 +17,7 @@ const NEW = {
   note: { size: [220, 180], data: { text: '' } },
   image: { size: [300, 260], data: { path: '' } },
   link: { size: [320, 150], data: { url: '' } },
+  source: { size: [320, 170], data: { url: '', about: '' } },
   library: { size: [260, 180], data: { noteId: '' } },
   imagegen: { size: [320, 420], data: { prompt: '' } },
   voicegen: { size: [320, 340], data: { text: '' } },

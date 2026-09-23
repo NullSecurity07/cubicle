@@ -2,7 +2,8 @@ import { useReactFlow, useStore, type NodeProps } from '@xyflow/react';
 import { useRef, useState, type DragEvent } from 'react';
 import { fileUrl, refreshLink, uploadFile } from '../api';
 import { useMedia } from '../media';
-import type { ImageNodeType, LinkNodeType, NoteNodeType } from '../stage';
+import { safeHost } from '../../shared/sources';
+import type { ImageNodeType, LinkNodeType, NoteNodeType, SourceNodeType } from '../stage';
 import { useFlushStage } from '../sync';
 import { CardActions, Frame } from './Frame';
 
@@ -98,6 +99,52 @@ export function LinkNode({ id, data, selected }: NodeProps<LinkNodeType>) {
       <form className="link nodrag" onSubmit={(event) => { event.preventDefault(); void read(draft.trim()); }}>
         <input aria-label="Web address" placeholder="https://…  then Enter" spellCheck={false} value={draft} onChange={(event) => setDraft(event.target.value)} />
         <p>{state.reading ? 'Reading the page…' : state.problem ? state.problem : state.preview ?? (data.url ? 'Wired people read this page. Press Enter to read it again.' : 'Paste an address. A person wired to this card gets the page text as background.')}</p>
+      </form>
+    </Frame>
+  );
+}
+
+// A website the founder trusts. Nobody has to be wired to it: every person may search inside it when the founder's
+// line about it fits their question.
+export function SourceNode({ id, data, selected }: NodeProps<SourceNodeType>) {
+  const { updateNodeData } = useReactFlow();
+  const flushStage = useFlushStage();
+  const [draft, setDraft] = useState(data.url);
+  const [state, setState] = useState<{ reading?: boolean; problem?: string }>({});
+  const host = safeHost(data.url);
+  // The host whose icon has loaded, so a site without one keeps the globe.
+  const [icon, setIcon] = useState('');
+  async function read(url: string) {
+    if (url === data.url && data.title) return;
+    updateNodeData(id, { url, title: undefined });
+    if (!url) return;
+    setState({ reading: true });
+    try {
+      // Let the new address reach the stage first: the server reads the site from the saved card.
+      await new Promise((settle) => setTimeout(settle, 0));
+      await flushStage();
+      const page = await refreshLink(id);
+      updateNodeData(id, { title: page.title });
+      setState({});
+    } catch (error) { setState({ problem: (error as Error).message }); }
+  }
+  return (
+    <Frame selected={!!selected} minWidth={260} minHeight={150}>
+      <header className="card__header card__header--doc">
+        {/* Only the site's name goes out, to fetch its small icon; until it arrives, or when a site has none, a globe. */}
+        <span className="source__icon" aria-hidden="true">
+          {icon !== host && <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.6" fill="none" stroke="currentColor" strokeWidth="1.2" /><path d="M2.400 8h11.200M8 2.400c1.700 1.600 2.500 3.500 2.500 5.600S9.700 12 8 13.600M8 2.400C6.300 4 5.500 5.900 5.500 8S6.300 12 8 13.600" fill="none" stroke="currentColor" strokeWidth="1.2" /></svg>}
+          {host && <img key={host} src={`https://icons.duckduckgo.com/ip3/${host}.ico`} alt="" draggable={false} hidden={icon !== host} onLoad={() => setIcon(host)} onError={() => setIcon('')} />}
+        </span>
+        <div className="card__name">{data.title || host || 'Source website'}</div>
+        {data.url && <a className="link__open nodrag" href={data.url} target="_blank" rel="noreferrer" title="Open in your browser">open</a>}
+        <CardActions id={id} what="this website" />
+      </header>
+      <form className="link source nodrag" onSubmit={(event) => { event.preventDefault(); void read(draft.trim()); }}>
+        <input aria-label="Web address" placeholder="https://…  then Enter" spellCheck={false} value={draft} onChange={(event) => setDraft(event.target.value)}
+          onBlur={() => { if (draft.trim() !== data.url) void read(draft.trim()); }} />
+        <input aria-label="What people find here" placeholder="What people find here, in a line" value={data.about} onChange={(event) => updateNodeData(id, { about: event.target.value })} />
+        <p className={state.problem ? 'msg--problem' : undefined}>{state.reading ? 'Looking at the site…' : state.problem ?? 'Every person may search inside this site when your line fits their question.'}</p>
       </form>
     </Frame>
   );

@@ -51,6 +51,7 @@ const MORE: [kind: CardKind, label: string, hint: string][] = [
   ['library', 'Note from library', 'Something you learned, for a person to work from'],
   ['note', 'Sticky note', 'Words a wired person keeps in mind'],
   ['link', 'Link', 'A web page a wired person reads'],
+  ['source', 'Source website', 'A site people search when it fits'],
   ['image', 'Picture', 'An image a wired person can see'],
   ['imagegen', 'Image studio', 'Pictures from a few words, free'],
   ['voicegen', 'Voice studio', 'Words said out loud, on this machine'],

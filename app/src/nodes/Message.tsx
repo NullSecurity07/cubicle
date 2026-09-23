@@ -1,4 +1,5 @@
 import type { ChatMessage, ToolEvent } from '../../shared/model';
+import { safeHost } from '../../shared/sources';
 import { fileUrl } from '../api';
 import { SLICES } from '../slices';
 import { Approval } from './Approval';
@@ -13,7 +14,7 @@ const VERBS: Record<string, [doing: string, done: string]> = {
   recall: ['Looking up', 'Looked up'], propose_decision: ['Proposing', 'Proposed'], read_decision: ['Reading', 'Read'],
   list_files: ['Looking at', 'Looked at'], read_file: ['Reading', 'Read'], write_file: ['Saving', 'Saved'],
   generate_image: ['Drawing', 'Drew'], generate_voice: ['Saying', 'Said'], generate_video: ['Filming', 'Filmed'],
-  delegate_task: ['Handing to', 'Handed to'],
+  delegate_task: ['Handing to', 'Handed to'], search_source: ['Searching', 'Searched'], propose_source: ['Proposing', 'Proposed'],
 };
 const compact = (count: number) => (count < 1000 ? String(count) : `${(count / 1000).toFixed(1)}k`);
 // Where the founder was when they said it, when they were not at the stage.
@@ -25,7 +26,10 @@ function Chip({ tool }: { tool: ToolEvent }) {
   const state = tool.ok === undefined ? 'run' : tool.ok ? 'ok' : 'fail';
   const [doing, done] = VERBS[tool.name] ?? [tool.name, tool.name];
   const many = (tool.args.queries ?? tool.args.urls) as unknown;
-  const subject = Array.isArray(many) ? (many.length === 1 ? String(many[0]) : `${many.length} ${tool.args.queries ? 'queries' : 'pages'} at once`)
+  // A search inside a source names the site before its queries, so the founder sees where a person looked.
+  const subject = tool.name === 'search_source' ? `${tool.args.source ?? ''}: ${(Array.isArray(many) ? many : []).join(', ')}`
+    : tool.name === 'propose_source' ? safeHost(String(tool.args.url ?? ''))
+    : Array.isArray(many) ? (many.length === 1 ? String(many[0]) : `${many.length} ${tool.args.queries ? 'queries' : 'pages'} at once`)
     : tool.name === 'browse' ? [tool.args.action, tool.args.url ?? tool.args.ref].filter(Boolean).join(' ')
     : tool.name === 'remember' ? String(tool.args.fact ?? '').slice(0, 60) : tool.name === 'list_tasks' ? 'the board'
     : tool.name === 'ask_person' ? String(tool.args.name ?? '') : tool.name === 'recall' ? String(tool.args.query ?? '').slice(0, 60)
