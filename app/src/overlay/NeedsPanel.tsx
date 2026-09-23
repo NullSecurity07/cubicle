@@ -11,7 +11,7 @@ import { overlay, showDecision } from './store';
 
 const WHAT: Record<Attention['kind'], string> = {
   approval: 'needs your OK', 'run-approval': 'needs your OK on a task', 'proposed-task': 'suggests a task', 'proposed-decision': 'asks for a decision',
-  'run-failed': 'could not finish', missed: 'missed a repeat', 'review-due': 'Decision to look at again',
+  'run-failed': 'could not finish', missed: 'missed a repeat', 'review-due': 'Decision to look at again', 'proposed-source': 'suggests a website',
 };
 export const ago = (at: number, now = Date.now()) => {
   const minutes = Math.max(0, Math.round((now - at) / 60_000));

@@ -93,10 +93,12 @@ export type Task = {
 export type BoardEvent = { tasks: Task[] } | { effect: ToolEffect; roomId: string };
 
 // One thing waiting for the founder. `lapsed`: the approval belonged to a turn that ended with the app; it can only be asked again.
-export type AttentionKind = 'approval' | 'run-approval' | 'proposed-task' | 'proposed-decision' | 'run-failed' | 'missed' | 'review-due';
+export type AttentionKind = 'approval' | 'run-approval' | 'proposed-task' | 'proposed-decision' | 'run-failed' | 'missed' | 'review-due' | 'proposed-source';
 export type Attention = {
   id: string; kind: AttentionKind; title: string; detail?: string; at: number; who?: string;
   roomId?: string; cardId?: string; taskId?: string; decisionId?: string; event?: ToolEvent; lapsed?: boolean;
+  // A proposed source: which proposal, the site and the line on what it holds, for the founder to add as it is.
+  sourceId?: string; url?: string; about?: string;
 };
 
 // One conversation as the messages view lists it: a person's room, or the consults between two people.

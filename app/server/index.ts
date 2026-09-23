@@ -9,6 +9,7 @@ import { boardAttention, createAttention } from './attention.ts';
 import { createBoards } from './boards.ts';
 import { createCurator } from './curator.ts';
 import { createDecisions, decidedLines, decisionAttention } from './decisions.ts';
+import { createSources, sourceAttention } from './sources.ts';
 import { createEvents } from './events.ts';
 import { createFounder } from './founder.ts';
 import { fakeCoder, opencodeCoder } from './coder.ts';
@@ -53,6 +54,7 @@ import { createStore } from './store.ts';
 import { threadsOf } from './threads.ts';
 import { createTrace } from './trace.ts';
 import { decisionTools } from './tools/decisions.ts';
+import { sourceTools } from './tools/sources.ts';
 import { docTools } from './tools/docs.ts';
 import { fileTools } from './tools/files.ts';
 import { mediaTools } from './tools/media.ts';
@@ -165,6 +167,10 @@ const media = createMedia({
 const decisions = createDecisions(workspace);
 attention.source(decisionAttention(decisions));
 decisions.onChange(() => { void attention.refresh(); });
+// Websites people proposed as sources, each waiting for the founder in Needs you.
+const sources = createSources(workspace);
+attention.source(sourceAttention(sources));
+sources.onChange(() => { void attention.refresh(); });
 // The one playbook everybody shares, and the one page everybody has read about the founder.
 const skills = createSkills(workspace);
 const founder = createFounder(workspace);
@@ -268,7 +274,7 @@ seams.on('turn:before', guards.reset);
 seams.on('tool:before', guards.before);
 seams.on('tool:after', guards.after);
 seams.on('turn:before', createPlaybook({ skills, recall }).before);
-const tools = [...docTools, ...fileTools, ...webTools(browser, (id, card) => ({ profile: store.browserProfile(id), headed: isHeaded(card), ...(!fake && card?.kind === 'browser' && card.app ? { pace: [1500, 3000] as [number, number] } : {}) })), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir), ...projectTools(fake ? fakeCoder : opencodeCoder(), [workspace, root]), ...teamTools(consult), ...taskTools(boards), ...decisionTools(decisions), ...memoryTools(memory), ...recallTools(recall), ...mediaTools(media, () => !local.ready()), ...skillTools(skills), ...founderTools(founder)];
+const tools = [...docTools, ...fileTools, ...webTools(browser, (id, card) => ({ profile: store.browserProfile(id), headed: isHeaded(card), ...(!fake && card?.kind === 'browser' && card.app ? { pace: [1500, 3000] as [number, number] } : {}) })), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir), ...projectTools(fake ? fakeCoder : opencodeCoder(), [workspace, root]), ...teamTools(consult), ...taskTools(boards), ...decisionTools(decisions), ...sourceTools(browser, sources), ...memoryTools(memory), ...recallTools(recall), ...mediaTools(media, () => !local.ready()), ...skillTools(skills), ...founderTools(founder)];
 // Anything dropped into `server/slices` is installed here, so a new feature is new files rather than one more edit to
 // this one. They are handed a `runs` that is not built yet: the runner is made from the final tool list, and that
 // list is only final once every slice has added its own, so `late.runs` stands in and is filled the moment it exists.
@@ -520,6 +526,8 @@ createServer(async (req, res) => {
     // `%3A`. Without the `%` and the decoding, Dismiss reached nothing at all and the founder pressed it for nothing.
     const dismissed = /^\/api\/attention\/([\w.:%-]{1,160})\/dismiss$/.exec(path)?.[1];
     if (dismissed && req.method === 'POST') { await attention.dismiss(decodeURIComponent(dismissed)); return json(res, 200, { ok: true }); }
+    const droppedSource = /^\/api\/sources\/([a-z0-9-]{1,100})\/drop$/.exec(path)?.[1];
+    if (droppedSource && req.method === 'POST') { await sources.drop(droppedSource); return json(res, 200, { ok: true }); }
     const board = /^\/api\/boards\/([^/]+)(?:\/(events|tasks)(?:\/([^/]+)(?:\/(run|stop|learn))?)?)?$/.exec(path);
     if (board) {
       const [, boardId, part, taskId, action] = board;

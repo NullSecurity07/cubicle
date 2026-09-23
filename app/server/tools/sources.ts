@@ -1,8 +1,8 @@
 import type { Card } from '../../shared/model.ts';
 import { findSource, safeHost, sourceCards } from '../../shared/sources.ts';
-import type { Browser } from '../browser.ts';
+import { webUrl, type Browser } from '../browser.ts';
 import type { Sources } from '../sources.ts';
-import type { Tool } from './registry.ts';
+import { text, type Tool } from './registry.ts';
 import { howFar, list, MAX_EACH, RECENT, SNIPPETS, UNTRUSTED } from './web.ts';
 
 export { findSource, hostOf } from '../../shared/sources.ts';
@@ -64,7 +64,6 @@ export function homeLinks(home: string, host: string, queries: string[]): string
 }
 
 export function sourceTools(browser: Pick<Browser, 'search' | 'read'>, sources: Pick<Sources, 'propose'>): Tool[] {
-  void sources;
   return [
     {
       name: 'search_source',
@@ -91,6 +90,29 @@ export function sourceTools(browser: Pick<Browser, 'search' | 'read'>, sources: 
         const found = onHost(await browser.search(queries.map((query) => `site:${host} ${query}`), howFar(args)), host);
         const body = found.any ? found.text : homeLinks(await browser.read([card.url]), host, queries);
         return { text: UNTRUSTED + body + SNIPPETS };
+      },
+    },
+    {
+      name: 'propose_source',
+      description: 'Propose a website for the founder to add to the sources every person searches, when a site keeps answering questions like the ones you get. '
+        + 'Give its address, one line on what it holds, and why it is worth adding. The founder decides; it waits for them in Needs you.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'The site\'s address.' },
+          about: { type: 'string', description: 'One line on what the site holds, for example "startup case studies".' },
+          why: { type: 'string', description: 'Why it is worth adding, in a sentence or two.' },
+        },
+        required: ['url', 'about', 'why'],
+      },
+      async run(args, context) {
+        const url = webUrl(typeof args.url === 'string' ? args.url.trim() : '');
+        const about = text(args, 'about', 160).trim().replace(/\s+/g, ' ');
+        const why = text(args, 'why', 400).trim().replace(/\s+/g, ' ');
+        const by = context.stage.rooms.find((room) => room.id === context.roomId)?.name || 'A person';
+        const existing = sourceCards(context.stage.cards).map((card) => safeHost(card.url)).filter(Boolean);
+        const made = await sources.propose({ url, about, why, by }, existing);
+        return { text: `Proposed ${safeHost(made.url)}. It waits for the founder in Needs you.` };
       },
     },
   ];

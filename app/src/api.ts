@@ -84,6 +84,8 @@ export const refreshLink = (id: string) => request<{ title: string; preview: str
 // Everything that waits for the founder, pushed whole after every change.
 export const watchAttention = (onList: (list: Attention[]) => void) => feed<Attention[]>('attention', onList);
 export const dismissAttention = (id: string) => request(`/api/attention/${encodeURIComponent(id)}/dismiss`, { method: 'POST' });
+// The founder turns down a website a person proposed as a source, or has just added it to the stage.
+export const dropSource = (id: string) => request(`/api/sources/${id}/drop`, { method: 'POST' });
 export const getThreads = (query = '') => request<Thread[]>(`/api/threads${query ? `?q=${encodeURIComponent(query)}` : ''}`);
 export const getDecisions = () => request<Decision[]>('/api/decisions');
 export const recordDecision = (decision: Partial<Decision>) => request<Decision>('/api/decisions', send('POST', decision));

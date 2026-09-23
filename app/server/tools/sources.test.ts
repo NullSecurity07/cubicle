@@ -39,3 +39,16 @@ describe('search_source', () => {
     expect(hostOf('startups.rip')).toBe('startups.rip');
   });
 });
+
+describe('propose_source', () => {
+  it('refuses this machine, caps the description, and says where it went', async () => {
+    const proposed: unknown[] = [];
+    const sources = { ...fakeSources, propose: async (input: unknown) => { proposed.push(input); return { id: 'p1', at: 1, ...(input as object) } as never; } };
+    const propose = sourceTools({ search: async () => '', read: async () => '' }, sources).find((tool) => tool.name === 'propose_source')!;
+    await expect(propose.run({ url: 'http://localhost:7430/', about: 'x', why: 'y' }, ctx(stageWith([])))).rejects.toThrow('cannot be opened');
+    await expect(propose.run({ url: 'https://startups.rip/', about: 'x'.repeat(161), why: 'y' }, ctx(stageWith([])))).rejects.toThrow('too long');
+    const { text } = await propose.run({ url: 'startups.rip', about: 'case studies', why: 'it answered' }, ctx(stageWith([])));
+    expect(proposed[0]).toMatchObject({ url: 'https://startups.rip/', about: 'case studies', why: 'it answered', by: 'Maya' });
+    expect(text).toBe('Proposed startups.rip. It waits for the founder in Needs you.');
+  });
+});
