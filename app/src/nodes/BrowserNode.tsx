@@ -1,11 +1,13 @@
 import { useReactFlow, type NodeProps } from '@xyflow/react';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode, type WheelEvent } from 'react';
 import type { AppKey } from '../../shared/apps';
 import { getBrowser, restartBrowser, signedInBrowser, signInBrowser, signInDoneBrowser } from '../api';
 import { listen } from '../bus';
+import { overlay, useFocused } from '../overlay/store';
 import type { BrowserNodeType } from '../stage';
 import { useFlushStage } from '../sync';
 import { CardActions, Frame } from './Frame';
+import { keyMessage, mouseMessage, toFrame, type MouseKind, type Point } from './live';
 
 const GLOBE = <svg className="doc-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" strokeWidth="1.2" /><path d="M1.8 8h12.4M8 1.800c2 2 2 10.400 0 12.400M8 1.800c-2 2-2 10.400 0 12.400" fill="none" stroke="currentColor" strokeWidth="1.2" /></svg>;
 // A small mark per app, drawn in the card's own line so no brand colour shouts from the stage.
@@ -15,9 +17,10 @@ const ICONS: Record<AppKey, ReactNode> = {
   gmail: <svg className="doc-icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="3.300" width="12.4" height="9.400" rx="1.600" fill="none" stroke="currentColor" strokeWidth="1.2" /><path d="M2.300 4.200 8 8.700l5.700-4.500" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" /></svg>,
   custom: GLOBE,
 };
+const LARGE = <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M9.500 2.500h4v4M13.500 2.500 9 7M6.500 13.500h-4v-4M2.500 13.500 7 9" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" /></svg>;
 const WINDOW = <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><rect x="1.800" y="2.800" width="12.400" height="10.400" rx="1.600" fill="none" stroke="currentColor" strokeWidth="1.2" /><path d="M1.800 5.800h12.400" fill="none" stroke="currentColor" strokeWidth="1.2" /></svg>;
 
-// A live window onto the browser a wired person drives. It only watches: the session's frames arrive over a local socket.
+// A live window onto the browser a wired person drives. Frames arrive over a local socket, and the founder's clicks and keys go back on it.
 export function BrowserNode({ id, data, selected }: NodeProps<BrowserNodeType>) {
   const { updateNodeData } = useReactFlow();
   const flushStage = useFlushStage();
@@ -32,6 +35,12 @@ export function BrowserNode({ id, data, selected }: NodeProps<BrowserNodeType>) 
   const [status, setStatus] = useState<boolean | null>(null);
   // True while the founder's own Chrome is open on this card's profile to sign in.
   const [hand, setHand] = useState(false);
+  const focused = useFocused(id);
+  // The page's own size, from the latest frame: the picture is scaled, the page is not.
+  const page = useRef({ width: 0, height: 0 });
+  const [acting, setActing] = useState(false);
+  const lastMove = useRef(0);
+  const lastPoint = useRef<Point | null>(null);
 
   // A signed-in card shows where its session is from the start; one that is not stays quiet and shows its copy.
   function heard(signedIn: boolean | null) {
@@ -68,7 +77,8 @@ export function BrowserNode({ id, data, selected }: NodeProps<BrowserNodeType>) 
         const next = new WebSocket(`ws://127.0.0.1:${port}`);
         socket.current = next;
         next.onmessage = (event) => {
-          const message = JSON.parse(String(event.data)) as { type?: string; data?: string; tabs?: { active: boolean; url: string }[] };
+          const message = JSON.parse(String(event.data)) as { type?: string; data?: string; tabs?: { active: boolean; url: string }[]; metadata?: { deviceWidth?: number; deviceHeight?: number } };
+          if (message.metadata?.deviceWidth && message.metadata.deviceHeight) page.current = { width: message.metadata.deviceWidth, height: message.metadata.deviceHeight };
           if (message.type === 'frame' && typeof message.data === 'string' && message.data) {
             // Decode off-screen first: a frame cut short by a navigation must never replace the last good picture.
             const frame = new Image();
@@ -106,6 +116,33 @@ export function BrowserNode({ id, data, selected }: NodeProps<BrowserNodeType>) 
     await signInBrowser(id).catch(() => setHand(false));
   }
 
+  const send = (message: object) => { if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify(message)); };
+
+  function pointAt(event: { clientX: number; clientY: number }): Point | null {
+    const picture = screen.current;
+    if (!picture) return null;
+    const box = picture.getBoundingClientRect();
+    const frame = page.current.width ? page.current : { width: picture.naturalWidth, height: picture.naturalHeight };
+    // The card can sit in a zoomed canvas, so the box is measured on screen and the offset scaled to its layout size.
+    const zoom = picture.offsetWidth ? box.width / picture.offsetWidth : 1;
+    return toFrame({ x: (event.clientX - box.left) / zoom, y: (event.clientY - box.top) / zoom }, { width: picture.offsetWidth, height: picture.offsetHeight }, frame);
+  }
+
+  function mouse(event: PointerEvent<HTMLImageElement> | WheelEvent<HTMLImageElement>, kind: MouseKind) {
+    // A release outside the picture still lands where the pointer last was, so the page never keeps a button held.
+    const point = pointAt(event) ?? (kind === 'mouseReleased' ? lastPoint.current : null);
+    if (!point) return;
+    lastPoint.current = point;
+    send(mouseMessage({ button: 'button' in event ? event.button : 0, detail: event.detail, deltaX: 'deltaX' in event ? event.deltaX : 0, deltaY: 'deltaY' in event ? event.deltaY : 0, altKey: event.altKey, ctrlKey: event.ctrlKey, metaKey: event.metaKey, shiftKey: event.shiftKey }, point, kind));
+  }
+
+  function key(event: KeyboardEvent<HTMLImageElement>, down: boolean) {
+    if (event.key === 'Escape') { if (down) { event.preventDefault(); event.currentTarget.blur(); } return; }
+    event.preventDefault();
+    event.stopPropagation();
+    send(keyMessage(event, down ? 'keyDown' : 'keyUp'));
+  }
+
   return (
     <Frame selected={!!selected} minWidth={320} minHeight={240}>
       <header className="card__header card__header--doc">
@@ -128,10 +165,39 @@ export function BrowserNode({ id, data, selected }: NodeProps<BrowserNodeType>) 
             {data.headed ? 'Window shown' : 'Show window'}
           </button>
         )}
+        {!focused && (
+          <button type="button" className="browser__window browser__window--icon nodrag" aria-label="Open large" title="Open this page large, to read and act on it" onClick={() => overlay.open({ kind: 'focus', id })}>
+            {LARGE}
+          </button>
+        )}
         <CardActions id={id} what="this browser and its saved logins" />
       </header>
       <div className="browser nodrag">
-        <img ref={screen} alt={address ? `Live view of ${address}` : ''} hidden={state !== 'live'} draggable={false} />
+        <img
+          ref={screen}
+          className={`browser__live nokey nowheel nopan${acting ? ' is-acting' : ''}`}
+          role="application"
+          aria-label="Live page. Click to act on it; type when it is focused; Esc to stop."
+          tabIndex={0}
+          hidden={state !== 'live'}
+          draggable={false}
+          {...(acting ? { 'data-holds-escape': '' } : {})}
+          onFocus={() => setActing(true)}
+          onBlur={() => setActing(false)}
+          onPointerDown={(event) => { event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId); mouse(event, 'mousePressed'); }}
+          onPointerUp={(event) => mouse(event, 'mouseReleased')}
+          onPointerMove={(event) => {
+            // About thirty moves a second is smooth for hover menus without flooding the socket.
+            if (event.timeStamp - lastMove.current < 33) return;
+            lastMove.current = event.timeStamp;
+            mouse(event, 'mouseMoved');
+          }}
+          onWheel={(event) => mouse(event, 'mouseWheel')}
+          onContextMenu={(event) => event.preventDefault()}
+          onKeyDown={(event) => key(event, true)}
+          onKeyUp={(event) => key(event, false)}
+        />
+        {acting && state === 'live' && <p className="browser__typing" role="status">Typing goes to the page. Esc to stop.</p>}
         {state === 'idle' && app && <p className="chat__empty">Press Sign in: your own Chrome opens on {app.name} with this card's profile. Sign in there, close that window, and the card keeps the login. Then wire a person: they act as you, one step at a time, and every Connect, Message or Post waits for your OK.</p>}
         {state === 'idle' && !app && <p className="chat__empty">Wire a person to this browser, then ask them to look something up. You will see every step here. It keeps its own logins: press Show window to sign in to an account you made for them.</p>}
         {state === 'problem' && <p className="chat__empty">{problem}</p>}

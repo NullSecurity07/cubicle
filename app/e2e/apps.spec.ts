@@ -150,3 +150,19 @@ test('an app card is a browser signed in as the founder', async ({ page }) => {
   await expect(page.locator('.react-flow__node-browser').nth(2)).toContainText('Notion');
   expect((await (await page.request.get('/api/stage')).json()).cards[2].app).toEqual({ key: 'custom', name: 'Notion', home: 'https://notion.so/' });
 });
+
+test('a browser card opens large, with its live page ready to act on', async ({ page }) => {
+  const linkedin = await addApp(page, 'Add LinkedIn');
+  const card = node(page, linkedin);
+  await card.hover();
+  await card.getByRole('button', { name: 'Open large' }).click();
+  const sheet = page.getByRole('dialog', { name: 'Focused card' });
+  await expect(sheet).toBeVisible();
+  await expect(sheet).toContainText('LinkedIn');
+  // Fake mode streams nothing, so the live page is there but waits for its first frame.
+  await expect(sheet.getByRole('application', { name: 'Live page. Click to act on it; type when it is focused; Esc to stop.', includeHidden: true })).toHaveCount(1);
+  await expect(sheet.getByRole('button', { name: 'Open large' })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(sheet).toBeHidden();
+  await expect(card).toContainText('LinkedIn');
+});

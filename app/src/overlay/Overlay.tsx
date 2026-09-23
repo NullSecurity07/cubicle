@@ -19,7 +19,9 @@ const PANELS: Record<string, () => React.JSX.Element> = { needs: NeedsPanel, mes
 const OPENERS: Record<string, string> = { n: 'needs', m: 'messages', d: 'decisions', '/': 'command', '?': 'keys' };
 const focusHost = setHostElement('focus');
 
-const typing = (target: EventTarget | null) => target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
+// A browser card's live page takes every key while it is focused, as a text field would.
+const live = (target: EventTarget | null) => target instanceof Element && !!target.closest('.browser__live');
+const typing = (target: EventTarget | null) => target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || live(target));
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 // Everything that sits above the canvas: a shade, and the sheet a focused card moves into. The canvas stays as it
@@ -36,7 +38,7 @@ export function Overlay() {
     function onKey(event: KeyboardEvent) {
       // Something inside the layer may hold Escape for itself first (an edit in progress): it goes back one thing at a time.
       if (event.key === 'Escape' && overlay.layers().length && !(event.target instanceof Element && event.target.closest('[data-holds-escape]'))) { event.preventDefault(); overlay.back(); return; }
-      if (event.key === 'Tab' && overlay.layers().length && top.current) {
+      if (event.key === 'Tab' && overlay.layers().length && top.current && !live(event.target)) {
         const stops = [...top.current.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((stop) => stop.offsetParent !== null);
         if (!stops.length) return;
         const [first, last] = [stops[0], stops[stops.length - 1]];
