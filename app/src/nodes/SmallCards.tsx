@@ -1,5 +1,5 @@
 import { useReactFlow, useStore, type NodeProps } from '@xyflow/react';
-import { useRef, useState, type DragEvent } from 'react';
+import { useEffect, useRef, useState, type DragEvent } from 'react';
 import { fileUrl, refreshLink, uploadFile } from '../api';
 import { useMedia } from '../media';
 import { safeHost } from '../../shared/sources';
@@ -128,6 +128,11 @@ export function SourceNode({ id, data, selected }: NodeProps<SourceNodeType>) {
       setState({});
     } catch (error) { setState({ problem: (error as Error).message }); }
   }
+  // A card that lands with an address and no name, as an accepted proposal does, reads its name by itself.
+  useEffect(() => {
+    if (data.url && !data.title) void read(data.url);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
   return (
     <Frame selected={!!selected} minWidth={260} minHeight={150}>
       <header className="card__header card__header--doc">

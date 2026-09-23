@@ -64,7 +64,8 @@ test('a source website is searched by anyone when it fits, and people may propos
   await row.getByRole('button', { name: 'Accept' }).click();
   await expect(page.locator('.react-flow__node-source')).toHaveCount(2);
   const accepted = page.locator('.react-flow__node-source').nth(1);
-  await expect(accepted).toContainText('indiehackers.com');
+  // Its name arrives on its own, without the founder typing anything.
+  await expect(accepted.locator('.card__name')).toHaveText('Example Domain');
   await expect(accepted.getByLabel('What people find here')).toHaveValue('founder interviews');
   await expect(page.locator('.needs li').filter({ hasText: 'indiehackers.com' })).toHaveCount(0);
 
