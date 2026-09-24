@@ -301,6 +301,9 @@ ${serif ? `/* A serif display line over a photograph is the thinnest thing in th
 .shot { position: absolute; inset: ${sketch ? 'calc(var(--margin) * 0.72)' : '0'}; overflow: hidden; z-index: 1; ${sketch ? 'border-radius: var(--radius);' : ''} }
 ${sketch ? '.frame--captioned .shot { bottom: calc(var(--margin) * 2.2); }' : ''}
 .shot img, .shot video { display: block; width: 100%; height: 100%; object-fit: cover; transform-origin: 50% 50%; }
+/* The camera: a box around the picture that the shot's move slides, turns and scales. The picture's own push and
+   the editor's punch-in run inside it, so the three multiply rather than overwrite each other. */
+.cam { position: absolute; inset: 0; transform-origin: 50% 50%; will-change: transform; }
 /* A moving shot is the whole frame it plays in. It is written as an element of the film rather than of its scene —
    a <video> with its own start inside a section with one too is resolved against two clocks — so it is the one thing
    on the page that has to be placed here and nowhere else. Without this it plays at whatever size it was encoded

@@ -1,5 +1,6 @@
 import { content, countWords, STOP, type Layout, type Scene } from './spec.ts';
 import { inStyle, noFace, photographic, trimTo } from './critic.ts';
+import { framingOf, lensPhrase, SIZE_PHRASE, SIZES_OF, type Lens, type Size } from './moves.ts';
 
 // The pictures.
 //
@@ -52,6 +53,9 @@ export type Visual = {
   // stand-in for it rather than a photograph of the word. Naming it is what makes it checkable: a picture with no
   // noun from the line and no metaphor is a picture of something else.
   metaphor?: string;
+  // The size and lens the storyboard gave this scene, carried onto its first shot. The size has already decided the
+  // framing above; the lens is said in the picture's own words.
+  size?: Size; lens?: Lens;
 };
 
 export type Finding = { rule: string; at: number; says: string };
@@ -417,11 +421,21 @@ export type Slot = { scene: number; take: number; line: string; layout: Layout }
 // The framings a film may use for the shots that are not its one person: a place, a thing, a detail, a wide.
 const WITHOUT: Kind[] = ['environment', 'detail', 'object', 'wide'];
 export function slotsFor(slots: Slot[], captions: boolean, scenes: Scene[]): Visual[] {
-  const made = slots.map((slot, at) => ({
-    at, scene: slot.scene, take: slot.take, line: slot.line,
-    about: (scenes[slot.scene]?.say ?? '').trim() || undefined,
-    subject: '', kind: kindFor(at, slot.layout), room: roomFor(scenes[slot.scene] ?? { layout: slot.layout }, captions),
-  }));
+  const made = slots.map((slot, at): Visual => {
+    const scene = scenes[slot.scene];
+    const dealt = kindFor(at, slot.layout);
+    // A size the storyboard chose is kept on the scene's first shot: a framing of the same family as the one dealt
+    // stays as dealt, and one of another family takes the size's own. The later shots of that scene keep the deal,
+    // so a scene cut in two still cuts between sizes.
+    const size = slot.take === 0 ? scene?.shot : undefined;
+    const kind: Kind = size && !SIZES_OF[dealt].includes(size) ? framingOf(size) : dealt;
+    return {
+      at, scene: slot.scene, take: slot.take, line: slot.line,
+      about: (scene?.say ?? '').trim() || undefined,
+      subject: '', kind, room: roomFor(scene ?? { layout: slot.layout }, captions),
+      ...(size ? { size } : {}), ...(slot.take === 0 && scene?.lens ? { lens: scene.lens } : {}),
+    };
+  });
   // Exactly one shot in a film is framed as a person. The first one the wheel offers keeps it; the rest take a
   // place or a thing, by rotation, so the film still cuts between distances.
   let person = false;
@@ -444,7 +458,12 @@ export function drawnAs(visual: Visual, bible: string): string {
   // to be on all of them, and a picture model handed it draws a person every time — the same person, because the
   // look is fixed. Four shots of one stranger is what that cost on a real reel.
   const who = somebodyIn(body) ? ', anybody in the picture is at work and turned away from the camera' : '';
-  return `${bible}. ${FRAMING[visual.kind]}: ${body}, ${ROOM[visual.room]}${who}`
+  // How big and through what, where the storyboard said: a phrase about focus and distance, never anybody's name.
+  // A shot the rules have since re-framed (a second person taken out, a face stepped back from) has left the size it
+  // was given behind, and a close-up's long lens on what is now a wide is two instructions that disagree.
+  const holds = !visual.size || SIZES_OF[visual.kind].includes(visual.size);
+  const lens = holds ? [visual.size ? SIZE_PHRASE[visual.size] : '', lensPhrase(visual.lens)].filter(Boolean).join(', ') : '';
+  return `${bible}. ${FRAMING[visual.kind]}${lens ? `, ${lens}` : ''}: ${body}, ${ROOM[visual.room]}${who}`
     .replace(/\s{2,}/g, ' ').replace(/\s+([,.])/g, '$1');
 }
 

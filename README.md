@@ -56,6 +56,16 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   the frame high, in capitals, with a black stroke, one to three words at a time and one of them the word the line
   turns on. There is no grain and no vignette over any of it: a grade belongs to a look that declares one as its
   format, on the pictures and never over the type.
+- **A camera, not a slide** (2026-09-24): every picture and clip scene is taken at a **size** (extreme close-up to
+  extreme wide), through a **lens** (24 to 135) and with a **move** out of a fixed table of twenty-one — push in,
+  pan, tilt, truck, pedestal, crash zoom, whip pan, a parallax arc across the depth planes, and five that only a
+  real clip can make (orbit, tracking, handheld, drone pull back, crane up). The storyboard may name any of them;
+  the studio deals what it leaves out, so no two neighbours move alike, the quiet looks stay on slow moves, the
+  feed looks get the fast ones, and the payoff holds on a slow push. A move on a still is a few keyframes on a box
+  around the picture, so the look's own push and the editor's punch-in still run inside it; a move asked of a clip
+  is said to the clip model in words. The critic takes a close-up off a wide lens, breaks three shots in a row of
+  one size, and turns an orbit asked of a still into the nearest move a still can make, and says so on the card.
+  A lens is said in the picture's words as focus and distance, never as anybody's name.
 - **A director, not a form** (2026-09-19): every picker on the card starts on **Auto**, and a brief on its own is
   enough. The studio reads what the brief actually asks for — what it is for, who is watching, how long, how fast,
   what it should sound like, whether somebody is on camera — then decides an angle, a hook and one line of visual

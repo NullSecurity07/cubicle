@@ -1,6 +1,6 @@
 import type { Shape } from '../../shared/model.ts';
 import { MOODS, type Mood } from './audio.ts';
-import { contrasty, criticise, drawnWord, figureIn, hasNumber, headlineOf, keywords, listy, photographic, repair, trimTo, type Want } from './critic.ts';
+import { contrasty, criticise, drawnWord, figureIn, hasNumber, headlineOf, keywords, listy, photographic, mendShots, repair, trimTo, type Want } from './critic.ts';
 import {
   AI_LAYOUTS, budgetOf, CAPS, HEADING_WORDS, isPurpose, LAYOUTS, MAX_SCENES, parseSpec, PURPOSE, PURPOSES,
   saidWords, scenesFor, TEXT_WORDS, type Layout, type Purpose, type Scene, type Spec,
@@ -9,6 +9,7 @@ import { isPack, PACES, PACKS, type Brand, type Pace, type Pack } from './templa
 import { FILLER, sourcesOf } from './grounding.ts';
 import type { Wanted } from './voice.ts';
 import { criticiseVisuals, repairVisuals, visualsOf, visualsPrompt, type Visual } from './visuals.ts';
+import { LENSES, motionMoves, SIZES, stillMoves } from './moves.ts';
 
 // The director. Not a form to fill in — a person who reads the brief, works out what is being asked for, decides on
 // an angle and a look, writes the beats, and only then writes the storyboard. Every one of those is a separate pass,
@@ -296,6 +297,7 @@ export function specPrompt(plan: Plan, understanding: Understanding, material: M
       ? ['- "source": the quotation the beat carried, word for word, for any scene that states a feature, a number or a name.']
       : []),
     ...(understanding.pack === 'creator' ? ['- "icon": one emoji that belongs beside this scene, or leave it out.'] : []),
+    `- ${has('clip') ? 'picture and clip scenes' : 'picture scenes'} may take "shot" (${SIZES.join(', ')}), "lens" (${LENSES.join(', ')}) and "move" (${stillMoves.map((one) => one.name).join(', ')}${has('clip') ? `; a clip may also use ${motionMoves.map((one) => one.name).join(', ')}` : ''}). Optional; the studio fills what you leave out.`,
     '',
     'The rules this storyboard is checked against, before it is rendered:',
     `- What is on screen is a headline, never the narration. A heading is at most ${HEADING_WORDS} words and a line of text at most ${TEXT_WORDS}.`,
@@ -447,7 +449,10 @@ export async function direct(asked: Asked, material: Material, think: Think, hel
   }
   // Whatever survives, the last word on shape and length is the rules', not the model's.
   const { spec: final } = repair(spec, want);
-  spec = final;
+  // How each picture is taken, last, because every pass above may have changed which scenes are pictures.
+  const shots = mendShots(final, { pace: understanding.pace, look: understanding.pack });
+  spec = shots.spec;
+  for (const line of shots.notes.slice(0, 3)) help.report(line);
   help.report(`${spec.scenes.length} scenes, about ${saidWords(spec)} words said: ${spec.title}`);
   return { understanding, plan, spec, bible: plan.bible };
 }

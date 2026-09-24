@@ -2,8 +2,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { firstClips, noClips, type Clips } from './clips.ts';
+import { CAPS } from './spec.ts';
 import {
-  availableRam, availableSwap, CLIP_SECONDS, DOWNLOAD_GB, FRAME, frameOf, LEAST_RAM_GB, LORA, localClips, MINUTES_EACH, SHAPES,
+  availableRam, availableSwap, clipPrompt, CLIP_SECONDS, DOWNLOAD_GB, FRAME, frameOf, LEAST_RAM_GB, LORA, localClips, MINUTES_EACH, SHAPES,
   MODELS, modelsDir, NEEDS_RAM_GB, REAL_DISK, roomToFilm, fakeLocalClips, vulkanHere,
 } from './local-clips.ts';
 
@@ -178,5 +179,27 @@ describe('the shape a clip is drawn in', () => {
       expect(size.width % 16, name).toBe(0);
       expect(size.height % 16, name).toBe(0);
     }
+  });
+});
+
+describe('what the clip model is asked for', () => {
+  it('says what the camera does after what the clip is of', () => {
+    expect(clipPrompt({ prompt: 'steam rising off a kettle in a dark kitchen.', move: 'orbit' }))
+      .toBe('steam rising off a kettle in a dark kitchen, the camera circles slowly around the subject');
+    expect(clipPrompt({ prompt: 'rain on a window', move: 'push in' })).toBe('rain on a window, the camera moves slowly forward');
+  });
+
+  it('leaves the move out when there is none, when it is nobody\'s, or when a clip model would not read it', () => {
+    expect(clipPrompt({ prompt: 'rain on a window' })).toBe('rain on a window');
+    expect(clipPrompt({ prompt: 'rain on a window', move: 'a swoop' })).toBe('rain on a window');
+    expect(clipPrompt({ prompt: 'rain on a window', move: 'whip pan' })).toBe('rain on a window');
+  });
+
+  it('stays inside the storyboard\'s cap, shortening the subject at a word and keeping the move', () => {
+    const long = Array.from({ length: 60 }, (_one, at) => `word${at}`).join(' ');
+    const asked = clipPrompt({ prompt: long, move: 'drone pull back' });
+    expect(asked.length).toBeLessThanOrEqual(CAPS.clip_prompt);
+    expect(asked.endsWith(', an aerial view rising and drawing back to show the whole place')).toBe(true);
+    expect(asked).toMatch(/^word0 word1 .* word\d+, an aerial/);
   });
 });

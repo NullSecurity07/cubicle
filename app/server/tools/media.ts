@@ -1,6 +1,7 @@
 import { SHAPES, type Card } from '../../shared/model.ts';
 import { MOODS } from '../media/audio.ts';
 import type { MediaJobs } from '../media/jobs.ts';
+import { MOVE_NAMES, SIZES } from '../media/moves.ts';
 import { AI_LAYOUTS, FRAMES, LAYOUTS, parseSpec, PURPOSES, type Layout } from '../media/video.ts';
 import { DEFAULT_VOICE, isVoice, VOICES } from '../media/voice.ts';
 import { LOOKS, PACES } from '../media/templates/index.ts';
@@ -142,6 +143,9 @@ export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = ()
               start: { type: 'number', description: 'How far into a piece of footage the scene starts' },
               mute: { type: 'boolean', description: "Whether a footage scene's own sound is silenced; true when left out" },
               say: { type: 'string', description: 'One or two sentences spoken over this scene' },
+              shot: { type: 'string', enum: [...SIZES], description: 'Optional. How big the subject is in a picture or clip scene, from ecu (extreme close-up) to ews (extreme wide); the studio deals one when left out' },
+              lens: { type: 'number', description: 'Optional. The lens in millimetres: 24, 35, 50, 85 or 135' },
+              move: { type: 'string', enum: [...MOVE_NAMES], description: 'Optional. What the camera does. A picture scene takes a move a still can make; orbit, tracking, handheld, drone pull back and crane up are for clip scenes only' },
             },
             required: ['layout'],
           },

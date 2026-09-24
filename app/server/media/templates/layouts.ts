@@ -1,5 +1,6 @@
 import type { Shape } from '../../../shared/model.ts';
 import { barOf, type Scene } from '../spec.ts';
+import { settle, type Recipe } from '../moves.ts';
 import type { Part } from './captions.ts';
 import { barChartPiece, countUpPiece, type Piece } from '../registry/index.ts';
 import { FORMATS, PACE, PACK, TYPE_FLOOR, typeScale, type Pace, type Pack, type Paint } from './looks.ts';
@@ -341,7 +342,10 @@ export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = f
     // A picture scene with no picture is not a picture scene, and an <img> pointed at nothing is a 404 in the
     // render log and a blank rectangle in the film. Everything upstream tries to stop this happening; this is the
     // line that makes it harmless when something upstream does not.
-    if (shot.image) parts.push(`<div class="shot" data-mark="frame"${measured(shot) ? ` style="${measured(shot)}"` : ''}>${deepOf(shot, pack) ?? `<img src="assets/${shot.image}" alt="" data-layout-allow-overflow>`}</div>`);
+    // A shot with a camera move has the picture in a box of its own, which is what the move moves.
+    const inner = deepOf(shot, pack) ?? `<img src="assets/${shot.image}" alt="" data-layout-allow-overflow>`;
+    const held = camOf(shot) ? `<div class="cam" id="cam${index}" data-layout-allow-overflow>${inner}</div>` : inner;
+    if (shot.image) parts.push(`<div class="shot" data-mark="frame"${measured(shot) ? ` style="${measured(shot)}"` : ''}>${held}</div>`);
     if (text) parts.push(`<div class="plate"><p class="lead rise">${kinetic(text, scene.emphasis, pack, false)}</p></div>`);
     return `<div class="frame frame--picture${text ? ' frame--captioned' : ''}${captioned ? ' has-caps' : ''}" id="f${index}">${parts.join('')}</div>`;
   } else if (MOVING.has(scene.layout)) {
@@ -388,6 +392,35 @@ export function sceneHtml(shot: Shot, index: number, shape: Shape, captioned = f
 // own: they belong to the line they sit beside, and that line arrives on its own beat.
 const hasRule = (scene: Scene) => scene.layout === 'title' || scene.layout === 'statement' || scene.layout === 'stat'
   || scene.layout === 'outro' || scene.layout === 'logo' || ((scene.layout === 'bullets' || scene.layout === 'checklist' || scene.layout === 'steps') && !!scene.heading?.trim());
+
+// The camera move this shot really makes, as keyframes, or nothing. Only a still picture scene moves this way: a
+// clip was asked for its move in words, and a background behind type keeps the look's own drift. The editor's
+// punch-in wins over any move that zooms, and the second shot of a scene makes its move the other way round.
+export function camOf(shot: Shot): Recipe | null {
+  if (shot.scene.layout !== 'picture' || !shot.image || shot.video) return null;
+  const move = settle(shot.scene.move, { take: shot.take, punched: !!shot.punch });
+  return move?.css(shot.seconds) ?? null;
+}
+
+// The move written as steps on the film's clock: the first keyframe is where the box starts, and each after it is
+// reached in its own share of the shot. The shot's length includes the overlap into the next one, so the camera is
+// still moving while the cut happens rather than stopping just before it.
+export function camSteps(recipe: Recipe, index: number, at: number, seconds: number): string[] {
+  const pose = (frame: Recipe['frames'][number]) => `xPercent: ${frame.x}, yPercent: ${frame.y}, scale: ${frame.scale}, rotation: ${frame.rotate ?? 0}`
+    + (recipe.frames.some((one) => one.blur) ? `, filter: "blur(${frame.blur ?? 0}px)"` : '');
+  const [first, ...rest] = recipe.frames;
+  const steps: string[] = [];
+  let from = first;
+  for (const [order, frame] of rest.entries()) {
+    const start = at + from.at * seconds;
+    const span = Math.max(0.01, (frame.at - from.at) * seconds);
+    steps.push(order === 0
+      ? `tl.fromTo("#cam${index}", { ${pose(first)} }, { ${pose(frame)}, duration: ${span.toFixed(3)}, ease: "${recipe.ease}" }, ${start.toFixed(3)});`
+      : `tl.to("#cam${index}", { ${pose(frame)}, duration: ${span.toFixed(3)}, ease: "none" }, ${start.toFixed(3)});`);
+    from = frame;
+  }
+  return steps;
+}
 
 // A scene that fills the frame with a picture, moving or not, and so takes the slow push rather than the rise.
 const FILLS = new Set(['picture', 'footage', 'clip', 'presenter']);
@@ -450,7 +483,12 @@ export function sceneSteps(shot: Shot, index: number, at: number, scale: number,
     steps.push(`tl.fromTo("${box}", { opacity: 0 }, { opacity: 1, duration: ${(beat.rise * 0.9).toFixed(2)}, ease: "power2.out" }, ${time(0)});`);
     // The only motion that runs the whole scene: a slow push in, so a still does not sit dead on the screen. Footage
     // moves by itself and is left alone; a talking head is a locked-off shot, so it takes the push too.
+    // A dealt camera move runs on the box around the picture. One that slides keeps the push inside it, which is a
+    // camera moving and settling at once; one that zooms replaces the push, because two zooms on a picture fight.
+    const cam = camOf(shot);
+    if (cam) steps.push(...camSteps(cam, index, at, shot.seconds + style.overlap));
     if (deep) { /* the planes are already moving: a second push on top of them is two cameras */ }
+    else if (cam?.zooms) { /* the move is the push */ }
     else if (!shot.video || layout === 'presenter') {
       steps.push(`tl.fromTo("${shot.video ? box : `${box} img`}", { scale: 1 }, { scale: ${layout === 'presenter' ? 1.06 : 1.09}, duration: ${shot.seconds.toFixed(3)}, ease: "none" }, ${time(0)});`);
     }

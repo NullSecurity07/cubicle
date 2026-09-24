@@ -73,7 +73,7 @@ function punchSteps(shot: Shot, index: number): string[] {
   // A quick push is an emphasis and overshoots a little; a slow one is a camera and must not.
   const ease = seconds < 0.6 ? 'back.out(1.6)' : 'power1.inOut';
   // A still in planes is punched as one stack: a punch on each plane would overwrite the move that makes them planes.
-  return [`tl.fromTo("#g${index} .bg > img, #g${index} .shot > img, #g${index} .deep, #g${index} .shot video, #g${index} .mesh",`
+  return [`tl.fromTo("#g${index} .bg > img, #g${index} .shot > img, #g${index} .cam > img, #g${index} .deep, #g${index} .shot video, #g${index} .mesh",`
     + ` { scale: 1 }, { scale: ${to.toFixed(3)}, duration: ${seconds.toFixed(2)}, ease: "${ease}" }, ${at.toFixed(3)});`];
 }
 

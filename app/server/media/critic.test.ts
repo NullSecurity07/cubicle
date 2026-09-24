@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { carriesVisual, criticise, DATA, facesCamera, noFace, opensADoor, plainClose, echoes, figureIn, headlineOf, inStyle, keywords, offStyle, repair, shorten, trimTo, worthAStat, type Want } from './critic.ts';
+import { carriesVisual, criticise, criticiseShots, DATA, facesCamera, mendShots, noFace, opensADoor, plainClose, echoes, figureIn, headlineOf, inStyle, keywords, offStyle, repair, shorten, trimTo, worthAStat, type Want } from './critic.ts';
+import { stillMoves } from './moves.ts';
 import { barOf, countWords, LAYOUTS, parseSpec, saidWords, saysWhatItShows, type Layout, type Scene, type Spec } from './spec.ts';
 
 // Every rule here is written the same way round: a lazy storyboard of the kind a free model really hands back goes
@@ -679,5 +680,66 @@ describe('emoji', () => {
     const made = repair(spec, want).spec.scenes.map((one) => one.icon);
     expect(made.filter(Boolean)).toHaveLength(1);
     expect(made.at(-1)).toBe('🚀');
+  });
+});
+
+describe('the camera', () => {
+  const still = (extra: Partial<Scene> = {}): Scene => ({ layout: 'picture', image_prompt: 'a kettle on a hob', ...extra });
+  const line = (): Scene => ({ layout: 'statement', text: 'A line.' });
+  const want = { pace: 'calm' as const, look: 'documentary' as const };
+
+  it('breaks three pictures in a row of one size, and says so', () => {
+    const board = spec([still({ shot: 'cu' }), line(), still({ shot: 'cu' }), still({ shot: 'cu', lens: 85 })]);
+    expect(rules(criticiseShots(board))).toEqual(['sizes']);
+    const { spec: mended, notes } = mendShots(board, want);
+    expect(mended.scenes[3]).toMatchObject({ shot: 'ws', lens: 35 });
+    expect(notes[0]).toBe('three pictures in a row were close-up shots, so scene 4 is a wide instead');
+    expect(criticiseShots(mended)).toEqual([]);
+  });
+
+  it('takes a close shot off a wide lens and an extreme wide off a long one', () => {
+    const board = spec([still({ shot: 'ecu', lens: 24 }), still({ shot: 'ews', lens: 135 })]);
+    expect(criticiseShots(board).map((one) => one.rule)).toEqual(['lens', 'lens']);
+    const { spec: mended, notes } = mendShots(board, want);
+    expect(mended.scenes.map((one) => one.lens)).toEqual([85, 35]);
+    expect(notes).toContain('scene 1 was a close shot on a wide lens, which bends whatever is near it, so it is taken on an 85');
+    expect(notes).toContain('scene 2 was an extreme wide on a long lens, which cannot take in a place, so it is taken on a 35');
+  });
+
+  it('drops a move nobody knows and deals one that is', () => {
+    const board = spec([still({ move: 'dramatic swoop' }), line()]);
+    expect(criticiseShots(board)[0].says).toContain('"dramatic swoop"');
+    const { spec: mended, notes } = mendShots(board, want);
+    expect(stillMoves.map((one) => one.name)).toContain(mended.scenes[0].move);
+    expect(notes[0]).toContain('is not a move the studio knows');
+  });
+
+  it('turns a move only a clip can make into the nearest a still can', () => {
+    const board = spec([still({ move: 'orbit' }), line(), still({ move: 'handheld' }), line(), still({ move: 'crane up' }), line(), still({ move: 'tracking' })]);
+    expect(criticiseShots(board).filter((one) => one.rule === 'move')).toHaveLength(4);
+    const { spec: mended, notes } = mendShots(board, want);
+    expect(mended.scenes.map((one) => one.move).filter(Boolean)).toEqual(['parallax arc', 'static', 'pedestal up', 'truck right']);
+    expect(notes).toContain('scene 1 is a still, and only a real clip can make an orbit, so it makes a parallax arc instead');
+    expect(notes).toContain('scene 3 is a still, and only a real clip can be handheld, so it holds still instead');
+    // A clip keeps a move a clip can make.
+    const clip = mendShots(spec([{ layout: 'clip', clip_prompt: 'a kettle', move: 'orbit' }, line()]), want);
+    expect(clip.spec.scenes[0].move).toBe('orbit');
+    expect(clip.notes).toEqual([]);
+  });
+
+  it('deals the second of two neighbours making one move a move of its own', () => {
+    const board = spec([still({ move: 'pan left' }), still({ move: 'pan left' }), line()]);
+    expect(rules(criticiseShots(board))).toEqual(['move']);
+    const { spec: mended, notes } = mendShots(board, want);
+    expect(mended.scenes[0].move).toBe('pan left');
+    expect(mended.scenes[1].move).not.toBe('pan left');
+    expect(notes).toContain('scenes 1 and 2 made the same move, so the second is given another');
+  });
+
+  it('fills what the storyboard left out without a word on the card, and takes a move off a scene with no picture', () => {
+    const { spec: mended, notes } = mendShots(spec([still(), { ...line(), move: 'pan left' }, still()]), want);
+    expect(notes).toEqual([]);
+    expect(mended.scenes[1].move).toBeUndefined();
+    for (const at of [0, 2]) expect(mended.scenes[at]).toMatchObject({ shot: expect.any(String), lens: expect.any(Number), move: expect.any(String) });
   });
 });

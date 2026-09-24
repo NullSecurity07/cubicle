@@ -12,9 +12,10 @@ process.env.STAGE_WORKSPACE ??= mkdtempSync(join(tmpdir(), 'stage-e2e-'));
 // under a person writes a file in here. Nothing of the repository is ever written to, so the founder's own app —
 // which watches `server` and `shared` from their working copy — is never restarted by a check running beside it.
 process.env.STAGE_RESTART_DIR ??= mkdtempSync(join(tmpdir(), 'stage-e2e-restart-'));
+// The api watches only that folder, never the code: an edit under server/ mid-run no longer restarts it under a journey.
 // Several checkouts may run their checks at once (one worktree per piece of work), so the pair of ports can be moved.
 const web = Number(process.env.E2E_PORT ?? 7430);
-const env = { STAGE_PORT: String(web), STAGE_API_PORT: String(web + 1), STAGE_FAKE_MODEL: '1', STAGE_API_TOKEN: 'e2e-token', STAGE_WORKSPACE: process.env.STAGE_WORKSPACE, STAGE_RESTART_DIR: process.env.STAGE_RESTART_DIR };
+const env = { STAGE_PORT: String(web), STAGE_API_PORT: String(web + 1), STAGE_FAKE_MODEL: '1', STAGE_API_TOKEN: 'e2e-token', STAGE_WORKSPACE: process.env.STAGE_WORKSPACE, STAGE_RESTART_DIR: process.env.STAGE_RESTART_DIR, STAGE_NO_CODE_WATCH: '1' };
 
 export default defineConfig({
   testDir: 'e2e',

@@ -1,6 +1,7 @@
 import type { Shape } from '../../shared/model.ts';
 import { MOODS, type Mood } from './audio.ts';
 import { isPack, PACES, type Pack, type Pace } from './templates/looks.ts';
+import { lensOf, moveName, moveOf, sizeOf, stillOf, type Lens, type Size } from './moves.ts';
 
 // Eighteen shapes a scene can take, in the order a film tends to use them. `chart` is the newest and it is the
 // one the research kept naming: a film over fifteen seconds with a number, a list or a comparison in its script
@@ -23,6 +24,9 @@ export type Scene = {
   // Whether this scene is somebody on camera. A film has one person in it, so the second of these reuses the first
   // one's shot rather than drawing a stranger, and none of them lends its picture to the scenes around it.
   person?: boolean;
+  // How the shot is taken: how big the subject is, the lens it is seen through and what the camera does. All three
+  // are optional, because the studio deals whatever the storyboard leaves out (see `moves.ts`).
+  shot?: Size; lens?: Lens; move?: string;
   seconds?: number; start?: number; mute?: boolean; say?: string;
 };
 // The whole film as one flat object. `music` is the mood the bed wants, `sfx` and `captions` are on or off, `pace` is
@@ -192,6 +196,16 @@ export function parseSpec(raw: unknown): Spec {
     if (scene.seconds !== undefined && scene.seconds !== null) made.seconds = number(scene.seconds, `${where}: "seconds"`, 1, 30);
     if (scene.start !== undefined && scene.start !== null) made.start = number(scene.start, `${where}: "start"`, 0, 3600);
     if (scene.mute !== undefined && scene.mute !== null) made.mute = scene.mute !== false;
+    // The shot, read as loosely as it honestly can be: "close-up" is a cu and "85mm" is an 85. A size or a lens that
+    // is none of ours is left out rather than refused, because the studio deals one anyway and a storyboard is never
+    // thrown away over a camera note. A move is kept as written, known or not, so the critic can say what it did
+    // with one it did not know.
+    const size = sizeOf(scene.shot);
+    if (size) made.shot = size;
+    const lens = lensOf(scene.lens);
+    if (lens) made.lens = lens;
+    const move = moveName(scene.move).slice(0, 40);
+    if (move) made.move = moveOf(move)?.name ?? move;
 
     if (NEEDS_HEADING.has(layout) && !made.heading) throw new Error(`${where}: a ${layout} scene needs "heading"`);
     if (NEEDS_TEXT.has(layout) && !made.text) throw new Error(`${where}: a ${layout} scene needs "text"`);
@@ -338,11 +352,16 @@ export function withinLength<T extends { seconds: number }>(shots: T[], target: 
 // had any, and a presenter keeps saying what it was going to say — the film is never a scene shorter for it. Why it
 // could not be made is told to the founder on the card; it is never set across the frame. A film that renders
 // "nothing to show" or "Cloudflare answered 429" as its headline is worse than one that renders nothing at all.
+// A clip that becomes a picture keeps how it was framed, and its move becomes the nearest one a still can make.
+const shotOf = (scene: Scene): Pick<Scene, 'shot' | 'lens' | 'move'> => {
+  const move = stillOf(scene.move)?.name;
+  return { ...(scene.shot ? { shot: scene.shot } : {}), ...(scene.lens ? { lens: scene.lens } : {}), ...(move ? { move } : {}) };
+};
 export function fallbackOf(scene: Scene): Scene {
   if (scene.layout === 'clip') {
     return scene.asset
       ? { layout: 'picture', asset: scene.asset, text: scene.text, say: scene.say, emphasis: scene.emphasis }
-      : { layout: 'picture', image_prompt: scene.clip_prompt ?? scene.text ?? 'an abstract product still, soft light', text: scene.text, say: scene.say, heading: scene.heading, emphasis: scene.emphasis };
+      : { layout: 'picture', image_prompt: scene.clip_prompt ?? scene.text ?? 'an abstract product still, soft light', text: scene.text, say: scene.say, heading: scene.heading, emphasis: scene.emphasis, ...shotOf(scene) };
   }
   // A talking head made out of a real picture keeps the picture when the talking cannot be made: the founder drew
   // that person and wired them up, and a scene of words where they should be is the film ignoring them.

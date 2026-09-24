@@ -6,7 +6,8 @@
 // back in plain words when neither can.
 // `shape` is the film's own shape. A clip drawn wide and cut down to a phone loses whatever was at the sides,
 // which on a person is their hands.
-export type ClipAsk = { prompt: string; image?: Buffer; seconds: number; shape?: string };
+// `move` is what the camera does, by name out of `moves.ts`; a backend that can read it says it in the prompt.
+export type ClipAsk = { prompt: string; image?: Buffer; seconds: number; shape?: string; move?: string };
 // `about` is what the portrait was drawn from, in words. A backend that cannot animate the picture itself can still
 // draw somebody of that description moving, which is nearer what was asked for than the photograph held still.
 export type PresenterAsk = { portrait: Buffer; speech: Buffer; about?: string; shape?: string };

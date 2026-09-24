@@ -8,7 +8,8 @@ import { projectDir } from '../folder.ts';
 import { musicBed, MOODS, SFX_DIR, sfxFile, type Mood } from './audio.ts';
 import { fakeMusic, type Credit, type Music, type Mood as MusicMood } from './music.ts';
 import { noClips, type Clips } from './clips.ts';
-import { headlineOf, repair, trimTo, type Want } from './critic.ts';
+import { headlineOf, mendShots, repair, trimTo, type Want } from './critic.ts';
+import { lensPhrase } from './moves.ts';
 import { liftFor, lighten, meanLight, scrimFor } from './contrast.ts';
 import { facesLens, fault, isLettered, type Sight } from './sight.ts';
 import {
@@ -432,6 +433,9 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           const mended = repair(spec, want);
           spec = mended.spec;
           for (const line of mended.notes.slice(0, 5)) report(line);
+          const shots = mendShots(spec, { pace: understanding.pace, look: understanding.pack });
+          spec = shots.spec;
+          for (const line of shots.notes.slice(0, 3)) report(line);
         } else {
           // A full film asked for straight after its draft is that film, not a second opinion: it is made from
           // the storyboard the founder has just watched. Anything else — the same speed again, a changed brief, a
@@ -555,8 +559,8 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
             try {
               said(index, 'making a few seconds of moving picture…');
               // A still first, so the clip looks like the rest of the film rather than like a different film.
-              const still = drawing ? await drawing.make({ prompt: `${bible}. ${scene.clip_prompt!}`, shape }, { report: () => {}, signal }).then((one) => one.bytes, () => undefined) : undefined;
-              const made = await clips.broll({ prompt: scene.clip_prompt!, image: still, seconds: scene.seconds ?? 4, shape }, { report: (line) => said(index, line), signal });
+              const still = drawing ? await drawing.make({ prompt: [`${bible}. ${scene.clip_prompt!}`, lensPhrase(scene.lens)].filter(Boolean).join(', '), shape }, { report: () => {}, signal }).then((one) => one.bytes, () => undefined) : undefined;
+              const made = await clips.broll({ prompt: scene.clip_prompt!, image: still, seconds: scene.seconds ?? 4, shape, move: scene.move }, { report: (line) => said(index, line), signal });
               shot.video = `clip-${index}.mp4`;
               await writeFile(join(at, 'assets', shot.video), made.bytes);
             } catch (error) {

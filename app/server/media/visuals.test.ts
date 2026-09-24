@@ -313,3 +313,32 @@ describe('the framing is where a person really gets in', () => {
     }
   });
 });
+
+describe('the size and the lens the storyboard chose', () => {
+  it('frames a scene\'s first shot at the size it was given, and lets its later shots keep the deal', () => {
+    const scenes: Scene[] = [{ layout: 'picture', image_prompt: 'a kettle', shot: 'ecu', lens: 135 }];
+    const made = slotsFor([
+      { scene: 0, take: 0, line: 'it runs out quietly', layout: 'picture' },
+      { scene: 0, take: 1, line: 'and nobody notices', layout: 'picture' },
+    ], false, scenes);
+    expect(made[0]).toMatchObject({ kind: 'detail', size: 'ecu', lens: 135 });
+    expect(made[1].size).toBeUndefined();
+    expect(made[1].lens).toBeUndefined();
+    // A wide size keeps a dealt framing of the same family.
+    const wide = slotsFor([{ scene: 0, take: 0, line: 'one', layout: 'picture' }, { scene: 1, take: 0, line: 'two', layout: 'picture' }], false,
+      [{ layout: 'picture', image_prompt: 'x' }, { layout: 'picture', image_prompt: 'y', shot: 'ews' }]);
+    expect(wide[1].kind).toBe('environment');
+  });
+
+  it('says the lens in the picture\'s words, and drops it once the shot has been re-framed', () => {
+    const close = drawnAs(one(0, 'a cold kettle on a ring', 'it runs out quietly', { kind: 'detail', size: 'ecu', lens: 135 }), BIBLE);
+    expect(close).toContain('an extreme close-up, shallow depth of field, compressed background:');
+    const wide = drawnAs(one(0, 'an empty loading bay', 'it runs out quietly', { kind: 'wide', size: 'ws', lens: 35 }), BIBLE);
+    expect(wide).toContain('wide view, deep focus:');
+    const fifty = drawnAs(one(0, 'a bench by a station', 'it runs out quietly', { kind: 'medium', size: 'ms', lens: 50 }), BIBLE);
+    expect(fifty).not.toMatch(/depth of field|deep focus/);
+    // A close-up that was stepped back to a wide keeps none of its close-up words.
+    const moved = drawnAs(one(0, 'a cold kettle on a ring', 'it runs out quietly', { kind: 'wide', size: 'cu', lens: 85 }), BIBLE);
+    expect(moved).not.toMatch(/shallow depth|close-up/);
+  });
+});

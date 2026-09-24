@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import type { Clip, ClipAsk, Clips, Help } from './clips.ts';
 import { ff, FFMPEG } from './ff.ts';
 import { fetchModels, inTurn, modelsDir, REAL_DISK, SETUP_DIR, vulkanHere, type Model } from './on-this-machine.ts';
+import { moveOf } from './moves.ts';
+import { CAPS } from './spec.ts';
 
 // Moving pictures made on this machine, with nobody's quota and nothing leaving the house: stable-diffusion.cpp (MIT)
 // driving Wan2.1-T2V-1.3B through Vulkan, with a tiny autoencoder in place of the full one and a four-step adapter in
@@ -149,6 +151,20 @@ const run: Runner = (command, args, at, onLine, signal) => new Promise((done, fa
 // for three minutes.
 const STEP = /\|\s*(\d+)\/(\d+)\s*-\s*[\d.]+(s\/it|it\/s)/;
 
+// What the clip model is asked for: what the clip is of, and then what the camera does, in one clause it reads. The
+// move goes on the end so the subject leads, and the whole is held to the storyboard's own cap: when there is no
+// room for both, the subject is shortened at a word and the move kept, because a clip of the right thing that does
+// not move as asked is still the right thing, and one cut off mid-word is not.
+export function clipPrompt(ask: Pick<ClipAsk, 'prompt' | 'move'>): string {
+  const subject = ask.prompt.trim().replace(/[\s,.;]+$/, '');
+  const move = moveOf(ask.move);
+  const phrase = move && (move.kind === 'motion' || move.wanReads) ? move.wan : '';
+  if (!phrase) return subject.slice(0, CAPS.clip_prompt);
+  const room = CAPS.clip_prompt - phrase.length - 2;
+  const cut = subject.length <= room ? subject : subject.slice(0, room).replace(/\s+\S*$/, '').replace(/[\s,.;]+$/, '');
+  return `${cut}, ${phrase}`;
+}
+
 export type LocalDeps = { env?: NodeJS.ProcessEnv; fetch?: typeof fetch; now?: () => number };
 
 export function localClips(deps: LocalDeps = {}): Clips {
@@ -191,7 +207,7 @@ export function localClips(deps: LocalDeps = {}): Clips {
             '--tae', join(at, 'taew2_1.safetensors'),
             '--t5xxl', join(at, 'text_encoders/umt5-xxl-encoder-Q3_K_S.gguf'),
             '--lora-model-dir', join(at, 'loras'),
-            '-p', `${ask.prompt}<lora:${LORA}:1.0>`,
+            '-p', `${clipPrompt(ask)}<lora:${LORA}:1.0>`,
             // Every one of these was measured, and the film is mush without them: no guidance (the adapter replaces
             // it), four steps, the flow shift the adapter was trained at, the tiny decoder, and the weights kept in
             // system memory rather than on a four-gigabyte card.
