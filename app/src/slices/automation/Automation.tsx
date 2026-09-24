@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { parseSchedule, sayRepeat } from '../../../shared/automation';
-import type { Skill, Task } from '../../../shared/model';
-import { listSkills, setAutomation, type AutomationPatch } from './api';
+import type { Task } from '../../../shared/model';
+import { usePlaybook } from '../../overlay/playbook';
+import { setAutomation, type AutomationPatch } from './api';
 import './automation.css';
 import { pressed } from '../../keys';
 
@@ -21,9 +22,8 @@ export function Automation({ boardId, task, tasks, act }: { boardId: string; tas
   const [typed, setTyped] = useState(() => wordsFor(task));
   const [saved, setSaved] = useState(() => wordsFor(task));
   const [code, setCode] = useState(task.script?.code ?? '');
-  const [skills, setSkills] = useState<Skill[]>([]);
-
-  useEffect(() => { void listSkills().then((held) => setSkills(held.filter((one) => one.state !== 'off'))).catch(() => {}); }, []);
+  // The window's one live copy of the playbook, so a skill learned or switched off while this is open shows at once.
+  const skills = usePlaybook().skills.filter((one) => one.state !== 'off');
 
   const set = (patch: AutomationPatch) => act(setAutomation(boardId, task.id, patch));
   const read = typed.trim() ? parseSchedule(typed, Date.now()) : null;
