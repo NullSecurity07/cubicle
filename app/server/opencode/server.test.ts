@@ -48,7 +48,7 @@ describe('the one opencode server', () => {
     const spawn = (_bin: string, args: string[], options: { env: NodeJS.ProcessEnv }) => {
       started.push({ args, env: options.env });
       const child = Object.assign(new EventEmitter(), { pid: 4242, stderr: new PassThrough(), stdout: new PassThrough(), exitCode: null as number | null, kill: (signal: string) => { signals.push(signal); child.exitCode = 0; child.emit('exit', 0); return true; } });
-      setTimeout(() => child.stderr.write('opencode server listening on http://127.0.0.1:5123\n'), 5);
+      setTimeout(() => child.stdout.write('opencode server listening on http://127.0.0.1:5123\n'), 5);
       return child;
     };
     const asked: { url: string; auth: string | null; method: string }[] = [];

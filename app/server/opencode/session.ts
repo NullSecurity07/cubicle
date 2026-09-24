@@ -104,11 +104,13 @@ export function createCoder(deps: Deps) {
   }
 
   async function models(): Promise<CoderModels> {
-    const said = await engine.call<{ providers: { id: string; name?: string; options?: { baseURL?: string }; models: Record<string, { id?: string; name?: string; cost?: { input?: number; output?: number } }> }[] }>('GET', '/config/providers');
+    const said = await engine.call<{ providers: { id: string; name?: string; options?: { baseURL?: string }; models: Record<string, { id?: string; name?: string; status?: string; capabilities?: { toolcall?: boolean }; cost?: { input?: number; output?: number } }> }[] }>('GET', '/config/providers');
     const groups = { free: [] as { id: string; name: string }[], keys: [] as { id: string; name: string }[], local: [] as { id: string; name: string }[] };
     for (const provider of said?.providers ?? []) {
       if (provider.options?.baseURL && provider.id in LOCAL) bases = { ...bases, [provider.id]: provider.options.baseURL };
       for (const [key, model] of Object.entries(provider.models ?? {})) {
+        // A coder works through tools: a model that cannot call one (speech, a guard model) is no use here.
+        if (model.capabilities?.toolcall === false || model.status === 'deprecated') continue;
         const one = { id: `${provider.id}/${key}`, name: model.name || key };
         const free = !model.cost?.input && !model.cost?.output;
         if (provider.id === 'opencode' && free) groups.free.push(one);
@@ -240,7 +242,9 @@ export function createCoder(deps: Deps) {
     const heard = translate(event, card.dir);
     if (!heard) return;
     if (heard.progress) card.heard = now();
-    if (heard.busy) { card.seenBusy = true; card.heard = now(); if (!busy(card)) setState(card, 'working'); }
+    // Busy only counts while the card is waiting on it: opencode says busy once more after an error or a stop, and
+    // that must not bring back a spinner for work that is over.
+    if (heard.busy) { card.seenBusy = true; card.heard = now(); }
     if (heard.line?.kind === 'reply') card.reply = heard.line.text;
     if (heard.line) line(card, heard.line);
     if (heard.permission) void asked(card, heard.permission);
@@ -250,9 +254,15 @@ export function createCoder(deps: Deps) {
       settled(card, ask, `answered elsewhere · ${ask.tool} ${ask.what}`);
       approvals.answer(`coder:${ask.id}`, { ok: false });
     }
+    // An error ends the work: opencode would otherwise go on retrying a request that cannot succeed (too large for a
+    // free tier, a key refused) while the card and the person wait for nothing.
     if (heard.error) {
       card.error = heard.error;
-      if (busy(card)) { setState(card, 'stopped'); finish(card, 'stopped'); }
+      if (busy(card)) {
+        setState(card, 'stopped');
+        finish(card, 'stopped');
+        if (card.session) void engine.call('POST', `/session/${card.session}/abort`, { directory: card.dir }).catch(() => {});
+      }
     }
     if (heard.idle) void idle(card);
   }

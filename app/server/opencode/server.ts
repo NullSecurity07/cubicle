@@ -60,10 +60,10 @@ export async function reap(pidFile: string, read = (path: string) => readFile(pa
   try { kill(pid); return true; } catch { return false; }
 }
 
-type Child = { pid?: number; exitCode: number | null; stderr: NodeJS.ReadableStream | null; kill(signal?: NodeJS.Signals): boolean; once(event: 'exit', listener: () => void): unknown; on(event: 'exit', listener: () => void): unknown };
+type Child = { pid?: number; exitCode: number | null; stdout: NodeJS.ReadableStream | null; stderr: NodeJS.ReadableStream | null; kill(signal?: NodeJS.Signals): boolean; once(event: 'exit', listener: () => void): unknown; on(event: 'exit', listener: () => void): unknown };
 type Options = {
   bin: string | null; env: NodeJS.ProcessEnv; home: () => Promise<CoderHome>;
-  spawn?: (bin: string, args: string[], options: { env: NodeJS.ProcessEnv; stdio: ['ignore', 'ignore', 'pipe'] }) => Child;
+  spawn?: (bin: string, args: string[], options: { env: NodeJS.ProcessEnv; stdio: ['ignore', 'pipe', 'pipe'] }) => Child;
   fetch?: typeof fetch; listen?: boolean;
 };
 const START_LIMIT = 30_000;
@@ -103,18 +103,22 @@ export function createOpencodeServer(options: Options): Engine {
     const pidFile = join(dirname(home.configPath), 'server.pid');
     await reap(pidFile);
     const password = randomBytes(24).toString('base64url');
-    const mine = spawn(options.bin, ['serve', '--port', '0', '--hostname', '127.0.0.1'], { env: serverEnv(options.env, home, password), stdio: ['ignore', 'ignore', 'pipe'] });
+    const mine = spawn(options.bin, ['serve', '--port', '0', '--hostname', '127.0.0.1'], { env: serverEnv(options.env, home, password), stdio: ['ignore', 'pipe', 'pipe'] });
     child = mine;
     if (mine.pid) await writeFile(pidFile, String(mine.pid)).catch(() => {});
     auth = `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}`;
     let said = '';
     port = await new Promise<number>((done, fail) => {
       const timer = setTimeout(() => fail(new Error(`opencode did not start in time. ${said.trim().split('\n').slice(-2).join(' ')}`.trim())), START_LIMIT);
-      mine.stderr?.on('data', (chunk: Buffer) => {
+      // The line comes on standard output in 1.18; either stream is read, and both keep being drained afterwards so a
+      // chatty server never blocks on a full pipe.
+      const heard = (chunk: Buffer) => {
         if (said.length < 4000) said += chunk;
         const found = portOf(said);
         if (found) { clearTimeout(timer); done(found); }
-      });
+      };
+      mine.stdout?.on('data', heard);
+      mine.stderr?.on('data', heard);
       mine.once('exit', () => { clearTimeout(timer); fail(new Error(`opencode stopped as it started. ${said.trim().split('\n').slice(-2).join(' ')}`.trim())); });
     }).catch((error: Error) => { if (mine.exitCode === null) mine.kill('SIGKILL'); child = null; throw error; });
     base = `http://127.0.0.1:${port}`;

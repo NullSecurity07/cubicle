@@ -103,7 +103,7 @@ export function fakeEngine({ step = 120, now = Date.now }: { step?: number; now?
       if (method === 'GET' && path.startsWith('/config/providers')) {
         return { default: { opencode: 'fake-free' }, providers: [
           { id: 'opencode', name: 'OpenCode Zen', models: { 'fake-free': { id: 'fake-free', name: 'Fake Free', cost: { input: 0, output: 0 } }, 'fake-paid': { id: 'fake-paid', name: 'Fake Paid', cost: { input: 1, output: 2 } }, 'other-free': { id: 'other-free', name: 'Other Free', cost: { input: 0, output: 0 } } } },
-          { id: 'ollama', name: 'Ollama', models: { 'qwen2.5-coder:7b': { id: 'qwen2.5-coder:7b', name: 'qwen2.5-coder:7b' } } },
+          { id: 'ollama', name: 'Ollama', models: { 'qwen2.5-coder:7b': { id: 'qwen2.5-coder:7b', name: 'qwen2.5-coder:7b' }, whisper: { id: 'whisper', name: 'Whisper', capabilities: { toolcall: false } } } },
         ] };
       }
       throw new Error(`opencode answered 404: the fake has no ${method} ${path}`);

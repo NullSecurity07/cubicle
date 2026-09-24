@@ -42,6 +42,9 @@ describe('what the coder does, as lines a founder reads', () => {
     expect(translate({ type: 'session.error', properties: { sessionID: 'ses_1', error: { name: 'APIError', data: { message: 'Rate limited' } } } }, DIR)).toMatchObject({ session: 'ses_1', error: 'Rate limited', line: { kind: 'error', text: 'Rate limited' } });
     expect(translate({ type: 'session.error', properties: { sessionID: 'ses_1', error: { name: 'MessageAbortedError', data: {} } } }, DIR)).toEqual({ session: 'ses_1' });
     expect(translate({ type: 'server.heartbeat', properties: {} }, DIR)).toBeNull();
+    const groq = 'Request too large for model `openai/gpt-oss-120b` in organization `org_01m24v86` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 9500, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing';
+    expect(translate({ type: 'session.error', properties: { sessionID: 'ses_1', error: { name: 'APIError', data: { message: groq } } } }, DIR)?.error)
+      .toBe('Request too large for model `openai/gpt-oss-120b` on tokens per minute (TPM): Limit 8000, Requested 9500, please reduce your message size and try again.');
   });
 });
 
