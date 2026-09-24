@@ -1,5 +1,6 @@
-import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
+import { folderCache, writeAtomic } from './fsx.ts';
 import type { Skill, SkillEvent, SkillSource, SkillState, SkillVersion } from '../shared/model.ts';
 
 export type Skills = ReturnType<typeof createSkills>;
@@ -80,8 +81,7 @@ export function createSkills(dir: string, now: () => number = Date.now) {
   const watchers = new Set<(event: SkillEvent) => void>();
   let queue: Promise<unknown> = Promise.resolve();
 
-  async function list(): Promise<Skill[]> {
-    await queue;
+  async function read(): Promise<Skill[]> {
     const names = await readdir(folder).catch(() => [] as string[]);
     const found: Skill[] = [];
     for (const name of names.filter((one) => one.endsWith('.json') && !one.endsWith('.tmp'))) {
@@ -92,13 +92,18 @@ export function createSkills(dir: string, now: () => number = Date.now) {
     }
     return found.sort((a, b) => b.createdAt - a.createdAt);
   }
+  // Every turn's playbook reads the list, so it is read off the disk only when something changed.
+  const cache = folderCache(folder, read);
+  async function list(): Promise<Skill[]> {
+    await queue;
+    return cache.get();
+  }
   const get = async (id: string) => (await list()).find((one) => one.id === id);
   function save(skill: Skill) {
     const text = JSON.stringify(skill, null, 2);
     const job = queue.then(async () => {
-      await mkdir(folder, { recursive: true });
-      await writeFile(`${path(skill.id)}.tmp`, text);
-      await rename(`${path(skill.id)}.tmp`, path(skill.id));
+      await writeAtomic(path(skill.id), text, { mkdir: true });
+      cache.drop();
     });
     queue = job.catch(() => {});
     // Told before the caller hears back, so a panel and whoever asked for the change never disagree about the playbook.
@@ -174,6 +179,7 @@ export function createSkills(dir: string, now: () => number = Date.now) {
       await queue;
       await mkdir(join(dir, 'trash'), { recursive: true });
       await rename(path(id), join(dir, 'trash', `${new Date(now()).toISOString().replace(/[:.]/g, '-')}-${safe(id)}.json`));
+      cache.drop();
       await tellAll();
     },
     watch(tell: (event: SkillEvent) => void) { watchers.add(tell); return () => { watchers.delete(tell); }; },

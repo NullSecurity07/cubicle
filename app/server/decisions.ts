@@ -1,7 +1,8 @@
-import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Attention, Decision } from '../shared/model.ts';
 import { shortDay } from './clock.ts';
+import { folderCache, writeAtomic } from './fsx.ts';
 
 export type Decisions = ReturnType<typeof createDecisions>;
 const safe = (id: string) => { if (!/^[a-z0-9][a-z0-9-]{0,99}$/.test(id)) throw new Error(`bad id: ${id}`); return id; };
@@ -52,7 +53,7 @@ export function createDecisions(dir: string, now: () => number = Date.now) {
   const listeners = new Set<() => void>();
   const path = (id: string) => join(folder, `${safe(id)}.md`);
 
-  async function list(): Promise<Decision[]> {
+  async function read(): Promise<Decision[]> {
     const names = await readdir(folder).catch(() => [] as string[]);
     const found: Decision[] = [];
     for (const name of names.filter((one) => one.endsWith('.md'))) {
@@ -60,10 +61,12 @@ export function createDecisions(dir: string, now: () => number = Date.now) {
     }
     return found.sort((a, b) => (b.decidedAt ?? b.at) - (a.decidedAt ?? a.at) || b.id.localeCompare(a.id));
   }
+  // Every person's prompt reads the decisions, so they are read off the disk only when something changed.
+  const cache = folderCache(folder, read);
+  const list = () => cache.get();
   async function save(decision: Decision) {
-    await mkdir(folder, { recursive: true });
-    await writeFile(`${path(decision.id)}.tmp`, writeDecision(decision));
-    await rename(`${path(decision.id)}.tmp`, path(decision.id));
+    await writeAtomic(path(decision.id), writeDecision(decision), { mkdir: true });
+    cache.drop();
     for (const tell of listeners) tell();
     return decision;
   }
@@ -89,7 +92,6 @@ export function createDecisions(dir: string, now: () => number = Date.now) {
 
   return {
     list,
-    get: async (id: string) => (await list()).find((one) => one.id === id),
     onChange(tell: () => void) { listeners.add(tell); return () => { listeners.delete(tell); }; },
     async propose(input: Record<string, unknown>): Promise<Decision> {
       const base = checked(input);
@@ -108,6 +110,7 @@ export function createDecisions(dir: string, now: () => number = Date.now) {
     async remove(id: string) {
       await mkdir(join(dir, 'trash'), { recursive: true });
       await rename(path(id), join(dir, 'trash', `${new Date(now()).toISOString().replace(/[:.]/g, '-')}-${id}.md`));
+      cache.drop();
       for (const tell of listeners) tell();
     },
   };
