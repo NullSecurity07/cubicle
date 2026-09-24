@@ -34,7 +34,8 @@ try {
   for (const maker of imageMakers()) await check(maker, { prompt: 'a paper plane over a desk, soft morning light', shape: 'square' }, (piece) => `a ${piece.ext} · ${size(piece)}`);
   for (const maker of voiceMakers(resolve(import.meta.dirname, '../.cache/voice')).filter((one) => !one.optIn)) await check(maker, { prompt: 'The studios are working.', voice: DEFAULT_VOICE }, (piece) => `${wavSeconds(piece.bytes).toFixed(1)} seconds spoken · ${size(piece)}`);
   await check(hyperframesVideos({ dir, think: async () => { throw new Error('the storyboard is written here, not asked for'); } }),
-    { prompt: film.title, spec: film, format: 'wide', look: 'clean', narrate: false }, (piece) => `an mp4 · ${size(piece)}${piece.poster ? ' · with a poster frame' : ''}`);
+    { prompt: film.title, spec: film, format: 'wide', look: 'clean', narrate: false }, (piece) => `an mp4 · ${size(piece)}${piece.poster ? ' · with a poster frame' : ''}`
+      + `${piece.edit ? ` · with an .mlt of ${piece.edit.film.shots.length} shots and ${piece.edit.files.length} parts` : ''}`);
 
   // The bed under a film, both ways it can arrive. First the real one: a live search of the public domain and a real
   // download into the cache beside the voice model, which is where a founder's own run would put it. Then the one

@@ -5,7 +5,7 @@ import { extname, join, resolve } from 'node:path';
 import type { Card, MediaAsset, Shape, Stage } from '../../shared/model.ts';
 import { CHROMES } from '../browser.ts';
 import { projectDir } from '../folder.ts';
-import { musicBed, MOODS, SFX_DIR, sfxFile, type Mood } from './audio.ts';
+import { musicBed, MOODS, SFX, SFX_DIR, sfxFile, type Mood } from './audio.ts';
 import { fakeMusic, type Credit, type Music, type Mood as MusicMood } from './music.ts';
 import { noClips, type Clips } from './clips.ts';
 import { headlineOf, mendShots, repair, trimTo, type Want } from './critic.ts';
@@ -35,9 +35,11 @@ import { filmMemory, storyboardKey, subjectKey, type KeptSubject } from './remem
 import { sourcesOf } from './grounding.ts';
 import { readProject, VIEWPORTS } from './sources.ts';
 import {
-  composition, FORMATS, isPack, PACE, PACK, PACKS, PACES, paintOf, projectFile, sceneSeconds, snapToBeats,
-  type Pace, type Pack, type Shot,
+  captionLines, composition, FORMATS, isPack, PACE, PACK, PACKS, PACES, paintOf, projectFile, sceneSeconds, snapToBeats,
+  type Film, type Pace, type Pack, type Shot,
 } from './templates/index.ts';
+import { camOf } from './templates/layouts.ts';
+import { FPS, type EditPlan, type EditShot, type EditSound } from './mlt.ts';
 import { timeWords, type Part, type Word } from './timings.ts';
 import { castLine, castVoice, engineOf, isVoice, VOICES, wavSeconds } from './voice.ts';
 import { creditsOf, designOf, NONCOMMERCIAL, OMNI_ENGINE } from './omnivoice.ts';
@@ -1117,10 +1119,11 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           report('most of this film writes its own words on screen, so the captions stay out of the way — two sets of words in one place is read as neither');
         }
 
-        await writeFile(join(at, 'index.html'), composition({
+        const film: Film = {
           title: spec.title, shape, look: pack === 'brand' && !brand ? 'clean' : pack, shots: cut, pace, captions, brand,
           bed: music, cues, beats, voice, words, keywords, quiet,
-        }));
+        };
+        await writeFile(join(at, 'index.html'), composition(film));
         await writeFile(join(at, 'hyperframes.json'), projectFile);
 
         // A finding here is worth saying out loud, but it is not worth withholding the film over: render either way.
@@ -1157,7 +1160,10 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           'The narration in this film was made with OmniVoice. The film is not for commercial use.',
           '', voiceTerms.trim(), ...(credit && music ? ['', `Music: ${credit.title} by ${credit.by} · ${credit.licence} · ${credit.source}`] : []), '',
         ].join('\n') : '';
-        return { ext: 'mp4', bytes, poster, credit, ...(terms ? { noncommercial: true, credits: terms } : {}) };
+        // A finished film goes out with the same film laid out as tracks, for a founder who wants to move one cut by
+        // hand. A draft does not: it is a film to look at, not one to finish.
+        const handEdit = draft ? undefined : await editPlan(film, at).catch(() => undefined);
+        return { ext: 'mp4', bytes, poster, credit, ...(terms ? { noncommercial: true, credits: terms } : {}), ...(handEdit ? { edit: handEdit } : {}) };
       } finally {
         // The project a film was rendered from is thrown away, because it is a copy of everything the founder
         // wired plus a few megabytes of pictures. When something is wrong with a finished film the only way to
@@ -1167,6 +1173,67 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         else await rm(at, { recursive: true, force: true }).catch(() => {});
       }
     },
+  };
+}
+
+// The film as an editor would lay it out, and the files it needs beside it: every picture and moving picture a shot
+// shows, the narration, the bed and the sounds, read out of the project before it is thrown away. A file that
+// cannot be read is left out, and its shot becomes the look's own colour rather than a hole in the timeline.
+export async function editPlan(film: Film, at: string): Promise<EditPlan> {
+  const { height, scale, caps, width } = FORMATS[film.shape];
+  const paint = paintOf(film.look, film.brand);
+  const files = new Map<string, Buffer>();
+  const take = async (name: string | undefined): Promise<string | undefined> => {
+    if (!name) return undefined;
+    // Only a plain file name out of the project's own assets: the parts folder is flat.
+    const safe = (name.split(/[\\/]/).pop() ?? '').replace(/[^\w.-]+/g, '-');
+    if (!safe || safe.startsWith('.')) return undefined;
+    if (files.has(safe)) return safe;
+    const bytes = await readFile(join(at, 'assets', name)).catch(() => null);
+    if (!bytes) return undefined;
+    files.set(safe, bytes);
+    return safe;
+  };
+  const shots: EditShot[] = [];
+  for (const shot of film.shots) {
+    const video = await take(shot.video);
+    const image = video ? undefined : await take(shot.image ?? shot.bg);
+    const words = [shot.scene.heading, shot.scene.text].filter(Boolean).join(' — ') || shot.scene.say || undefined;
+    shots.push({
+      seconds: shot.seconds, ground: paint.ground, ...(words ? { words } : {}),
+      ...(video ? { video, from: typeof shot.scene.start === 'number' ? shot.scene.start : 0 } : {}),
+      ...(image ? { image } : {}),
+      ...(image && camOf(shot) ? { move: String(shot.scene.move ?? 'a slow move') } : {}),
+    });
+  }
+  const starts: number[] = [];
+  let clock = 0;
+  for (const shot of film.shots) { starts.push(clock); clock = Math.round((clock + shot.seconds) * 100) / 100; }
+  const narration: EditSound[] = [];
+  if (film.voice) {
+    const file = await take(film.voice.file);
+    if (file) narration.push({ file, at: 0, seconds: film.voice.seconds });
+  } else {
+    for (const [index, shot] of film.shots.entries()) {
+      const file = shot.voice ? await take(shot.voice.file) : undefined;
+      if (file && shot.voice) narration.push({ file, at: starts[index] + PACE[film.pace ?? 'calm'].lead, seconds: shot.voice.seconds });
+    }
+  }
+  // The bed was mixed to its level, ducked and faded before the film was rendered, so it plays at full gain here too.
+  const bedFile = film.bed ? await take(film.bed.file) : undefined;
+  const sounds: EditSound[] = [];
+  for (const cue of film.cues ?? []) {
+    const file = await take(SFX[cue.sound].file);
+    if (file) sounds.push({ file, at: Math.max(0, cue.at), seconds: 1, gain: cue.gain ?? SFX[cue.sound].gain });
+  }
+  const captions = captionLines(film).map((line) => ({ text: line.words.map((one) => one.word).join(' '), at: line.at, seconds: line.seconds }));
+  return {
+    film: {
+      title: film.title, width, height, fps: FPS, shots, narration, sounds, captions,
+      ...(film.bed && bedFile ? { bed: { file: bedFile, at: 0, seconds: film.bed.seconds, gain: 1 } } : {}),
+      ink: paint.ink, capSize: Math.round(height * 0.108) * scale, capFoot: caps,
+    },
+    files: [...files].map(([name, bytes]) => ({ name, bytes })),
   };
 }
 
@@ -1185,7 +1252,12 @@ export const fakeVideos: Maker = {
     if (asked.images?.length) report(`using: ${asked.images.length} picture${asked.images.length === 1 ? '' : 's'} you were handed — ${asked.images.join(', ')}`);
     report(`${spec.scenes.length} scenes: ${spec.title}`);
     report('rendering 6 seconds…');
-    return { ext: 'mp4', bytes: Buffer.from(CLIP, 'base64'), poster: { ext: 'png', bytes: Buffer.from(POSTER, 'base64') } };
+    // The second of colour laid out the way a real film is, so the card and the tool show the project in fake mode too.
+    const edit: EditPlan | undefined = isDraft(asked.speed) ? undefined : {
+      film: { title: spec.title, width: 1280, height: 720, fps: FPS, shots: [{ seconds: 1, ground: PACK.clean.paint.ground, words: spec.title }] },
+      files: [],
+    };
+    return { ext: 'mp4', bytes: Buffer.from(CLIP, 'base64'), poster: { ext: 'png', bytes: Buffer.from(POSTER, 'base64') }, ...(edit ? { edit } : {}) };
   },
 };
 

@@ -14,7 +14,9 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   **Voice studio** says a line in one of 28 voices, on this machine. **Video studio** turns a brief into a
   marketing film, a product explainer or a phone reel: a model fills a validated flat storyboard, our TypeScript
   writes the composition, the other two studios draw and speak it, and headless Chrome renders it frame by frame.
-  Everything made lands in `workspace/files/media/` and can be downloaded or put on the stage.
+  Everything made lands in `workspace/files/media/` and can be downloaded or put on the stage. A finished film
+  (not a draft) also gets a `<film>.mlt` that Shotcut or Kdenlive opens, with its pictures and sound in
+  `<film>.parts/` beside it, so a founder can move a cut by hand.
 - **What a film is made of** (2026-09-19): the Video studio builds from what is really there. Wire a **project
   card** to it and it reads that folder read-only — the README, the landing copy, the CSS variables, the typeface,
   the logo — and can wear the product's own colours (the `brand` look); wire a **link** or **browser** card, or
