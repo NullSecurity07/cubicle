@@ -143,6 +143,18 @@ test('drawing a wire to a doc lets that person read it', async ({ page }) => {
   await expect(await ask(page, 'build', 'now what')).toContainText('Docs I can read: Company brief, Brand doc.');
 });
 
+test('a card is never wired to itself, nor twice to the same card through other sides', async ({ page }) => {
+  await tidy(page);
+  await expect(page.locator('.react-flow__edge')).toHaveCount(1);
+  // Out of one side of Build and into another of its own sides.
+  await drag(page, centre((await handle(page, 'build', 'r').boundingBox())!), centre((await handle(page, 'build', 'b').boundingBox())!), 20);
+  // Marketing and the brand doc are already joined; joining them again through their bottoms is refused.
+  await drag(page, centre((await handle(page, 'marketing', 'b').boundingBox())!), centre((await handle(page, 'brand-doc', 'b').boundingBox())!), 20);
+  await page.waitForTimeout(400);
+  await expect(page.locator('.react-flow__edge')).toHaveCount(1);
+  await expect.poll(async () => (await (await page.request.get('/api/stage')).json()).wires.length).toBe(1);
+});
+
 test('screenshots and frame rate', async ({ page }, info) => {
   await page.waitForTimeout(500);
   await page.screenshot({ path: '.shots/1-fit.png' });
