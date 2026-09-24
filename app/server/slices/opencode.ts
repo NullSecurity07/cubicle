@@ -10,6 +10,7 @@ import { fakeEngine } from '../opencode/fake.ts';
 import { coderHealth, createOpencodeServer, findBin, NOT_INSTALLED } from '../opencode/server.ts';
 import { createCoder, type Coder } from '../opencode/session.ts';
 import { wired } from '../prompt.ts';
+import { patchStageVia } from '../slice-kit.ts';
 import { text, type Tool, type ToolContext } from '../tools/registry.ts';
 import { cardLog, GRAPH_HINT, graphJson, mcpCommand } from './graph.ts';
 
@@ -101,10 +102,11 @@ export default {
     coderHealth.now = () => ({ ...engine.health(), bin });
 
     // The session lives on the card in the saved stage, so the same conversation carries on after a restart.
+    // Through the one stage queue, so a map finishing at the same moment does not save a copy without this.
     async function remember(cardId: string, session: string) {
-      const stage = await deps.store.loadStage();
-      if (!projects(stage).some((one) => one.id === cardId)) return;
-      await deps.store.saveStage({ ...stage, cards: (stage.cards ?? []).map((one) => (one.id === cardId && one.kind === 'project' ? { ...one, session: session || undefined } : one)) });
+      await patchStageVia(deps.store, (stage) => {
+        stage.cards = (stage.cards ?? []).map((one) => (one.id === cardId && one.kind === 'project' ? { ...one, session: session || undefined } : one));
+      });
     }
     // A folder Graphify has mapped: the coder reads that map through Graphify's own tools, told so in one sentence.
     async function map(dir: string) {

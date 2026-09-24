@@ -11,6 +11,7 @@ import { projectDir } from '../folder.ts';
 import type { Deps, Slice } from '../install.ts';
 import { wired } from '../prompt.ts';
 import { childEnv } from '../safety/env.ts';
+import { patchStageVia } from '../slice-kit.ts';
 import type { Tool, ToolContext } from '../tools/registry.ts';
 
 // The map of a code folder, made by Graphify: every file, function and class, what calls and imports what, and the
@@ -339,10 +340,11 @@ export default {
     const run = deps.fake ? fakeRunner : spawnRunner(() => findTool('graphify'));
     const ready = () => (deps.fake || findTool('graphify') ? null : NOT_HERE);
     // The map's counts go onto the card, the way the coder's session does, so they are there after a restart.
+    // Through the one stage queue, so a coder session saved at the same moment does not save a copy without this.
     async function keep(cardId: string, mark: GraphMark) {
-      const stage = await deps.store.loadStage();
-      if (!projects(stage).some((one) => one.id === cardId)) return;
-      await deps.store.saveStage({ ...stage, cards: (stage.cards ?? []).map((one) => (one.id === cardId && one.kind === 'project' ? { ...one, graph: mark } : one)) });
+      await patchStageVia(deps.store, (stage) => {
+        stage.cards = (stage.cards ?? []).map((one) => (one.id === cardId && one.kind === 'project' ? { ...one, graph: mark } : one));
+      });
     }
     const maps = createMaps({ workspace: deps.workspace, forbidden, run, ready, keep });
     const cardOf = async (cardId: string) => projects(await deps.store.loadStage()).find((one) => one.id === cardId);

@@ -19,6 +19,7 @@ import { createApi, createPoller } from '../reach/telegram.ts';
 import { createTopics } from '../reach/topics.ts';
 import { createUpdates } from '../reach/updates.ts';
 import { ffmpeg, fakeFfmpeg, oggOf, samplesOf, sayable } from '../reach/voicenotes.ts';
+import { patchStageVia } from '../slice-kit.ts';
 import { text, type Tool } from '../tools/registry.ts';
 
 const SPOKEN = 12;
@@ -69,11 +70,15 @@ export default {
 
     // A voice the app cast under an older, looser rule is cast again under today's, once, as the app starts: people
     // were once handed D-grade voices by the luck of their id. A voice the founder picked is theirs and stays.
-    await deps.store.loadStage().then(async (stage) => {
+    // Through the one stage queue, like every other change a slice makes to the stage.
+    let cast: ReturnType<typeof recast>['changed'] = [];
+    await patchStageVia(deps.store, (stage) => {
       const { rooms, changed } = recast(stage.rooms, VOICES);
       if (!changed.length) return;
-      await deps.store.saveStage({ ...stage, rooms });
-      console.log(`[reach] cast better voices: ${changed.map((one) => `${one.name} ${one.from} to ${one.to}`).join(', ')}`);
+      stage.rooms = rooms;
+      cast = changed;
+    }).then(() => {
+      if (cast.length) console.log(`[reach] cast better voices: ${cast.map((one) => `${one.name} ${one.from} to ${one.to}`).join(', ')}`);
     }).catch(() => {});
 
     const phone = createPhone({
@@ -184,14 +189,17 @@ export default {
 
     // A person's own voice, written down on them the first time it is needed. Working it out again every time would
     // be the same answer, but writing it down is what holds it still while the founder adds and removes people.
+    // Written through the one stage queue, so it cannot save over a change made in the same moment.
     async function voiceOf(roomId: string): Promise<string> {
-      const stage = await deps.store.loadStage();
-      const room = stage.rooms.find((one) => one.id === roomId);
-      if (!room) return DEFAULT_VOICE;
-      if (isVoice(room.voice)) return room.voice;
-      const given = voiceFor(room, stage.rooms, VOICES);
-      const mine = { ...room, gender: room.gender ?? guessGender(room.name), voice: given, voiceBy: 'cast' as const };
-      await deps.store.saveStage({ ...stage, rooms: stage.rooms.map((one) => (one.id === room.id ? mine : one)) }).catch(() => {});
+      let given = DEFAULT_VOICE;
+      await patchStageVia(deps.store, (stage) => {
+        const room = stage.rooms.find((one) => one.id === roomId);
+        if (!room) return;
+        if (isVoice(room.voice)) { given = room.voice; return; }
+        given = voiceFor(room, stage.rooms, VOICES);
+        const mine = { ...room, gender: room.gender ?? guessGender(room.name), voice: given, voiceBy: 'cast' as const };
+        stage.rooms = stage.rooms.map((one) => (one.id === room.id ? mine : one));
+      }).catch(() => {});
       return given;
     }
 
