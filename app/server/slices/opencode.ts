@@ -87,6 +87,7 @@ export default {
     const forbidden = [deps.workspace, deps.root];
     const bin = findBin();
     const engine = deps.fake ? fakeEngine() : createOpencodeServer({ bin, env: process.env, home: () => writeCoderHome({ workspace: deps.workspace, env: process.env }) });
+    const healthBefore = coderHealth.now;
     coderHealth.now = () => ({ ...engine.health(), bin });
 
     // The session lives on the card in the saved stage, so the same conversation carries on after a restart.
@@ -115,7 +116,7 @@ export default {
       const { lines, state, permission, waiting, session, model } = coder.snapshot(id);
       return { channel: coderChannel(id), data: { lines, state, permission: permission ?? null, waiting, session, model } satisfies CoderEvent };
     });
-    hub.opening.push(opening);
+    const unopen = hub.open(opening);
 
     const cardOf = async (cardId: string) => projects(await deps.store.loadStage()).find((one) => one.id === cardId);
 
@@ -168,8 +169,8 @@ export default {
       },
       async close() {
         cardLog.add = logBefore;
-        const at = hub.opening.indexOf(opening);
-        if (at >= 0) hub.opening.splice(at, 1);
+        coderHealth.now = healthBefore;
+        unopen();
         await engine.stop();
       },
     };

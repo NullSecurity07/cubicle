@@ -136,15 +136,13 @@ export default {
       };
     }
 
-    deps.attention.watch((list) => { void phone.show(list).catch(() => {}); });
-    deps.seams.on('turn:before', async (payload, next) => {
+    const off = [deps.attention.watch((list) => { void phone.show(list).catch(() => {}); }), deps.seams.on('turn:before', async (payload, next) => {
       sources.set(payload.roomId, payload.source);
       // The founder writing again *is* the answer to whatever this person asked them, so the question stops waiting.
       const open = payload.source === 'chat' ? asks.get(payload.roomId) : undefined;
       if (open) { asks.delete(payload.roomId); deps.approvals.answer(open.id, { ok: false }); void deps.attention.clear(open.attentionId); }
       return next(payload);
-    });
-    deps.seams.on('turn:after', async (payload, next) => { sources.delete(payload.roomId); return next(payload); });
+    }), deps.seams.on('turn:after', async (payload, next) => { sources.delete(payload.roomId); return next(payload); })];
 
     const askFounder: Tool = {
       name: 'ask_founder',
@@ -378,6 +376,7 @@ export default {
       async close() {
         await poller.close();
         unwatch();
+        for (const stop of off) stop();
         await outbox.settled();
         await book.settled();
         await reach.settled();

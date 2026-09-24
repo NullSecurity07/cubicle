@@ -7,7 +7,7 @@ import type { Slice } from '../install.ts';
 import { createOutreach, fakeRunner, outreachEnv, uvxRunner } from '../leads/openoutreach.ts';
 import { isStage, leadsFor, type Leads } from '../leads/store.ts';
 import { wired } from '../prompt.ts';
-import type { Handler } from '../seams.ts';
+import { withSystem, type Handler } from '../seams.ts';
 import { text, type Tool, type ToolContext } from '../tools/registry.ts';
 
 // The Leads card: the founder's list of people to sell to, a light CRM on the stage. People wired to it add, score,
@@ -125,15 +125,14 @@ export default {
 
     // A window that opens late gets every leads card's list at once.
     const opening = async () => Promise.all((await onStage()).map(async (id) => ({ channel: leadsChannel(id), data: await leads.read(id) })));
-    hub.opening.push(opening);
+    const unopen = hub.open(opening);
 
     // A person wired to a Leads card is told it is there, in one line, beside the other cards they can reach.
     const before: Handler<'turn:before'> = async (payload, next) => {
-      const [system, ...rest] = payload.messages;
-      if (system?.role !== 'system') return next(payload);
+      if (payload.messages[0]?.role !== 'system') return next(payload);
       const stage = await deps.store.loadStage().catch(() => null);
       if (!stage || !wired(stage, payload.roomId, cardsOf(stage)).length) return next(payload);
-      return next({ ...payload, messages: [{ ...system, content: `${system.content}\n\n${HINT}` }, ...rest] });
+      return next(withSystem(payload, HINT));
     };
     // An email the founder said yes to, to somebody on a wired Leads card, is the founder contacting them.
     const after: Handler<'tool:after'> = async (payload, next) => {
@@ -190,8 +189,7 @@ export default {
       },
       async close() {
         for (const stop of off) stop();
-        const at = hub.opening.indexOf(opening);
-        if (at >= 0) hub.opening.splice(at, 1);
+        unopen();
         await leads.settled();
       },
     };

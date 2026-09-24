@@ -518,8 +518,12 @@ export default {
       ...(deps.fake ? { http: fakeSite, resolveHost: async () => [] } : {}),
       save: (name, text) => deps.store.writeFile(name, text),
     };
-    deps.attention.source(watchAttention(watches, deps));
+    // The attention book has no way to take a source off again (attention.ts), so a closed crawl reports nothing.
+    let closed = false;
+    const report = watchAttention(watches, deps);
+    deps.attention.source(async () => (closed ? [] : report()));
     return {
+      async close() { closed = true; },
       tools: crawlTools(options, watches),
       // Every half minute, at most one page read. Never in fake mode, and never while the app is closed.
       async tick() { await checkOne(watches, deps, options); },

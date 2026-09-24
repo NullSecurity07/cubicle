@@ -22,7 +22,15 @@ const boardsOn = (stage: Stage) => new Set((stage.cards ?? []).filter((card) => 
 // The same trick the library uses to ask the frameworks whether a note is held: one small handle both sides share.
 // `opening` is what an extra says to a window the moment it joins, the way a board card's tasks are: a card whose
 // window opened late is whole without waiting for the next thing to happen.
-export const hub: { say: (channel: string, data: unknown) => void; opening: (() => Promise<{ channel: string; data: unknown }[]>)[] } = { say: () => {}, opening: [] };
+type Opening = () => Promise<{ channel: string; data: unknown }[]>;
+// `open` adds one and hands back the way to take it off again, so a slice's `close` is one call.
+export const hub: { say: (channel: string, data: unknown) => void; opening: Opening[]; open(fn: Opening): () => void } = {
+  say: () => {}, opening: [],
+  open(fn) {
+    hub.opening.push(fn);
+    return () => { const at = hub.opening.indexOf(fn); if (at >= 0) hub.opening.splice(at, 1); };
+  },
+};
 
 export function createEvents(deps: Deps) {
   const windows = new Set<(envelope: Envelope) => void>();

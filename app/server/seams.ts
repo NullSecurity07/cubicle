@@ -57,3 +57,11 @@ export function createSeams(onError: (name: SeamName, error: Error) => void = ()
     },
   };
 }
+
+// A few more words at the end of the system prompt, the way the library, the leads and the coding hint add theirs.
+// A payload whose first message is not the system prompt is handed back as it came.
+export function withSystem<P extends { messages: ModelMessage[] }>(payload: P, extra: string): P {
+  const [system, ...rest] = payload.messages;
+  if (system?.role !== 'system' || !extra) return payload;
+  return { ...payload, messages: [{ ...system, content: `${system.content}\n\n${extra}` }, ...rest] };
+}

@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 import { NO_UNDO_LINE, UNDO_LINE } from '../../shared/safety.ts';
 import { projectDir } from '../folder.ts';
-import { wired } from '../prompt.ts';
+import { wiredProject } from '../opencode/cards.ts';
 import { checkCall } from '../safety/blocks.ts';
 import { createCheckpoints } from '../safety/checkpoints.ts';
 import { redact, secretValues } from '../safety/keys.ts';
@@ -32,15 +32,12 @@ export default {
     // folder that is not there: no snapshot, and the receipt says the step cannot be undone.
     async function folderFor(roomId: string): Promise<string | null> {
       try {
-        const stage = await deps.store.loadStage();
-        const cards = (stage.cards ?? []).filter((one) => one.kind === 'project');
-        const [id] = wired(stage, roomId, cards.map((one) => one.id));
-        const card = cards.find((one) => one.id === id);
-        return card && card.kind === 'project' ? projectDir(card.path, [deps.workspace, deps.root]) : null;
+        const card = wiredProject(await deps.store.loadStage(), roomId);
+        return card ? projectDir(card.path, [deps.workspace, deps.root]) : null;
       } catch { return null; }
     }
 
-    deps.seams.on('tool:before', async (payload, next) => {
+    const off = [deps.seams.on('tool:before', async (payload, next) => {
       const { call } = payload;
       held.set(call.id, { roomId: payload.roomId, name: call.name, args: call.args });
       for (const old of [...held.keys()].slice(0, Math.max(0, held.size - CALLS_HELD))) held.delete(old);
@@ -55,7 +52,7 @@ export default {
       // another extra still ends the step: nothing the founder allowed in advance can outvote a no.
       const allowed = await rules.allows(payload.roomId, call.name, call.args).catch(() => false);
       return next(allowed ? { ...payload, approved: true } : payload);
-    });
+    }),
 
     deps.seams.on('tool:after', async (payload, next) => {
       const { event } = payload;
@@ -66,9 +63,10 @@ export default {
         result = `${result ?? ''}\n\n${saved ? UNDO_LINE : NO_UNDO_LINE}`.trim();
       }
       return next({ ...payload, event: { ...event, ...(result === event.result ? {} : { result }) } });
-    });
+    })];
 
     return {
+      async close() { for (const stop of off) stop(); },
       async route(req, res, path) {
         const rule = /^\/api\/safety\/rules(?:\/([\w-]{1,80}))?$/.exec(path);
         if (rule && !rule[1] && req.method === 'GET') { deps.json(res, 200, await rules.list()); return true; }

@@ -2,7 +2,7 @@ import type { Card } from '../../shared/model.ts';
 import type { Slice } from '../install.ts';
 import { noteOf, notesBlock, NOTE_FLOOR, TOP_CHUNKS } from '../library/notes.ts';
 import { wired } from '../prompt.ts';
-import type { Handler } from '../seams.ts';
+import { withSystem, type Handler } from '../seams.ts';
 import { sharedLibrary } from '../slice-kit.ts';
 
 // The founder's library: the notes they learn from, kept as files, and the passages of them a person is given when
@@ -18,8 +18,7 @@ export default {
 
     // Every note wired to this person, each asked what it has to say about the question, best passages first.
     const before: Handler<'turn:before'> = async (payload, next) => {
-      const [system, ...rest] = payload.messages;
-      if (system?.role !== 'system' || !payload.query.trim()) return next(payload);
+      if (payload.messages[0]?.role !== 'system' || !payload.query.trim()) return next(payload);
       const stage = await deps.store.loadStage().catch(() => null);
       if (!stage) return next(payload);
       const cards = (stage.cards ?? []).filter((card): card is Card & { kind: 'library' } => card.kind === 'library');
@@ -36,13 +35,14 @@ export default {
       }
       const block = notesBlock(found);
       if (!block) return next(payload);
-      return next({ ...payload, messages: [{ ...system, content: `${system.content}\n\n${block}` }, ...rest] });
+      return next(withSystem(payload, block));
     };
     // A check script hands round stub deps with no seams in them; the routes still work, and half a feature is
     // better than a slice that refuses to install.
-    if (deps.seams) deps.seams.on('turn:before', before);
+    const off = deps.seams ? deps.seams.on('turn:before', before) : () => {};
 
     return {
+      async close() { off(); },
       async route(req, res, path) {
         if (!path.startsWith('/api/library')) return false;
         const method = req.method ?? 'GET';

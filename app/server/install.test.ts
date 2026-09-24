@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Stage } from '../shared/model.ts';
+import { hub } from './events.ts';
 import { installSlices, lateRuns, loadSlices, type Deps, type Installed, type Runs, type Slice } from './install.ts';
 import { stubDeps } from './slice-stubs.ts';
 import type { Tool } from './tools/registry.ts';
@@ -168,13 +169,25 @@ describe('slices', () => {
     const said: string[] = [];
     const onError = (name: string, error: Error) => { said.push(`${name}: ${error.message}`); };
     const scratch = await mkdtemp(join(tmpdir(), 'slices-real-'));
-    const extras = await installSlices(await loadSlices(dir, onError), stubDeps(scratch, resolve(import.meta.dirname, '../..')), onError);
+    const deps = stubDeps(scratch, resolve(import.meta.dirname, '../..'));
+    // Every seam handler and window opening a slice adds, counted, so closing can be seen to take each one off again.
+    let seamsOn = 0;
+    const on = deps.seams.on.bind(deps.seams);
+    deps.seams.on = ((name, handler) => { seamsOn += 1; const off = on(name, handler); return () => { seamsOn -= 1; off(); }; }) as typeof deps.seams.on;
+    const openings = hub.opening.length;
+    const extras = await installSlices(await loadSlices(dir, onError), deps, onError);
+    let closed = false;
     try {
       expect(said).toEqual([]);
       expect(extras.names).toHaveLength(files.length);
       const names = extras.tools.map((one) => one.name);
       expect(names.filter((name, at) => names.indexOf(name) !== at)).toEqual([]);
       expect(names.length).toBeGreaterThan(20);
-    } finally { await extras.close(); }
+      expect(seamsOn).toBeGreaterThan(5);
+      await extras.close();
+      closed = true;
+      expect(seamsOn).toBe(0);
+      expect(hub.opening.length).toBe(openings);
+    } finally { if (!closed) await extras.close(); }
   }, 30_000);
 });

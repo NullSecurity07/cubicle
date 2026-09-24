@@ -39,15 +39,14 @@ export default {
     });
     const running = mirror;
     const opening = async () => [{ channel: TWENTY_CHANNEL, data: running.status() }];
-    hub.opening.push(opening);
+    const unopen = hub.open(opening);
     console.log(`Twenty: connected to ${config.url}; leads are mirrored there every half minute.`);
 
     return {
       route,
       tick: () => running.sync(),
       async close() {
-        const at = hub.opening.indexOf(opening);
-        if (at >= 0) hub.opening.splice(at, 1);
+        unopen();
       },
     };
   },
