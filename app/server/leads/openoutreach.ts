@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseEnv } from 'node:util';
 import { childEnv } from '../safety/env.ts';
-import { findTool } from '../slices/graph.ts';
+import { findTool } from '../opencode/graph-kit.ts';
 import type { LeadInput } from './store.ts';
 
 // OpenOutreach, a lead finder the founder runs on this machine through uvx. It is GPL and stays a separate program:

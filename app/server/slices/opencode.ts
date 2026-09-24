@@ -1,38 +1,26 @@
 import { existsSync } from 'node:fs';
-import { basename } from 'node:path';
 import { coderChannel, type CoderEvent } from '../../shared/coder.ts';
-import type { Card, Stage } from '../../shared/model.ts';
 import { hub } from '../events.ts';
-import { projectDir } from '../folder.ts';
 import type { Deps, Slice } from '../install.ts';
+import { projects, refOf, wiredProject } from '../opencode/cards.ts';
 import { graphMcp, writeCoderHome } from '../opencode/config.ts';
 import { fakeEngine } from '../opencode/fake.ts';
+import { cardLog, GRAPH_HINT, graphJson, mcpCommand } from '../opencode/graph-kit.ts';
 import { coderHealth, createOpencodeServer, findBin, NOT_INSTALLED } from '../opencode/server.ts';
 import { createCoder, type Coder } from '../opencode/session.ts';
-import { wired } from '../prompt.ts';
 import { patchStageVia } from '../slice-kit.ts';
 import { text, type Tool, type ToolContext } from '../tools/registry.ts';
-import { cardLog, GRAPH_HINT, graphJson, mcpCommand } from './graph.ts';
 
 // The coder card: a running OpenCode in one project folder, driven by the founder from the card or by any person
 // wired to it. One server for the whole app, one lasting session per card, every step on the card as it happens.
-type Project = Extract<Card, { kind: 'project' }>;
-const projects = (stage: Stage) => (stage.cards ?? []).filter((card): card is Project => card.kind === 'project');
-const nameOf = (card: Project) => basename(card.path.trim().replace(/\/+$/, '')) || 'Project';
 const NO_CARD = 'no coder card is connected to your room. Ask the founder to add one from the dock (More cards, then Coder), set its folder and draw a wire to it.';
 
-// The card as the coder needs it: the folder checked, its name, and whatever session and model the stage holds.
-const refOf = (card: Project, forbidden: string[]) => ({ id: card.id, dir: projectDir(card.path, forbidden), name: nameOf(card), session: card.session, model: card.model });
 
 // What a wired person may do with the coder. Starting work and following it up wait for the founder's yes, with the
 // words editable; stopping and looking never do. `ready` refuses the two that start work on a machine with no opencode,
 // before the founder is asked and before the safety net copies the folder: both would be for nothing.
 export function coderTools(coder: Coder, forbidden: string[], ready: () => string | null = () => null): Tool[] {
-  const cardFor = (context: ToolContext) => {
-    const cards = projects(context.stage);
-    const [id] = wired(context.stage, context.roomId, cards.map((one) => one.id));
-    return cards.find((one) => one.id === id);
-  };
+  const cardFor = (context: ToolContext) => wiredProject(context.stage, context.roomId);
   const need = (context: ToolContext) => { const card = cardFor(context); if (!card) throw new Error(NO_CARD); return card; };
   const who = (context: ToolContext) => context.stage.rooms.find((one) => one.id === context.roomId)?.name;
   const folder = (context: ToolContext) => cardFor(context)?.path || '(no folder set)';
