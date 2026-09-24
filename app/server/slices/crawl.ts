@@ -320,20 +320,34 @@ export function diffOf(before: string, after: string, most = 3): string {
 const sameUrl = (one: string, other: string) => { try { return keyOf(webUrl(one)) === keyOf(webUrl(other)) && new URL(webUrl(one)).search === new URL(webUrl(other)).search; } catch { return one.trim() === other.trim(); } };
 
 export function createWatches(dir: string) {
-  const fileOf = (roomId: string) => join(dir, `${roomId.replace(/[^\w-]/g, '_')}.json`);
+  const keyOf = (roomId: string) => roomId.replace(/[^\w-]/g, '_');
+  const fileOf = (key: string) => join(dir, `${key}.json`);
+  // Every watch, read from disk once and then kept here: the half-minute tick and the "needs you" list both ask for
+  // all of them, and only this ever writes them. Callers are handed copies, so nothing changes the table but `change`.
+  let table: Promise<Map<string, Watch[]>> | null = null;
+  const load = () => (table ??= (async () => {
+    const files = (await readdir(dir).catch(() => [] as string[])).filter((one) => one.endsWith('.json'));
+    const read = await Promise.all(files.map(async (one) => [one.slice(0, -5), await readFile(join(dir, one), 'utf8').then((body) => JSON.parse(body) as Watch[], () => [])] as const));
+    return new Map(read);
+  })());
+  const copy = (list: Watch[]) => list.map((one) => ({ ...one }));
+  const read = async (roomId: string): Promise<Watch[]> => copy((await load()).get(keyOf(roomId)) ?? []);
+  const write = async (key: string, list: Watch[]) => { await mkdir(dir, { recursive: true }); await writeFile(`${fileOf(key)}.tmp`, JSON.stringify(list, null, 2)); await rename(`${fileOf(key)}.tmp`, fileOf(key)); };
   let queue: Promise<unknown> = Promise.resolve();
-  const read = async (roomId: string): Promise<Watch[]> => { try { return JSON.parse(await readFile(fileOf(roomId), 'utf8')) as Watch[]; } catch { return []; } };
-  const write = async (roomId: string, list: Watch[]) => { await mkdir(dir, { recursive: true }); await writeFile(`${fileOf(roomId)}.tmp`, JSON.stringify(list, null, 2)); await rename(`${fileOf(roomId)}.tmp`, fileOf(roomId)); };
-  // One change at a time, so a tick and a tool never write over each other.
+  // One change at a time, so a tick and a tool never write over each other. The table changes only once the file has.
   const change = <T>(roomId: string, edit: (list: Watch[]) => T | Promise<T>): Promise<T> => {
-    const job = queue.then(async () => { const list = await read(roomId); const out = await edit(list); await write(roomId, list); return out; });
+    const job = queue.then(async () => {
+      const key = keyOf(roomId);
+      const list = await read(roomId);
+      const out = await edit(list);
+      await write(key, list);
+      (await load()).set(key, copy(list));
+      return out;
+    });
     queue = job.catch(() => {});
     return job;
   };
-  async function all(): Promise<Watch[]> {
-    const files = await readdir(dir).catch(() => [] as string[]);
-    return (await Promise.all(files.filter((one) => one.endsWith('.json')).map((one) => readFile(join(dir, one), 'utf8').then((body) => JSON.parse(body) as Watch[], () => [])))).flat();
-  }
+  const all = async (): Promise<Watch[]> => [...(await load()).values()].flatMap(copy);
   return { read, all, change, settled: () => queue };
 }
 export type Watches = ReturnType<typeof createWatches>;

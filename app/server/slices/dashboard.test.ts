@@ -15,7 +15,7 @@ import { fakeClient, type ModelClient } from '../providers.ts';
 import { createSkills } from '../skills.ts';
 import { createStore } from '../store.ts';
 import { createUsage } from '../usage.ts';
-import slice, { fileCache, localDay } from './dashboard.ts';
+import slice, { fileCache, localDay, readTeams } from './dashboard.ts';
 
 const root = resolve(import.meta.dirname, '../../..');
 const NOW = Date.now();
@@ -185,5 +185,21 @@ describe('the file cache', () => {
     expect(await read(join(dir, 'missing.json'), ['none'])).toEqual(['none']);
     await writeFile(join(dir, 'bad.json'), '{');
     expect(await read(join(dir, 'bad.json'), 'fallback')).toBe('fallback');
+  });
+});
+
+describe('readTeams', () => {
+  it('reads each framework and only its newest run, through the file cache', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'teams-'));
+    const at = join(workspace, 'frameworks', 'pitch-team');
+    await mkdir(join(at, 'runs'), { recursive: true });
+    await writeFile(join(at, 'framework.json'), JSON.stringify({ name: 'Pitch team', scorecard: { mean: 0.5, at: 1, cases: 2 } }));
+    const run = (when: number, mean: number) => ({ at: when, mean, cases: [{ id: 'a', scores: { x: mean } }] });
+    await writeFile(join(at, 'runs', '2026-09-01T10-00-00-000Z.json'), JSON.stringify(run(1, 0.4)));
+    await writeFile(join(at, 'runs', '2026-09-20T10-00-00-000Z.json'), JSON.stringify(run(2, 0.8)));
+    const stage = { rooms: [{ id: 'r1', name: 'Ana', framework: { id: 'pitch-team' } }] } as unknown as Stage;
+    const read = fileCache();
+    const [team] = await readTeams(workspace, root, stage, read);
+    expect(team).toMatchObject({ id: 'pitch-team', name: 'Pitch team', builtIn: false, placed: true, placedRoomId: 'r1', lastEval: { mean: 0.8, at: 2, of: 1 } });
   });
 });
