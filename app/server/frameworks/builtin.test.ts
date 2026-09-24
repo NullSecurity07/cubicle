@@ -110,8 +110,8 @@ type Box = { x: number; y: number; w: number; h: number };
 const overlap = (one: Box, other: Box) => one.x < other.x + other.w && other.x < one.x + one.w && one.y < other.y + other.h && other.y < one.y + one.h;
 
 describe('every built-in framework', () => {
-  it('ships the three teams', async () => {
-    expect(await builtIns()).toEqual(['launch-team', 'pitch-practice', 'startup-evaluation']);
+  it('ships the four teams', async () => {
+    expect(await builtIns()).toEqual(['due-diligence', 'launch-team', 'pitch-practice', 'startup-evaluation']);
   });
 
   it('is named by its folder, and gives every person a name, a colour and a brief the forge would accept', async () => {
@@ -227,5 +227,41 @@ describe('pitch practice', () => {
         expect(room.brief, `${room.role}: ${words}`).toContain(words);
       }
     }
+  });
+});
+
+describe('due diligence', () => {
+  it('profiles the company, reads the people, finds the risks and writes the brief, and says so in one line', async () => {
+    const framework = await loadOne('due-diligence');
+    expect(framework.rooms.map((room) => room.role)).toEqual(['Company profiler', 'People reader', 'Risk finder', 'Brief writer']);
+    expect(sizeLine(framework)).toBe('4 people · 2 docs · 1 sticky note · 1 note · 1 browser');
+    expect(framework.docs.map((doc) => doc.title)).toEqual(['Profile', 'Brief']);
+    for (const heading of ['## Company', '## People', '## Risks', '## Sources']) expect(framework.docs[0].text).toContain(heading);
+    for (const heading of ['## Verdict', '## Five facts', '## Three questions to ask', '## One risk to watch', '## Sources']) expect(framework.docs[1].text).toContain(heading);
+    const target = framework.cards.find((card) => card.kind === 'note');
+    expect(target && 'text' in target && target.text).toContain('Who:');
+  });
+
+  it('links every line, says not found rather than guessing, and will not brief from an empty profile', async () => {
+    const [profiler, people, risks, writer] = (await loadOne('due-diligence')).rooms.map((room) => room.brief);
+    for (const brief of [profiler, people, risks, writer]) expect(brief).toContain('Reading a company from outside');
+    for (const brief of [profiler, people]) { expect(brief).toContain('not found'); expect(brief).toContain('link'); }
+    expect(profiler).toContain('read_feed');
+    expect(profiler).toContain('never guess');
+    expect(people).toContain('meeting-brief');
+    expect(people).toContain('read_youtube');
+    expect(risks).toContain('read_reddit');
+    expect(risks).toContain('contract-review');
+    for (const word of ['SURVIVABLE', 'NOT SURVIVABLE']) expect(risks).toContain(word);
+    for (const word of ['GO', 'GO WITH CONDITIONS', 'PASS', 'refuse']) expect(writer).toContain(word);
+  });
+
+  it('wires the target to everybody, the three to the profile, the writer to them all and the browser to the two who look', async () => {
+    const framework = await loadOne('due-diligence');
+    const wired = new Set(framework.wires.map((wire) => `${wire.from}>${wire.to}`));
+    for (const room of framework.rooms) for (const pair of [`target>${room.key}`, `reading>${room.key}`, `${room.key}>profile`]) expect(wired.has(pair), pair).toBe(true);
+    for (const pair of ['writer>brief', 'writer>profiler', 'writer>people', 'writer>risks', 'profiler>browser', 'risks>browser']) expect(wired.has(pair), pair).toBe(true);
+    expect(wired.has('people>brief')).toBe(false);
+    expect(framework.dataset.find((held) => held.keys.includes('writer'))?.rubric).toContain('Refuses');
   });
 });
