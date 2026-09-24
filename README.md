@@ -68,6 +68,19 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   is said to the clip model in words. The critic takes a close-up off a wide lens, breaks three shots in a row of
   one size, and turns an orbit asked of a still into the nearest move a still can make, and says so on the card.
   A lens is said in the picture's words as focus and distance, never as anybody's name.
+- **Notes, not a new film** (2026-09-24): a finished film keeps a record beside it, `<film>.film.json`: the
+  storyboard it was rendered from, every shot's picture in the parts folder with a hash of what made it, and where
+  each line sits in the one reading. Write notes under the film — "drop shot 2, trim shot 3 to 4 seconds, swap the
+  picture in shot 5 for the office" — and press **Edit**. The plain notes are read without asking anybody; the rest
+  go to one small model call that may answer only with the eleven edits the studio knows (trim, drop, move, a new
+  picture, a new line, new words on screen, pace, look, music, captions, voice). A note it cannot read comes back as
+  "I could not read", and nothing is guessed. Then only what the notes touch is made again: a kept line is cut out
+  of the old reading with its own breath and word timings, a new line is said on its own and laid in, a picture is
+  drawn again only when the note asks for one or the look changes, and the bed is kept unless the music changed or
+  the film moved by more than a tenth. The card says what it kept ("kept 6 of 8 pictures, 7 of 8 lines; drew 2
+  pictures, said 1 line"), and the new version lands beside the old one as `<film>-v2.mp4` with its own parts,
+  `.mlt`, record and credits line. A trimmed shot never cuts its line short: it holds for the line and says so.
+  People wired to the studio have the same thing as `edit_video`.
 - **A director, not a form** (2026-09-19): every picker on the card starts on **Auto**, and a brief on its own is
   enough. The studio reads what the brief actually asks for — what it is for, who is watching, how long, how fast,
   what it should sound like, whether somebody is on camera — then decides an angle, a hook and one line of visual

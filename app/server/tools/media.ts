@@ -238,5 +238,37 @@ export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = ()
       const project = made.mlt ? ` It is also at ${made.mlt} as tracks for Shotcut or Kdenlive, with its pictures and sound beside it.` : '';
       return { text: `Made the film.${project}\n\n[${made.prompt.replace(/[[\]]/g, '')}](/api/files/${made.path})`, effect: { kind: 'media-made', id: card.id } };
     },
+  }, {
+    name: 'edit_video',
+    perTurn: 1,
+    description: 'Give notes on a finished film in the video studio connected to your room, and get a new version that changes only what the notes touch. '
+      + 'Write the notes as a founder would say them: "drop shot 2", "trim shot 3 to 4 seconds", "swap the picture in shot 5 for a quiet office", '
+      + 'shot 4 should say "the new line, word for word", "move shot 5 before shot 2", "make it faster", "use the documentary look", "no music", "captions off". '
+      + 'Shots are numbered from 1 in the order the film shows them. Pictures, lines and music the notes do not touch are kept, so this takes a fraction of a new film. '
+      + 'A note the studio cannot read comes back as unread; nothing is guessed. The film is saved as a new file beside the old one.',
+    parameters: {
+      type: 'object',
+      properties: {
+        notes: { type: 'string', description: 'What to change, in plain words, one note after another' },
+        film: { type: 'string', description: 'The film to edit, as the path generate_video or edit_video gave you; the newest film on the card when left out' },
+      },
+      required: ['notes'],
+    },
+    ready: () => media.ready('videogen'),
+    async run(args, context) {
+      const card = studio(context, 'videogen');
+      if (!card) throw new Error('no video studio is connected to your room. Ask the founder to add one from the dock and draw a wire to it.');
+      const notes = text(args, 'notes', 1200).trim();
+      if (!notes) throw new Error('say what to change in "notes"');
+      const named = typeof args.film === 'string' ? args.film.trim().replace(/^\/?api\/files\//, '') : '';
+      const results = (await media.read(card.id)).results.filter((one) => one.film);
+      const film = named || results[0]?.path;
+      if (!film) throw new Error('there is no finished film on the video studio to give notes on yet; make one with generate_video first');
+      const made = await media.make(card, { prompt: notes, edit: film }, { signal: context.signal });
+      return {
+        text: `Made ${made.path.split('/').pop()}, edited from ${film.split('/').pop()}.\n\n[${notes.replace(/[[\]]/g, '').slice(0, 80)}](/api/files/${made.path})`,
+        effect: { kind: 'media-made', id: card.id },
+      };
+    },
   }];
 }

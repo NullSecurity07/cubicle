@@ -287,9 +287,20 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
   const voices = useVoices();
   const [shown, setShown] = useState(0);
   const [over, setOver] = useState(false);
+  const [notes, setNotes] = useState('');
   const log = useRef<HTMLDivElement>(null);
   const brief = data.brief ?? '';
   const film = media.results[shown] ?? media.results[0];
+  // Every version of the film on show, the first one first: the notes that made each are what it is called.
+  const root = film?.edited?.root ?? film?.path;
+  const versions = root ? media.results.filter((one) => one.path === root || one.edited?.root === root).sort((a, b) => (a.edited?.version ?? 1) - (b.edited?.version ?? 1)) : [];
+  // Notes on the film on show: only what they touch is made again, and the new version lands beside it.
+  const reedit = () => {
+    if (!film?.film || !notes.trim() || making) return;
+    setShown(0);
+    void make({ prompt: notes.trim(), edit: film.path });
+    setNotes('');
+  };
   const assets = media.assets ?? [];
   const shoot = () => {
     if (!brief.trim() || making) return;
@@ -355,10 +366,11 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
           )}
           {!film && !making && <p className="chat__empty">{hint ?? 'Say what the film is about and press Make. It is storyboarded, drawn, narrated and rendered here, which takes a few minutes.'}</p>}
         </div>
-        {media.results.length > 1 && (
+        {/* The films made from a brief. A version made from notes is listed under its own film, not here. */}
+        {media.results.filter((one) => !one.edited).length > 1 && (
           <div className="studio__takes nowheel" aria-label="Made earlier">
-            {media.results.map((one, index) => (
-              <button key={one.path} type="button" className={index === shown ? 'is-shown' : undefined} title={one.prompt} onClick={() => setShown(index)}>{one.prompt}</button>
+            {media.results.filter((one) => !one.edited).map((one) => (
+              <button key={one.path} type="button" className={one.path === root ? 'is-shown' : undefined} title={one.prompt} onClick={() => setShown(media.results.indexOf(one))}>{one.prompt}</button>
             ))}
           </div>
         )}
@@ -370,6 +382,27 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
           </div>
         )}
         {film?.mlt && !making && <p className="studio__note">Also an .mlt for Shotcut or Kdenlive.</p>}
+        {versions.length > 1 && !making && (
+          <div className="studio__versions nowheel" aria-label="Versions of this film">
+            {versions.map((one) => (
+              <button key={one.path} type="button" className={one.path === film?.path ? 'is-shown' : undefined} title={one.edited?.notes ?? one.prompt}
+                onClick={() => setShown(media.results.indexOf(one))}>
+                {one.edited ? <><b>v{one.edited.version}</b> {one.edited.notes}</> : <><b>First cut</b> {one.prompt}</>}
+              </button>
+            ))}
+          </div>
+        )}
+        {film?.film && !making && (
+          <form className="studio__notes" onSubmit={(event) => { event.preventDefault(); reedit(); }}>
+            <textarea
+              aria-label="Notes on this film" rows={1} value={notes}
+              placeholder="Trim shot 3, swap the picture in shot 5 for the office, say the last line slower"
+              onChange={(event) => setNotes(event.target.value)}
+              onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); reedit(); } }}
+            />
+            <button type="submit" disabled={!notes.trim()} title="Only what the notes touch is made again. Everything else is this film's own.">Edit</button>
+          </form>
+        )}
         {!!using.length && <p className="studio__using">Using: {using.join(', ')}</p>}
         {film?.music && !making && <p className="studio__note">Music: {film.music.title} by {film.music.by} · {film.music.licence}</p>}
         {film?.noncommercial && !making && <p className="studio__note"><NotForSale result={film} /> Narrated with OmniVoice: {NONCOMMERCIAL}.{film.credits && <> <a href={fileUrl(film.credits)} target="_blank" rel="noreferrer">Credits</a></>}</p>}

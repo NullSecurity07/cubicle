@@ -13,7 +13,7 @@ const VERBS: Record<string, [doing: string, done: string]> = {
   web_search: ['Searching', 'Searched'], web_fetch: ['Reading', 'Read'], browse: ['Browsing', 'Browsed'],
   recall: ['Looking up', 'Looked up'], reflect: ['Looking back at', 'Looked back at'], propose_decision: ['Proposing', 'Proposed'], read_decision: ['Reading', 'Read'],
   list_files: ['Looking at', 'Looked at'], read_file: ['Reading', 'Read'], write_file: ['Saving', 'Saved'],
-  generate_image: ['Drawing', 'Drew'], generate_voice: ['Saying', 'Said'], generate_video: ['Filming', 'Filmed'],
+  generate_image: ['Drawing', 'Drew'], generate_voice: ['Saying', 'Said'], generate_video: ['Filming', 'Filmed'], edit_video: ['Editing', 'Edited'],
   delegate_task: ['Handing to', 'Handed to'], search_source: ['Searching', 'Searched'], propose_source: ['Proposing', 'Proposed'],
   map_folder: ['Mapping the folder', 'Mapped the folder'], ask_graph: ['Asking the map:', 'Asked the map:'], affected_by: ['Tracing what depends on', 'Traced what depends on'],
   add_lead: ['Adding lead', 'Added lead'], score_lead: ['Scoring', 'Scored'], note_lead: ['Noting on', 'Noted on'], move_lead: ['Moving', 'Moved'],
@@ -50,6 +50,7 @@ function Chip({ tool }: { tool: ToolEvent }) {
     : tool.name === 'generate_image' ? String(tool.args.prompt ?? '').replace(/\s+/g, ' ').slice(0, 60)
     : tool.name === 'generate_voice' ? `"${String(tool.args.text ?? '').replace(/\s+/g, ' ').slice(0, 55)}"`
     : tool.name === 'generate_video' ? String(tool.args.title ?? '').replace(/\s+/g, ' ').slice(0, 60)
+    : tool.name === 'edit_video' ? String(tool.args.notes ?? '').replace(/\s+/g, ' ').slice(0, 60)
     : tool.name === 'run_code' ? `${tool.args.language ?? ''} code` : tool.name === 'read_inbox' ? 'the mailbox'
     : tool.name === 'read_youtube' ? String(tool.args.url ?? '').replace(/^https?:\/\/(www\.)?/, '').slice(0, 60)
     : tool.name === 'crawl_site' || tool.name === 'watch_page' || tool.name === 'stop_watching' ? String(tool.args.url ?? '').replace(/^https?:\/\/(www\.)?/, '').slice(0, 60)
