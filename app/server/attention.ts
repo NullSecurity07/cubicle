@@ -8,7 +8,7 @@ import type { Store } from './store.ts';
 export type AttentionBook = ReturnType<typeof createAttention>;
 type Source = () => Promise<Attention[]>;
 // What the founder may wave away. A proposal or an approval is answered where it lives, never dismissed here.
-const DISMISSABLE = new Set<AttentionKind>(['run-failed', 'missed', 'review-due']);
+const DISMISSABLE = new Set<AttentionKind>(['run-failed', 'missed', 'review-due', 'page-changed']);
 const A_DAY = 86_400_000;
 // Argument names whose value is nobody's to keep, not even for a line the founder reads.
 const PRIVATE = /key|token|secret|password/i;

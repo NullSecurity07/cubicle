@@ -13,7 +13,7 @@ import { overlay, showDecision } from './store';
 
 const WHAT: Record<Attention['kind'], string> = {
   approval: 'needs your OK', 'run-approval': 'needs your OK on a task', 'proposed-task': 'suggests a task', 'proposed-decision': 'asks for a decision',
-  'run-failed': 'could not finish', missed: 'missed a repeat', 'review-due': 'Decision to look at again', 'proposed-source': 'suggests a website',
+  'run-failed': 'could not finish', missed: 'missed a repeat', 'review-due': 'Decision to look at again', 'proposed-source': 'suggests a website', 'page-changed': 'saw a watched page change',
 };
 export const ago = (at: number, now = Date.now()) => {
   const minutes = Math.max(0, Math.round((now - at) / 60_000));
@@ -90,7 +90,7 @@ export function NeedsPanel() {
                   <button type="button" className="primary" onClick={() => accept(entry)}>Accept</button>
                 </>}
                 {entry.decisionId && <button type="button" className="primary" onClick={() => { showDecision(entry.decisionId!); overlay.open({ kind: 'panel', name: 'decisions' }); }}>{entry.kind === 'review-due' ? 'Look at it' : 'Decide'}</button>}
-                {(entry.lapsed || entry.kind === 'run-failed' || entry.kind === 'missed' || entry.kind === 'review-due') && <button type="button" onClick={() => attempt(dismissAttention(entry.id))}>Dismiss</button>}
+                {(entry.lapsed || entry.kind === 'run-failed' || entry.kind === 'missed' || entry.kind === 'review-due' || entry.kind === 'page-changed') && <button type="button" onClick={() => attempt(dismissAttention(entry.id))}>Dismiss</button>}
                 {entry.lapsed && entry.roomId && <button type="button" className="primary" onClick={() => ask(entry, said)}>Ask {entry.who ?? 'them'} again</button>}
               </div>
             </li>

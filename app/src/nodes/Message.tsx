@@ -19,6 +19,7 @@ const VERBS: Record<string, [doing: string, done: string]> = {
   add_lead: ['Adding lead', 'Added lead'], score_lead: ['Scoring', 'Scored'], note_lead: ['Noting on', 'Noted on'], move_lead: ['Moving', 'Moved'],
   list_leads: ['Reading', 'Read'], find_leads: ['Finding', 'Found'],
   read_youtube: ['Reading the video', 'Read the video'], read_feed: ['Reading the feed of', 'Read the feed of'], read_reddit: ['Reading Reddit:', 'Read Reddit:'],
+  crawl_site: ['Reading the site', 'Read the site'], watch_page: ['Watching', 'Watching'], list_watches: ['Listing', 'Listed'], stop_watching: ['Stopping the watch on', 'Stopped watching'],
 };
 const compact = (count: number) => (count < 1000 ? String(count) : `${(count / 1000).toFixed(1)}k`);
 // Where the founder was when they said it, when they were not at the stage.
@@ -51,6 +52,8 @@ function Chip({ tool }: { tool: ToolEvent }) {
     : tool.name === 'generate_video' ? String(tool.args.title ?? '').replace(/\s+/g, ' ').slice(0, 60)
     : tool.name === 'run_code' ? `${tool.args.language ?? ''} code` : tool.name === 'read_inbox' ? 'the mailbox'
     : tool.name === 'read_youtube' ? String(tool.args.url ?? '').replace(/^https?:\/\/(www\.)?/, '').slice(0, 60)
+    : tool.name === 'crawl_site' || tool.name === 'watch_page' || tool.name === 'stop_watching' ? String(tool.args.url ?? '').replace(/^https?:\/\/(www\.)?/, '').slice(0, 60)
+    : tool.name === 'list_watches' ? 'the watched pages'
     : tool.name === 'read_feed' ? safeHost(String(tool.args.url ?? '')) || String(tool.args.url ?? '').slice(0, 60)
     : tool.name === 'read_reddit' ? String(tool.args.query ?? tool.args.url ?? (tool.args.subreddit ? `r/${tool.args.subreddit}` : '')).slice(0, 60)
     : String(tool.args.to ?? tool.args.doc ?? tool.args.title ?? tool.args.path ?? (tool.name === 'list_files' ? 'the shared files' : ''));

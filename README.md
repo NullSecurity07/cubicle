@@ -115,6 +115,13 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   finds: plain finding spends nothing, and verified email lookups are the one thing that costs credits (one each, 40
   free). The app never runs OpenOutreach's sending verbs. **Sending stays with you**, in the mail card, and a lead
   is marked contacted only by you, or by an email you said yes to.
+- **A site read whole, and a page watched** (2026-09-24): `crawl_site` reads a competitor's site in one go, 15
+  pages two links deep unless a person asks for more (at most 40, three deep), two at a time and gently, and obeys
+  its robots.txt. It gives a map of the pages and quotes the five that best answer your question; every page's text
+  goes into `files/crawls/` for later. `watch_page` asks you first, then reads one page every six hours **while the
+  app is open** and never while it is closed. A change comes to that person's conversation and to Needs you, with
+  the lines that changed; numbers alone (dates, counters) do not count. A person watches at most ten pages, and the
+  side panel shows them with a Stop button. The `watch-a-competitor` skill puts both together.
 - **Operator views** (2026-09-19): Focus mode (`F` or the header button; a card fills the window); Needs you (dock
   bell, `N`); Messages (`M`); Decisions (`D`; one markdown file per decision in `workspace/decisions/`); Recall (a
   `recall` tool for people, a search for the founder, by meaning, on a local model; a person finds only what their

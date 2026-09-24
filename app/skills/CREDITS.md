@@ -7,4 +7,4 @@ The built-in skills are written for this app in our own words. None of their tex
   https://github.com/sergebulaev/linkedin-skills, MIT licence. Their scraping and posting connectors are not used.
 - `icp-fit`, `evidence-outreach`: ideas from the LinkedIn-Manager project (lead scoring, evidence-backed first
   messages), rewritten from scratch; nothing of its code or text is used.
-- `meeting-brief`, `contract-review`, `map-a-codebase`, `work-a-lead`: our own.
+- `meeting-brief`, `contract-review`, `map-a-codebase`, `work-a-lead`, `watch-a-competitor`: our own.

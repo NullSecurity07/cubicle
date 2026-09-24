@@ -1,0 +1,5 @@
+/* One watched page to a line: the address runs out of room before the Stop button does. */
+.side .watch-row a { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); text-decoration: none; }
+.side .watch-row a:hover { text-decoration: underline; }
+.side .watch-row button { flex: none; border: 0; border-radius: 6px; padding: 2px 8px; background: rgba(255, 255, 255, 0.08); color: var(--muted); font: inherit; font-size: 11px; cursor: pointer; }
+.side .watch-row button:hover { background: rgba(255, 255, 255, 0.16); color: var(--text); }

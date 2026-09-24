@@ -7,7 +7,7 @@ export type Where = { tool: string; key: string };
 export type Rule = { id: string; says: string; hits(value: string, where: Where, own: string[]): boolean };
 
 // Tools whose arguments leave this machine one way or another. A key may not travel in one of these.
-const OUTWARD = new Set(['send_email', 'web_search', 'web_fetch', 'browse', 'code_task', 'code_reply', 'read_youtube', 'read_feed', 'read_reddit']);
+const OUTWARD = new Set(['send_email', 'web_search', 'web_fetch', 'browse', 'code_task', 'code_reply', 'read_youtube', 'read_feed', 'read_reddit', 'crawl_site', 'watch_page']);
 // Where a path or a command can really be acted on. A question typed at a search engine is words, not a file.
 const FILE_TOOLS = new Set(['run_code', 'code_task', 'code_reply', 'write_file', 'read_file']);
 const CODER = new Set(['code_task', 'code_reply']);
@@ -91,7 +91,7 @@ export function privateHost(raw: string): boolean {
 const hosts = (value: string) => [...value.matchAll(URLS)].flatMap((found) => { try { return [new URL(found[0].replace(/[).,;]+$/, '')).hostname]; } catch { return []; } });
 // The tools that open the web already refuse this machine and its network, and say so in their own words. Asking the
 // very same function is how this stays out of their way instead of answering the same call twice, differently.
-const WEB_TOOLS = new Set(['browse', 'web_fetch', 'web_search', 'read_youtube', 'read_feed', 'read_reddit']);
+const WEB_TOOLS = new Set(['browse', 'web_fetch', 'web_search', 'read_youtube', 'read_feed', 'read_reddit', 'crawl_site', 'watch_page']);
 const refusedAlready = (host: string) => { try { webUrl(`http://${host.includes(':') && !host.startsWith('[') ? `[${host}]` : host}/`); return false; } catch { return true; } };
 
 export const RULES: Rule[] = [

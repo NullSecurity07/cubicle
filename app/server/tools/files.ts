@@ -16,11 +16,15 @@ export const fileTools: Tool[] = [
   {
     name: 'read_file',
     description: 'Read a text file from the shared files folder. Not for documents on the stage: a connected document is already in your context.',
-    parameters: { type: 'object', properties: { path }, required: ['path'] },
+    parameters: { type: 'object', properties: { path, from: { type: 'number', description: 'Where to start, in characters, for a file longer than 20000' } }, required: ['path'] },
     async run(args, context) {
       const body = await context.store.readFile(text(args, 'path', 200));
       if (body === null) throw new Error('no such file');
-      return { text: body.length > 20_000 ? `${body.slice(0, 20_000)}\n… (cut at 20000 of ${body.length} characters)` : body };
+      // A long file is read a window at a time: each cut says where the next window starts.
+      const from = Math.max(0, Math.min(body.length, Math.floor(Number(args.from) || 0)));
+      const part = body.slice(from, from + 20_000);
+      const end = from + part.length;
+      return { text: end < body.length ? `${part}\n… (cut at ${end} of ${body.length} characters; read on with "from": ${end})` : from ? `${part}\n(the end of the file)` : part };
     },
   },
   {

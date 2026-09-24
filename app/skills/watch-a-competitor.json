@@ -1,0 +1,17 @@
+{
+  "name": "Watch a competitor",
+  "when": "The founder names a competitor to keep an eye on, or asks what changed at one.",
+  "procedure": [
+    "Crawl their site once with crawl_site from the home page.",
+    "From the map, note the addresses of their pricing, changelog and careers pages. Say which of the three you could not find.",
+    "Watch those pages with watch_page, one call each, saying in \"what\" what to look out for.",
+    "When a change arrives in this conversation, write one line in the Launch plan or the Profile doc: the date, what changed, and the link.",
+    "Tell the founder in one sentence why it matters, or that it does not."
+  ],
+  "pitfalls": [
+    "Crawl once. Watching is what keeps you up to date, not crawling again.",
+    "Do not watch the home page: it changes for reasons that mean nothing.",
+    "A change is what the page says now, not what the competitor will do. Do not guess their plans."
+  ],
+  "verify": "Up to three pages are watched, each named in list_watches, and every change that arrived has one dated line with its link in the doc."
+}
