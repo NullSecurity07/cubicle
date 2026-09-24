@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { NeedsPanel } from './NeedsPanel';
 import { CommandBar } from './CommandBar';
 import { Cheatsheet } from './Cheatsheet';
+import { Dashboard } from './Dashboard';
 import { DecisionsPanel } from './DecisionsPanel';
 import { Guard } from './Guard';
 import { MessagesPanel } from './MessagesPanel';
@@ -16,7 +17,7 @@ import { held, pressed } from '../keys';
 import { overlay, setHostElement, useLayers } from './store';
 
 // The founder's views, by layer name.
-const PANELS: Record<string, () => React.JSX.Element> = { needs: NeedsPanel, messages: MessagesPanel, decisions: DecisionsPanel, playbook: PlaybookPanel, library: LibraryPanel, note: NotePanel, frameworks: FrameworksPanel, command: CommandBar, keys: Cheatsheet };
+const PANELS: Record<string, () => React.JSX.Element> = { needs: NeedsPanel, messages: MessagesPanel, decisions: DecisionsPanel, playbook: PlaybookPanel, library: LibraryPanel, note: NotePanel, frameworks: FrameworksPanel, command: CommandBar, keys: Cheatsheet, dashboard: Dashboard };
 // Keys that open a view, when nothing is open and nobody is typing, and the view each one opens.
 const opens = (event: KeyboardEvent) => (pressed(event, 'needs') ? 'needs' : pressed(event, 'messages') ? 'messages' : pressed(event, 'decisions') ? 'decisions'
   : pressed(event, 'command-bar-slash') ? 'command' : pressed(event, 'cheatsheet') ? 'keys' : null);
@@ -52,6 +53,13 @@ export function Overlay() {
       }
       // The command bar opens from anywhere, even while typing.
       if (pressed(event, 'command-bar')) { event.preventDefault(); overlay.open({ kind: 'panel', name: 'command' }); return; }
+      // The dashboard opens from anywhere too, and closes again when it is the view on top.
+      if (pressed(event, 'dashboard') && !live(event.target)) {
+        event.preventDefault();
+        const top = overlay.layers().at(-1);
+        if (top?.kind === 'panel' && top.name === 'dashboard') overlay.back(); else overlay.open({ kind: 'panel', name: 'dashboard' });
+        return;
+      }
       // The sheet may also open over a focused card, never over another view, and with ⌘ or Ctrl even from a field.
       const opener = opens(event);
       if (opener && (!typing(event.target) || (opener === 'keys' && held(event))) && (!overlay.layers().length || (opener === 'keys' && overlay.layers().at(-1)?.kind !== 'panel'))) { event.preventDefault(); overlay.open({ kind: 'panel', name: opener }); return; }

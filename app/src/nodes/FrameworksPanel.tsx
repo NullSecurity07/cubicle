@@ -1,11 +1,9 @@
-import { useReactFlow } from '@xyflow/react';
 import { useEffect, useState } from 'react';
 import type { Case, Framework } from '../../shared/frameworks';
-import { sizeLine, spanOf } from '../../shared/frameworks';
-import { getModels, placeFramework, removeFramework, rerunEvals, saveFramework } from '../api';
-import { MARGIN, refreshFrameworks, useFrameworks } from '../frameworks';
+import { sizeLine } from '../../shared/frameworks';
+import { getModels, removeFramework, rerunEvals, saveFramework } from '../api';
+import { refreshFrameworks, useFrameworks, usePlaceFramework } from '../frameworks';
 import { useNotes } from '../library';
-import { freeSpot } from '../place';
 import { overlay } from '../overlay/store';
 import { PanelShell } from '../overlay/PanelShell';
 import { ForgeView } from './ForgeView';
@@ -129,8 +127,7 @@ function Briefs({ framework, onSave }: { framework: Framework; onSave: (next: Fr
 export function FrameworksPanel() {
   const frameworks = useFrameworks();
   const notes = useNotes();
-  const flush = useFlushStage();
-  const { fitBounds, getNodes, screenToFlowPosition, setNodes, setEdges } = useReactFlow<StageNode>();
+  const place = usePlaceFramework();
   // Which framework is open, and at which of its three shelves: its test cases, its briefs, or its runs. One at a
   // time, because the panel is a column and three lists stacked in it is a page nobody reads.
   const [open, setOpen] = useState<{ id: string; what: 'cases' | 'people' | 'runs' } | null>(null);
@@ -155,27 +152,8 @@ export function FrameworksPanel() {
 
   async function land(framework: Framework) {
     setBusy(framework.id);
-    try {
-      setProblem('');
-      // The top-left of what the founder can see, with a margin — and then the nearest place that big where nothing
-      // already stands, the same rule a single new card follows. A team dropped on top of the stage the founder
-      // already has is five people they then have to dig out from behind their own cards.
-      const corner = screenToFlowPosition({ x: MARGIN, y: MARGIN });
-      const span = spanOf(framework);
-      const at = freeSpot(getNodes(), { x: Math.round(corner.x), y: Math.round(corner.y) }, span.w, span.h);
-      const { nodes, edges } = toFlow(await placeFramework(framework.id, at));
-      setNodes((current) => [...current.map((node) => ({ ...node, selected: false })), ...nodes.map((node) => ({ ...node, selected: true }))]);
-      setEdges((current) => [...current, ...edges]);
-      // Saved at once rather than after the quiet period: the server has already written the docs' words, and the
-      // people it just minted have to exist on the stage before anybody can be asked anything. The wait is for the
-      // canvas to have drawn them first — saving reads what is on it, not what is about to be.
-      await new Promise((drawn) => { setTimeout(drawn, 0); });
-      await flush();
-      overlay.close({ kind: 'panel', name: 'frameworks' });
-      // And the view moves to the team, whole: a group is wider than one card, so the founder should not have to go
-      // looking for the five people they just asked for.
-      void fitBounds({ x: at.x, y: at.y, width: span.w, height: span.h }, { duration: 400, padding: 0.12 });
-    } catch (error) { setProblem((error as Error).message); } finally { setBusy(''); }
+    try { setProblem(''); await place(framework, () => overlay.close({ kind: 'panel', name: 'frameworks' })); }
+    catch (error) { setProblem((error as Error).message); } finally { setBusy(''); }
   }
 
   // Running every case again, against the briefs this framework holds now. The founder is answered at once and the

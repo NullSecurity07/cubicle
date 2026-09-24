@@ -4,7 +4,7 @@ import { sliceCommands } from '../slices';
 // `run` is the one a UI slice brings: the bar closes and calls it, without knowing what it does.
 export type Action =
   | { do: 'add'; kind: 'room' | 'doc' | 'note' | 'link' | 'image' | 'imagegen' | 'voicegen' | 'videogen' | 'browser' | 'project' | 'board' | 'leads'; data?: Record<string, string> }
-  | { do: 'focus' | 'jump'; id: string } | { do: 'panel'; name: 'needs' | 'messages' | 'decisions' | 'playbook' | 'library' }
+  | { do: 'focus' | 'jump'; id: string } | { do: 'panel'; name: 'needs' | 'messages' | 'decisions' | 'playbook' | 'library' | 'dashboard' }
   // One note out of the founder's library, opened to be read.
   | { do: 'note'; id: string }
   | { do: 'ask'; roomId: string; text: string } | { do: 'thread' | 'decision'; id: string } | { do: 'file'; path: string }
@@ -44,6 +44,7 @@ const STARTERS: Starter[] = [
   { section: 'Do', label: 'Who is idle?', action: { do: 'idle' }, words: /^who('s| is)? (idle|free|busy|working)$/, say: ['who is idle?', 'who is busy?'] },
   { section: 'Do', label: 'Show everything', hint: 'Fit the stage in the window', action: { do: 'fit' }, words: /^(show (everything|all)|fit|zoom out|overview)$/, say: ['show everything', 'zoom out'] },
   { section: 'Do', label: 'Keyboard shortcuts', action: { do: 'keys' }, words: /^(shortcuts?|keys|keyboard( shortcuts)?|help)$/, say: ['shortcuts', 'keys', 'help'] },
+  { section: 'Do', label: 'Dashboard', hint: 'Your day, your tokens, your teams, what was made', action: { do: 'panel', name: 'dashboard' }, words: /^(dashboard|home|today|my day)$/, say: ['dashboard', 'home', 'today'] },
 ];
 const offer = ({ words: _words, say: _say, ...suggestion }: Starter): Suggestion => suggestion;
 

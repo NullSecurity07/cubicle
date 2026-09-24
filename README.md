@@ -142,6 +142,14 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   `recall` tool for people, a search for the founder, by meaning, on a local model; a person finds only what their
   wires let them read); the command bar (Ctrl-K or `/`; patterns first, never a model guess); first-run missions,
   ticked from workspace facts; and `?` for the shortcuts.
+- **Dashboard** (2026-09-24): one screen for the founder's day (Ctrl-D, the dock's four-square chip, or "dashboard",
+  "home" or "today" in the command bar). Today: what needs you, tasks running and due, pages that changed, decisions to
+  make, replies to read, and the leads pipeline by stage. Tokens and health: fourteen days of tokens, each provider's
+  allowance left today, the week by person and by tool, and the health checks. Teams: every framework, placed or not,
+  with its last eval, a Place or Open button, the skills used this week, and the notes people kept on their own. Made
+  this week: the studios' pictures, voices and films, with their credits. Every row opens the room, card or panel it
+  came from. It reads the stores the app already keeps (`GET /api/dashboard`, the `dashboard` slice) and refreshes
+  itself when any of them change.
 
 ## Run it
 

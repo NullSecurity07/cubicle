@@ -17,6 +17,7 @@ export type Shortcut = { id: string; keys: string[]; when: When; does: string; w
 export const SHORTCUTS: Shortcut[] = [
   { id: 'command-bar', keys: ['Mod+K'], when: 'anywhere', does: 'Open the command bar, even while you type' },
   { id: 'cancel', keys: ['Escape'], when: 'anywhere', does: 'Put back what you are in the middle of: an edit, a name, an open menu' },
+  { id: 'dashboard', keys: ['Mod+D'], when: 'anywhere', does: 'Open the dashboard: your day, your tokens, your teams, what was made; again closes it' },
 
   { id: 'command-bar-slash', keys: ['/'], when: 'stage', does: 'Open the command bar' },
   { id: 'cheatsheet', keys: ['?', 'Mod+/'], when: 'stage', does: 'Show this sheet' },
