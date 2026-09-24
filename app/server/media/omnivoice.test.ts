@@ -8,7 +8,7 @@ import { createStore } from '../store.ts';
 import { mediaTools } from '../tools/media.ts';
 import { createMedia, type Maker } from './jobs.ts';
 import {
-  creditsOf, DEFAULT_DESIGN, designLine, designOf, languageOf, NONCOMMERCIAL, OFF_HINT, OMNI_ENGINE, omniVoices, PINS, pyprojectOf, requestOf,
+  creditsOf, DEFAULT_DESIGN, designLine, designOf, languageOf, NONCOMMERCIAL, OFF_HINT, OMNI_ENGINE, omniVoices, PINS, pyprojectOf, release, requestOf,
   type Child, type Request,
 } from './omnivoice.ts';
 import { engineOf, fakeVoices, voiceMakers, wavOf } from './voice.ts';
@@ -109,13 +109,15 @@ function fakeWorker(opts: { device?: 'cuda' | 'cpu'; fail?: string; answer?: (as
   return { start, started, killed: () => killed };
 }
 
-const engine = async (worker: ReturnType<typeof fakeWorker>, env: NodeJS.ProcessEnv = { STAGE_OMNIVOICE: '1' }, more: { idleMs?: number; uv?: boolean } = {}) => {
+const engine = async (worker: ReturnType<typeof fakeWorker>, env: NodeJS.ProcessEnv = { STAGE_OMNIVOICE: '1' }, more: { idleMs?: number; uv?: boolean; rooms?: number[] } = {}) => {
   const dir = await mkdtemp(join(tmpdir(), 'omni-'));
   const setups: string[] = [];
   return {
     dir, setups,
     maker: omniVoices(dir, env, {
       start: worker.start, idleMs: more.idleMs ?? 60_000, uvHere: async () => more.uv ?? true,
+      // Never the real card: a test must not unload the founder's chat model.
+      room: async (need) => { more.rooms?.push(need); },
       setup: async (at, report) => { setups.push(at); report('setting up OmniVoice: about 4 GB of Python packages, once'); },
     }),
   };
@@ -164,6 +166,24 @@ describe('the OmniVoice engine', () => {
     expect(worker.killed()).toBe(1);
     await maker.make({ prompt: 'Three.' }, { report: () => {} });
     expect(worker.started).toHaveLength(2);
+  });
+
+  it('makes room on the card before a worker starts, and lets go when a picture needs the card', async () => {
+    const worker = fakeWorker({ device: 'cuda' });
+    const rooms: number[] = [];
+    const { maker } = await engine(worker, undefined, { rooms });
+    await maker.make({ prompt: 'One.' }, { report: () => {} });
+    await maker.make({ prompt: 'Two.' }, { report: () => {} });
+    // Only a worker that is starting asks for room; a warm one already has it.
+    expect(rooms).toEqual([2500]);
+    expect(release()).toBe(true);
+    expect(worker.killed()).toBe(1);
+    // Nothing is running now, so asking again is harmless.
+    expect(release()).toBe(false);
+    await maker.make({ prompt: 'Three.' }, { report: () => {} });
+    expect(rooms).toEqual([2500, 2500]);
+    expect(worker.started).toHaveLength(2);
+    release();
   });
 
   it('passes on what went wrong as a sentence, and keeps the worker', async () => {

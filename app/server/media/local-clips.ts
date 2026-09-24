@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Clip, ClipAsk, Clips, Help } from './clips.ts';
 import { ff, FFMPEG } from './ff.ts';
+import { makeRoom, NEEDS_MB, plainLine, whatWentWrong, WRONG } from './gpu-room.ts';
 import { fetchModels, inTurn, modelsDir, REAL_DISK, SETUP_DIR, vulkanHere, type Model } from './on-this-machine.ts';
 import { moveOf } from './moves.ts';
 import { CAPS } from './spec.ts';
@@ -186,6 +187,9 @@ export function localClips(deps: LocalDeps = {}): Clips {
       const stopped = why();
       if (stopped) throw new Error(stopped);
       return inTurn(async () => {
+        // Room on the graphics card first: a chat model resting there holds system memory too, so the memory below
+        // is counted after it has been let go of.
+        await makeRoom(NEEDS_MB.clip, help.report, { env, fetch: http });
         // Asked at the last moment, not at start: what a machine can spare changes minute to minute. Both numbers
         // come out of one reading of the file, so memory and swap are describing the same moment.
         const meminfo = await readFile('/proc/meminfo', 'utf8').catch(() => '');
@@ -201,6 +205,7 @@ export function localClips(deps: LocalDeps = {}): Clips {
           help.report(`making ${CLIP_SECONDS} seconds here on this computer — about ${MINUTES_EACH} minutes…`);
           const started = Date.now();
           let said = 0;
+          const wrong: string[] = [];
           const code = await run(binary, [
             '-M', 'vid_gen',
             '--diffusion-model', join(at, 'diffusion/wan2.1_t2v_1.3B_fp16.safetensors'),
@@ -218,12 +223,14 @@ export function localClips(deps: LocalDeps = {}): Clips {
             '-o', webm,
           ], at, (line) => {
             const step = STEP.exec(line);
+            // What it said when it went wrong, so the founder is told why rather than guessed at.
+            if (!step && WRONG.test(line)) wrong.push(plainLine(line));
             if (!step || Number(step[1]) <= said) return;
             said = Number(step[1]);
             help.report(`making it… step ${step[1]} of ${step[2]}`);
           }, help.signal);
           if (help.signal?.aborted) throw new Error('stopped');
-          if (code !== 0 || !existsSync(webm)) throw new Error('the local video model did not finish; there may not have been enough memory');
+          if (code !== 0 || !existsSync(webm)) throw new Error(`the local video model did not finish${wrong.length ? `: ${whatWentWrong(wrong)}` : '; there may not have been enough memory'}`);
           // The renderer writes VP9; the film is cut in H.264, so it is re-wrapped once here.
           const mp4 = join(work, 'clip.mp4');
           await ff(FFMPEG, ['-y', '-loglevel', 'error', '-i', webm, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',

@@ -3,6 +3,7 @@ import { readFile, mkdir, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Maker, Piece } from './jobs.ts';
+import { makeRoom, NEEDS_MB, plainLine, whatWentWrong, WRONG } from './gpu-room.ts';
 import { fetchModels, inTurn, modelsDir, REAL_DISK, vulkanHere, type Model } from './on-this-machine.ts';
 
 // Pictures made on this machine, with nobody's quota and nothing leaving the house.
@@ -15,9 +16,11 @@ import { fetchModels, inTurn, modelsDir, REAL_DISK, vulkanHere, type Model } fro
 //
 // Measured on the founder's box, an RTX 3050 laptop with 4 GB of video memory beside 27 GB of system memory:
 // 1024×1024 in 53 seconds, 768×1344 in 50, 1344×768 in 51, about 6.2 GB of weights held in system memory. The card
-// is too small to hold the model, so the weights stay in RAM and are streamed in as they are needed. On this
-// machine that makes the *integrated* graphics faster than the discrete card — it shares the same memory, so there
-// is nothing to copy — and so no device is named here: the renderer's own first choice is the right one.
+// is too small to hold the model, so the weights stay in RAM and are streamed in as they are needed, about 2.1 GB of
+// them on the card at a time. No device is named, and the renderer's own first choice is the NVIDIA card (Vulkan1).
+// That is the right one: forced onto the integrated graphics with GGML_VK_VISIBLE_DEVICES=0 the same picture took
+// 303 seconds and then lost the device. What goes wrong on the NVIDIA card is somebody else holding it, so a picture
+// first makes room there (gpu-room.ts).
 export const PICTURES_DIR = 'pictures';
 // Where the spike that proved this left its weights. If they are there, they are copied rather than fetched again.
 const SPIKE = join(homedir(), '.cache/local-image-spike');
@@ -114,6 +117,9 @@ export function localImages(deps: LocalImageDeps = {}): Maker {
         // A picture waits its turn, and whoever asked may have stopped wanting it by the time the turn comes: a
         // film that found its cut had no shot for this one. The renderer is only told to stop if it is running.
         if (help.signal?.aborted) throw new Error('stopped');
+        // Room on the graphics card first: a chat model resting there holds system memory too, so the memory below
+        // is counted after it has been let go of.
+        await makeRoom(NEEDS_MB.picture, help.report, { env, fetch: deps.fetch });
         // Asked at the last moment, not at start: what a machine can spare changes minute to minute, and a picture
         // drawn out of swap takes ten minutes rather than one.
         const spare = await availableRam(deps.read);
@@ -137,7 +143,7 @@ export function localImages(deps: LocalImageDeps = {}): Maker {
             // Everything here was measured. The model is distilled, so it wants no guidance at all; the weights do
             // not fit in 4 GB of video memory, so they are held in system memory and streamed; flash attention and
             // a direct convolution in the decoder together take a fifth off the time and stop the decoder failing
-            // on the shared-memory graphics this machine prefers.
+            // on a card this small.
             '--cfg-scale', '1.0', '--steps', String(STEPS),
             '-W', String(width), '-H', String(height),
             // The same words drawn twice give the same picture, so a film re-rendered after one line changed does
@@ -155,12 +161,12 @@ export function localImages(deps: LocalImageDeps = {}): Maker {
               else if (Number(step[1]) === 1) help.report('putting the picture together…');
               return;
             }
-            // Whatever it said last when it went wrong. Without this a founder is told only that it did not work,
-            // which is the one thing they already knew.
-            if (/\b(error|failed|cannot|out of memory|no such)\b/i.test(line)) wrong.push(line.replace(/^\[\w+\s*\]\s*[\w.]+:\d+\s*-\s*/, ''));
+            // Whatever it said when it went wrong. Without this a founder is told only that it did not work, which is
+            // the one thing they already knew.
+            if (WRONG.test(line)) wrong.push(plainLine(line));
           }, help.signal);
           if (help.signal?.aborted) throw new Error('stopped');
-          if (code !== 0) throw new Error(`the picture could not be drawn on this computer${wrong.length ? `: ${wrong.slice(-2).join('; ').slice(0, 200)}` : ''}`);
+          if (code !== 0) throw new Error(`the picture could not be drawn on this computer${wrong.length ? `: ${whatWentWrong(wrong)}` : ''}`);
           const bytes = await readFile(out);
           if (!bytes.length) throw new Error('the picture came out empty');
           return { ext: 'png', bytes };
