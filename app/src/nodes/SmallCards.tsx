@@ -1,9 +1,11 @@
-import { useReactFlow, useStore, type NodeProps } from '@xyflow/react';
+import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useEffect, useRef, useState, type DragEvent } from 'react';
 import { fileUrl, refreshLink, uploadFile } from '../api';
 import { useMedia } from '../media';
 import { safeHost } from '../../shared/sources';
-import type { ImageNodeType, LinkNodeType, NoteNodeType, SourceNodeType } from '../stage';
+import { studioBehind } from '../../shared/model';
+import { useFlowPick } from '../flow';
+import { fromFlow, type ImageNodeType, type LinkNodeType, type NoteNodeType, type SourceNodeType } from '../stage';
 import { useFlushStage } from '../sync';
 import { CardActions, Frame } from './Frame';
 import { LivePicture, OpenLarge } from './LivePicture';
@@ -36,15 +38,8 @@ export function ImageNode({ id, data, selected }: NodeProps<ImageNodeType>) {
   // An empty picture card wired to an image studio shows what that studio has drawn. The founder who joins the two
   // up has said "show me what that makes"; before this they said it and got an empty box. The wire is read out of
   // the live graph rather than a snapshot, so the picture arrives the moment the wire is drawn.
-  const behind = useStore((flow) => {
-    if (data.path) return '';
-    const ends = new Set<string>();
-    for (const wire of flow.edges) {
-      if (wire.source === id) ends.add(wire.target);
-      if (wire.target === id) ends.add(wire.source);
-    }
-    return [...flow.nodeLookup.values()].find((node) => ends.has(node.id) && node.type === 'imagegen')?.id ?? '';
-  });
+  // The rule itself is `studioBehind`, the one the server shows people and films with.
+  const behind = useFlowPick(({ nodes, edges }) => (data.path ? '' : studioBehind(fromFlow(nodes, edges), id) ?? ''));
   const studio = useMedia(behind);
   const drawn = behind ? studio.media.results[0] : undefined;
   async function take(file?: File) {

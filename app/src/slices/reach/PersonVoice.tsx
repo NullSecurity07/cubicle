@@ -1,21 +1,18 @@
-import { useNodes } from '@xyflow/react';
 import { useState } from 'react';
 import { voiceFor, voiceNamed } from '../../../shared/voices';
 import { useVoices } from '../../nodes/MediaCards';
-import type { RoomData, StageNode } from '../../stage';
+import { everyoneIn, useFlowPick } from '../../flow';
+import type { RoomData } from '../../stage';
 import { SPEAKER, STOP } from './Speak';
 import { quiet, say, spokenOnce, useSaying, useVoiceOn, VOICE_SIZE } from './voice';
-
-const everyoneIn = (nodes: StageNode[]) => nodes.flatMap((node) => (node.type === 'room'
-  ? [{ id: node.id, name: node.data.name, gender: node.data.gender, voice: node.data.voice }] : []));
 
 // How this person sounds, beside who they are wired to and what they remember. It is only worth saying while their
 // replies can actually be heard, so it comes and goes with the switch in "Reach you anywhere".
 export function PersonVoice({ roomId, room }: { roomId: string; room: RoomData }) {
   const on = useVoiceOn();
   const voices = useVoices();
-  const nodes = useNodes<StageNode>();
-  const named = voiceNamed(voiceFor({ id: roomId, name: room.name, gender: room.gender, voice: room.voice }, everyoneIn(nodes), voices), voices);
+  const everyone = useFlowPick(({ nodes }) => everyoneIn(nodes));
+  const named = voiceNamed(voiceFor({ id: roomId, name: room.name, gender: room.gender, voice: room.voice }, everyone, voices), voices);
   if (!on || !named) return null;
   return <section><h3>Voice</h3><p className="side__text">{named}</p></section>;
 }

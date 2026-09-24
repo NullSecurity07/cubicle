@@ -1,10 +1,9 @@
-import { useNodes } from '@xyflow/react';
 import { useEffect, useState } from 'react';
 import type { ModelInfo } from '../../shared/model';
 import { GENDERS, type Gender, guessGender, poolsOf, voiceFor, type VoiceBy } from '../../shared/voices';
 import { getModels } from '../api';
+import { everyoneIn, useFlowPick } from '../flow';
 import { SLICES } from '../slices';
-import type { StageNode } from '../stage';
 import { useVoices } from './MediaCards';
 
 export type Person = { name: string; role: string; brief: string; model?: string; gender?: Gender; voice?: string; voiceBy?: VoiceBy };
@@ -18,12 +17,11 @@ export function PersonForm({ id, person, onSave, onCancel }: { id: string; perso
   const [picked, setPicked] = useState(false);
   const [allVoices, setAllVoices] = useState(false);
   const voices = useVoices();
-  const nodes = useNodes<StageNode>();
+  // Only the people and how they sound: a card dragged elsewhere does not draw the form again.
+  const everyone = useFlowPick(({ nodes }) => everyoneIn(nodes));
   useEffect(() => { getModels().then(setModels).catch(() => {}); }, []);
   const ready = form.name.trim() && form.role.trim();
 
-  const everyone = nodes.flatMap((node) => (node.type === 'room'
-    ? [{ id: node.id, name: node.data.name, gender: node.data.gender, voice: node.data.voice }] : []));
   const gender = form.gender ?? guessGender(form.name);
   const voice = voiceFor({ id, name: form.name, gender, voice: form.voice }, everyone, voices);
   const pools = poolsOf(voices);
