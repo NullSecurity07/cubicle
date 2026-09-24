@@ -17,6 +17,10 @@ const cards: Card[] = [
   { id: 'idle-browser', kind: 'browser', ...box },
   { id: 'code', kind: 'project', path: '/home/me/code/shop/', ...box },
   { id: 'leads', kind: 'leads', ...box },
+  { id: 'kept', kind: 'library', noteId: 'n1', ...box },
+  { id: 'unpicked', kind: 'library', noteId: '', ...box },
+  { id: 'site', kind: 'source', url: 'https://www.startups.rip/list', about: 'dead startups', ...box },
+  { id: 'their-browser', kind: 'browser', ...box },
 ];
 const wire = (from: string, to: string) => ({ id: `${from}-${to}`, from, fromHandle: 'r', to, toHandle: 'l' });
 const stage: Stage = {
@@ -27,6 +31,7 @@ const stage: Stage = {
     wire('film', 'studio'), wire('pic', 'film'), wire('film', 'empty-pic'), wire('feeder', 'empty-pic'), wire('film', 'note'),
     wire('blank-note', 'film'), wire('film', 'link'), wire('film', 'browser'), wire('film', 'idle-browser'), wire('film', 'code'),
     wire('film', 'leads'), wire('film', 'brief'), wire('maya', 'other'), wire('maya', 'note'),
+    wire('film', 'kept'), wire('film', 'unpicked'), wire('film', 'site'),
   ],
 };
 
@@ -39,6 +44,13 @@ describe('what a film may draw on', () => {
     expect(wiredTo(stage, 'film')).toEqual(server.wiredTo(stage, 'film'));
   });
 
+  // The media builder is teaching the server the same rule; until that lands on this branch it is pinned here alone.
+  it('carries the browser wired to whoever is making the film', () => {
+    const theirs = { ...stage, wires: [...stage.wires, wire('maya', 'their-browser')] };
+    expect(sourcesFor(theirs, 'film', 'maya').map((card) => card.id)).toContain('their-browser');
+    expect(sourcesFor(theirs, undefined, 'maya').map((card) => card.id)).toEqual(['note', 'their-browser']);
+  });
+
   it('reaches the image studio behind an empty picture card', () => {
     expect(sourcesFor(stage, 'film').map((card) => card.id)).toContain('feeder');
   });
@@ -46,13 +58,13 @@ describe('what a film may draw on', () => {
 
 describe('what the video card says it will use', () => {
   const seen = { where: (id: string) => (id === 'browser' ? 'https://shop.example' : id === 'idle-browser' ? '' : ''), drawn: (id: string) => (id === 'studio' ? 5 : id === 'feeder' ? 1 : 0) };
-  const says = filmSays(sourcesFor(stage, 'film'), ['Company brief'], seen);
+  const says = filmSays(sourcesFor(stage, 'film'), ['Company brief'], { ...seen, noteTitle: (id) => (id === 'n1' ? 'Pricing notes' : '') });
 
   it('names what a film will really gather, then the docs', () => {
-    expect(says).toEqual(['3 pictures from the image studio', 'a picture', 'a note', 'Example', 'a browser card', 'shop project', '1 picture from the image studio', 'Company brief']);
+    expect(says).toEqual(['3 pictures from the image studio', 'a picture', 'a note', 'Example', 'a browser card', 'shop project', 'Pricing notes', 'startups.rip', '1 picture from the image studio', 'Company brief']);
   });
 
   it('leaves out an empty picture or note card, a blank browser and a studio that has drawn nothing', () => {
-    expect(filmSays(sourcesFor(stage, 'film'), [], { where: () => 'about:blank', drawn: () => 0 })).toEqual(['a picture', 'a note', 'Example', 'shop project']);
+    expect(filmSays(sourcesFor(stage, 'film'), [], { where: () => 'about:blank', drawn: () => 0 })).toEqual(['a picture', 'a note', 'Example', 'shop project', 'a note from your library', 'startups.rip']);
   });
 });

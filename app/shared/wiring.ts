@@ -1,4 +1,5 @@
 import type { Card, Stage } from './model.ts';
+import { safeHost } from './sources.ts';
 
 // What a film may draw on, worked out the way the server works it out. These three are twins of `wiredTo`,
 // `sourcesFor` and `docsFor` in server/media/video.ts, which is what `gather` really reads when a film is made; the
@@ -14,8 +15,9 @@ export const wiredTo = (stage: Wires, cardId: string): Card[] => {
   return (stage.cards ?? []).filter((card) => ends.has(card.id));
 };
 
-// The kinds of card a person carries into a film they are asked to make.
-const THEIRS = new Set<Card['kind']>(['imagegen', 'image', 'note', 'link', 'project']);
+// The kinds of card a person carries into a film they are asked to make. A browser is theirs too: the page they have
+// open is one they meant the film to show.
+const THEIRS = new Set<Card['kind']>(['imagegen', 'image', 'note', 'link', 'project', 'browser']);
 
 // Three reaches, in the order they matter: what is wired to the studio; the image studio behind a wired picture card;
 // and everything of those kinds wired to whoever is making the film.
@@ -45,9 +47,11 @@ export const docsFor = (stage: Pick<Stage, 'wires' | 'docs'>, cardId?: string, r
 // What the card says a film will use, one phrase per thing, in the order `gather` reads them: the cards, then the
 // docs. A card `gather` would skip is not named: an empty note or picture card, a link with no address, a browser
 // still on a blank page (`where` is the page a browser card is on, '' when nobody has opened one), an image studio
-// that has drawn nothing yet (`drawn` is how many pictures it has, of which a film takes the newest three). A doc is
-// named by its title, because what is written in it is not known here.
-export function filmSays(cards: Card[], docTitles: string[], seen: { where: (cardId: string) => string; drawn: (cardId: string) => number }): string[] {
+// that has drawn nothing yet (`drawn` is how many pictures it has, of which a film takes the newest three), a library
+// card with no note picked. A library card is read as a note and named by that note's title (`noteTitle`); a source
+// is read as a link and named by its title, else its site. A doc is named by its title, because what is written in
+// it is not known here.
+export function filmSays(cards: Card[], docTitles: string[], seen: { where: (cardId: string) => string; drawn: (cardId: string) => number; noteTitle?: (noteId: string) => string }): string[] {
   const said: string[] = [];
   for (const card of cards) {
     if (card.kind === 'project' && card.path) said.push(`${card.path.split('/').filter(Boolean).at(-1) ?? 'a'} project`);
@@ -55,6 +59,8 @@ export function filmSays(cards: Card[], docTitles: string[], seen: { where: (car
     else if (card.kind === 'browser' && seen.where(card.id) && !/^about:/.test(seen.where(card.id))) said.push('a browser card');
     else if (card.kind === 'note' && card.text?.trim()) said.push('a note');
     else if (card.kind === 'image' && card.path) said.push('a picture');
+    else if (card.kind === 'library' && card.noteId) said.push(seen.noteTitle?.(card.noteId) || 'a note from your library');
+    else if (card.kind === 'source' && card.url) said.push(card.title?.trim() || safeHost(card.url) || card.url);
     else if (card.kind === 'imagegen') {
       const count = Math.min(3, seen.drawn(card.id));
       if (count) said.push(`${count} picture${count === 1 ? '' : 's'} from the image studio`);

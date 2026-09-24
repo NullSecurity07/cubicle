@@ -7,6 +7,7 @@ import { addAsset, fileUrl, getVoices, removeAsset, stopMedia } from '../api';
 import { useElapsed, useMedia, usePictureCounts } from '../media';
 import { useFlowPick } from '../flow';
 import { usePages } from '../where';
+import { useNotes } from '../library';
 import { docsFor, filmSays, sourcesFor } from '../../shared/wiring';
 import { fromFlow, type ImageGenNodeType, type VideoGenNodeType, type VoiceGenNodeType } from '../stage';
 import { CardActions, Frame } from './Frame';
@@ -330,7 +331,8 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
   });
   const pages = usePages();
   const drawn = usePictureCounts(found.cards.filter((card) => card.kind === 'imagegen').map((card) => card.id));
-  const using = filmSays(found.cards, found.docs, { where: (cardId) => pages[cardId] ?? '', drawn: (cardId) => drawn[cardId] ?? 0 });
+  const library = useNotes();
+  const using = filmSays(found.cards, found.docs, { where: (cardId) => pages[cardId] ?? '', drawn: (cardId) => drawn[cardId] ?? 0, noteTitle: (noteId) => library.find((note) => note.id === noteId)?.title ?? '' });
   if (data.address?.trim()) using.unshift(data.address.trim());
   const clips = assets.filter((one) => one.kind === 'video').length;
   if (clips) using.push(`${clips} of your clip${clips === 1 ? '' : 's'}`);
