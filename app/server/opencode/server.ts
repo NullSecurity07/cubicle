@@ -5,7 +5,7 @@ import { readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { childEnv } from '../safety/env.ts';
-import type { CoderHome } from './config.ts';
+import { PERMISSION, type CoderHome } from './config.ts';
 import { readStream, type RawEvent } from './events.ts';
 
 // One long-lived `opencode serve` for the whole app, started the first time somebody needs it, on this machine only.
@@ -31,13 +31,17 @@ export const portOf = (text: string): number | null => { const found = LISTENING
 export function serverEnv(env: NodeJS.ProcessEnv, home: CoderHome, password: string): NodeJS.ProcessEnv {
   return {
     ...childEnv(env, home.keys),
-    OPENCODE_CONFIG: home.configPath, OPENCODE_DISABLE_PROJECT_CONFIG: '1',
+    OPENCODE_CONFIG: home.configPath,
     XDG_DATA_HOME: home.dataHome, XDG_CONFIG_HOME: home.configHome,
     OPENCODE_SERVER_PASSWORD: password,
-    // opencode reads skills and instructions from ~/.claude and ~/.agents whatever its config says (an empty
-    // `skills.paths` changes nothing): 115 of the founder's skills rode in every prompt. These two switches are the
-    // only way to keep them out.
-    OPENCODE_DISABLE_EXTERNAL_SKILLS: '1', OPENCODE_DISABLE_CLAUDE_CODE: '1',
+    // A project's own `opencode.json` is read (turning it off with OPENCODE_DISABLE_PROJECT_CONFIG also drops the
+    // project's AGENTS.md and CLAUDE.md, which are exactly what a coder should read), so the permissions are said once
+    // more here, where nothing in a project can widen them.
+    OPENCODE_PERMISSION: JSON.stringify(PERMISSION),
+    // opencode reads skills from ~/.claude and ~/.agents whatever its config says (an empty `skills.paths` changes
+    // nothing): 115 of the founder's skills rode in every prompt. These two switches are the only way to keep them
+    // out. Not the broad OPENCODE_DISABLE_CLAUDE_CODE: that one also stops a project's CLAUDE.md being read.
+    OPENCODE_DISABLE_EXTERNAL_SKILLS: '1', OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1',
   };
 }
 

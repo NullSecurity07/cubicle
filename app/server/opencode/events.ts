@@ -15,8 +15,14 @@ export type Heard = {
 // A path as the founder would say it inside their own folder.
 const short = (value: string, dir: string) => (dir && value.startsWith(`${dir}/`) ? value.slice(dir.length + 1) : value);
 const flat = (value: unknown, max: number) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+// A provider that answers with a JSON body is read for its message; the rest of the body is nobody's business.
+const unwrap = (text: string) => {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('{')) return text;
+  try { const said = JSON.parse(trimmed); return String(said?.error?.message ?? said?.message ?? text); } catch { return text; }
+};
 // A provider's error in the founder's words: its account numbers, tiers and links are nobody's business on the card.
-export const plainError = (text: string) => text
+export const plainError = (text: string) => unwrap(text)
   .replace(/\s+in organization `[^`]*`/gi, '').replace(/\s+service tier `[^`]*`/gi, '')
   .replace(/[^.?!]*https?:\/\/\S+[^.?!]*[.?!]?/g, '').replace(/\s*Need more tokens\?/gi, '').replace(/\s+/g, ' ').trim();
 

@@ -32,12 +32,17 @@ type Held = {
   done: Set<(how: 'done' | 'stopped') => void>;
 };
 
+// How long a working coder may say nothing before it is stopped. A hosted model that has gone quiet is retrying in
+// the background and will not come back; a model on this machine is often just reading the prompt on a slow CPU, and
+// a 30B one takes minutes over it, so it gets ten.
 const QUIET = 90_000;
+const LOCAL_QUIET = 10 * 60_000;
 const POLL = 5_000;
 const KEPT = 500;
 const SHOWN = 200;
 const MONTH = 30 * 86_400_000;
-const LOCAL: Record<string, string> = { ollama: 'http://127.0.0.1:11434/v1', 'ollama-bridge': 'http://127.0.0.1:11435/v1' };
+// The one local provider; its address comes from the config (the founder's bridge when it is up, Ollama itself otherwise).
+const LOCAL: Record<string, string> = { ollama: 'http://127.0.0.1:11434/v1' };
 const FREE = 'Free (OpenCode Zen)';
 const KEYED = new Set(['groq', 'google', 'openrouter']);
 // Models a provider lists that are not for writing code: research agents, speech, pictures, video, guards, filters.
@@ -269,7 +274,9 @@ export function createCoder(deps: Deps) {
     // that must not bring back a spinner for work that is over.
     if (heard.busy) { card.seenBusy = true; card.heard = now(); }
     if (heard.line?.kind === 'reply') card.reply = heard.line.text;
-    if (heard.line) line(card, heard.line);
+    // A diff only means something while work is on: opencode says one after an undo too, and that would sit under
+    // "undone" claiming the change is still there.
+    if (heard.line && (heard.line.kind !== 'diff' || busy(card))) line(card, heard.line);
     if (heard.permission) void asked(card, heard.permission);
     // Answered without a word from here: opencode refuses every other question in a session when one is refused, and
     // lets through the ones an "always" now covers; or somebody answered on opencode's own screen. The question goes,
@@ -368,7 +375,11 @@ export function createCoder(deps: Deps) {
 
     // The half-minute look: a session gone quiet is stopped, and a server grown too big is started afresh when idle.
     async tick() {
-      for (const card of cards.values()) if (card.state === 'working' && now() - card.heard > QUIET) await stop(card.id, 'no progress for 90 s (the free model went quiet)');
+      for (const card of cards.values()) {
+        if (card.state !== 'working') continue;
+        const local = (card.model ?? '').split('/')[0] in LOCAL;
+        if (now() - card.heard > (local ? LOCAL_QUIET : QUIET)) await stop(card.id, local ? 'no progress for 10 minutes (the local model is stuck, or too slow for this machine)' : 'no progress for 90 s (the model went quiet)');
+      }
       const health = engine.health();
       if (health.running && health.rss && needsRestart(health.rss, [...cards.values()].some(busy))) await engine.restart();
     },

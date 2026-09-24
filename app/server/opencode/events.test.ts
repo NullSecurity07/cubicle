@@ -47,6 +47,10 @@ describe('what the coder does, as lines a founder reads', () => {
     const groq = 'Request too large for model `openai/gpt-oss-120b` in organization `org_01m24v86` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 9500, please reduce your message size and try again. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing';
     expect(translate({ type: 'session.error', properties: { sessionID: 'ses_1', error: { name: 'APIError', data: { message: groq } } } }, DIR)?.error)
       .toBe('Request too large for model `openai/gpt-oss-120b` on tokens per minute (TPM): Limit 8000, Requested 9500, please reduce your message size and try again.');
+    // A provider that answers with a JSON body: only its message is news.
+    const json = '{"message":"Tool call validation failed: attempted to call tool \'search\' which was not in request.tools","type":"invalid_request_error"}';
+    expect(translate({ type: 'session.error', properties: { sessionID: 'ses_1', error: { name: 'APIError', data: { message: json } } } }, DIR)?.error)
+      .toBe("Tool call validation failed: attempted to call tool 'search' which was not in request.tools");
   });
 });
 

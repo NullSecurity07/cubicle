@@ -112,7 +112,7 @@ describe('prompt', () => {
     const system = buildMessages(withCards, 'build', docs, [], ['code_task'])[0].content;
     expect(system).toContain('A coder working in a project folder (/code/app)');
     expect(system).toContain('code_reply to follow up in the same session');
-    expect(system).toContain('never write project code into them');
+    expect(system).toContain('never reach for run_code, write_file or a document to do project work');
     expect(system).toContain('A browser card');
     expect(buildMessages(withCards, 'marketing', docs, [], ['code_task'])[0].content).not.toContain('Also connected');
   });

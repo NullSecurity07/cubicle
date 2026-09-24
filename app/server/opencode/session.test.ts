@@ -11,7 +11,7 @@ const card = { id: 'coder-1', dir: '/code/shop', name: 'shop' };
 
 // The engine the card drives, the book the founder answers in and the list of what waits for them — all of them
 // watched, so a test can say what went where.
-function setup(engine: Engine & Partial<ReturnType<typeof fakeEngine>> = fakeEngine({ step: 2 }), extra: { now?: () => number } = {}) {
+function setup(engine: Engine & Partial<ReturnType<typeof fakeEngine>> = fakeEngine({ step: 2 }), extra: { now?: () => number; reachable?: (url: string) => Promise<boolean> } = {}) {
   const said: CoderEvent[] = [];
   const raised: Attention[] = [];
   const cleared: string[] = [];
@@ -131,8 +131,22 @@ describe('a coder card', () => {
     await coder.tick();
     expect(calls.some((one) => one.path.endsWith('/abort'))).toBe(true);
     expect(await waited).toBe('stopped');
-    expect(lines().at(-1)).toBe('note: stopped · no progress for 90 s (the free model went quiet)');
+    expect(lines().at(-1)).toBe('note: stopped · no progress for 90 s (the model went quiet)');
     expect(coder.snapshot(card.id).state).toBe('stopped');
+  });
+
+  it('gives a model on this machine ten minutes of quiet, since a slow CPU reads the prompt for that long', async () => {
+    let now = 1_000_000;
+    const { coder, calls, lines } = setup(fakeEngine({ step: 60_000 * 20, now: () => now }), { now: () => now, reachable: async () => true });
+    await coder.prompt({ ...card, model: 'ollama/qwen3:30b-a3b' }, 'Slow local work', {});
+    const waited = coder.wait(card.id);
+    now += 9 * 60_000;
+    await coder.tick();
+    expect(calls.some((one) => one.path.endsWith('/abort'))).toBe(false);
+    now += 2 * 60_000;
+    await coder.tick();
+    expect(await waited).toBe('stopped');
+    expect(lines().at(-1)).toBe('note: stopped · no progress for 10 minutes (the local model is stuck, or too slow for this machine)');
   });
 
   it('restarts a server that grew too big, but never under somebody\'s work', async () => {
@@ -168,6 +182,9 @@ describe('a coder card', () => {
     await coder.undo(card.id);
     const revert = calls.find((one) => one.path.endsWith('/revert'))!;
     expect(revert.body.messageID).toBe('msg_fake0003');
+    expect(lines().at(-1)).toBe('note: undone · "Second"');
+    // The diff opencode says after the undo is not a line: nothing changed that the founder should be told of.
+    await new Promise((settle) => setTimeout(settle, 5));
     expect(lines().at(-1)).toBe('note: undone · "Second"');
     await coder.undo(card.id);
     expect(calls.filter((one) => one.path.endsWith('/revert')).at(-1)?.body.messageID).toBe('msg_fake0001');

@@ -2,10 +2,11 @@ import { mkdtemp, readFile, stat, utimes, writeFile, mkdir } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { coderConfig, copyAuth, writeCoderHome } from './config.ts';
+import { coderConfig, copyAuth, discoverLocal, writeCoderHome } from './config.ts';
 
-const bridge = { npm: '@ai-sdk/openai-compatible', name: 'Ollama Bridge', options: { baseURL: 'http://127.0.0.1:11435/v1' }, models: { 'qwen7b-coder': { name: 'Qwen', tool_call: true } } };
-const founder = { permission: { '*': 'allow' }, tool_output: { max_lines: 150, max_bytes: 8192 }, plugin: ['./plugins/notify.ts'], mcp: { laya: {} }, provider: { 'ollama-bridge': bridge, google: { env: ['GEMINI_API_KEY'] } } };
+const founder = { permission: { '*': 'allow' }, tool_output: { max_lines: 150, max_bytes: 8192 }, plugin: ['./plugins/notify.ts'], mcp: { laya: {} }, provider: { 'ollama-bridge': { options: { baseURL: 'http://127.0.0.1:11435/v1' } }, google: { env: ['GEMINI_API_KEY'] } } };
+// A machine's answers, by address: the bridge's model list, Ollama's own, or nothing there.
+const machine = (answers: Record<string, unknown>) => (async (url: string) => (url in answers ? { ok: true, json: async () => answers[url] } : { ok: false, json: async () => null })) as unknown as typeof fetch;
 
 describe('the coder config', () => {
   it('names a provider only when its key is here, and hands the child only those keys', () => {
@@ -31,10 +32,11 @@ describe('the coder config', () => {
     expect(permission.skill).toBe('deny');
   });
 
-  it('copies the founder\'s local bridge as it is, and nothing else of theirs but the output caps', () => {
+  it('takes nothing of the founder\'s own opencode but the output caps', () => {
     const { config } = coderConfig({ env: {}, founder });
-    expect(config.provider['ollama-bridge']).toEqual(bridge);
-    expect(config.enabled_providers).toEqual(['opencode', 'ollama-bridge', 'ollama']);
+    expect(config.provider).not.toHaveProperty('ollama-bridge');
+    expect(config.provider).not.toHaveProperty('google');
+    expect(config.enabled_providers).toEqual(['opencode', 'ollama']);
     expect(config.tool_output).toEqual({ max_lines: 150, max_bytes: 8192 });
     expect(config).not.toHaveProperty('plugin');
     expect(config).not.toHaveProperty('mcp');
@@ -42,10 +44,20 @@ describe('the coder config', () => {
     expect(config).toMatchObject({ autoupdate: false, share: 'disabled' });
   });
 
-  it('lists the founder\'s own local models under a plain ollama provider, which nothing starts', () => {
-    const { config } = coderConfig({ env: { OPENCODE_LOCAL_MODELS: 'qwen2.5-coder:7b, llama3.2' } });
-    expect(config.provider.ollama.options.baseURL).toBe('http://127.0.0.1:11434/v1');
-    expect(Object.keys(config.provider.ollama.models)).toEqual(['qwen2.5-coder:7b', 'llama3.2']);
+  it('lists the models found on this machine and the ones the founder named, under one ollama provider', () => {
+    const { config } = coderConfig({ env: { OPENCODE_LOCAL_MODELS: 'qwen2.5-coder:7b, llama3.2' }, local: { baseURL: 'http://127.0.0.1:11435/v1', models: ['qwen3-coder:30b', 'qwen2.5-coder:7b'] } });
+    expect(config.provider.ollama.options.baseURL).toBe('http://127.0.0.1:11435/v1');
+    expect(Object.keys(config.provider.ollama.models)).toEqual(['qwen3-coder:30b', 'qwen2.5-coder:7b', 'llama3.2']);
+    expect(config.provider.ollama.models['qwen3-coder:30b']).toEqual({ name: 'qwen3-coder:30b', tool_call: true, limit: { context: 16384, output: 4096 } });
+    expect(coderConfig({ env: {} }).config.provider.ollama).toMatchObject({ options: { baseURL: 'http://127.0.0.1:11434/v1' }, models: {} });
+  });
+
+  it('finds local models through the bridge when it is up, through Ollama itself otherwise, and starts nothing', async () => {
+    const tags = { models: [{ name: 'qwen3-coder:30b' }, { name: 'nomic-embed-text:latest' }, { name: 'gpt-oss:20b' }] };
+    expect(await discoverLocal(machine({ 'http://127.0.0.1:11435/v1/models': { data: [{ id: 'old' }] }, 'http://127.0.0.1:11434/api/tags': tags }))).toEqual({ baseURL: 'http://127.0.0.1:11435/v1', models: ['qwen3-coder:30b', 'gpt-oss:20b'] });
+    expect(await discoverLocal(machine({ 'http://127.0.0.1:11434/api/tags': tags }))).toEqual({ baseURL: 'http://127.0.0.1:11434/v1', models: ['qwen3-coder:30b', 'gpt-oss:20b'] });
+    expect(await discoverLocal(machine({ 'http://127.0.0.1:11435/v1/models': { data: [{ id: 'qwen2.5:7b' }] } }))).toEqual({ baseURL: 'http://127.0.0.1:11435/v1', models: ['qwen2.5:7b'] });
+    expect(await discoverLocal(machine({}))).toEqual({ baseURL: 'http://127.0.0.1:11434/v1', models: [] });
   });
 
   it('takes the founder\'s chosen model as the default', () => {
@@ -60,9 +72,11 @@ describe('the coder home', () => {
     const theirs = join(workspace, 'theirs', 'auth.json');
     await mkdir(join(workspace, 'theirs'), { recursive: true });
     await writeFile(theirs, '{"opencode":{"type":"api","key":"one"}}');
-    const home = await writeCoderHome({ workspace, env: { GROQ_API_KEY: 'x' }, founderConfig: join(workspace, 'missing.json'), founderAuth: theirs });
+    const home = await writeCoderHome({ workspace, env: { GROQ_API_KEY: 'x' }, founderConfig: join(workspace, 'missing.json'), founderAuth: theirs, discover: async () => ({ baseURL: 'http://127.0.0.1:11435/v1', models: ['qwen3-coder:30b'] }) });
     expect(home.configPath).toBe(join(workspace, 'opencode', 'opencode.json'));
-    expect(JSON.parse(await readFile(home.configPath, 'utf8')).provider.groq).toEqual({ env: ['GROQ_API_KEY'] });
+    const written = JSON.parse(await readFile(home.configPath, 'utf8'));
+    expect(written.provider.groq).toEqual({ env: ['GROQ_API_KEY'] });
+    expect(Object.keys(written.provider.ollama.models)).toEqual(['qwen3-coder:30b']);
     expect(home.keys).toEqual(['GROQ_API_KEY']);
     const copied = join(home.dataHome, 'opencode', 'auth.json');
     expect(await readFile(copied, 'utf8')).toContain('one');

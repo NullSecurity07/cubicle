@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
+import { PERMISSION } from './config.ts';
 import { createOpencodeServer, needsRestart, portOf, reap, rssOf, serverEnv } from './server.ts';
 
 const home = { configPath: '/w/opencode/opencode.json', configHome: '/w/opencode/settings', dataHome: '/w/opencode/data', keys: ['GROQ_API_KEY'] };
@@ -16,10 +17,10 @@ describe('the one opencode server', () => {
     const env = serverEnv({ PATH: '/bin', HOME: '/home/me', GROQ_API_KEY: 'gsk', GEMINI_API_KEY: 'AIza', GITHUB_TOKEN: 'ghp', AWS_SECRET_ACCESS_KEY: 'x' }, home, 'pw-123');
     expect(env).toMatchObject({
       PATH: '/bin', HOME: '/home/me', GROQ_API_KEY: 'gsk',
-      OPENCODE_CONFIG: home.configPath, OPENCODE_DISABLE_PROJECT_CONFIG: '1', XDG_DATA_HOME: home.dataHome, XDG_CONFIG_HOME: home.configHome,
+      OPENCODE_CONFIG: home.configPath, OPENCODE_PERMISSION: JSON.stringify(PERMISSION), XDG_DATA_HOME: home.dataHome, XDG_CONFIG_HOME: home.configHome,
       OPENCODE_SERVER_PASSWORD: 'pw-123',
       // None of the founder's skills or Claude Code files (~/.claude, ~/.agents) are read into the coder's prompt.
-      OPENCODE_DISABLE_EXTERNAL_SKILLS: '1', OPENCODE_DISABLE_CLAUDE_CODE: '1',
+      OPENCODE_DISABLE_EXTERNAL_SKILLS: '1', OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1',
     });
     for (const gone of ['GEMINI_API_KEY', 'GITHUB_TOKEN', 'AWS_SECRET_ACCESS_KEY']) expect(env).not.toHaveProperty(gone);
   });

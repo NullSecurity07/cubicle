@@ -95,7 +95,8 @@ export function fakeEngine({ step = 120, gap = 0, now = Date.now }: { step?: num
           return null;
         }
         if (method === 'POST' && action === 'abort') { session.run?.abort(); return true; }
-        if (method === 'POST' && action === 'revert') { session.reverted = String(asked.messageID); return { id: session.id, revert: { messageID: session.reverted } }; }
+        // The real one says the folder's diff once more after an undo, a moment later.
+        if (method === 'POST' && action === 'revert') { session.reverted = String(asked.messageID); setTimeout(() => tell('session.diff', { sessionID: session.id, diff: [{ file: 'src/example.ts', additions: 12, deletions: 3 }] }, session.directory), 0); return { id: session.id, revert: { messageID: session.reverted } }; }
         if (method === 'GET' && action === 'diff') return session.messages.length && !session.reverted ? [{ file: 'src/example.ts', patch: PATCH, additions: 12, deletions: 3, status: 'modified' }] : [];
         if (method === 'GET' && action === 'message') return session.messages.map((one) => ({ info: { id: one.id, role: one.role }, parts: [{ type: 'text', text: one.text }] }));
         if (method === 'GET' && !action) return { id: session.id, directory: session.directory, time: { created: session.created }, ...(session.reverted ? { revert: { messageID: session.reverted } } : {}) };
