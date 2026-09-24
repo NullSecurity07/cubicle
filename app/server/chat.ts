@@ -1,0 +1,111 @@
+import type { ServerResponse } from 'node:http';
+import { newMessageId, newTurnId, type Attachment, type ChatEvent, type ChatVia, type Stage } from '../shared/model.ts';
+import { askFounder, type Approvals } from './approvals.ts';
+import type { AttentionBook } from './attention.ts';
+import { json } from './http.ts';
+import { runTurn } from './loop.ts';
+import type { createMemory } from './memory.ts';
+import type { Offered } from './playbook.ts';
+import { complete, promptSize, type ModelClient } from './providers.ts';
+import type { RoomFeed } from './rooms-feed.ts';
+import { route } from './router.ts';
+import type { Payloads, Seams } from './seams.ts';
+import type { Store } from './store.ts';
+import type { Consult } from './tools/team.ts';
+import type { Tool } from './tools/registry.ts';
+import type { PromptFor } from './turn-prompt.ts';
+import type { UsageBook } from './usage.ts';
+
+type Deps = {
+  store: Store; roomFeed: RoomFeed; busy: Set<string>; clients: ModelClient[]; usage: UsageBook; seams: Seams;
+  attention: AttentionBook; approvals: Approvals; memory: Pick<ReturnType<typeof createMemory>, 'fold'>;
+  promptFor: PromptFor;
+  // Asked only when a turn starts: the tool list is final only once every slice is installed.
+  toolsFor: (stage: Stage, roomId: string) => Tool[];
+};
+
+// The founder talking to one person, and one person asking another.
+export function createChat(deps: Deps) {
+  const { store, roomFeed, busy, clients, usage, seams, attention, approvals, memory, promptFor } = deps;
+
+  // A consult: the question lands in the colleague's room under the asker's name, they answer once without tools, and both are kept there.
+  const consult: Consult = async ({ fromRoomId, toRoomId, question, signal }) => {
+    const stage = await store.loadStage();
+    const asker = stage.rooms.find((room) => room.id === fromRoomId)!;
+    const target = stage.rooms.find((room) => room.id === toRoomId)!;
+    await store.appendChat(toRoomId, { id: newMessageId(), role: 'user', text: question, at: Date.now(), from: asker.name });
+    let messages = await promptFor(stage, toRoomId, []);
+    // The colleague is shown what they would be shown in a turn of their own: their playbook, their notes, their
+    // cards. Offered nothing, so every procedure that needs a tool is left out, and they still answer in words only.
+    // Not while they are in a turn of their own, whose guards and questions to the founder this must not disturb; and
+    // as a run, because being asked by a colleague is not the founder answering whatever this person asked them.
+    if (!busy.has(toRoomId)) {
+      const before: Payloads['turn:before'] & Offered = { roomId: toRoomId, source: 'run', query: question, messages, offered: [] };
+      messages = (await seams.run('turn:before', before)).messages;
+    }
+    const { order } = route(clients, usage, { pinned: target.model, promptChars: promptSize(messages), tools: false });
+    const reply = await complete(messages, { onToken: () => {}, signal }, order);
+    usage.record(reply.client.name, reply.usage, reply.quota);
+    await store.appendChat(toRoomId, { id: newMessageId(), role: 'assistant', text: reply.text, at: Date.now(), provider: reply.client.name, model: reply.client.model, usage: reply.usage });
+    return reply.text;
+  };
+
+  async function chat(roomId: string, text: string, res: ServerResponse, extra: { replace?: string; attachments?: Attachment[]; via?: ChatVia } = {}) {
+    const stage = await store.loadStage();
+    if (!stage.rooms.some((room) => room.id === roomId)) return json(res, 404, { error: 'unknown room' });
+    if (busy.has(roomId)) return json(res, 409, { error: 'this person is still replying' });
+    busy.add(roomId);
+
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+    const send = (event: ChatEvent) => !res.writableEnded && res.write(`data: ${JSON.stringify(event)}\n\n`);
+    // One name for this turn, said on both roads out of here: whoever asked hears it on their own stream, every other
+    // window hears it on the feed, and so nobody draws the same reply twice.
+    const turn = newTurnId();
+    send({ turn });
+    // The founder pressing Stop closes the request; the turn ends there and what was said is kept.
+    const stop = new AbortController();
+    res.on('close', () => stop.abort());
+    try {
+      // Regenerate and edit: the old message and everything after it leave the conversation (to trash) before the new one goes in.
+      if (extra.replace) await store.cutChat(roomId, extra.replace, true);
+      await store.appendChat(roomId, { id: newMessageId(), role: 'user', text, at: Date.now(), ...(extra.via ? { via: extra.via } : {}), ...(extra.attachments?.length ? { attachments: extra.attachments } : {}) });
+      roomFeed.tell({ roomId, turn, started: { ...(extra.via ? { via: extra.via } : {}) } });
+      // The names in the prompt are the narrowed list too: a person is never told about a tool they are not offered.
+      const mine = deps.toolsFor(stage, roomId);
+      const messages = await promptFor(stage, roomId, mine.map((tool) => tool.name));
+      const room = stage.rooms.find((candidate) => candidate.id === roomId)!;
+      const vision = messages.some((message) => message.role === 'user' && !!message.images?.length);
+      const { order, notice } = route(clients, usage, { pinned: room.model, promptChars: promptSize(messages), tools: true, vision });
+      if (vision && !order[0]?.vision) send({ notice: 'No model that can see images is set up (Gemini can), so the picture is described to the model only by its file name.' });
+      if (notice) send({ notice });
+      const reply = await runTurn({
+        messages, tools: mine, clients: order, usage, signal: stop.signal, seams, source: 'chat', query: text,
+        // Listened for before it is shown, so an answer given while Needs you is still being written is heard.
+        approve: (event, signal) => askFounder(attention, approvals, { id: `approval:${event.id}`, kind: 'approval', title: event.question ?? event.name.replace(/_/g, ' '), at: Date.now(), roomId, who: room.name, event }, signal),
+        context: { stage, roomId, store, granted: new Map() },
+        // Both roads at once: the window that asked, and every window that is only watching.
+        events: {
+          token: (token) => { send({ token }); roomFeed.tell({ roomId, turn, token }); },
+          tool: (tool) => { send({ tool }); roomFeed.tell({ roomId, turn, tool }); },
+          notice: (text) => send({ notice: text }),
+        },
+      });
+      const message = {
+        id: newMessageId(), role: 'assistant' as const, text: reply.text, at: Date.now(), provider: reply.provider, model: reply.model,
+        usage: reply.usage, ...(reply.tools.length ? { tools: reply.tools } : {}), ...(reply.stopped ? { stopped: true } : {}),
+      };
+      if (reply.text.trim() || reply.tools.length) await store.appendChat(roomId, message);
+      send({ done: true, message });
+      // Older talk folds into the person's memory after the reply, never in the founder's way.
+      void memory.fold(roomId).catch(() => {});
+    } catch (error) {
+      send({ error: (error as Error).message });
+    } finally {
+      busy.delete(roomId);
+      roomFeed.tell({ roomId, turn, ended: true });
+      res.end();
+    }
+  }
+
+  return { chat, consult };
+}

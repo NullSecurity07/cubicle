@@ -260,3 +260,10 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
     },
   };
 }
+
+// Every person's conversation on this stage, by room id.
+export async function allChats(store: Pick<Store, 'readChat'>, stage: Stage): Promise<Record<string, ChatMessage[]>> {
+  const chats: Record<string, ChatMessage[]> = {};
+  for (const one of stage.rooms) chats[one.id] = await store.readChat(one.id);
+  return chats;
+}

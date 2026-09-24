@@ -14,6 +14,9 @@ export const json = (res: ServerResponse, status: number, body: unknown) => {
   res.end(JSON.stringify(body));
 };
 
+// The same, for a route: the answer is sent, and the route says so.
+export const answer = (res: ServerResponse, status: number, body: unknown): true => { json(res, status, body); return true; };
+
 export async function body(req: IncomingMessage): Promise<any> {
   let text = '';
   for await (const chunk of req) {

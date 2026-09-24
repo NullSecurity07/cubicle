@@ -1,5 +1,5 @@
 import { pipeline } from 'node:stream/promises';
-import { json, raw, typeOf, type Route } from '../http.ts';
+import { answer, raw, typeOf, type Route } from '../http.ts';
 import { rangeOf } from '../static.ts';
 import type { Store } from '../store.ts';
 
@@ -12,13 +12,12 @@ export function fileRoutes(deps: { store: Store }): Route {
       const name = url.searchParams.get('name') ?? 'file';
       const data = await raw(req, 15_000_000);
       const saved = await store.saveUpload(name, data);
-      json(res, 200, { path: saved, type: typeOf(saved), size: data.length });
-      return true;
+      return answer(res, 200, { path: saved, type: typeOf(saved), size: data.length });
     }
     if (path.startsWith('/api/files/') && req.method === 'GET') {
       const name = decodeURIComponent(path.slice('/api/files/'.length));
       const size = await store.fileSize(name);
-      if (size === null) { json(res, 404, { error: 'no such file' }); return true; }
+      if (size === null) return answer(res, 404, { error: 'no such file' });
       // Files may hold anything a person or a page produced: never let one run as a page of this app.
       const headers = { 'content-type': typeOf(name), 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox", 'x-content-type-options': 'nosniff', 'cache-control': 'no-cache', 'accept-ranges': 'bytes' };
       // A player asks for a piece at a time, and will not play or seek a sound or a video that answers with the lot.

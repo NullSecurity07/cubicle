@@ -2,7 +2,7 @@ import { mkdtemp, readdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { seedStage, type ToolEvent } from '../shared/model.ts';
+import type { ToolEvent } from '../shared/model.ts';
 import { runTurn } from './loop.ts';
 import type { ModelMessage } from './prompt.ts';
 import type { ModelClient, ModelTurn } from './providers.ts';
