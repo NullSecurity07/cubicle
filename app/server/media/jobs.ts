@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { Card, Media, MediaAsset, MediaCredit, MediaEvent, MediaKind, MediaResult } from '../../shared/model.ts';
 import type { Store } from '../store.ts';
 import type { Voice } from './voice.ts';
+import { mltOf, type EditPlan } from './mlt.ts';
 
 export type MediaJobs = ReturnType<typeof createMedia>;
 // What the founder or a person asked for. `prompt` is the words of it; the rest is whatever that kind of studio offers.
@@ -16,6 +17,9 @@ export type Ask = { prompt: string } & Record<string, unknown>;
 export type Piece = {
   ext: string; bytes: Buffer; poster?: { ext: string; bytes: Buffer }; parts?: { text: string; seconds: number }[]; credit?: MediaCredit; by?: string;
   noncommercial?: boolean; credits?: string;
+  // A finished film laid out as tracks, with the pictures and sound it needs. It is written beside the film as
+  // `<film>.mlt`, with those files in `<film>.parts/`, so Shotcut or Kdenlive can open it.
+  edit?: EditPlan;
 };
 // One backend that makes one kind of media. `ready` says in the founder's words why it cannot work yet, or nothing.
 // `cast` is the voice makers' own answer to "who can say this?": the table the loaded weights ship with, so a film
@@ -51,6 +55,16 @@ export function createMedia(deps: { dir: string; store: Store; makers: Makers; n
   const running = new Map<string, AbortController>();
   const watchers = new Set<(event: MediaEvent) => void>();
   let queue: Promise<unknown> = Promise.resolve();
+
+  // The hand-editable film: its parts in a folder named after it, and the `.mlt` beside it naming them by relative
+  // path, so the film, its parts and the project move together as one folder.
+  async function saveEdit(film: string, edit: EditPlan): Promise<string> {
+    const base = film.replace(/\.[^./]+$/, '');
+    const own = (name: string) => name.split('/').pop() ?? name;
+    for (const file of edit.files) await deps.store.saveFileBytes(`${base}.parts/${own(file.name)}`, file.bytes);
+    const text = mltOf({ ...edit.film, film: own(film), parts: `${own(base)}.parts` });
+    return deps.store.saveFileBytes(`${base}.mlt`, Buffer.from(text));
+  }
 
   async function read(cardId: string): Promise<Media> {
     const known = cache.get(cardId);
@@ -157,6 +171,9 @@ export function createMedia(deps: { dir: string; store: Store; makers: Makers; n
             if (piece.credit) made.music = piece.credit;
             if (piece.noncommercial) made.noncommercial = true;
             if (piece.credits) made.credits = await deps.store.saveFileBytes(`${made.path}.credits.txt`, Buffer.from(piece.credits));
+            // A project that could not be written costs the founder nothing but the project: the film stands.
+            const mlt = piece.edit ? await saveEdit(made.path, piece.edit).catch(() => null) : null;
+            if (mlt) made.mlt = mlt;
             // What the founder dropped on the card while it was working is still theirs: read the card again, not `before`.
             const latest = await read(card.id);
             save(card.id, { ...latest, state: 'idle', problem: undefined, log: [...log, `done · ${maker.name}`], results: [made, ...before.results].slice(0, KEEP) });

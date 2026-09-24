@@ -240,12 +240,16 @@ describe('generate_video', () => {
   it('films the storyboard a person wrote, and keeps the poster beside the film', async () => {
     const { tool, media, context } = await turn(wired);
     const ran = await tool.run({ ...film, format: 'tall', look: 'sketch' }, context);
-    expect(ran.text).toMatch(/^Made the film\.\n\n\[Week eleven\]\(\/api\/files\/media\/[a-z0-9-]+\.mp4\)$/);
+    expect(ran.text).toMatch(/^Made the film\. It is also at media\/[a-z0-9-]+\.mlt as tracks for Shotcut or Kdenlive, with its pictures and sound beside it\.\n\n\[Week eleven\]\(\/api\/files\/media\/[a-z0-9-]+\.mp4\)$/);
     expect(ran.effect).toEqual({ kind: 'media-made', id: 'studio-3' });
     const made = (await media.read('studio-3')).results[0];
     expect(made.prompt).toBe('Week eleven');
     expect(made.poster).toMatch(/^media\/.+\.png$/);
     expect((await context.store.readFileBytes(made.path))!.length).toBeGreaterThan(1000);
+    // The finished film is also a project an editor opens, named after the film and pointing at it by its own name.
+    expect(made.mlt).toBe(made.path.replace(/\.mp4$/, '.mlt'));
+    const project = (await context.store.readFileBytes(made.mlt!))!.toString('utf8');
+    expect(project).toContain(`<property name="resource">${made.path.split('/').pop()}</property>`);
     expect((await media.read('studio-3')).log[1]).toBe('4 scenes: Week eleven');
   });
 

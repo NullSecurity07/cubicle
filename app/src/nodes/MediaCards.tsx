@@ -361,7 +361,14 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
             ))}
           </div>
         )}
-        {film && !making && <div className="studio__done"><a href={fileUrl(film.path)} download>Download</a></div>}
+        {film && !making && (
+          <div className="studio__done">
+            <a href={fileUrl(film.path)} download>Download</a>
+            {film.poster && <a href={fileUrl(film.poster)} download>Poster</a>}
+            {film.mlt && <a href={fileUrl(film.mlt)} download title="The film as tracks, for Shotcut or Kdenlive. Its pictures and sound sit beside it in the shared files, in a folder of the same name.">.mlt</a>}
+          </div>
+        )}
+        {film?.mlt && !making && <p className="studio__note">Also an .mlt for Shotcut or Kdenlive.</p>}
         {!!using.length && <p className="studio__using">Using: {using.join(', ')}</p>}
         {film?.music && !making && <p className="studio__note">Music: {film.music.title} by {film.music.by} · {film.music.licence}</p>}
         {film?.noncommercial && !making && <p className="studio__note"><NotForSale result={film} /> Narrated with OmniVoice: {NONCOMMERCIAL}.{film.credits && <> <a href={fileUrl(film.credits)} target="_blank" rel="noreferrer">Credits</a></>}</p>}

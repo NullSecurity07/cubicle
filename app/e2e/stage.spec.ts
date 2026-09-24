@@ -812,6 +812,9 @@ test('a video studio: the founder sets the film going and watches it being made,
   await card.getByRole('button', { name: 'Make' }).click();
   await expect(card.locator('.studio__result video')).toBeVisible();
   await expect(card.getByRole('link', { name: 'Download' })).toHaveAttribute('href', /\/api\/files\/media\/.+\.mp4$/);
+  // The finished film is also a project for Shotcut or Kdenlive, downloadable beside it.
+  await expect(card.getByRole('link', { name: '.mlt' })).toHaveAttribute('href', /\/api\/files\/media\/.+\.mlt$/);
+  await expect(card.locator('.studio__note', { hasText: 'Also an .mlt for Shotcut or Kdenlive.' })).toBeVisible();
   await expect.poll(async () => (await (await page.request.get(`/api/media/${id}`)).json()).results[0]?.poster).toMatch(/\.png$/);
 
   // The person writes the whole storyboard, and the film lands on the same card.

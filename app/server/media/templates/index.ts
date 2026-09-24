@@ -1,7 +1,7 @@
 import type { Shape } from '../../../shared/model.ts';
 import { SFX, type Cue } from '../audio.ts';
 import { crowdsCaptions, saysWhatItShows } from '../spec.ts';
-import { capHtml, capLines, capSteps, wordTimes, type Word } from './captions.ts';
+import { capHtml, capLines, capSteps, wordTimes, type CapLine, type Word } from './captions.ts';
 import { breakMove, captionPiece, type BreakMove } from '../registry/index.ts';
 import { actBreaks, cutSteps } from './cuts.ts';
 import { dataGraphic, groundHtml, MOVING, onscreen, sceneHtml, sceneSteps, type Shot } from './layouts.ts';
@@ -100,6 +100,29 @@ export type Film = {
   quiet?: { at: number; seconds: number }[];
 };
 
+// One to three words at a time for a reel, two to four for a quieter film, and never more than four: past that
+// a caption is a subtitle, read instead of watched. The pack's own caption measure decides which end it sits at.
+const capWordsOf = (pack: Pack): number => Math.min(4, Math.max(1, Math.round(PACK[pack].capScale * 3.4)));
+
+// The caption lines a film shows, and when. The composition sets them in the frame, and the hand-editable export
+// writes the same lines out as text, so the two can never disagree.
+//
+// A stretch of narration whose scene already writes out what is being said gets none of it: a hook is the spoken
+// line set large, and a word-by-word caption under it is the same sentence twice on one frame, which is exactly
+// what a founder was handed.
+export function captionLines(film: Film): CapLine[] {
+  if (!film.captions || !film.words?.length) return [];
+  const starts: number[] = [];
+  let at = 0;
+  for (const shot of film.shots) { starts.push(Math.round(at * 100) / 100); at = Math.round((at + shot.seconds) * 100) / 100; }
+  const quiet = film.quiet ?? film.shots.map((shot, index) => (saysWhatItShows(shot.scene) || crowdsCaptions(shot.scene)
+    ? { at: starts[index], seconds: shot.seconds } : null)).filter(Boolean) as { at: number; seconds: number }[];
+  const spoken = film.words.filter((word) => !quiet.some((gap) => word.at >= gap.at - 0.01 && word.at < gap.at + gap.seconds));
+  if (!spoken.length) return [];
+  const { capChars } = FORMATS[film.shape];
+  return capLines(spoken, Math.round(capChars * PACK[film.look].capScale), capWordsOf(film.look), film.keywords ?? []);
+}
+
 // The whole video as one HTML file: the scenes in order with their timing on them, the narration and the music beside
 // them, and one paused timeline the renderer steps through frame by frame.
 export function composition(film: Film): string {
@@ -144,15 +167,7 @@ export function composition(film: Film): string {
   // A stretch of narration whose scene already writes out what is being said gets none of it: a hook is the spoken
   // line set large, and a word-by-word caption under it is the same sentence twice on one frame, which is exactly
   // what a founder was handed.
-  const quiet = film.quiet ?? film.shots.map((shot, index) => (saysWhatItShows(shot.scene) || crowdsCaptions(shot.scene)
-    ? { at: starts[index], seconds: shot.seconds } : null)).filter(Boolean) as { at: number; seconds: number }[];
-  const spoken = (film.words ?? []).filter((word) => !quiet.some((gap) => word.at >= gap.at - 0.01 && word.at < gap.at + gap.seconds));
-  // One to three words at a time for a reel, two to four for a quieter film, and never more than four: past that
-  // a caption is a subtitle, read instead of watched. The pack's own caption measure decides which end it sits at.
-  const capWords = Math.min(4, Math.max(1, Math.round(style.capScale * 3.4)));
-  const lines = film.captions && spoken.length
-    ? capLines(spoken, Math.round(capChars * style.capScale), capWords, film.keywords ?? [])
-    : [];
+  const lines = captionLines(film);
   // The band's real measure, so a long word is set smaller rather than having both ends cut off by the frame.
   const capSize = Math.round(height * 0.108) * scale;
   const capRoom = width - margin - (margin + safeRight);
@@ -163,7 +178,7 @@ export function composition(film: Film): string {
   if (lines.length && style.captions !== 'studio') {
     try {
       const piece = captionPiece(style.captions, lines, total, { left: margin, bottom: caps, width: capRoom, size: capSize },
-        { ink: paint.ink, signal: paint.signal, ground: paint.ground, ...fonts }, capWords);
+        { ink: paint.ink, signal: paint.signal, ground: paint.ground, ...fonts }, capWordsOf(pack));
       captionHtml = piece.html;
       captionSteps = piece.steps;
       extra.css.add(piece.css);
