@@ -383,6 +383,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         const memory = filmMemory(deps.cacheDir ? join(deps.cacheDir, 'films') : undefined);
 
         const { material, files, bed } = await gather(deps, asked, at, report, signal);
+        if (signal?.aborted) throw new Error('stopped');
         if (material.using.length) report(`using: ${material.using.join(', ')}`);
 
         // A person who wrote the whole storyboard is not overruled about what is in it, only about how it is set —
@@ -432,7 +433,8 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           const key = storyboardKey({ brief: asked.prompt, told, lines: material.lines, assets: material.assets.map((one) => one.name) });
           const watched = await memory.storyboard<Awaited<ReturnType<typeof direct>>>(asked.cardId, key, draft ? 'draft' : 'full');
           if (watched) report('this is the draft you watched, now made in full: the same storyboard, every shot its own picture');
-          const directed = watched ?? await direct(told, material, deps.think, { report, ai: mayUseAi, lipsync });
+          const directed = watched ?? await direct(told, material, deps.think, { report, ai: mayUseAi, lipsync, signal });
+          if (signal?.aborted) throw new Error('stopped');
           if (watched) report(tellOf(directed.understanding));
           else await memory.keepStoryboard(asked.cardId, { key, speed: draft ? 'draft' : 'full', directed });
           understanding = directed.understanding;
@@ -868,7 +870,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           const keys = new Map(wanted.map((one) => [one.at, subjectKey(one, bible)]));
           const known = await memory.subjects([...keys.values()]);
           const unknown = wanted.filter((one) => !known.has(keys.get(one.at)!));
-          const written = unknown.length ? await photograph(unknown, bible, angle, deps.think, { report }) : [];
+          const written = unknown.length ? await photograph(unknown, bible, angle, deps.think, { report, signal }) : [];
           await memory.keepSubjects(written.filter((one) => one.subject.trim())
             .map((one): [string, KeptSubject] => [keys.get(one.at)!, { subject: one.subject, metaphor: one.metaphor }]));
           for (const slot of wanted) {

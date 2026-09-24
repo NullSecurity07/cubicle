@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { seedStage, type Stage } from '../../shared/model.ts';
 import { criticise, drawnWord, photographic } from './critic.ts';
 import {
-  bibleFor, direct, faceIn, narratorWanted, onCamera, showsSomebody, layoutsFor, planOf, readBrief, secondsIn, specFromPlan, tellOf, understandingOf,
+  bibleFor, direct, photograph, faceIn, narratorWanted, onCamera, showsSomebody, layoutsFor, planOf, readBrief, secondsIn, specFromPlan, tellOf, understandingOf,
   type Material, type Plan, type Understanding,
 } from './director.ts';
 import { countWords, saidWords, type Scene, type Spec } from './spec.ts';
@@ -376,5 +376,24 @@ describe('a picture the film was handed', () => {
     const holding = made.find((one) => one.asset === 'drawn-1');
     expect(holding?.layout).toBe('picture');
     expect(holding?.bg_prompt).toBeUndefined();
+  });
+});
+
+describe('a film stopped while it is being thought about', () => {
+  it('asks the model nothing more once the film is stopped, and says stopped rather than falling back', async () => {
+    const stop = new AbortController();
+    let asked = 0;
+    const think = async () => { asked += 1; stop.abort(); return '{}'; };
+    await expect(direct({ brief: 'a 20 second calm piece about slowing down' }, nothing, think, { report: () => {}, signal: stop.signal })).rejects.toThrow('stopped');
+    expect(asked).toBe(1);
+  });
+
+  it('writes no pictures for a film stopped before they were asked for', async () => {
+    const stop = new AbortController();
+    stop.abort();
+    let asked = 0;
+    const slots = [{ at: 0, scene: 0, take: 0, line: 'We ship on Fridays.', subject: '', kind: 'place' as const, room: 'full' as const }];
+    await expect(photograph(slots as never, 'a calm bible', 'the angle', async () => { asked += 1; return '[]'; }, { report: () => {}, signal: stop.signal })).rejects.toThrow('stopped');
+    expect(asked).toBe(0);
   });
 });
