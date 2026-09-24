@@ -17,18 +17,21 @@ export function route(clients: ModelClient[], usage: UsageBook, want: { pinned?:
   // asking for another provider.
   const pinned = want.pinned && want.pinned !== 'auto' ? pool.filter((client) => providerOf(client.name) === want.pinned) : [];
   const roomy = (client: ModelClient) => usage.left(client) > FLOOR && !usage.hot(client, want.promptChars);
+  // A model on this machine stands behind every hosted one that still has room, wherever it was listed: it is the
+  // net under the free quotas, not a peer of them. It still comes before a hosted model that is out of room.
+  const settle = (list: ModelClient[]) => [...list.filter((client) => !client.local), ...list.filter((client) => client.local)];
 
   if (pinned.length) {
     const share = Math.max(...pinned.map((client) => usage.left(client)));
     const notice = share <= FLOOR ? `${title(want.pinned!)} has no free quota left today. Another model answers if it fails.`
       : share < 0.2 ? `${title(want.pinned!)} has ${Math.round(share * 100)}% of today's free quota left.` : undefined;
-    return { order: [...pinned.filter(roomy), ...pinned.filter((client) => !roomy(client)), ...pool.filter((client) => !pinned.includes(client) && roomy(client))], notice };
+    return { order: [...pinned.filter(roomy), ...pinned.filter((client) => !roomy(client)), ...settle(pool.filter((client) => !pinned.includes(client) && roomy(client)))], notice };
   }
   if (want.pinned && want.pinned !== 'auto') {
-    return { order: [...pool.filter(roomy), ...pool.filter((client) => !roomy(client))], notice: `${title(want.pinned)} is not set up here, so another model answers.` };
+    return { order: [...settle(pool.filter(roomy)), ...settle(pool.filter((client) => !roomy(client)))], notice: `${title(want.pinned)} is not set up here, so another model answers.` };
   }
-  const order = [...pool.filter(roomy), ...pool.filter((client) => !roomy(client))];
-  const first = pool[0];
+  const order = [...settle(pool.filter(roomy)), ...settle(pool.filter((client) => !roomy(client)))];
+  const first = settle(pool)[0];
   const notice = order[0] && first && order[0] !== first
     ? `${title(first.name)} is near its free limit, so ${title(order[0].name)} answers for now.` : undefined;
   return { order, notice };

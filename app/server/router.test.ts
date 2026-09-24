@@ -64,6 +64,23 @@ describe('route', () => {
     expect(names(result)).toEqual(['ok']);
   });
 
+  it('keeps a model on this machine behind every hosted one with room, wherever it was listed', () => {
+    const usage = createUsage(null);
+    const local = client('ollama', { local: true, limits: {} });
+    // Listed last, and listed first (the way summaries read the list backwards): behind the hosted ones either way.
+    expect(names(route([client('groq'), client('gemini'), local], usage, { promptChars: 10, tools: true }))).toEqual(['groq', 'gemini', 'ollama']);
+    const backwards = route([local, client('gemini'), client('groq')], usage, { promptChars: 10, tools: true });
+    expect(names(backwards)).toEqual(['gemini', 'groq', 'ollama']);
+    expect(backwards.notice).toBeUndefined();
+    // Hosted ones out of room: the machine's own model answers before them, and the founder is told.
+    for (let i = 0; i < 10; i += 1) { usage.record('groq', { input: 1, output: 1 }); usage.record('gemini', { input: 1, output: 1 }); }
+    const spent = route([client('groq', { limits: { rpd: 10 } }), client('gemini', { limits: { rpd: 10 } }), local], usage, { promptChars: 10, tools: true });
+    expect(names(spent)).toEqual(['ollama', 'groq', 'gemini']);
+    expect(spent.notice).toBe('Groq is near its free limit, so Ollama answers for now.');
+    // Pinned by a person: first, like any pinned model.
+    expect(names(route([client('groq'), local], createUsage(null), { pinned: 'ollama', promptChars: 10, tools: true }))).toEqual(['ollama', 'groq']);
+  });
+
   it('starts a new day at zero', () => {
     let now = Date.parse('2026-09-19T23:59:00Z');
     const usage = createUsage(null, () => now);

@@ -43,7 +43,7 @@ import { createRecall, localEmbedder, wordEmbedder } from './recall.ts';
 import { recallTools } from './tools/recall.ts';
 import { recent } from './memory.ts';
 import { buildMessages, colleagueIds, readableDocIds, wired, type Attached } from './prompt.ts';
-import { complete, fakeClient, promptSize, realClients } from './providers.ts';
+import { complete, fakeClient, findLocal, promptSize, realClients } from './providers.ts';
 import { route } from './router.ts';
 import { createRoomFeed } from './rooms-feed.ts';
 import { createRuns, desktopNotify } from './runs.ts';
@@ -73,7 +73,9 @@ const port = Number(process.env.STAGE_API_PORT ?? 7421);
 const fake = process.env.STAGE_FAKE_MODEL === '1';
 // Who may use the api: the app's own page (here, or on Vite's port in development) and scripts that hold this launch's token.
 const own = { ports: [port, Number(process.env.STAGE_PORT ?? 7420)], token: process.env.STAGE_API_TOKEN || randomBytes(24).toString('base64url') };
-const clients = fake ? [fakeClient] : realClients();
+// The people answer from the hosted free models in the configured order, and from a model on this machine, if one
+// known to work is here, when those have no room left.
+const clients = fake ? [fakeClient] : realClients(process.env, await findLocal());
 const busy = new Set<string>();
 const workspace = process.env.STAGE_WORKSPACE ?? resolve(root, 'workspace');
 // Every open window hears what every other writer did, through the store: a message written anywhere at all reaches

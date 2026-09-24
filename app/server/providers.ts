@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import OpenAI from 'openai';
 import type { Usage } from '../shared/model.ts';
 import models from './models.json' with { type: 'json' };
+import { discoverLocal } from './opencode/config.ts';
 import type { ModelMessage } from './prompt.ts';
 
 export type Limits = { rpm?: number; rpd?: number; tpm?: number; tpd?: number };
@@ -21,6 +22,9 @@ export type ModelClient = {
   tools: boolean;
   vision?: boolean;
   limits: Limits;
+  // A model on this machine: free and private, slower and weaker than the hosted ones, so it answers last unless it is
+  // pinned, and only when the hosted ones have no room left.
+  local?: boolean;
   // The OpenAI-compatible handle behind this client, when there is one. Nothing in a turn uses it — a turn goes
   // through `step`, which streams and counts — but a library that speaks the OpenAI API for us (the eval scorers)
   // needs the very same key and base URL rather than a second one the founder would have to go and get.
@@ -161,40 +165,74 @@ function keysOf(env: NodeJS.ProcessEnv, keyEnv: string): { key: string; at: numb
   return [...(env[keyEnv] ? [{ key: env[keyEnv]!, at: 1 }] : []), ...spare.sort((one, other) => one.at - other.at)];
 }
 
-export function realClients(env: NodeJS.ProcessEnv = process.env): ModelClient[] {
-  return (models as Entry[]).flatMap((entry) => keysOf(env, entry.keyEnv).map(({ key, at }) => {
-    const api = new OpenAI({ apiKey: key, baseURL: entry.baseURL, timeout: 45_000, maxRetries: 0 });
-    return {
-      name: at > 1 ? `${entry.name}#${at}` : entry.name,
-      model: entry.model,
-      maxPromptChars: entry.maxPromptChars,
-      tools: entry.tools,
-      vision: !!entry.vision,
-      limits: entry.limits ?? {},
-      openai: api,
-      async step(history, { tools, signal, onToken }) {
-        const messages = withImages(portable(history, entry.callSignature), !!entry.vision);
-        const { data: stream, response } = await api.chat.completions.create({
-          model: entry.model, messages, stream: true, max_tokens: entry.maxTokens,
-          ...(entry.streamUsage === false ? {} : { stream_options: { include_usage: true } }),
-          ...(tools?.length ? { tools: wireTools(tools) } : {}),
-          ...(entry.extra ?? {}),
-        } as OpenAI.Chat.ChatCompletionCreateParamsStreaming, { signal }).withResponse();
+type Shape = { model: string; maxPromptChars: number; maxTokens: number; tools: boolean; vision?: boolean; streamUsage?: boolean; callSignature?: string; extra?: Record<string, unknown>; limits?: Limits; local?: boolean };
 
-        const calls: ToolCall[] = [];
-        let usage: Usage | undefined;
-        let cut = false;
-        for await (const chunk of stream) {
-          if (chunk.usage) usage = { input: chunk.usage.prompt_tokens ?? 0, output: chunk.usage.completion_tokens ?? 0 };
-          const delta = chunk.choices[0]?.delta;
-          if (chunk.choices[0]?.finish_reason === 'length') cut = true;
-          if (delta?.content) onToken(delta.content);
-          collectCalls(calls, delta?.tool_calls ?? []);
-        }
-        return { text: '', calls: calls.filter(Boolean).map((call, index) => ({ ...call, id: call.id || callId() })), usage, quota: readQuota(response.headers), ...(cut ? { cut } : {}) };
-      },
-    };
+function clientOf(name: string, entry: Shape, api: OpenAI): ModelClient {
+  return {
+    name,
+    model: entry.model,
+    maxPromptChars: entry.maxPromptChars,
+    tools: entry.tools,
+    vision: !!entry.vision,
+    limits: entry.limits ?? {},
+    ...(entry.local ? { local: true } : {}),
+    openai: api,
+    async step(history, { tools, signal, onToken }) {
+      const messages = withImages(portable(history, entry.callSignature), !!entry.vision);
+      const { data: stream, response } = await api.chat.completions.create({
+        model: entry.model, messages, stream: true, max_tokens: entry.maxTokens,
+        ...(entry.streamUsage === false ? {} : { stream_options: { include_usage: true } }),
+        ...(tools?.length ? { tools: wireTools(tools) } : {}),
+        ...(entry.extra ?? {}),
+      } as OpenAI.Chat.ChatCompletionCreateParamsStreaming, { signal }).withResponse();
+
+      const calls: ToolCall[] = [];
+      let usage: Usage | undefined;
+      let cut = false;
+      for await (const chunk of stream) {
+        if (chunk.usage) usage = { input: chunk.usage.prompt_tokens ?? 0, output: chunk.usage.completion_tokens ?? 0 };
+        const delta = chunk.choices[0]?.delta;
+        if (chunk.choices[0]?.finish_reason === 'length') cut = true;
+        if (delta?.content) onToken(delta.content);
+        collectCalls(calls, delta?.tool_calls ?? []);
+      }
+      return { text: '', calls: calls.filter(Boolean).map((call, index) => ({ ...call, id: call.id || callId() })), usage, quota: readQuota(response.headers), ...(cut ? { cut } : {}) };
+    },
+  };
+}
+
+// The model on this machine that answers for the people when the hosted ones cannot: where it is spoken to and which
+// one. The address is the founder's bridge (a 16k window, tidy tool calls) when it is up, Ollama itself otherwise.
+export type LocalModel = { baseURL: string; model: string };
+// Models known to call tools properly through Ollama's own chat template, best first. Others found on the machine
+// are not guessed at: a model that answers with a tool call written out as prose is worse than no model at all.
+const PREFERRED_LOCAL = ['qwen2.5:7b', 'qwen2.5:14b', 'qwen2.5:3b', 'llama3.1:8b', 'mistral:7b', 'mistral-nemo:12b'];
+
+// Looks, never starts: which model on this machine the people may fall back to, or none. `STAGE_LOCAL_MODEL` names
+// one outright; `STAGE_NO_LOCAL=1` keeps the people off this machine's models altogether (the founder needs Ollama
+// for something else).
+export async function findLocal(env: NodeJS.ProcessEnv = process.env, discover = discoverLocal): Promise<LocalModel | undefined> {
+  if (env.STAGE_NO_LOCAL === '1') return undefined;
+  const found = await discover().catch(() => undefined);
+  if (!found) return undefined;
+  const named = env.STAGE_LOCAL_MODEL?.trim();
+  const model = named || PREFERRED_LOCAL.find((one) => found.models.includes(one));
+  return model ? { baseURL: found.baseURL, model } : undefined;
+}
+
+// A local model is patient work: a 7B on this machine takes half a minute over a prompt the hosted ones answer in two
+// seconds, and the 16k window is the bridge's. No key, no limits: what it costs is time.
+export function localClient(local: LocalModel): ModelClient {
+  const api = new OpenAI({ apiKey: 'ollama', baseURL: local.baseURL, timeout: 180_000, maxRetries: 0 });
+  return clientOf('ollama', { model: local.model, maxPromptChars: 40_000, maxTokens: 2048, tools: true, limits: {}, local: true }, api);
+}
+
+export function realClients(env: NodeJS.ProcessEnv = process.env, local?: LocalModel): ModelClient[] {
+  const hosted = (models as Entry[]).flatMap((entry) => keysOf(env, entry.keyEnv).map(({ key, at }) => {
+    const api = new OpenAI({ apiKey: key, baseURL: entry.baseURL, timeout: 45_000, maxRetries: 0 });
+    return clientOf(at > 1 ? `${entry.name}#${at}` : entry.name, entry, api);
   }));
+  return local ? [...hosted, localClient(local)] : hosted;
 }
 
 // Deterministic stand-in for browser tests: says who it is, what it heard and which docs it can see.
