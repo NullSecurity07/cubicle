@@ -8,10 +8,10 @@ import { writeAtomic } from './fsx.ts';
 
 type Count = { requests: number; input: number; output: number };
 // What a call was for. A turn is a person answering; the rest are the calls around it.
-export type CallKind = 'turn' | 'side' | 'eval' | 'retain' | 'reflect' | 'compaction';
+type CallKind = 'turn' | 'side' | 'eval' | 'retain' | 'reflect' | 'compaction';
 // Per tool: how many results went into a prompt, and how many characters they came to before and after shrinking.
-export type ToolCount = { results: number; before: number; after: number };
-export type CacheCount = { hits: number; misses: number; tokensSaved: number };
+type ToolCount = { results: number; before: number; after: number };
+type CacheCount = { hits: number; misses: number; tokensSaved: number };
 // `kinds`, `tools` and `cache` came later: a day written before them still reads, as a day without them.
 type State = { day: string; providers: Record<string, Count>; kinds?: Record<string, Count>; tools?: Record<string, ToolCount>; cache?: Record<string, CacheCount> };
 type Seen = { at: number; tokens: number };

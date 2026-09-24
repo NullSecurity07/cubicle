@@ -59,7 +59,7 @@ export const bodyOf = (skill: Skill) => [`${skill.name}. ${skill.when}`, skill.p
 // Only the words are required; everything a skill is counted or sorted by has an answer that is true of a new one.
 const list_ = (value: unknown): string[] => (Array.isArray(value) ? value.filter((one): one is string => typeof one === 'string' && !!one.trim()) : []);
 const number_ = (value: unknown, fallback = 0) => (typeof value === 'number' && Number.isFinite(value) ? value : fallback);
-export function whatIsThere(held: Partial<Skill>, id: string): Skill | null {
+function whatIsThere(held: Partial<Skill>, id: string): Skill | null {
   const words = [held.name, held.when, held.verify];
   if (words.some((one) => typeof one !== 'string' || !one.trim()) || !list_(held.procedure).length) return null;
   return {

@@ -17,7 +17,7 @@ export type Reason = 'effort' | 'recovered' | 'corrected' | 'taught';
 export type Turn = { roomId: string; source: Source; query: string; reply: TurnResult; ref?: string };
 // What the model is shown. The founder's words, the person's own words, and what they reached for — never a word of
 // what a tool came back with, so a web page cannot write itself into the playbook.
-export type Evidence = { roomName: string; source: Source; reason: Reason; asked: string; said: string; earlier: string[]; calls: { name: string; args: string }[] };
+type Evidence = { roomName: string; source: Source; reason: Reason; asked: string; said: string; earlier: string[]; calls: { name: string; args: string }[] };
 export type Verdict = { action: 'none' } | ({ action: 'create' } & Fields) | { action: 'patch'; skill: string; changes: Change[] };
 export type Learned = { roomId: string; source: Source; name: string; action: 'create' | 'patch' };
 
@@ -51,7 +51,7 @@ export function shouldReflect(turn: Pick<Turn, 'source' | 'query' | 'reply'>): R
   return stumbled >= 0 && ran.slice(stumbled + 1).some((tool) => tool.ok) ? 'recovered' : null;
 }
 
-export const callsOf = (tools: ToolEvent[]) => tools.filter((tool) => tool.ok !== undefined)
+const callsOf = (tools: ToolEvent[]) => tools.filter((tool) => tool.ok !== undefined)
   .map((tool) => ({ name: tool.name, args: JSON.stringify(tool.args).slice(0, ARGS_CHARS) }));
 
 const DOCTRINE = 'You keep the one playbook shared by the people who work for a founder. A piece of work has just finished and you decide whether it taught something worth writing down.\n\n'

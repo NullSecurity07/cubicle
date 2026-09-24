@@ -7,7 +7,6 @@ import type { Handler, Source } from './seams.ts';
 // What one turn cost and what it did. Written after the founder already has their reply, so nothing here is in their way.
 export type TraceLine = { at: number; roomId: string; source: Source; provider: string; model: string; usage: Usage; tools: { name: string; ok: boolean }[]; stopped: boolean };
 export type Totals = { turns: number; input: number; output: number; tools: number; failed: number };
-export type Trace = ReturnType<typeof createTrace>;
 
 const KEEP_DAYS = 30;
 const MAX_DAYS = 90;

@@ -68,7 +68,7 @@ const PAGE_BREAK = '\n\n---\n\n';
 // Every step a person takes in a browser card, one JSON line each, in a file beside the card's own browser profile.
 // Nothing shows it: it is there for the founder to open when they want to know exactly what was done on their
 // account, and when. The newest 2,000 steps are kept.
-export const LOG_LINES = 2000;
+const LOG_LINES = 2000;
 export type Step = { at: number; roomId: string; action: string; url?: string; ref?: string; outward: boolean; ok: boolean };
 const writing = new Map<string, Promise<void>>();
 export function logStep(file: string, step: Step, keep = LOG_LINES): Promise<void> {
@@ -87,7 +87,7 @@ export const stepLogFile = (_cardId: string, launch: Launch) => (launch.profile 
 
 // Which browser card a step goes to. One wired card is the answer whatever the person wrote in "app": small models
 // hand over stale names. Two or more, and the person has to say which by name.
-export function pickBrowserCard(stage: Stage, roomId: string, app?: string): { id: string; name: string; card: Card } {
+function pickBrowserCard(stage: Stage, roomId: string, app?: string): { id: string; name: string; card: Card } {
   const mine = wiredCards(stage, roomId, 'browser');
   if (!mine.length) throw new Error('no browser card is connected to your room. Ask the founder to add one from the dock and draw a wire to it.');
   const named = mine.length === 1 ? mine[0] : mine.find((one) => appName(one).toLowerCase() === (app ?? '').trim().toLowerCase());

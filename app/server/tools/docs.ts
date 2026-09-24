@@ -26,7 +26,7 @@ function besideRoom(stage: Stage, room: Box): { x: number; y: number } {
 // happens to be open: a doc made from the phone, in a board run or by a colleague asked to do it has no window
 // watching, and without this it had no card, no wire, and nobody could reach it again. The wire has the name the
 // window gives it too, so a window that does hear of it adds nothing twice.
-export const docOnStage = (roomId: string, id: string, title: string) => (stage: Stage) => {
+const docOnStage = (roomId: string, id: string, title: string) => (stage: Stage) => {
   const room = stage.rooms.find((one) => one.id === roomId);
   if (!room || stage.docs.some((one) => one.id === id)) return;
   stage.docs.push({ id, title, ...besideRoom(stage, room), w: WIDTH, h: HEIGHT });

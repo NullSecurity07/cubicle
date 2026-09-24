@@ -14,7 +14,7 @@ const sourceName = (card: Card & { kind: 'source' }) => card.title?.trim() || sa
 
 // A search engine does not always honour site:, so every result whose address is on another host is dropped and the
 // rest are numbered again. Returns the blocks and whether any result was left at all.
-export function onHost(found: string, host: string): { text: string; any: boolean } {
+function onHost(found: string, host: string): { text: string; any: boolean } {
   let any = false;
   const blocks = found.split(/\n\n(?=## )/).map((block) => {
     const lines = block.split('\n');
@@ -45,7 +45,7 @@ const wordsOf = (text: string) => new Set(text.toLowerCase().split(/[^\p{L}\p{N}
 
 // When the engine finds nothing inside the site, the site's own home page still links to what it holds: the links
 // whose words meet a query's words are the next best thing to a search result.
-export function homeLinks(home: string, host: string, queries: string[]): string {
+function homeLinks(home: string, host: string, queries: string[]): string {
   const links = new Map<string, string>();
   for (const match of home.matchAll(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g)) if (!links.has(match[2])) links.set(match[2], match[1].trim());
   for (const match of home.matchAll(/(?<![(\w])https?:\/\/[^\s)\]]+/g)) if (!links.has(match[0])) links.set(match[0], new URL(match[0]).pathname.replace(/[/_-]+/g, ' ').trim());

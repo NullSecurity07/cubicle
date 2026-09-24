@@ -13,8 +13,8 @@ export const SIDE_TTL = 6 * 3600_000;
 export const WEB_TTL = 15 * 60_000;
 const SWEEP_EVERY = 3600_000;
 
-export type CacheKind = 'side' | 'web';
-export type CacheEvent = { folder: string; kind: CacheKind; hit: boolean; tokens?: number };
+type CacheKind = 'side' | 'web';
+type CacheEvent = { folder: string; kind: CacheKind; hit: boolean; tokens?: number };
 
 // Whoever keeps count (the usage book) listens here, for its own workspace.
 const listeners = new Set<(event: CacheEvent) => void>();

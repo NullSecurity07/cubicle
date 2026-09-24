@@ -3,9 +3,9 @@
 // clears it; a provider that errors (5xx) or times out (408) five times in a row is taken out for thirty seconds, then
 // trusted with exactly one request, which closes it again on success and opens it for another thirty on failure.
 // A resting key is only moved to the back: its siblings serve, and it is still there when nothing else is.
-export const TRIPS = 5;
+const TRIPS = 5;
 export const OPEN_MS = 30_000;
-export const REST_FIRST = 3000;
+const REST_FIRST = 3000;
 export const REST_MOST = 5 * 60_000;
 
 type Key = { fails: number; openUntil?: number; probeUntil?: number; half?: boolean; rest?: number; restUntil?: number };
@@ -18,7 +18,7 @@ export const headerWait = (error: unknown) => {
 };
 // A request that never got an answer is the provider down as much as a 503 is. An abort is the founder's Stop, not a failure.
 const TIMED_OUT = /timed? ?out|ECONNRESET|ECONNREFUSED|fetch failed|Connection error/i;
-export const brokeDown = (error: unknown) => {
+const brokeDown = (error: unknown) => {
   const status = statusOf(error);
   if (status !== undefined) return status >= 500 || status === 408;
   const { name, message } = (error ?? {}) as Error;
@@ -80,4 +80,3 @@ export function createBreaker(now: () => number = Date.now) {
     },
   };
 }
-export type Breaker = ReturnType<typeof createBreaker>;

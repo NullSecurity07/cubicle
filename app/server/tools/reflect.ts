@@ -37,7 +37,7 @@ export function memoryEntries(notes: string, keys: string[]): Entry[] {
   });
 }
 
-export const decisionEntry = (decision: Decision): Entry => ({
+const decisionEntry = (decision: Decision): Entry => ({
   at: decision.decidedAt ?? decision.at, where: WHERE.decision,
   text: clip(decision.status === 'decided' ? `${decision.title}: ${decision.chosen ?? ''}` : `${decision.title} (proposed, not decided yet)`),
 });

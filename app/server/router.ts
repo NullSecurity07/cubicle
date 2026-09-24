@@ -8,7 +8,7 @@ const title = (name: string) => name[0].toUpperCase() + name.slice(1);
 
 // A turn is a person answering; a side call is one of the calls around it (a summary, a reflection, a compaction
 // note). Side calls go to the small side model first and may be answered from the cache; a turn never reaches either.
-export type CallRoute = 'turn' | 'side';
+type CallRoute = 'turn' | 'side';
 type Want = { pinned?: string; promptChars: number; tools: boolean; vision?: boolean; kind?: CallRoute };
 
 // One provider's keys take turns: within the places the order already gives that provider, the key that has carried

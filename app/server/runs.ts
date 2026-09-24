@@ -33,7 +33,7 @@ const line = (event: ToolEvent) => `${event.ok ? '✓' : '✗'} ${event.name} ${
 // narrow. Without it a person is offered the lot, which is what this was before any of them existed.
 // Who set a piece of work going. A person told "the founder started this" about a task that started itself at nine
 // in the morning has been told something untrue, and answers as if somebody were sitting there waiting for it.
-export type StartedBy = 'founder' | 'schedule' | 'chain' | 'call';
+type StartedBy = 'founder' | 'schedule' | 'chain' | 'call';
 const STARTED: Record<StartedBy, string> = {
   founder: 'The founder started this task from the board.',
   schedule: 'This task started by itself, on the schedule the founder set for it. Nobody is watching it run.',

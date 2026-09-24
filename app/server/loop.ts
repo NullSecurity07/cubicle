@@ -20,7 +20,7 @@ const CUT = '\n… (cut) …\n';
 
 // A long text cut to `cap`, keeping its start and its last block: the end of a result is where a run's error, a
 // search's list of sources and the founder's Undo line all are.
-export function cutKeepingEnd(text: string, cap: number): string {
+function cutKeepingEnd(text: string, cap: number): string {
   if (text.length <= cap) return text;
   const lastBlock = text.slice(text.lastIndexOf('\n\n') + 1);
   const tail = lastBlock.length <= cap / 4 ? lastBlock : text.slice(-Math.floor(cap / 4));
@@ -32,7 +32,7 @@ const bounded = (messages: ModelMessage[], cap: number) => messages.some((messag
   ? messages.map((message) => (message.role === 'tool' && message.content.length > cap ? { ...message, content: cutKeepingEnd(message.content, cap) } : message))
   : messages;
 
-export type TurnEvents = { token(token: string): void; tool(event: ToolEvent): void; notice?(text: string): void };
+type TurnEvents = { token(token: string): void; tool(event: ToolEvent): void; notice?(text: string): void };
 export type TurnResult = { text: string; tools: ToolEvent[]; provider: string; model: string; usage: Usage; stopped: boolean };
 
 // One turn of one person: ask the model, run the tools it calls, hand the results back, until it answers in words.
