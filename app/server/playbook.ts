@@ -45,7 +45,7 @@ const written = (skill: Skill) => [
 
 // The skills nearest to a piece of text, best first, one entry each however many passages matched.
 export async function nearestSkills(recall: Recall, query: string, top: number): Promise<Hit[]> {
-  const hits = await recall.search(query, { allow: (piece) => piece.kind === 'skill', top: top * 2 });
+  const hits = await recall.search(query, { kinds: ['skill'], top: top * 2 });
   const best = new Map<string, Hit>();
   for (const hit of hits) if (!best.has(hit.id)) best.set(hit.id, hit);
   return [...best.values()].slice(0, top);

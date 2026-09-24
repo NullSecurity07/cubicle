@@ -79,7 +79,8 @@ export function mayRecall(stage: Stage, roomId: string): (piece: Piece) => boole
 
 // Finds passages by meaning across everything the workspace holds. The workspace files stay the truth: `gather` reads
 // them fresh, only passages whose text changed are embedded again, and the saved vectors can be deleted at any time.
-export function createRecall(deps: { dir: string; embed: Embedder; gather: () => Promise<Piece[]> }) {
+// `gather` may be handed the kinds wanted and read only those; one that reads everything anyway is filtered here.
+export function createRecall(deps: { dir: string; embed: Embedder; gather: (kinds?: ReadonlySet<Piece['kind']>) => Promise<Piece[]> }) {
   const path = join(deps.dir, '.index', 'recall.json');
   let known: Map<string, number[]> | null = null;
   let mode: 'meaning' | 'words' = 'meaning';
@@ -91,21 +92,24 @@ export function createRecall(deps: { dir: string; embed: Embedder; gather: () =>
     try { for (const [hash, packed] of Object.entries(JSON.parse(await readFile(path, 'utf8')).vectors as Record<string, string>)) known.set(hash, [...new Float32Array(new Uint8Array(Buffer.from(packed, 'base64')).buffer)]); } catch { /* no index yet */ }
     return known;
   }
-  async function passages(): Promise<Passage[]> {
+  async function passages(kinds?: ReadonlySet<Piece['kind']>): Promise<Passage[]> {
     const vectors = await load();
     // The hash is what was embedded and nothing else: the kind, the title and the words. When a piece was written is
     // not in it, so an index saved before passages carried a date still matches every one of them and nothing is
     // embedded again for the sake of a new field.
-    const all: Passage[] = (await deps.gather()).flatMap((piece) => chunksOf(piece.text).map((text) => ({ ...piece, text, hash: createHash('sha1').update(`${piece.kind}\n${piece.title}\n${text}`).digest('hex') })));
+    const all: Passage[] = (await deps.gather(kinds)).filter((piece) => !kinds || kinds.has(piece.kind)).flatMap((piece) => chunksOf(piece.text).map((text) => ({ ...piece, text, hash: createHash('sha1').update(`${piece.kind}\n${piece.title}\n${text}`).digest('hex') })));
     const fresh = all.filter((passage) => !vectors.has(passage.hash));
     if (fresh.length) {
       try {
         const made = await deps.embed(fresh.map((passage) => `${passage.title}\n${passage.text}`));
         fresh.forEach((passage, index) => vectors.set(passage.hash, made[index]));
         mode = 'meaning';
-        // Keep only what is still in the workspace, so the file does not grow with every edit.
-        const live = new Set(all.map((passage) => passage.hash));
-        for (const hash of [...vectors.keys()]) if (!live.has(hash)) vectors.delete(hash);
+        // Keep only what is still in the workspace, so the file does not grow with every edit. A search over some
+        // kinds only has not seen the rest, so it cannot tell what is gone and throws nothing away.
+        if (!kinds) {
+          const live = new Set(all.map((passage) => passage.hash));
+          for (const hash of [...vectors.keys()]) if (!live.has(hash)) vectors.delete(hash);
+        }
         const packed = Object.fromEntries([...vectors].map(([hash, vector]) => [hash, Buffer.from(new Float32Array(vector).buffer).toString('base64')]));
         queue = queue.then(async () => { await mkdir(join(deps.dir, '.index'), { recursive: true }); await writeFile(`${path}.tmp`, JSON.stringify({ vectors: packed })); await rename(`${path}.tmp`, path); }).catch(() => {});
       } catch { mode = 'words'; }
@@ -118,10 +122,11 @@ export function createRecall(deps: { dir: string; embed: Embedder; gather: () =>
     settled: () => queue,
     // Brings the saved vectors up to date without searching: run after start so the first real search is quick.
     warm: async () => { await passages(); },
-    async search(query: string, options: { allow?: (piece: Piece) => boolean; top?: number } = {}): Promise<Hit[]> {
+    // `kinds` searches only those, and reads only those from the workspace.
+    async search(query: string, options: { allow?: (piece: Piece) => boolean; top?: number; kinds?: Piece['kind'][] } = {}): Promise<Hit[]> {
       const asked = query.trim();
       if (!asked) return [];
-      const pool = (await passages()).filter((passage) => !options.allow || options.allow(passage));
+      const pool = (await passages(options.kinds ? new Set(options.kinds) : undefined)).filter((passage) => !options.allow || options.allow(passage));
       const question = [...new Set(words(asked))];
       let vector: number[] | undefined;
       if (mode === 'meaning' && pool.some((passage) => passage.vector)) { try { [vector] = await deps.embed([asked]); } catch { mode = 'words'; } }
