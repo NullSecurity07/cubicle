@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { leadsChannel, TWENTY_CHANNEL, type LeadsEvent, type TwentyStatus } from '../../shared/leads.ts';
 import { hub } from '../events.ts';
+import { healthRows } from '../openends/health.ts';
 import type { Slice } from '../install.ts';
 import { leadsCardIds, leadsFor } from '../leads/store.ts';
 import { createMirror, createTwentyClient, twentyConfig, type Mirror } from '../leads/twenty.ts';
@@ -39,6 +40,15 @@ export default {
     const running = mirror;
     const opening = async () => [{ channel: TWENTY_CHANNEL, data: running.status() }];
     const unopen = hub.open(opening);
+    // Twenty's row on the health screen, from the mirror's own last word.
+    healthRows.set('twenty', () => {
+      const status = running.status();
+      return {
+        name: 'Twenty', ok: status.connected && !status.problem,
+        detail: status.problem ? `${config.url}: ${status.problem}` : status.connected ? `leads are mirrored to ${config.url}${status.lastSync ? `, last at ${new Date(status.lastSync).toISOString().slice(11, 16)} UTC` : ''}` : `${config.url} has not answered yet`,
+        fix: 'Check that Twenty is running (docker compose up -d in its folder) and that TWENTY_API_KEY is a key it still knows.',
+      };
+    });
     console.log(`Twenty: connected to ${config.url}; leads are mirrored there every half minute.`);
 
     return {
@@ -46,6 +56,7 @@ export default {
       tick: () => running.sync(),
       async close() {
         unopen();
+        healthRows.delete('twenty');
       },
     };
   },

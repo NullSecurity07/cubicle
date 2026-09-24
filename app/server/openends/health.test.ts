@@ -2,7 +2,8 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { checkAll, keyPools, keysOf, liveChecks, liveReaders, LIVE_FEED, LIVE_REDDIT, LIVE_REDDIT_FEED, onPath, ytdlpVersion } from './health.ts';
+import { checkAll, healthRows, keyChecks, keyPools, keysOf, liveChecks, liveReaders, LIVE_FEED, LIVE_REDDIT, LIVE_REDDIT_FEED, onPath, ytdlpVersion } from './health.ts';
+import type { Check } from '../../shared/openends.ts';
 
 const at = new Date('2026-09-20T09:00:00').getTime();
 const DAY = 86_400_000;
@@ -135,5 +136,39 @@ describe('reading videos, feeds and Reddit', () => {
     expect(feed).toMatchObject({ ok: false, detail: `${LIVE_FEED} did not send a feed` });
     const [, offline] = await liveReaders((async () => { throw new Error('getaddrinfo ENOTFOUND hnrss.org'); }) as typeof fetch);
     expect(offline).toMatchObject({ ok: false, detail: `${LIVE_FEED} could not be reached: getaddrinfo ENOTFOUND hnrss.org` });
+  });
+});
+
+describe('the rows for keys and for slices', () => {
+  it('say which services have their keys, and never show a value', async () => {
+    const none = keyChecks({}, '/nowhere');
+    expect(none.map((one) => [one.name, one.ok])).toEqual([['Email', false], ['Drawing pictures', false], ['Making clips', false], ['Real photographs', false], ['More music', false], ['Finding leads', false]]);
+    expect(none.find((one) => one.name === 'Finding leads')!.detail).toMatch(/uvx is not on this machine/);
+    const env = { AGENTMAIL_API_KEY: 'am-secret', CLOUDFLARE_API_TOKEN: 'cf-secret', CLOUDFLARE_ACCOUNT_ID: 'acc-secret', HF_TOKEN: 'hf_secret', PEXELS_API_KEY: 'px-secret', FREESOUND_API_KEY: 'fs-secret' };
+    const some = keyChecks(env, '/nowhere');
+    expect(some.filter((one) => one.ok).map((one) => one.name)).toEqual(['Email', 'Drawing pictures', 'Making clips', 'Real photographs', 'More music']);
+    expect(JSON.stringify(some)).not.toContain('secret');
+    expect(keyChecks({ STAGE_IMAGE_BACKEND: 'local' }, '/nowhere').find((one) => one.name === 'Drawing pictures')!.ok).toBe(true);
+  });
+
+  it('names the OpenOutreach settings still missing once uvx is here', async () => {
+    const bin = await mkdtemp(join(tmpdir(), 'uvx-'));
+    await writeFile(join(bin, 'uvx'), '#!/bin/sh\n', { mode: 0o755 });
+    const leads = keyChecks({ PATH: bin, OPENOUTFIND_AI_MODEL: 'm' }, '/nowhere').find((one) => one.name === 'Finding leads')!;
+    expect(leads.ok).toBe(false);
+    expect(leads.detail).toContain('OPENOUTFIND_LLM_API_KEY');
+    expect(leads.detail).not.toContain('OPENOUTFIND_AI_MODEL');
+  });
+
+  it('adds what slices say about themselves, and leaves out one that throws', async () => {
+    const rows: typeof healthRows = new Map<string, () => Promise<Check | null> | Check | null>([
+      ['phone', async () => ({ name: 'Your phone', ok: true, detail: 'on', fix: '' })],
+      ['broken', async () => { throw new Error('no'); }],
+      ['quiet', () => null],
+    ]);
+    const checks = await setup({ rows });
+    expect(row(checks, 'Your phone')).toMatchObject({ ok: true, detail: 'on' });
+    expect(checks.some((one) => one.name === 'broken')).toBe(false);
+    expect(healthRows).toBeInstanceOf(Map);
   });
 });

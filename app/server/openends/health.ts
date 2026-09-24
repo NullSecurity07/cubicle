@@ -7,7 +7,8 @@ import type { ModelClient } from '../providers.ts';
 import type { EngineHealth } from '../opencode/server.ts';
 import { graphifyVersion, INSTALL, mcpCommand, PIN } from '../slices/graph.ts';
 import { isoDay, parseFeed, REDDIT_AGENT } from '../readers.ts';
-import { whichAsync } from '../which.ts';
+import { which, whichAsync } from '../which.ts';
+import { FIND_VARS, outreachEnv } from '../leads/openoutreach.ts';
 
 // Is everything this app leans on really here? One question a line, answered yes or no, and when the answer is no,
 // what the founder would do about it — in the words they would use, not ours.
@@ -47,6 +48,8 @@ export type HealthDeps = {
   // Which Graphify is here, or null, and how the coder would start its tool server (null: it cannot).
   graphify?: () => Promise<string | null>;
   graphServer?: () => string[] | null;
+  // The rows slices add about themselves. The app's own registry when left out.
+  rows?: Map<string, () => Promise<Check | null> | Check | null>;
 };
 
 // The version yt-dlp says it is, or null when it is not on the PATH or will not run.
@@ -60,6 +63,57 @@ export async function ytdlpVersion(env: NodeJS.ProcessEnv = process.env): Promis
 // The outside programs' rows, as the openends slice that talks to them last saw them. The dashboard reads its health
 // through this, so it shows the same rows as the health panel without connecting to anything itself.
 export const outsideHealth: { now: () => { name: string; ok: boolean; detail: string }[] } = { now: () => [] };
+
+// Rows a slice adds about itself, by name, and takes off again when it closes. null is "nothing to say".
+export const healthRows = new Map<string, () => Promise<Check | null> | Check | null>();
+
+// The services that need nothing but a key in .env: what each one opens up, and the line that sets it up.
+export function keyChecks(env: NodeJS.ProcessEnv, root: string): Check[] {
+  const has = (...names: string[]) => names.every((name) => !!env[name]?.trim());
+  const checks: Check[] = [];
+  const agentmail = has('AGENTMAIL_API_KEY');
+  const gmail = has('GMAIL_USER', 'GMAIL_APP_PASSWORD');
+  checks.push({
+    name: 'Email', ok: agentmail || gmail,
+    detail: agentmail && gmail ? 'each person has a mailbox, and mail can go out from your own address'
+      : agentmail ? 'each person has a mailbox; sending as you needs GMAIL_USER and GMAIL_APP_PASSWORD'
+      : gmail ? 'mail goes out from your own address; nobody can read an inbox without AGENTMAIL_API_KEY'
+      : 'no mail key is set, so people write mail only through a browser card signed in to webmail',
+    fix: 'Add AGENTMAIL_API_KEY (free at agentmail.to) to .env for a mailbox per person, or GMAIL_USER and GMAIL_APP_PASSWORD to send from your own address, then start the app again.',
+  });
+  const cloudflare = has('CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID');
+  const local = env.STAGE_IMAGE_BACKEND === 'local';
+  checks.push({
+    name: 'Drawing pictures', ok: cloudflare || local,
+    detail: cloudflare ? `Cloudflare draws them${local ? ', though STAGE_IMAGE_BACKEND=local keeps every picture on this machine' : ''}` : local ? 'every picture is drawn on this machine' : 'no Cloudflare key is set, so pictures are drawn on this machine if it can, and not at all if it cannot',
+    fix: 'Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID to .env. A free Cloudflare account covers hundreds of pictures a day.',
+  });
+  checks.push({
+    name: 'Making clips', ok: has('HF_TOKEN'),
+    detail: has('HF_TOKEN') ? 'a Hugging Face token is set, so films can have moving clips and lip-sync' : 'no Hugging Face token is set, so films are made of still pictures',
+    fix: 'Make a free Hugging Face account, copy a read token from huggingface.co/settings/tokens into .env as HF_TOKEN, and start the app again.',
+  });
+  checks.push({
+    name: 'Real photographs', ok: has('PEXELS_API_KEY'),
+    detail: has('PEXELS_API_KEY') ? 'Pexels is set, so films can use real stock photographs and footage' : 'no Pexels key is set, so films use drawn pictures only',
+    fix: 'Add PEXELS_API_KEY (free at pexels.com/api) to .env and start the app again.',
+  });
+  checks.push({
+    name: 'More music', ok: has('FREESOUND_API_KEY'),
+    detail: has('FREESOUND_API_KEY') ? 'Freesound is set as a second music library' : 'films take music from the free library alone; Freesound would add a second',
+    fix: 'Add FREESOUND_API_KEY (free at freesound.org/apiv2/apply) to .env. Music works without it.',
+  });
+  const found = outreachEnv(env, root);
+  const missing = FIND_VARS.filter((name) => !found[name]);
+  const uvx = which('uvx', { env, extra: env.HOME ? [join(env.HOME, '.local/bin')] : [] });
+  checks.push({
+    name: 'Finding leads', ok: !!uvx && !missing.length,
+    detail: !uvx ? 'uvx is not on this machine, so nobody can find leads (adding them by hand still works)'
+      : missing.length ? `OpenOutreach still needs ${missing.join(', ')}` : 'OpenOutreach is set up and runs through uvx',
+    fix: `Install uv (docs.astral.sh/uv), then put ${FIND_VARS.join(', ')} in .env at the repository root. The Leads card works without it.`,
+  });
+  return checks;
+}
 
 export async function checkAll(deps: HealthDeps): Promise<Check[]> {
   const { workspace, root, env = process.env, now = Date.now } = deps;
@@ -140,6 +194,13 @@ export async function checkAll(deps: HealthDeps): Promise<Check[]> {
     detail: newest ? `${held.length} kept in ${deps.backupDir}, the newest made ${ago(newest, now())}` : `nothing has been backed up yet (they would go to ${deps.backupDir})`,
     fix: 'Open Health and press "Back up now". Five are kept, and each one holds everything you have written.',
   });
+
+  checks.push(...keyChecks(env, root));
+  // What slices know about themselves right now (the phone, Twenty), each asked once; one that throws is left out.
+  for (const row of [...(deps.rows ?? healthRows).values()]) {
+    const found = await Promise.resolve().then(row).catch(() => null);
+    if (found) checks.push(found);
+  }
 
   const servers = deps.outside();
   const quiet = servers.filter((one) => !one.ok);

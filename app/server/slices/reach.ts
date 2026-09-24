@@ -6,6 +6,7 @@ import { guessGender, recast, voiceFor } from '../../shared/voices.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
 import { DEFAULT_VOICE, fakeVoices, isVoice, kokoroVoices, VOICES } from '../media/voice.ts';
 import type { Source } from '../seams.ts';
+import { healthRows } from '../openends/health.ts';
 import { createBridge } from '../reach/bridge.ts';
 import { createDigest, dueAt } from '../reach/digest.ts';
 import { fakeTelegram } from '../reach/fake.ts';
@@ -248,6 +249,20 @@ export default {
     void updates.look().catch(() => {});
     const held = await reach.read();
     if (held.on) void running(true).catch(() => {});
+    // The phone's row on the health screen: set up or not, on or off, paired or not, and the last trouble it had.
+    healthRows.set('phone', async () => {
+      const now = await reach.read();
+      const token = !!(await reach.token());
+      const paired = now.paired.length + (now.group ? 1 : 0);
+      return {
+        name: 'Your phone', ok: token && (!now.on || !trouble),
+        detail: !token ? 'no Telegram bot is set up, so nobody can reach you on your phone'
+          : !now.on ? 'a Telegram bot is set up but switched off'
+          : trouble ? trouble
+          : paired ? `Telegram is on, with ${paired === 1 ? 'one chat' : `${paired} chats`} paired` : 'Telegram is on, and no chat is paired yet',
+        fix: 'Make a bot with @BotFather in Telegram, paste its token in the Phone panel (or put TELEGRAM_BOT_TOKEN in .env), switch it on and pair your chat.',
+      };
+    });
 
     return {
       tools: [askFounder],
@@ -377,6 +392,7 @@ export default {
         await poller.close();
         unwatch();
         for (const stop of off) stop();
+        healthRows.delete('phone');
         await outbox.settled();
         await book.settled();
         await reach.settled();
