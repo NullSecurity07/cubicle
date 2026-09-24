@@ -4,6 +4,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { NONCOMMERCIAL, OMNI_PICKER_LINE, PERMISSION_LINE } from '../../shared/model.ts';
 import type { Ask, Maker, Piece } from './jobs.ts';
+import { holdsTheCard, makeRoom, NEEDS_MB } from './gpu-room.ts';
 import { inTurn } from './on-this-machine.ts';
 
 // A second voice, borrowed. OmniVoice (k2-fsa, code Apache-2.0) clones a voice from a few seconds of somebody
@@ -167,10 +168,24 @@ export type Child = {
   stderr: { on: (event: 'data', listen: (chunk: Buffer) => void) => unknown };
   on: (event: 'exit', listen: (code: number | null) => void) => unknown;
   kill: () => unknown;
+  pid?: number;
 };
 export type Starter = (python: string, args: string[], env: NodeJS.ProcessEnv) => Child;
 export type Setup = (dir: string, report: (line: string) => void, signal?: AbortSignal) => Promise<void>;
-export type OmniDeps = { start?: Starter; setup?: Setup; uvHere?: () => Promise<boolean>; idleMs?: number };
+export type OmniDeps = {
+  start?: Starter; setup?: Setup; uvHere?: () => Promise<boolean>; idleMs?: number;
+  room?: (need: number, report: (line: string) => void) => Promise<void>;
+};
+
+// Every engine made in this process, so that a picture or a clip that needs the graphics card can ask whichever of
+// them is resting on it to let go. A worker let go of is started again by the next ask, which costs its load time.
+const stoppers = new Set<{ stop: () => boolean; pid: () => number | undefined }>();
+export function release(): boolean {
+  let any = false;
+  for (const one of stoppers) any = one.stop() || any;
+  return any;
+}
+holdsTheCard({ name: OMNI_NAME, release, pids: () => [...stoppers].flatMap((one) => one.pid() ?? []) });
 
 export const WORKER = join(import.meta.dirname, 'omnivoice', 'worker.py');
 export const venvPython = (dir: string) => join(dir, '.venv', 'bin', 'python');
@@ -224,6 +239,7 @@ export function omniVoices(cacheDir: string, env: NodeJS.ProcessEnv = process.en
   const setup = deps.setup ?? uvSetup;
   const uvHere = deps.uvHere ?? uvHereReally;
   const idleMs = deps.idleMs ?? IDLE_MS;
+  const room = deps.room ?? ((need: number, report: (line: string) => void) => makeRoom(need, report, { env, soft: true }));
   let setting: string | null = null;
   let noUv = false;
 
@@ -240,6 +256,7 @@ export function omniVoices(cacheDir: string, env: NodeJS.ProcessEnv = process.en
     (idle as { unref?: () => void }).unref?.();
   };
   process.once('exit', () => child?.kill());
+  stoppers.add({ stop: () => { const was = !!child; stopWorker(); return was; }, pid: () => child?.pid });
 
   const wake = (report: (line: string) => void): Promise<Warm> => {
     warm ??= new Promise<Warm>((done, fail) => {
@@ -332,6 +349,9 @@ export function omniVoices(cacheDir: string, env: NodeJS.ProcessEnv = process.en
           if (firstTime && !existsSync(join(cacheDir, 'models', 'hub', 'models--k2-fsa--OmniVoice'))) {
             report(`OmniVoice fetches its weights next: ${WEIGHTS_GB} GB, once`);
           }
+          // A worker starting on the graphics card needs room there; a chat model resting on it is let go of first.
+          // Short of room it still starts, on the processor, which the worker decides for itself.
+          if (!warm && env.STAGE_OMNIVOICE_DEVICE !== 'cpu') await room(NEEDS_MB.voice, report);
           const worker = await wake((line) => { setting = line; report(line); });
           setting = null;
           if (firstTime) report(`OmniVoice is on ${deviceWords(worker.device)}${worker.why ? ` (${worker.why})` : ''}`);

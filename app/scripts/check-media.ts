@@ -12,6 +12,7 @@ const { hyperframesVideos } = await import('../server/media/video.ts');
 const { createClips } = await import('../server/media/spaces.ts');
 const { localClips, CLIP_SECONDS, MINUTES_EACH } = await import('../server/media/local-clips.ts');
 const { localImages, DOWNLOAD_GB, SECONDS_EACH } = await import('../server/media/local-image.ts');
+const { cardLine } = await import('../server/media/gpu-room.ts');
 const { createMusic } = await import('../server/media/music.ts');
 import type { Ask, Maker, Piece } from '../server/media/jobs.ts';
 
@@ -78,6 +79,9 @@ try {
   if (drawHint) console.log('Local pictures NOT SET UP:', drawHint);
   else if (!process.argv.includes('--local')) console.log(`Local pictures READY (not run: ${DOWNLOAD_GB} GB once, then about ${SECONDS_EACH}s a picture; pass --local to draw one)`);
   else {
+    // Where the card stands before the picture asks for room on it; the picture itself says what it let go of.
+    const standing = await cardLine();
+    if (standing) console.log(`  · ${standing}`);
     const started = Date.now();
     try {
       const made = await drawsHere.make({ prompt: 'a paper plane over a desk, soft morning light, photo', shape: 'square' }, { report: (line: string) => console.log('  ·', line) });
