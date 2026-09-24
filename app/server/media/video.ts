@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { copyFile, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { extname, join, resolve } from 'node:path';
@@ -11,6 +10,7 @@ import { noClips, type Clips } from './clips.ts';
 import { headlineOf, mendShots, repair, trimTo, type Want } from './critic.ts';
 import { lensPhrase } from './moves.ts';
 import { finishPicture, looking } from './finish.ts';
+import { runLines, type Ran } from './proc.ts';
 import { hands } from './turns.ts';
 import type { Sight } from './sight.ts';
 import {
@@ -66,28 +66,16 @@ export type { Credit, Music } from './music.ts';
 // Where Chrome is on this machine. The renderer takes it by name in the environment, not as a flag.
 export const chromePath = (): string | null => CHROMES.find((path) => existsSync(path)) ?? null;
 
-type Ran = { code: number; out: string };
-function run(command: string, args: string[], at: string, onLine: (line: string) => void, signal?: AbortSignal): Promise<Ran> {
-  return new Promise((done, fail) => {
-    const child = spawn(command, args, { cwd: at, env: { ...process.env, HYPERFRAMES_BROWSER_PATH: chromePath() ?? '', NO_COLOR: '1' } });
-    let out = '';
-    let rest = '';
-    const read = (chunk: Buffer) => {
-      const text = chunk.toString('utf8');
-      out += text;
-      rest += text;
-      const lines = rest.split('\n');
-      rest = lines.pop() ?? '';
-      for (const line of lines) onLine(line.replace(/\[[0-9;]*m/g, '').trim());
-    };
-    child.stdout.on('data', read);
-    child.stderr.on('data', read);
-    const stop = () => child.kill('SIGTERM');
-    signal?.addEventListener('abort', stop, { once: true });
-    child.on('error', fail);
-    child.on('close', (code) => { signal?.removeEventListener('abort', stop); done({ code: code ?? 1, out: out.replace(/\[[0-9;]*m/g, '') }); });
-  });
-}
+// The renderer is told where Chrome is by name in the environment, not as a flag, and prints no colour codes; the
+// few that slip through anyway are taken off every line and off what it printed.
+const ANSI = /\[[0-9;]*m/g;
+const run = (command: string, args: string[], at: string, onLine: (line: string) => void, signal?: AbortSignal, collect = 0): Promise<Ran> =>
+  runLines(command, args, {
+    cwd: at, env: { ...process.env, HYPERFRAMES_BROWSER_PATH: chromePath() ?? '', NO_COLOR: '1' }, signal, collect,
+    onLine: (line) => onLine(line.replace(ANSI, '').trim()),
+  }).then((ran) => ({ ...ran, out: ran.out.replace(ANSI, '') }));
+// What a render printed is kept only as its last few kilobytes: it is read for its last line when it fails.
+const RENDER_TAIL = 8192;
 
 // A handful of slow things at a time rather than all of them: a dozen pictures asked for at once is a dozen refusals.
 export async function pool<T>(jobs: (() => Promise<T>)[], most = 3): Promise<T[]> {
@@ -1174,7 +1162,7 @@ export async function renderProject(bin: string, at: string, film: Film, help: {
 
   // A finding here is worth saying out loud, but it is not worth withholding the film over: render either way.
   report('checking the composition…');
-  const checked = await run(bin, ['check', '.'], at, () => {}, signal);
+  const checked = await run(bin, ['check', '.'], at, () => {}, signal, Infinity);
   // Say what it disliked, not how many things it disliked: the lint's own line names the element and the reason.
   if (checked.code !== 0) {
     const found = checked.out.split('\n').map((line) => line.trim()).find((line) => line.startsWith('✗'))
@@ -1190,7 +1178,7 @@ export async function renderProject(bin: string, at: string, film: Film, help: {
     if (!line || Date.now() - last < 1000) return;
     last = Date.now();
     report(`rendering · ${line.slice(0, 120)}`);
-  }, signal);
+  }, signal, RENDER_TAIL);
   if (signal?.aborted) throw new Error('stopped');
   if (rendered.code !== 0) throw new Error(`the render stopped: ${(rendered.out.trim().split('\n').filter(Boolean).at(-1) ?? 'no reason given').slice(0, 200)}`);
   const bytes = await readFile(join(at, 'out.mp4'));

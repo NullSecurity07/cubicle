@@ -15,6 +15,7 @@
 // that cannot load them makes the film it always made, from flat stills nobody looked at.
 
 import { basename, join } from 'node:path';
+import { serial } from './turns.ts';
 
 // What was seen in one picture, each a share of certainty between nought and one.
 export type Seen = { facing: number; lettered: number };
@@ -205,12 +206,7 @@ export function createSight(cacheDir: string): Sight {
   let said: string | null = null;
   // One picture at a time through either model: three hands draw at once, and three networks running at once on
   // the same cores each take three times as long.
-  let queue: Promise<unknown> = Promise.resolve();
-  const inTurn = <T>(job: () => Promise<T>): Promise<T> => {
-    const next = queue.then(job, job);
-    queue = next.catch(() => undefined);
-    return next;
-  };
+  const inTurn = serial();
   const load = async () => {
     const { env, pipeline } = await import('@huggingface/transformers');
     env.cacheDir = cacheDir;

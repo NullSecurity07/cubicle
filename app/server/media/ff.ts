@@ -8,15 +8,19 @@ export const FF_HINT = 'ffmpeg is not on this machine, so music, sound and dropp
 
 const BIG = 64_000_000;
 
+// The stop is handed to execFile itself, which kills the program and lets go of the signal when it ends: a film
+// with many dropped stills used to leave a listener on its signal for every one of them. A job already stopped
+// runs nothing.
 export function ff(bin: string, args: string[], signal?: AbortSignal, seconds = 600): Promise<string> {
+  if (signal?.aborted) return Promise.reject(new Error('stopped'));
   return new Promise((done, fail) => {
-    const child = execFile(bin, args, { timeout: seconds * 1000, maxBuffer: BIG, encoding: 'utf8' }, (error, stdout, stderr) => {
+    execFile(bin, args, { timeout: seconds * 1000, maxBuffer: BIG, encoding: 'utf8', signal }, (error, stdout, stderr) => {
       if (!error) return done(stdout);
+      if (signal?.aborted) return fail(new Error('stopped'));
       // ffmpeg says what went wrong on its last line, and everything before it is the banner.
       const said = (stderr || stdout || error.message).trim().split('\n').filter(Boolean).at(-1) ?? error.message;
       fail(new Error(said.slice(0, 220)));
     });
-    signal?.addEventListener('abort', () => child.kill('SIGTERM'), { once: true });
   });
 }
 

@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { chmod, copyFile, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { serial } from './turns.ts';
 
 // What the two backends that run here have in common: where the weights live, whether this computer can run them at
 // all, how a few gigabytes are fetched the first time, and — the one that matters most — that only one of them runs
@@ -22,12 +23,13 @@ export const vulkanHere = (dirs = ['/usr/share/vulkan/icd.d', '/etc/vulkan/icd.d
 
 // One heavy job at a time, whatever kind it is. The queue is the module itself, so a clip and a picture asked for in
 // the same second take their turn rather than both asking Vulkan for everything at once.
-let turn: Promise<unknown> = Promise.resolve();
-export const inTurn = <T>(job: () => Promise<T>): Promise<T> => {
-  const mine = turn.then(job, job);
-  turn = mine.catch(() => {});
-  return mine;
-};
+//
+// Whoever asked may have stopped wanting it by the time its turn comes — a picture the measured cut has no shot
+// for is stopped while it waits, and two of a film's three hands are always waiting here. A job stopped by then is
+// not run at all: it would otherwise clear the graphics card of the resting chat model and then draw for nobody.
+const heavy = serial();
+export const inTurn = <T>(job: () => Promise<T>, signal?: AbortSignal): Promise<T> =>
+  heavy(() => (signal?.aborted ? Promise.reject(new Error('stopped')) : job()));
 
 // One file that has to be on disk before anything can be made, and where it really comes from. `unzip` marks the one
 // that is an archive rather than a weight.
