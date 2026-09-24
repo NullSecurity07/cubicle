@@ -1,5 +1,6 @@
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, extname, join, resolve } from 'node:path';
+import { countWords } from './spec.ts';
 import type { Brand } from './templates/index.ts';
 
 // What is wired to a Video studio card, or dropped on it, is what the film is made of. Nothing here invents a fact:
@@ -170,13 +171,12 @@ export type Product = { name?: string; about?: string; pitch: string; words: str
 // how one came to open on "Read-only project card".
 export function pitchOf(about: string | undefined, readme: string): string {
   const said = readme.split(/\n+/).map((one) => one.replace(/\s+/g, ' ').trim())
-    .filter((one) => countWordsIn(one) >= 6 && /[a-z]{3}/.test(one) && !/^[-*+>|#]/.test(one))
+    .filter((one) => countWords(one) >= 6 && /[a-z]{3}/.test(one) && !/^[-*+>|#]/.test(one))
     .flatMap((one) => one.split(/(?<=[.!?])\s+/))
-    .filter((one) => countWordsIn(one) >= 6)
+    .filter((one) => countWords(one) >= 6)
     .slice(0, 3);
   return [about, ...said].filter(Boolean).join(' ').slice(0, 480);
 }
-const countWordsIn = (text: string) => text.trim().split(/\s+/).filter(Boolean).length;
 
 export async function readProject(dir: string): Promise<Product> {
   const found = await walk(resolve(dir));

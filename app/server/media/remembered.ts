@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { hashOf } from './hash.ts';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -16,7 +16,7 @@ import { join } from 'node:path';
 //
 // Both are a kindness and never a requirement: a memory that cannot be read or written costs a film nothing.
 
-const hash = (...parts: unknown[]): string => createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, 32);
+const hash = (...parts: unknown[]): string => hashOf(32, ...parts);
 
 // Everything that decides what a film says. Not the speed, which is the one thing allowed to differ between a draft
 // and the film made from it; and not how its moving shots are made, which a draft never has.

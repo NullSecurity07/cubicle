@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { hashOf } from './hash.ts';
 import type { Shape } from '../../shared/model.ts';
 import { MOODS, type Mood } from './audio.ts';
 import { CAPS, type Scene, type Spec } from './spec.ts';
@@ -48,7 +48,7 @@ export type FilmRecord = {
   bed?: { source: string; mood: Mood; own?: boolean; credit?: { title: string; by: string; licence: string; source: string } };
 };
 
-const hash = (...parts: unknown[]): string => createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, 16);
+const hash = (...parts: unknown[]): string => hashOf(16, ...parts);
 // What decides a drawn picture: the words it was drawn from, the look they were drawn in, and the frame.
 export const pictureHash = (subject: string, bible: string, shape: string): string => hash('picture', subject.trim(), bible, shape);
 // What decides a spoken line: the words, the voice, and whatever reads it.

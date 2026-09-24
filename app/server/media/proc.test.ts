@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { ff } from './ff.ts';
 import { inTurn } from './on-this-machine.ts';
 import { runLines } from './proc.ts';
-import { hands, serial } from './turns.ts';
+import { connectWithin, hands, serial } from './turns.ts';
 
 // A job that was stopped before it started — a picture the measured cut no longer wants, waiting its turn behind
 // another — must never start. Every one of these used to register its stop after spawning, so it ran to the end.
@@ -106,5 +106,12 @@ describe('one heavy job at a time', () => {
     hold();
     await held;
     expect(typeof hands(2)).toBe('function');
+  });
+});
+
+describe('a Space that never answers the door', () => {
+  it('is given up on after the time allowed, and one that answers is used', async () => {
+    await expect(connectWithin(new Promise(() => {}), 20)).rejects.toThrow('the Space did not answer');
+    expect(await connectWithin(Promise.resolve('open'), 20)).toBe('open');
   });
 });

@@ -15,8 +15,8 @@ import { cachedImages } from './image.ts';
 import type { Piece } from './jobs.ts';
 import type { Mood as MusicMood } from './music.ts';
 import { NONCOMMERCIAL, OMNI_ENGINE } from './omnivoice.ts';
-import { content, crowdsCaptions, fallbackOf, saysWhatItShows, type Scene } from './spec.ts';
-import { FORMATS, PACE, paintOf, type Film, type Pace, type Shot } from './templates/index.ts';
+import { content, fallbackOf, type Scene } from './spec.ts';
+import { FORMATS, PACE, paintOf, quietOf, startsOf, type Film, type Pace, type Shot } from './templates/index.ts';
 import { timeWords, type Word } from './timings.ts';
 import { drawnAs, kindFor, roomFor, visualFrom, type Visual } from './visuals.ts';
 import type { Plies } from './sight.ts';
@@ -364,11 +364,7 @@ export async function remakeFilm(film: { path: string; record: FilmRecord }, ops
     } else if (mood === 'none' && record.music !== 'none') report('no music under it');
     for (const sound of new Set(edit.cues.map((one) => one.sound))) await copyFile(join(SFX_DIR, sfxFile(sound)), join(at, 'assets', sfxFile(sound))).catch(() => {});
 
-    const shotStarts: number[] = [];
-    let running = 0;
-    for (const shot of cut) { shotStarts.push(running); running = Math.round((running + shot.seconds) * 100) / 100; }
-    const quiet = cut.map((shot, index) => (saysWhatItShows(shot.scene) || crowdsCaptions(shot.scene) ? { at: shotStarts[index], seconds: shot.seconds } : null))
-      .filter(Boolean) as { at: number; seconds: number }[];
+    const quiet = quietOf(cut, startsOf(cut).starts);
     const made: Film = {
       title: record.title, shape, look: pack, shots: cut, pace, captions: edited.captions, brand,
       bed: music, cues: edit.cues, voice: voiceFile, words, keywords: [...new Set(edit.shots.map((one) => one.keyword).filter(Boolean) as string[])], quiet,

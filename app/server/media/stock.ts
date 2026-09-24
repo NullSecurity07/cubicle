@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { digestOf } from './hash.ts';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -138,7 +138,7 @@ export function pexels(env: NodeJS.ProcessEnv = process.env, http: typeof fetch 
     async get(one, signal) {
       await mkdir(dir, { recursive: true }).catch(() => {});
       const ext = one.kind === 'video' ? 'mp4' : 'jpg';
-      const file = join(dir, `${createHash('sha256').update(one.id).digest('hex').slice(0, 24)}.${ext}`);
+      const file = join(dir, `${digestOf(one.id, 24)}.${ext}`);
       const held = await readFile(file).catch(() => null);
       if (held?.length) { if (!taken.some((other) => other.id === one.id)) taken.push(one); return { ext, bytes: held }; }
       const answer = await http(one.url, { signal });

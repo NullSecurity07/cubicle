@@ -28,3 +28,13 @@ export function serial(): <T>(job: () => Promise<T>) => Promise<T> {
     return mine;
   };
 }
+
+// A free Space that never answers the door is a Space that did not answer, after `ms`, rather than a film waiting
+// forever. The drawing Spaces and the moving-picture Spaces both connect this way.
+export function connectWithin<T>(connecting: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    connecting,
+    new Promise<never>((_, fail) => { timer = setTimeout(() => fail(new Error('the Space did not answer')), ms); }),
+  ]).finally(() => clearTimeout(timer));
+}

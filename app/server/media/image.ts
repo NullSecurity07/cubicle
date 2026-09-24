@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto';
+import { digestOf } from './hash.ts';
+import { connectWithin } from './turns.ts';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -127,11 +128,7 @@ export function huggingFaceImages(
     if (help.signal?.aborted) throw new Error('stopped');
     help.report(`drawing it on ${spot.name}…`);
     const key = token();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const app = await Promise.race([
-      connect(spot.space, key ? { token: key } : {}),
-      new Promise<never>((_, fail) => { timer = setTimeout(() => fail(new Error('the Space did not answer')), CONNECT_TIMEOUT); }),
-    ]).finally(() => clearTimeout(timer));
+    const app = await connectWithin(connect(spot.space, key ? { token: key } : {}), CONNECT_TIMEOUT);
     try {
       const args: Record<string, unknown> = {};
       for (const [name, value] of Object.entries(spot.params)) {
@@ -227,12 +224,12 @@ export const imageMakers = (env: NodeJS.ProcessEnv = process.env, http: typeof f
 // A draft is drawn smaller, so it is filed apart from the full-size picture of the same words. The size joins the
 // name only when one was asked for, which leaves every picture already in the cache exactly where it was.
 export const askedFor = (name: string, prompt: string, shape: unknown, size?: unknown): string =>
-  createHash('sha256').update(`${name}|${String(shape ?? '')}|${prompt}${typeof size === 'string' && size ? `|${size}` : ''}`).digest('hex').slice(0, 32);
+  digestOf(`${name}|${String(shape ?? '')}|${prompt}${typeof size === 'string' && size ? `|${size}` : ''}`, 32);
 // The same, without who was asked to draw it. The maker's name is every backend set up today joined together, so a
 // key added or a model fetched filed every picture anew and drew it again; a picture is what was asked for, not who
 // happened to be asked. Pictures filed under the old key are still found there, and copied under the new one.
 export const pictureKey = (prompt: string, shape: unknown, size?: unknown): string =>
-  createHash('sha256').update(`picture|${String(shape ?? '')}|${prompt}${typeof size === 'string' && size ? `|${size}` : ''}`).digest('hex').slice(0, 32);
+  digestOf(`picture|${String(shape ?? '')}|${prompt}${typeof size === 'string' && size ? `|${size}` : ''}`, 32);
 // Who drew a picture that nobody had to draw: said in `by`, so a film can count what its second run cost it.
 export const DRAWN_BEFORE = 'drawn before';
 

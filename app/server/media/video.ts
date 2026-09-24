@@ -25,8 +25,8 @@ import { cachedImages, DRAWN_BEFORE, mayDrawHere, outOfPictures } from './image.
 import type { Maker, Piece } from './jobs.ts';
 import { availableRam, availableSwap, MINUTES_EACH, needsRam, roomToFilm as room } from './local-clips.ts';
 import {
-  AI_LAYOUTS, content, isPurpose, MAX_AI, MAX_LOCAL_AI, PURPOSE, PURPOSES,
-  crowdsCaptions, fallbackOf, saysWhatItShows, withinCaps, type Spec,
+  AI_LAYOUTS, content, countWords, isPurpose, MAX_AI, MAX_LOCAL_AI, PURPOSE, PURPOSES,
+  fallbackOf, withinCaps, type Spec,
 } from './spec.ts';
 import { broll, creditOf, photoCredits, type Stock } from './stock.ts';
 import {
@@ -39,7 +39,7 @@ import { partName, recordOf } from './film-record.ts';
 import { sourcesOf } from './grounding.ts';
 import { readProject, VIEWPORTS } from './sources.ts';
 import {
-  captionLines, composition, FORMATS, isPack, PACE, PACK, PACKS, PACES, paintOf, projectFile, sceneSeconds, snapToBeats,
+  captionLines, composition, FORMATS, isPack, PACE, PACK, PACKS, PACES, paintOf, projectFile, quietOf, sceneSeconds, snapToBeats, startsOf,
   type Film, type Pace, type Pack, type Shot,
 } from './templates/index.ts';
 import { camOf } from './templates/layouts.ts';
@@ -682,7 +682,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         const spans: { from: number; to: number }[] = [];
         let counted = 0;
         for (const line of lines) {
-          const count = line ? line.split(/\s+/).filter(Boolean).length : 0;
+          const count = countWords(line);
           spans.push({ from: counted, to: counted + count });
           counted += count;
         }
@@ -1069,9 +1069,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           report('nobody is speaking, so the cuts are pulled onto the beat');
         }
 
-        const starts: number[] = [];
-        let clock = 0;
-        for (const shot of cut) { starts.push(clock); clock = Math.round((clock + shot.seconds) * 100) / 100; }
+        const { starts, total: clock } = startsOf(cut);
         total = clock;
 
         // The sounds the film is cut with: the editor's, capped at five and each on a cut frame, rather than one
@@ -1097,9 +1095,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // Where the caption track must stay quiet: a scene that already writes out what is being said, and a scene
         // whose own type grows down into the band the captions live in. Two systems of type in one part of the
         // frame is not a caption track, it is a collision — a real reel put the word "AWAY." on top of a checklist.
-        const quiet = cut.map((shot, index) => (saysWhatItShows(shot.scene) || crowdsCaptions(shot.scene)
-          ? { at: starts[index], seconds: shot.seconds } : null))
-          .filter(Boolean) as { at: number; seconds: number }[];
+        const quiet = quietOf(cut, starts);
         // A film whose scenes nearly all write their own words has almost no caption track left, and a founder who
         // switched captions on deserves to hear that from the card rather than to notice it in the film.
         const hushed = quiet.reduce((sum, one) => sum + one.seconds, 0);
@@ -1246,9 +1242,7 @@ export async function editPlan(film: Film, at: string): Promise<EditPlan> {
       ...(image && camOf(shot) ? { move: String(shot.scene.move ?? 'a slow move') } : {}),
     });
   }
-  const starts: number[] = [];
-  let clock = 0;
-  for (const shot of film.shots) { starts.push(clock); clock = Math.round((clock + shot.seconds) * 100) / 100; }
+  const { starts } = startsOf(film.shots);
   const narration: EditSound[] = [];
   if (film.voice) {
     const file = await take(film.voice.file);

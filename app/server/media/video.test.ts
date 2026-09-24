@@ -7,7 +7,7 @@ import { createStore } from '../store.ts';
 import { mediaTools } from '../tools/media.ts';
 import { createMedia, type Maker } from './jobs.ts';
 import { crowdsCaptions } from './spec.ts';
-import { composition, FORMATS, PACKS, SAFE_1080, safeArea, sceneSeconds, type Shot } from './templates/index.ts';
+import { composition, FORMATS, PACKS, quietOf, SAFE_1080, safeArea, sceneSeconds, startsOf, type Shot } from './templates/index.ts';
 import { meansAPicture, spendingScenes } from '../tools/media.ts';
 import { docsFor, estimate, fakeVideos, hands, LENGTHS, MAX_AI, MAX_IMAGES, MAX_LOCAL_AI, parseSpec, PURPOSE, PURPOSES, scenesFor, sourcesFor, withinCaps, withinLength, wordsFor, type Scene, type Spec, type VideoAsk } from './video.ts';
 import { bibleFor, jsonIn, layoutsFor, planPrompt, specPrompt, understandingOf, type Material, type Plan } from './director.ts';
@@ -854,5 +854,17 @@ describe('pictures that start before the cut is measured', () => {
     const minutes = (said: string) => Number(/about (\d+) minute/.exec(said)?.[1]);
     expect(minutes(estimate({ ...film, pictures: 3, draft: true }))).toBeLessThanOrEqual(3);
     expect(minutes(estimate({ ...film, pictures: 7 }))).toBeGreaterThanOrEqual(6);
+  });
+});
+
+describe('the film clock', () => {
+  it('starts each shot where the last ended, to the hundredth, and quiets captions only where a scene writes its line out', () => {
+    const cut = shots([{ layout: 'hook', text: 'Ship on Fridays.', say: 'Ship on Fridays.' }, { layout: 'statement', text: 'Quiet', say: 'Something else entirely is said here.' }]);
+    cut[0].seconds = 1.333;
+    cut[1].seconds = 2.004;
+    const { starts, total } = startsOf(cut);
+    expect(starts).toEqual([0, 1.33]);
+    expect(total).toBe(3.33);
+    expect(quietOf(cut, starts)).toEqual([{ at: 0, seconds: 1.333 }]);
   });
 });

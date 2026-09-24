@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ff, FFMPEG } from './ff.ts';
+import { wavHeader } from './wav.ts';
 
 // The bed under a film, found or made, and never one the founder could be sued over.
 //
@@ -442,20 +443,7 @@ export function wavOf(left: Float32Array, right: Float32Array, rate = RATE): Buf
     body.writeInt16LE(Math.round(Math.max(-1, Math.min(1, left[at])) * 32_767), at * 4);
     body.writeInt16LE(Math.round(Math.max(-1, Math.min(1, right[at])) * 32_767), at * 4 + 2);
   }
-  const header = Buffer.alloc(44);
-  header.write('RIFF', 0);
-  header.writeUInt32LE(36 + body.length, 4);
-  header.write('WAVEfmt ', 8);
-  header.writeUInt32LE(16, 16);
-  header.writeUInt16LE(1, 20);
-  header.writeUInt16LE(2, 22);
-  header.writeUInt32LE(rate, 24);
-  header.writeUInt32LE(rate * 4, 28);
-  header.writeUInt16LE(4, 32);
-  header.writeUInt16LE(16, 34);
-  header.write('data', 36);
-  header.writeUInt32LE(body.length, 40);
-  return Buffer.concat([header, body]);
+  return Buffer.concat([wavHeader(body.length, rate, 2), body]);
 }
 
 // The samples back out of a WAV, both channels. Anything with one channel hands the same array back twice, which is
