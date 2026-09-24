@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { capsOf, checkOverrides, flowKeys, keysOf, matches, parseChord, pressed, setOverrides, SHORTCUTS } from './keys';
+import { capsOf, checkOverrides, flowKeys, keyHint, keysOf, matches, parseChord, pressed, setOverrides, SHORTCUTS } from './keys';
 
 const press = (key: string, held: Partial<Record<'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey', boolean>> = {}) =>
   ({ key, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...held });
@@ -90,6 +90,18 @@ describe('the founder’s own keys', () => {
     expect(keysOf('command-bar')).toEqual(['Mod+P']);
     expect(pressed(press('k', { ctrlKey: true }), 'command-bar')).toBe(false);
     expect(flowKeys('delete-cards')).toEqual(['Delete', 'Backspace']);
+  });
+
+  it('names a row\'s key beside a button as the table, or the founder, has it', () => {
+    expect(keyHint('dashboard')).toBe(capsOf('Mod+D').join(' '));
+    expect(keyHint('back')).toBe('Esc');
+    expect(keyHint('focus-card')).toBe('F');
+    setOverrides(checkOverrides({ dashboard: ['Alt+B'] }).keys);
+    expect(keyHint('dashboard')).toBe('Alt B');
+  });
+
+  it('says Backspace takes away wires, since cards are only removed from their own button', () => {
+    expect(SHORTCUTS.find((row) => row.id === 'delete-cards')?.does).toMatch(/^Remove the selected wires/);
   });
 
   it('gives the canvas the keys React Flow has by default', () => {

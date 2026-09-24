@@ -9,6 +9,7 @@ import { BlocksIcon } from '../nodes/FrameworksPanel';
 import { ago } from './NeedsPanel';
 import { overlay, showDecision, showPlaybook } from './store';
 import './dashboard.css';
+import { keyHint } from '../keys';
 
 // The founder's one screen: what today holds, what the work has cost, how the teams are doing and what was made.
 // Nothing here is kept by the dashboard. Every row is a door to the place it came from, and going through one closes
@@ -191,7 +192,7 @@ export function Dashboard() {
       <header className="panel__header">
         <h2>Dashboard</h2>
         <span>{today}</span>
-        <button type="button" aria-label="Close" title="Close (Esc)" onClick={close}>
+        <button type="button" aria-label="Close" title={`Close (${keyHint('back')})`} onClick={close}>
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
         </button>
       </header>

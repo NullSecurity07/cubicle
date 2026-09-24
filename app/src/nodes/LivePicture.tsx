@@ -4,7 +4,7 @@ import { notePage } from '../where';
 import { listen } from '../bus';
 import { overlay, useFocused } from '../overlay/store';
 import { keyMessage, mouseMessage, toFrame, type MouseKind, type Point } from './live';
-import { pressed } from '../keys';
+import { keyHint, pressed } from '../keys';
 
 const LARGE = <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M9.500 2.500h4v4M13.500 2.500 9 7M6.500 13.500h-4v-4M2.500 13.500 7 9" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" /></svg>;
 
@@ -114,7 +114,7 @@ export function LivePicture({ id, kind, address, onAddress, idle, control }: { i
         ref={screen}
         className={`browser__live nokey nowheel nopan${acting ? ' is-acting' : ''}`}
         role="application"
-        aria-label="Live page. Click to act on it; type when it is focused; Esc to stop."
+        aria-label={`Live page. Click to act on it; type when it is focused; ${keyHint('leave-page')} to stop.`}
         tabIndex={0}
         hidden={state !== 'live'}
         draggable={false}
@@ -134,7 +134,7 @@ export function LivePicture({ id, kind, address, onAddress, idle, control }: { i
         onKeyDown={(event) => key(event, true)}
         onKeyUp={(event) => key(event, false)}
       />
-      {acting && state === 'live' && <p className="browser__typing" role="status">Typing goes to the page. Esc to stop.</p>}
+      {acting && state === 'live' && <p className="browser__typing" role="status">Typing goes to the page. {keyHint('leave-page')} to stop.</p>}
       {state === 'idle' && idle}
       {state === 'problem' && <p className="chat__empty">{problem}</p>}
     </div>
