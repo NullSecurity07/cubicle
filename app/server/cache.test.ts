@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { seedStage } from '../shared/model.ts';
 import type { Browser } from './browser.ts';
-import { diskCache, SIDE_TTL, WEB_TTL, webCache } from './cache.ts';
+import { diskCache, readFailed, SIDE_TTL, WEB_TTL, webCache, worthKeeping } from './cache.ts';
 import type { ModelMessage } from './prompt.ts';
 import { complete, type ModelClient } from './providers.ts';
 import { route } from './router.ts';
@@ -153,5 +153,16 @@ describe('sweeping a cache folder', () => {
     now += 3600_000 + 1;
     await diskCache<number>(dir, 1000, () => now).put('three', 3);
     expect(await readdir(dir)).not.toContain('one.json');
+  });
+});
+
+describe('what counts as a failed read', () => {
+  it('tells a failure from a short real page', () => {
+    expect(readFailed('## https://x.test\nFailed: the page did not load')).toBe(true);
+    expect(readFailed('(could not be read: timeout)')).toBe(true);
+    expect(readFailed('   ')).toBe(true);
+    expect(readFailed('We make shoes for runners.')).toBe(false);
+    // Short pages are real but not worth a web cache entry; a link card still keeps them.
+    expect(worthKeeping('We make shoes for runners.')).toBe(false);
   });
 });

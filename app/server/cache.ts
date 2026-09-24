@@ -118,7 +118,9 @@ export const readAt = (at: number, now: number) => {
 };
 
 // A read that failed is not worth keeping: it should be tried again, not remembered.
-export const worthKeeping = (text: string) => text.trim().length >= 200 && !/could not be read|did not load|came back almost empty|refused this request|could not be fetched|^## [^\n]*\nFailed: |asked for a human check|nothing could be read|nothing was found/i.test(text.slice(0, 600));
+// A read that says it failed: a wall, an empty page, an error written where the text would be.
+export const readFailed = (text: string) => !text.trim() || /could not be read|did not load|came back almost empty|refused this request|could not be fetched|^## [^\n]*\nFailed: |asked for a human check|nothing could be read|nothing was found/i.test(text.slice(0, 600));
+export const worthKeeping = (text: string) => text.trim().length >= 200 && !readFailed(text);
 
 export function webCache(folder: string | null | undefined, now: () => number = Date.now) {
   const disk = folder ? diskCache<string>(join(folder, 'cache', 'web'), WEB_TTL, now) : null;

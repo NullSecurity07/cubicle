@@ -66,6 +66,7 @@ import { teamTools, type Consult } from './tools/team.ts';
 import { browserSession, webTools } from './tools/web.ts';
 import { createUsage } from './usage.ts';
 import { fileRoutes } from './routes/files.ts';
+import { readFailed } from './cache.ts';
 
 const root = resolve(import.meta.dirname, '../..');
 try { process.loadEnvFile(resolve(root, '.env')); } catch { /* no .env: only the fake model will work */ }
@@ -198,7 +199,11 @@ async function promptFor(stage: Stage, roomId: string, toolNames: string[], fres
   for (const card of stage.cards ?? []) {
     if (card.kind !== 'link' || !card.url || !mine.has(card.id)) continue;
     let page = await store.readPage(card.id);
-    if (!page || page.url !== card.url) { page = { url: card.url, ...(await browser.page(card.url).catch((error: Error) => ({ title: card.url, text: `(could not be read: ${error.message})` }))) }; await store.writePage(card.id, page); }
+    if (!page || page.url !== card.url) {
+      page = { url: card.url, ...(await browser.page(card.url).catch((error: Error) => ({ title: card.url!, text: `(could not be read: ${error.message})` }))) };
+      // A page that could not be read is tried again next turn, not kept as if that were what it says.
+      if (!readFailed(page.text)) await store.writePage(card.id, page);
+    }
     pages[card.id] = page;
   }
   // What the founder has decided lately, each line with the day it was decided: everyone works from it, wired or not.
@@ -618,7 +623,7 @@ createServer(async (req, res) => {
       // A source is searched when it fits, never read into anyone's background, so only its name is kept.
       if (card.kind === 'source') return json(res, 200, { title: (await browser.page(card.url)).title, preview: '' });
       const page = { url: card.url, ...(await browser.page(card.url)) };
-      await store.writePage(linked, page);
+      if (!readFailed(page.text)) await store.writePage(linked, page);
       return json(res, 200, { title: page.title, preview: page.text.slice(0, 280) });
     }
     // Whether the founder is signed in to an app card. A plain browser card has no rule, so nothing is claimed for it.
