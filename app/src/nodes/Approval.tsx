@@ -10,7 +10,7 @@ async function remember(id: string, args: Record<string, string>) {
   if (!response.ok) throw new Error((await response.json().catch(() => null))?.error ?? 'that could not be remembered');
 }
 
-const TITLES: Record<string, [title: string, yes: string]> = { send_email: ['Send this email?', 'Send'], run_code: ['Run this code?', 'Run'], browse: ['Allow this step?', 'Allow'], code_task: ['Start this coding task?', 'Start'], code_reply: ['Send this to the coder?', 'Send'], browse_help: ['Do this step by hand?', 'Done'] };
+const TITLES: Record<string, [title: string, yes: string]> = { send_email: ['Send this email?', 'Send'], run_code: ['Run this code?', 'Run'], browse: ['Allow this step?', 'Allow'], code_task: ['Start this coding task?', 'Start'], code_reply: ['Send this to the coder?', 'Send'], browse_help: ['Do this step by hand?', 'Done'], map_folder: ['Map this folder?', 'Map'] };
 const FIXED = new Set(['from', 'language', 'action', 'ref', 'url', 'key', 'direction', 'card']);
 const LONG = new Set(['body', 'code', 'text', 'task', 'brief']);
 const LABELS: Record<string, string> = { to: 'To', subject: 'Subject', body: 'Message', from: 'From', reply_to: 'In reply to', language: 'Language', code: 'Code', brief: 'Brief', card: 'Card', answer: 'Why not (if you won\'t)' };

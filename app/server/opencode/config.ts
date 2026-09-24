@@ -20,11 +20,21 @@ const NOT_A_CODER = /embed|nomic|whisper|tts|vision-only/i;
 // agent (those trip the free models' gate) or stop to ask a question nobody is there to answer: no.
 // Skills: no. Every skill opencode can see goes into the prompt by name and description, and the one it always has
 // (how to configure opencode itself) is of no use in the founder's project; denied, the list and the tool both go.
+// Graphify's tools only read the folder's map, so they are allowed like reading a file; the three about pull requests
+// reach GitHub, and are not.
 export const PERMISSION = {
   read: 'allow', glob: 'allow', grep: 'allow', lsp: 'allow', skill: 'deny',
   edit: 'ask', bash: 'ask', doom_loop: 'ask',
   webfetch: 'deny', websearch: 'deny', external_directory: 'deny', task: 'deny', question: 'deny',
+  'graphify_*': 'allow', graphify_list_prs: 'deny', graphify_triage_prs: 'deny', graphify_get_pr_impact: 'deny',
 };
+
+// A folder with a map gets Graphify's own tool server, reading that one map. One opencode serves every folder, so this
+// is not written into the config file: the coder adds it to the folder's own instance (`POST /mcp`) before its work,
+// in exactly the shape a config's `mcp` entry takes.
+export type McpLocal = { type: 'local'; command: string[]; enabled: true };
+export const MCP_NAME = 'graphify';
+export const graphMcp = (command: string[]): McpLocal => ({ type: 'local', command, enabled: true });
 
 type Founder = { tool_output?: unknown } | undefined;
 export type CoderConfig = {

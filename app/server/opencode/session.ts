@@ -1,6 +1,7 @@
 import { diffLine, type CoderAsk, type CoderEvent, type CoderLine, type CoderModels, type CoderPatch, type CoderState } from '../../shared/coder.ts';
 import type { Attention } from '../../shared/model.ts';
 import type { Answer } from '../approvals.ts';
+import { MCP_NAME, type McpLocal } from './config.ts';
 import { translate, type RawEvent } from './events.ts';
 import { GONE, needsRestart, type Engine } from './server.ts';
 
@@ -19,7 +20,10 @@ type Deps = {
   now?: () => number;
   // Whether a local model server answers. Only ever looked at, never started.
   reachable?: (url: string) => Promise<boolean>;
+  // The folder's map, when it has one: the tool server that reads it and the one sentence that tells the coder so.
+  map?: (dir: string) => Promise<{ mcp: McpLocal; hint: string } | null>;
 };
+type McpStatus = Record<string, { status?: string; error?: string }> | null;
 type Held = {
   id: string; dir: string; name: string; session?: string; model?: string;
   state: CoderState; lines: CoderLine[];
@@ -156,8 +160,9 @@ export function createCoder(deps: Deps) {
       return;
     }
     setState(mine, 'working');
-    const body = { model: { providerID, modelID: rest.join('/') }, parts: [{ type: 'text', text }] };
     try {
+      const hint = await withMap(mine);
+      const body = { model: { providerID, modelID: rest.join('/') }, parts: [{ type: 'text', text }], ...(hint ? { system: hint } : {}) };
       const session = mine.session ?? await newSession(mine);
       await engine.call('POST', `/session/${session}/prompt_async`, { directory: mine.dir, body }).catch(async (error: Error) => {
         // A session the database no longer holds (a wiped workspace, a month gone) is started again, once.
@@ -169,6 +174,24 @@ export function createCoder(deps: Deps) {
       line(mine, { kind: 'error', text: `the coder could not start: ${mine.error}` });
       setState(mine, 'stopped');
       finish(mine, 'stopped');
+    }
+  }
+
+  // A folder with a map: Graphify's tool server is added to the folder's own instance, once, and the coder is told.
+  // Anything wrong with it is said on the card, and the work goes ahead without the map.
+  async function withMap(card: Held): Promise<string | undefined> {
+    const map = await deps.map?.(card.dir).catch(() => null);
+    if (!map) return undefined;
+    try {
+      const now = await engine.call<McpStatus>('GET', '/mcp', { directory: card.dir });
+      if (now?.[MCP_NAME]?.status !== 'connected') {
+        const added = await engine.call<McpStatus>('POST', '/mcp', { directory: card.dir, body: { name: MCP_NAME, config: map.mcp } });
+        if (added?.[MCP_NAME]?.status !== 'connected') throw new Error(added?.[MCP_NAME]?.error ?? 'it did not start');
+      }
+      return map.hint;
+    } catch (error) {
+      line(card, { kind: 'note', text: `the folder's map could not be handed to the coder (${(error as Error).message.slice(0, 160)}); it reads the files instead` });
+      return undefined;
     }
   }
 
@@ -313,6 +336,8 @@ export function createCoder(deps: Deps) {
 
   return {
     open, prompt, wait, models, hear, stop,
+    // A line the app itself writes on a card's log: a map being made, for one.
+    note(card: CoderCard, one: Omit<CoderLine, 'at'>) { line(open(card), one); },
     patches: (cardId: string) => diff(held(cardId)),
     snapshot(cardId: string) {
       const card = cards.get(cardId);

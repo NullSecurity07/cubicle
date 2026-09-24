@@ -16,3 +16,6 @@ app/shell/gen/
 
 # Pyodide wheels fetched on first use
 app/.cache/
+
+# Graphify maps: generated, never edited (the app keeps its own in the workspace)
+graphify-out/

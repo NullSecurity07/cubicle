@@ -69,6 +69,18 @@
 .coder__tools button:hover:not(:disabled) { color: var(--text); background: rgba(255, 255, 255, 0.08); }
 .coder__tools button:disabled { opacity: 0.35; cursor: default; }
 .coder__problem { flex: none; margin: 4px 12px 0; }
+/* The folder's map, one quiet line: when, how big, and the two ways to look at it. */
+.coder__map { flex: none; display: flex; align-items: center; gap: 10px; margin: 0; padding: 4px 16px 0; color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; animation: coder-rise 0.2s ease-out; }
+.coder__map span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.coder__map a, .coder__map button { flex: none; border: 0; padding: 0; background: none; color: var(--accent-soft); font: inherit; font-weight: 550; text-decoration: none; cursor: pointer; }
+.coder__map a:hover, .coder__map button:hover { color: var(--text); }
+.coder__report { font-size: 12.5px; line-height: 1.5; gap: 4px; }
+.coder__report h1 { margin: 4px 0 2px; font-size: 15px; font-weight: 650; }
+.coder__report h2 { margin: 8px 0 0; font-size: 12.5px; font-weight: 650; color: var(--text); }
+.coder__report ul, .coder__report ol { margin: 2px 0; padding-left: 18px; color: var(--muted); }
+.coder__report p { margin: 2px 0; }
+.coder__open { align-self: flex-start; color: var(--accent-soft); font-size: 12px; font-weight: 550; text-decoration: none; }
+.coder__open:hover { color: var(--text); }
 
 /* The card opened large on what changed: each file, then its patch, added lines green and removed ones red. */
 .coder__changes { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 10px; cursor: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; animation: coder-rise 0.2s ease-out; }
@@ -87,6 +99,6 @@
 @keyframes coder-rise { from { opacity: 0; transform: translateY(4px); } }
 @keyframes coder-think { 50% { opacity: 0.9; transform: translateY(-1px); } }
 @media (prefers-reduced-motion: reduce) {
-  .coder__line, .coder-ask, .coder-model__menu, .coder__changes { animation: none; }
+  .coder__line, .coder-ask, .coder-model__menu, .coder__changes, .coder__map { animation: none; }
   .coder__dot--working, .coder__dot--waiting, .coder__working i { animation: none; }
 }

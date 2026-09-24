@@ -3,7 +3,7 @@ import type { EvalsView } from '../shared/evals';
 import type { Framework, Placed } from '../shared/frameworks';
 import type { ForgeJob, ForgeMode, Proposal } from '../shared/forge';
 import type { Note } from '../shared/library';
-import type { CoderAsk, CoderLine, CoderModels, CoderPatch, CoderState } from '../shared/coder';
+import type { CoderAsk, CoderLine, CoderModels, CoderPatch, CoderState, GraphView } from '../shared/coder';
 import { feed, snapshot } from './feed';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -149,4 +149,7 @@ export const stopCoder = (id: string) => request(`/api/coder/${id}/stop`, send('
 export const undoCoder = (id: string) => request(`/api/coder/${id}/undo`, send('POST'));
 export const newCoderSession = (id: string) => request(`/api/coder/${id}/new`, send('POST'));
 export const answerCoder = (id: string, permissionId: string, reply: 'once' | 'always' | 'reject', message?: string) => request(`/api/coder/${id}/permission/${permissionId}`, send('POST', { reply, message }));
+// The folder's map: made on the server with Graphify, its lines on the card's channel like the coder's steps.
+export const mapCoderFolder = (id: string, path: string) => request<{ started: boolean }>(`/api/coder/${id}/map`, send('POST', { path }));
+export const getCoderGraph = (id: string) => request<GraphView>(`/api/coder/${id}/graph`);
 export const getCoderPatches = (id: string) => request<{ files: CoderPatch[] }>(`/api/coder/${id}/diff`).then((answer) => answer.files);

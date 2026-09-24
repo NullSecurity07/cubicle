@@ -1,5 +1,5 @@
 import type { AppPreset } from './apps.ts';
-import type { CoderAsk } from './coder.ts';
+import type { CoderAsk, GraphMark } from './coder.ts';
 import type { Gender } from './voices.ts';
 
 // The plain model both sides agree on. The client maps it to React Flow; the server stores it.
@@ -20,7 +20,7 @@ export type Doc = Box & { id: string; title: string; pinned?: boolean };
 // A coder card keeps the `model` the founder picked (`provider/model`, absent for the default) and the `session` it is in, so the same conversation carries on after a restart.
 // `headed` shows the card's Chrome as a real window, for the founder to sign in or pass a human check by hand.
 // `app` makes the card a named app the founder is signed in to, such as LinkedIn; a plain browser card has none.
-export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean; app?: AppPreset } | { kind: 'project'; path: string; model?: string; session?: string } | { kind: 'board' }
+export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean; app?: AppPreset } | { kind: 'project'; path: string; model?: string; session?: string; graph?: GraphMark } | { kind: 'board' }
   // Small things that are context when wired to a person: a note's words, a picture (for models that can see), a web page's text.
   // A picture card starts empty — the founder drops a file on it, or wires it to the studio whose work it shows.
   | { kind: 'note'; text: string; color?: string } | { kind: 'image'; path?: string } | { kind: 'link'; url: string; title?: string }

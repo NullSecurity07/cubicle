@@ -105,6 +105,16 @@ describe('reading videos, feeds and Reddit', () => {
     expect(await ytdlpVersion({ PATH: '/definitely/not/here' })).toBeNull();
   });
 
+  it('names the Graphify that is here, the pin when it differs, and how the coder reads its maps', async () => {
+    const pinned = row(await setup({ graphify: async () => '0.9.66', graphServer: () => ['/home/me/.local/bin/graphify-mcp', 'g'] }), 'Mapping code');
+    expect(pinned).toMatchObject({ ok: true, detail: 'Graphify 0.9.66 is here, so people and the coder can map a folder' });
+    const newer = row(await setup({ graphify: async () => '0.9.70', graphServer: () => ['/usr/bin/uvx', '--from', 'x'] }), 'Mapping code');
+    expect(newer.detail).toBe('Graphify 0.9.70 is here, but the app is tested with 0.9.66; the coder reads maps through uvx, because this graphify-mcp lacks its mcp part');
+    const missing = row(await setup({ graphify: async () => null, graphServer: () => null }), 'Mapping code');
+    expect(missing.ok).toBe(false);
+    expect(missing.fix).toContain('uv tool install graphifyy==0.9.66');
+  });
+
   const answers = (table: Record<string, () => Response>) => (async (url: string) => (table[String(url)] ?? (() => new Response('', { status: 404 })))()) as typeof fetch;
   const rss = '<rss version="2.0"><channel><title>Hacker News: Front Page</title><item><title>A</title><pubDate>Wed, 23 Sep 2026 10:00:00 GMT</pubDate></item><item><title>B</title></item></channel></rss>';
 

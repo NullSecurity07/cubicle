@@ -1,15 +1,17 @@
+import { existsSync } from 'node:fs';
 import { basename } from 'node:path';
 import { coderChannel, type CoderEvent } from '../../shared/coder.ts';
 import type { Card, Stage } from '../../shared/model.ts';
 import { hub } from '../events.ts';
 import { projectDir } from '../folder.ts';
 import type { Deps, Slice } from '../install.ts';
-import { writeCoderHome } from '../opencode/config.ts';
+import { graphMcp, writeCoderHome } from '../opencode/config.ts';
 import { fakeEngine } from '../opencode/fake.ts';
 import { coderHealth, createOpencodeServer, findBin } from '../opencode/server.ts';
 import { createCoder, type Coder } from '../opencode/session.ts';
 import { wired } from '../prompt.ts';
 import { text, type Tool, type ToolContext } from '../tools/registry.ts';
+import { cardLog, GRAPH_HINT, graphJson, mcpCommand } from './graph.ts';
 
 // The coder card: a running OpenCode in one project folder, driven by the founder from the card or by any person
 // wired to it. One server for the whole app, one lasting session per card, every step on the card as it happens.
@@ -103,10 +105,20 @@ export default {
       if (!projects(stage).some((one) => one.id === cardId)) return;
       await deps.store.saveStage({ ...stage, cards: (stage.cards ?? []).map((one) => (one.id === cardId && one.kind === 'project' ? { ...one, session: session || undefined } : one)) });
     }
+    // A folder Graphify has mapped: the coder reads that map through Graphify's own tools, told so in one sentence.
+    async function map(dir: string) {
+      const graph = graphJson(deps.workspace, dir);
+      if (!existsSync(graph)) return null;
+      const command = deps.fake ? ['graphify-mcp', graph] : mcpCommand(graph);
+      return command ? { mcp: graphMcp(command), hint: GRAPH_HINT } : null;
+    }
     const coder = createCoder({
-      engine, approvals: deps.approvals, attention: deps.attention, remember, env: process.env,
+      engine, approvals: deps.approvals, attention: deps.attention, remember, env: process.env, map,
       say: (cardId, event: CoderEvent) => hub.say(coderChannel(cardId), event),
     });
+    // A map being made writes its lines on the card's own log, kept with the coder's steps.
+    const logBefore = cardLog.add;
+    cardLog.add = (card, one) => coder.note(card, one);
     // A window that opens late gets each card's log, its question and its state at once.
     const opening = async () => coder.cards().map(({ id }) => {
       const { lines, state, permission, waiting, session, model } = coder.snapshot(id);
@@ -164,6 +176,7 @@ export default {
         await coder.forget(new Set(projects(await deps.store.loadStage()).map((one) => one.id)));
       },
       async close() {
+        cardLog.add = logBefore;
         const at = hub.opening.indexOf(opening);
         if (at >= 0) hub.opening.splice(at, 1);
         await engine.stop();

@@ -9,7 +9,7 @@ import type { CallOptions, Engine } from './server.ts';
 type Session = { id: string; directory: string; created: number; busy: boolean; messages: { id: string; role: 'user' | 'assistant'; text: string }[]; run?: AbortController; reverted?: string };
 const PATCH = '--- a/src/example.ts\n+++ b/src/example.ts\n@@ -1,3 +1,12 @@\n-export const ok = false;\n+export const ok = true;\n';
 
-export function fakeEngine({ step = 120, gap = 0, now = Date.now }: { step?: number; gap?: number; now?: () => number } = {}): Engine & { sessions: Map<string, Session> } {
+export function fakeEngine({ step = 120, gap = 0, now = Date.now }: { step?: number; gap?: number; now?: () => number } = {}): Engine & { sessions: Map<string, Session>; mcp: Map<string, Map<string, unknown>> } {
   const hearers = new Set<(event: RawEvent) => void>();
   const sessions = new Map<string, Session>();
   const waiting = new Map<string, { session: string; answer: (reply: string) => void }>();
@@ -73,8 +73,9 @@ export function fakeEngine({ step = 120, gap = 0, now = Date.now }: { step?: num
     return session;
   };
 
+  const mcp = new Map<string, Map<string, unknown>>();
   return {
-    sessions,
+    sessions, mcp,
     async call(method: string, path: string, { directory = '', body }: CallOptions = {}): Promise<any> {
       const [, first, sessionId, action] = /^\/(\w+)(?:\/([\w-]+))?(?:\/([\w_-]+))?/.exec(path.split('?')[0]) ?? [];
       const asked = (body ?? {}) as Record<string, any>;
@@ -109,7 +110,15 @@ export function fakeEngine({ step = 120, gap = 0, now = Date.now }: { step?: num
         return true;
       }
       if (method === 'GET' && path.startsWith('/permission')) return [];
-      if (method === 'POST' && path.startsWith('/instance/dispose')) return true;
+      if (method === 'POST' && path.startsWith('/instance/dispose')) { mcp.delete(directory); return true; }
+      // Tool servers added to one folder's instance, the way the real one keeps them until the instance goes.
+      if (method === 'GET' && path.startsWith('/mcp')) return Object.fromEntries([...(mcp.get(directory) ?? new Map())].map(([name]) => [name, { status: 'connected' }]));
+      if (method === 'POST' && path.startsWith('/mcp')) {
+        const held = mcp.get(directory) ?? new Map<string, unknown>();
+        held.set(String(asked.name), asked.config);
+        mcp.set(directory, held);
+        return { [String(asked.name)]: { status: 'connected' } };
+      }
       if (method === 'GET' && path.startsWith('/vcs/diff')) return [];
       if (method === 'GET' && path.startsWith('/config/providers')) {
         return { default: { opencode: 'fake-free' }, providers: [

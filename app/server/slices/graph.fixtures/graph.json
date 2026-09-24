@@ -1,0 +1,149 @@
+{
+  "directed": false,
+  "multigraph": false,
+  "graph": {},
+  "nodes": [
+    {
+      "id": "src_x_a",
+      "label": "a()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "a",
+      "file_type": "code",
+      "norm_label": "a()",
+      "source_file": "src/x.ts",
+      "source_location": "L1"
+    },
+    {
+      "id": "src_y_main",
+      "label": "main()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "a",
+      "file_type": "code",
+      "norm_label": "main()",
+      "source_file": "src/y.ts",
+      "source_location": "L2"
+    },
+    {
+      "id": "src_x_b",
+      "label": "b()",
+      "_callable": true,
+      "_origin": "ast",
+      "community": 1,
+      "community_name": "x.ts",
+      "file_type": "code",
+      "norm_label": "b()",
+      "source_file": "src/x.ts",
+      "source_location": "L2"
+    },
+    {
+      "id": "src_y",
+      "label": "y.ts",
+      "_origin": "ast",
+      "community": 0,
+      "community_name": "a",
+      "file_type": "code",
+      "norm_label": "y.ts",
+      "source_file": "src/y.ts",
+      "source_location": "L1"
+    },
+    {
+      "id": "src_x",
+      "label": "x.ts",
+      "_origin": "ast",
+      "community": 1,
+      "community_name": "x.ts",
+      "file_type": "code",
+      "norm_label": "x.ts",
+      "source_file": "src/x.ts",
+      "source_location": "L1"
+    }
+  ],
+  "links": [
+    {
+      "source": "src_x_a",
+      "target": "src_x_b",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "src/x.ts",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "src_y_main",
+      "target": "src_x_a",
+      "relation": "calls",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "call",
+      "source_file": "src/y.ts",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "src_y",
+      "target": "src_x_a",
+      "relation": "imports",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "import",
+      "source_file": "src/y.ts",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "src_y",
+      "target": "src_x",
+      "relation": "imports_from",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "import",
+      "source_file": "src/y.ts",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "src_x",
+      "target": "src_x_a",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/x.ts",
+      "source_location": "L1",
+      "weight": 1.0
+    },
+    {
+      "source": "src_x",
+      "target": "src_x_b",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/x.ts",
+      "source_location": "L2",
+      "weight": 1.0
+    },
+    {
+      "source": "src_y",
+      "target": "src_y_main",
+      "relation": "contains",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/y.ts",
+      "source_location": "L2",
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": []
+}

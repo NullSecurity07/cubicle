@@ -2,7 +2,7 @@ import { mkdtemp, readFile, stat, utimes, writeFile, mkdir } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { coderConfig, copyAuth, discoverLocal, writeCoderHome } from './config.ts';
+import { coderConfig, copyAuth, discoverLocal, graphMcp, MCP_NAME, PERMISSION, writeCoderHome } from './config.ts';
 
 const founder = { permission: { '*': 'allow' }, tool_output: { max_lines: 150, max_bytes: 8192 }, plugin: ['./plugins/notify.ts'], mcp: { laya: {} }, provider: { 'ollama-bridge': { options: { baseURL: 'http://127.0.0.1:11435/v1' } }, google: { env: ['GEMINI_API_KEY'] } } };
 // A machine's answers, by address: the bridge's model list, Ollama's own, or nothing there.
@@ -88,5 +88,16 @@ describe('the coder home', () => {
     await utimes(copied, later, later);
     expect(await copyAuth(theirs, copied)).toBe(false);
     expect(await readFile(copied, 'utf8')).toContain('mine');
+  });
+});
+
+describe('the folder map', () => {
+  it('is a local tool server in the shape an opencode config takes, and its tools may only read', () => {
+    expect(MCP_NAME).toBe('graphify');
+    expect(graphMcp(['graphify-mcp', '/w/graph.json'])).toEqual({ type: 'local', command: ['graphify-mcp', '/w/graph.json'], enabled: true });
+    expect(PERMISSION).toMatchObject({ 'graphify_*': 'allow', graphify_list_prs: 'deny', graphify_triage_prs: 'deny', graphify_get_pr_impact: 'deny' });
+    // The ones that reach GitHub come after the rule that allows the rest, so they win.
+    const keys = Object.keys(PERMISSION);
+    expect(keys.indexOf('graphify_list_prs')).toBeGreaterThan(keys.indexOf('graphify_*'));
   });
 });

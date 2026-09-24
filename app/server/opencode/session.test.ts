@@ -11,7 +11,7 @@ const card = { id: 'coder-1', dir: '/code/shop', name: 'shop' };
 
 // The engine the card drives, the book the founder answers in and the list of what waits for them — all of them
 // watched, so a test can say what went where.
-function setup(engine: Engine & Partial<ReturnType<typeof fakeEngine>> = fakeEngine({ step: 2 }), extra: { now?: () => number; reachable?: (url: string) => Promise<boolean> } = {}) {
+function setup(engine: Engine & Partial<ReturnType<typeof fakeEngine>> = fakeEngine({ step: 2 }), extra: { now?: () => number; reachable?: (url: string) => Promise<boolean>; map?: Parameters<typeof createCoder>[0]['map'] } = {}) {
   const said: CoderEvent[] = [];
   const raised: Attention[] = [];
   const cleared: string[] = [];
@@ -238,5 +238,29 @@ describe('a coder card', () => {
     expect(quiet.snapshot(card.id).state).toBe('stopped');
     expect(calls.some((one) => one.path.endsWith('/prompt_async'))).toBe(false);
     void coder; void lines;
+  });
+
+  it('hands a mapped folder\'s map to the coder once, and tells it so in one sentence', async () => {
+    const mcp = { type: 'local' as const, command: ['graphify-mcp', '/w/graphs/shop/graphify-out/graph.json'], enabled: true as const };
+    const { coder, calls, engine } = setup(fakeEngine({ step: 2 }), { map: async (dir) => (dir === card.dir ? { mcp, hint: 'This folder has a knowledge graph.' } : null) });
+    await coder.prompt(card, 'Where is checkout?', {});
+    await coder.wait(card.id);
+    expect(calls.filter((one) => one.method === 'POST' && one.path === '/mcp').map((one) => one.body)).toEqual([{ name: 'graphify', config: mcp }]);
+    expect(calls.find((one) => one.path.endsWith('/prompt_async'))?.body.system).toBe('This folder has a knowledge graph.');
+    expect(engine.mcp?.get(card.dir)?.has('graphify')).toBe(true);
+    // Already running in that folder: not started twice.
+    await coder.prompt(card, 'And the cart?', {});
+    await coder.wait(card.id);
+    expect(calls.filter((one) => one.method === 'POST' && one.path === '/mcp')).toHaveLength(1);
+  });
+
+  it('works without the map, and says so on the card, when its tool server will not start', async () => {
+    const base = fakeEngine({ step: 2 });
+    const failing: Engine = { ...base, call: async (method, path, options) => (path === '/mcp' && method === 'POST' ? { graphify: { status: 'failed', error: 'MCP error -32000: Connection closed' } } as never : base.call(method, path, options)) };
+    const { coder, calls, lines } = setup(failing, { map: async () => ({ mcp: { type: 'local', command: ['graphify-mcp', 'x'], enabled: true }, hint: 'hint' }) });
+    await coder.prompt(card, 'Go', {});
+    await coder.wait(card.id);
+    expect(calls.find((one) => one.path.endsWith('/prompt_async'))?.body).not.toHaveProperty('system');
+    expect(lines()).toContain('note: the folder\'s map could not be handed to the coder (MCP error -32000: Connection closed); it reads the files instead');
   });
 });

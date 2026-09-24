@@ -5,6 +5,7 @@ import type { Check } from '../../shared/openends.ts';
 import models from '../models.json' with { type: 'json' };
 import type { ModelClient } from '../providers.ts';
 import type { EngineHealth } from '../opencode/server.ts';
+import { graphifyVersion, INSTALL, mcpCommand, PIN } from '../slices/graph.ts';
 import { isoDay, parseFeed, REDDIT_AGENT } from '../slices/readers.ts';
 
 // Is everything this app leans on really here? One question a line, answered yes or no, and when the answer is no,
@@ -44,6 +45,9 @@ export type HealthDeps = {
   coder?: () => (EngineHealth & { bin: string | null }) | null;
   // Which yt-dlp is here, or null. Asked of the program itself, so a broken install says so too.
   ytdlp?: () => Promise<string | null>;
+  // Which Graphify is here, or null, and how the coder would start its tool server (null: it cannot).
+  graphify?: () => Promise<string | null>;
+  graphServer?: () => string[] | null;
 };
 
 // The version yt-dlp says it is, or null when it is not on the PATH or will not run.
@@ -105,6 +109,17 @@ export async function checkAll(deps: HealthDeps): Promise<Check[]> {
     name: 'Reading videos', ok: !!ytdlp,
     detail: ytdlp ? `yt-dlp ${ytdlp} is here, so people can read a YouTube video's transcript` : 'yt-dlp was not found, so nobody can read a YouTube video',
     fix: 'Install it with: pipx install yt-dlp (or put the single yt-dlp file from its GitHub page in ~/.local/bin). Feeds and Reddit work without it.',
+  });
+
+  const graphify = await (deps.graphify ?? (() => graphifyVersion(env)))();
+  const reader = (deps.graphServer ?? (() => mcpCommand('graph.json', env)))();
+  const through = !reader ? '; the coder cannot read maps (no graphify-mcp with its mcp part, and no uvx)' : reader[0].endsWith('uvx') ? '; the coder reads maps through uvx, because this graphify-mcp lacks its mcp part' : '';
+  checks.push({
+    name: 'Mapping code', ok: !!graphify,
+    detail: !graphify ? 'Graphify was not found, so nobody can map a code folder'
+      : graphify === PIN ? `Graphify ${graphify} is here, so people and the coder can map a folder${through}`
+      : `Graphify ${graphify} is here, but the app is tested with ${PIN}${through}`,
+    fix: `Install it with: ${INSTALL}. Coding works without it.`,
   });
 
   const voice = await hasFiles(join(root, 'app', '.cache', 'voice'));

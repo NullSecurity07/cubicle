@@ -17,7 +17,8 @@ export type CoderAsk = { id: string; tool: string; what: string; always: string[
 // What the card's channel carries: the whole log on opening (`lines`), one more step (`line`), and whatever changed of
 // the rest. A field that is absent did not change; `permission: null` means the question went.
 // `permission` is the question being shown; `waiting` counts the ones asked at the same time that wait behind it.
-export type CoderEvent = { lines?: CoderLine[]; line?: CoderLine; state?: CoderState; permission?: CoderAsk | null; waiting?: number; session?: string; model?: string };
+// `graph` is the folder's map as it stands after a mapping (null: gone), `mapping` whether one is being made now.
+export type CoderEvent = { lines?: CoderLine[]; line?: CoderLine; state?: CoderState; permission?: CoderAsk | null; waiting?: number; session?: string; model?: string; graph?: GraphMark | null; mapping?: boolean };
 export const coderChannel = (cardId: string) => `coder:${cardId}`;
 
 // The model picker's groups, in the order the founder reads them. `id` is `provider/model`.
@@ -35,3 +36,10 @@ export function diffLine(files: { additions: number; deletions: number }[]): str
 }
 
 export const CODER_TOOLS = ['code_task', 'code_reply', 'code_stop', 'code_status'];
+
+// The folder's map, made by Graphify from the code alone: when, and how big. Kept on the card, so it reads
+// "Mapped 3 minutes ago · 412 nodes · 38 groups" without opening anything.
+export type GraphMark = { at: number; nodes: number; edges: number; communities: number };
+// What the card reads about its map. `report` is the start of Graphify's own report; `page` opens the drawing.
+export type GraphView = { mapped: boolean; mapping: boolean; at?: number; nodes?: number; edges?: number; communities?: number; report?: string; html?: string; page?: string };
+export const GRAPH_TOOLS = ['map_folder', 'ask_graph', 'affected_by'];

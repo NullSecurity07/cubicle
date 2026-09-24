@@ -1,5 +1,6 @@
 import { MarkerType, type Edge, type Node } from '@xyflow/react';
 import type { AppPreset } from '../shared/apps';
+import type { GraphMark } from '../shared/coder';
 import type { Box, Card, Doc, Room, Shape, Stage, Switch, VideoLook, VoiceEngine } from '../shared/model';
 
 export type RoomData = Omit<Room, keyof Box | 'id'>;
@@ -7,7 +8,7 @@ export type DocData = Omit<Doc, keyof Box | 'id'>;
 export type RoomNodeType = Node<RoomData, 'room'>;
 export type DocNodeType = Node<DocData, 'doc'>;
 export type BrowserNodeType = Node<{ headed?: boolean; app?: AppPreset }, 'browser'>;
-export type ProjectNodeType = Node<{ path: string; model?: string; session?: string }, 'project'>;
+export type ProjectNodeType = Node<{ path: string; model?: string; session?: string; graph?: GraphMark }, 'project'>;
 export type BoardNodeType = Node<Record<string, never>, 'board'>;
 export type NoteNodeType = Node<{ text: string; color?: string }, 'note'>;
 export type ImageNodeType = Node<{ path: string }, 'image'>;

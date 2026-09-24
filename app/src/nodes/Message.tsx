@@ -15,6 +15,7 @@ const VERBS: Record<string, [doing: string, done: string]> = {
   list_files: ['Looking at', 'Looked at'], read_file: ['Reading', 'Read'], write_file: ['Saving', 'Saved'],
   generate_image: ['Drawing', 'Drew'], generate_voice: ['Saying', 'Said'], generate_video: ['Filming', 'Filmed'],
   delegate_task: ['Handing to', 'Handed to'], search_source: ['Searching', 'Searched'], propose_source: ['Proposing', 'Proposed'],
+  map_folder: ['Mapping the folder', 'Mapped the folder'], ask_graph: ['Asking the map:', 'Asked the map:'], affected_by: ['Tracing what depends on', 'Traced what depends on'],
   read_youtube: ['Reading the video', 'Read the video'], read_feed: ['Reading the feed of', 'Read the feed of'], read_reddit: ['Reading Reddit:', 'Read Reddit:'],
 };
 const compact = (count: number) => (count < 1000 ? String(count) : `${(count / 1000).toFixed(1)}k`);
@@ -35,6 +36,8 @@ function Chip({ tool }: { tool: ToolEvent }) {
     : tool.name === 'remember' ? String(tool.args.fact ?? '').slice(0, 60) : tool.name === 'list_tasks' ? 'the board'
     : tool.name === 'ask_person' ? String(tool.args.name ?? '') : tool.name === 'recall' ? String(tool.args.query ?? '').slice(0, 60)
     : tool.name === 'code_task' ? String(tool.args.brief ?? '').replace(/\s+/g, ' ').slice(0, 60)
+    : tool.name === 'ask_graph' ? String(tool.args.question ?? '').replace(/\s+/g, ' ').slice(0, 60)
+    : tool.name === 'affected_by' ? String(tool.args.name ?? '').slice(0, 60)
     : tool.name === 'code_reply' ? String(tool.args.text ?? '').replace(/\s+/g, ' ').slice(0, 60)
     : tool.name === 'generate_image' ? String(tool.args.prompt ?? '').replace(/\s+/g, ' ').slice(0, 60)
     : tool.name === 'generate_voice' ? `"${String(tool.args.text ?? '').replace(/\s+/g, ' ').slice(0, 55)}"`

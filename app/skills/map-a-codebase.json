@@ -1,0 +1,17 @@
+{
+  "name": "Find your way around a codebase",
+  "when": "Someone asks what a codebase does, what depends on something in it, or what a change would touch, and a coder card is wired to you.",
+  "procedure": [
+    "If the folder has no map yet, run map_folder once. Do not map it again in the same conversation.",
+    "For how something works, ask_graph with a plain question, e.g. \"how are payments stored\".",
+    "For what a change touches, affected_by with the function, class or file name.",
+    "Read only the files the map names, and only the parts you need.",
+    "Answer with the names the map gave (functions, files), so the founder can follow them."
+  ],
+  "pitfalls": [
+    "A map shows how the code is wired, not what it does when it runs: check behaviour in the code or with the coder.",
+    "A map is as old as its date. After big changes, run map_folder again before trusting it.",
+    "The map's files are generated. Never edit them or hand them to the coder to change."
+  ],
+  "verify": "The answer names the functions and files it rests on, and says how old the map was."
+}
