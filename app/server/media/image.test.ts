@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -7,7 +7,7 @@ import { seedStage, type Stage } from '../../shared/model.ts';
 import { createStore } from '../store.ts';
 import { mediaTools } from '../tools/media.ts';
 import {
-  askedFor, cachedImages, cloudflareImages, DRAWN_BEFORE, firstOf, spentFile, fakeImages, firstImages, HF_SPENT, huggingFaceImages, outOfPictures,
+  askedFor, cachedImages, pictureKey, cloudflareImages, DRAWN_BEFORE, firstOf, spentFile, fakeImages, firstImages, HF_SPENT, huggingFaceImages, outOfPictures,
   type Picture, type PictureConnect, pictureOf, pictureSpaces, pictureUrlOf, SETUP_HINT,
 } from './image.ts';
 import { createMedia } from './jobs.ts';
@@ -146,6 +146,24 @@ describe('a picture is paid for once', () => {
     expect(drawn).toBe(4);
     expect(askedFor('a', 'b', 'wide', undefined)).toBe(askedFor('a', 'b', 'wide'));
     expect(askedFor('a', 'b', 'wide', 'draft')).not.toBe(askedFor('a', 'b', 'wide'));
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('finds a picture again when the backends set up change, and one filed under the old key too', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pictures-'));
+    let drawn = 0;
+    const named = (name: string): Maker => ({ name, ready: () => null, async make() { drawn += 1; return { ext: 'png', bytes: Buffer.from([0x89, drawn]) }; } });
+    await cachedImages(named('Cloudflare'), dir).make({ prompt: 'a paper plane', shape: 'wide' }, { report: () => {} });
+    const later = await cachedImages(named('Cloudflare then this computer'), dir).make({ prompt: 'a paper plane', shape: 'wide' }, { report: () => {} });
+    expect(drawn).toBe(1);
+    expect(later.by).toBe(DRAWN_BEFORE);
+    // A picture filed before the key changed, under the maker's name, is still found, and filed under the new key.
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, `${askedFor('Cloudflare', 'a paper boat', 'wide')}.img`), Buffer.from([0x89, 42]));
+    const old = await cachedImages(named('Cloudflare'), dir).make({ prompt: 'a paper boat', shape: 'wide' }, { report: () => {} });
+    expect(old.bytes).toEqual(Buffer.from([0x89, 42]));
+    expect(await readFile(join(dir, `${pictureKey('a paper boat', 'wide')}.img`))).toEqual(Buffer.from([0x89, 42]));
+    expect(drawn).toBe(1);
     await rm(dir, { recursive: true, force: true });
   });
 

@@ -228,6 +228,11 @@ export const imageMakers = (env: NodeJS.ProcessEnv = process.env, http: typeof f
 // name only when one was asked for, which leaves every picture already in the cache exactly where it was.
 export const askedFor = (name: string, prompt: string, shape: unknown, size?: unknown): string =>
   createHash('sha256').update(`${name}|${String(shape ?? '')}|${prompt}${typeof size === 'string' && size ? `|${size}` : ''}`).digest('hex').slice(0, 32);
+// The same, without who was asked to draw it. The maker's name is every backend set up today joined together, so a
+// key added or a model fetched filed every picture anew and drew it again; a picture is what was asked for, not who
+// happened to be asked. Pictures filed under the old key are still found there, and copied under the new one.
+export const pictureKey = (prompt: string, shape: unknown, size?: unknown): string =>
+  createHash('sha256').update(`picture|${String(shape ?? '')}|${prompt}${typeof size === 'string' && size ? `|${size}` : ''}`).digest('hex').slice(0, 32);
 // Who drew a picture that nobody had to draw: said in `by`, so a film can count what its second run cost it.
 export const DRAWN_BEFORE = 'drawn before';
 
@@ -237,8 +242,14 @@ export function cachedImages(maker: Maker, dir: string): Maker {
     ready: maker.ready,
     next: maker.next ? () => maker.next!() : undefined,
     async make(ask, help): Promise<Piece> {
-      const file = join(dir, `${askedFor(maker.name, String(ask.prompt ?? ''), ask.shape, ask.size)}.img`);
-      const held = await readFile(file).catch(() => null);
+      const prompt = String(ask.prompt ?? '');
+      // The stand-in pixel of the fake mode is filed apart, so it can never be handed to a real film.
+      const file = join(dir, `${maker.name === fakeImages.name ? askedFor(maker.name, prompt, ask.shape, ask.size) : pictureKey(prompt, ask.shape, ask.size)}.img`);
+      let held = await readFile(file).catch(() => null);
+      if (!held?.length) {
+        held = await readFile(join(dir, `${askedFor(maker.name, prompt, ask.shape, ask.size)}.img`)).catch(() => null);
+        if (held?.length) await writeFile(file, held).catch(() => {});
+      }
       if (held?.length) { help.report('drawn before, so it costs nothing'); return { ext: held[0] === 0x89 ? 'png' : 'jpg', bytes: held, by: DRAWN_BEFORE }; }
       const piece = await maker.make(ask, help);
       await mkdir(dir, { recursive: true }).then(() => writeFile(file, piece.bytes)).catch(() => { /* a cache is a kindness, not a requirement */ });
