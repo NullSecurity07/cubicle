@@ -69,7 +69,8 @@ function rank(clients: ModelClient[], usage: UsageBook, want: Want) {
   }
   const order = [...settle(pool.filter(roomy)), ...settle(pool.filter((client) => !roomy(client)))];
   const first = settle(pool)[0];
-  const notice = order[0] && first && order[0] !== first
-    ? `${title(first.name)} is near its free limit, so ${title(order[0].name)} answers for now.` : undefined;
+  // One that is only busy with another request for a moment is not near any limit, and nothing is said.
+  const notice = order[0] && first && order[0] !== first && !first.busy?.()
+    ?`${title(first.name)} is near its free limit, so ${title(order[0].name)} answers for now.` : undefined;
   return { order, notice };
 }

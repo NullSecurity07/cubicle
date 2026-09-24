@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { wireTools, collectCalls, complete, portable, readQuota, realClients, type ModelClient, type ToolCall } from './providers.ts';
+import { wireTools, collectCalls, complete, expand, portable, readQuota, realClients, unset, type ModelClient, type ToolCall } from './providers.ts';
 
 const client = (name: string, tokens: string[] | Error, maxPromptChars = Infinity): ModelClient => ({
   name, model: `${name}-1`, maxPromptChars, tools: true, limits: {},
@@ -161,5 +161,50 @@ describe('naming a tool call', () => {
     const [one, two] = await Promise.all([fakeClient.step(ask, { tools, onToken: () => {} }), fakeClient.step(ask, { tools, onToken: () => {} })]);
     expect(one.calls).toHaveLength(1);
     expect(one.calls[0].id).not.toBe(two.calls[0].id);
+  });
+});
+
+describe('the free providers set up here', () => {
+  it('fills a name in an address from the environment, and gives no address when it is not set', () => {
+    const address = 'https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/v1';
+    expect(expand(address, { CLOUDFLARE_ACCOUNT_ID: 'abc123' })).toBe('https://api.cloudflare.com/client/v4/accounts/abc123/ai/v1');
+    expect(expand(address, {})).toBeUndefined();
+    expect(expand(address, { CLOUDFLARE_ACCOUNT_ID: '  ' })).toBeUndefined();
+    expect(expand('https://api.groq.com/openai/v1', {})).toBe('https://api.groq.com/openai/v1');
+    expect(unset({ keyEnv: 'CLOUDFLARE_API_TOKEN', baseURL: address }, { CLOUDFLARE_API_TOKEN: 't' })).toEqual(['CLOUDFLARE_ACCOUNT_ID']);
+  });
+
+  it('leaves out, quietly, a provider whose key or account id is missing', () => {
+    const names = (env: Record<string, string>) => realClients(env as NodeJS.ProcessEnv).map((one) => one.name);
+    expect(names({ CLOUDFLARE_API_TOKEN: 't' })).toEqual([]);
+    expect(names({ CLOUDFLARE_ACCOUNT_ID: 'abc' })).toEqual([]);
+    const [cloudflare] = realClients({ CLOUDFLARE_API_TOKEN: 't', CLOUDFLARE_ACCOUNT_ID: 'abc' } as NodeJS.ProcessEnv);
+    expect(cloudflare.name).toBe('cloudflare');
+    expect(cloudflare.openai!.baseURL).toBe('https://api.cloudflare.com/client/v4/accounts/abc/ai/v1');
+    // Cerebras counts each model apart, so its key makes two clients with a day's worth each.
+    expect(names({ CEREBRAS_API_KEY: 'c' })).toEqual(['cerebras', 'cerebras-qwen']);
+  });
+
+  it('never has two requests out on a key that takes one at a time, and passes it over while it is busy', async () => {
+    const [zai] = realClients({ ZAI_API_KEY: 'z' } as NodeJS.ProcessEnv);
+    expect(zai).toMatchObject({ name: 'zai-flash', concurrency: 1 });
+    let release = () => {};
+    const held = new Promise<void>((done) => { release = done; });
+    let sent = 0;
+    async function* chunks() { await held; yield { choices: [{ delta: { content: 'done' } }] }; }
+    (zai.openai!.chat.completions as unknown as { create: unknown }).create = () => { sent += 1; return { withResponse: async () => ({ data: chunks(), response: { headers: new Headers() } }) }; };
+    const first = complete(messages, { onToken: () => {} }, [zai]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(zai.busy!()).toBe(true);
+    // A second caller goes to the next model; the busy one is not asked at all.
+    const second = await complete(messages, { onToken: () => {} }, [zai, client('next', ['from next'])]);
+    expect(second.client.name).toBe('next');
+    await expect(zai.step(messages, { onToken: () => {} })).rejects.toThrow(/already answering/);
+    expect(sent).toBe(1);
+    release();
+    expect((await first).text).toBe('done');
+    expect(zai.busy!()).toBe(false);
+    expect((await complete(messages, { onToken: () => {} }, [zai])).client.name).toBe('zai-flash');
+    expect(sent).toBe(2);
   });
 });

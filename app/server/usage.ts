@@ -123,8 +123,9 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     today() { roll(); return { kinds: { ...state.kinds }, tools: { ...state.tools }, cache: { ...state.cache } }; },
     left,
     // True when one more request of this size would likely hit the per-minute wall.
+    // A key that takes one request at a time and has one out counts as out of room until it is back.
     hot(client: ModelClient, promptChars: number) {
-      if ((cooling[client.name] ?? 0) > now() || breaker.resting(client.name)) return true;
+      if ((cooling[client.name] ?? 0) > now() || breaker.resting(client.name) || client.busy?.()) return true;
       const seen = window(client.name);
       const tokens = Math.ceil(promptChars / 4);
       if (client.limits.rpm && seen.length >= client.limits.rpm) return true;

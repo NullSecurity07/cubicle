@@ -6,9 +6,24 @@ import { dirname, join } from 'node:path';
 // blanket "allow everything"; the one on the stage starts from nothing and asks before it edits a file or runs a
 // command, so every step it takes is one the founder saw.
 
-// The providers the app itself holds keys for, and the key each one reads. A provider is named only when its key is
-// here, so the model picker never offers something that cannot answer.
-const KEYED: [provider: string, key: string][] = [['groq', 'GROQ_API_KEY'], ['google', 'GEMINI_API_KEY'], ['openrouter', 'OPENROUTER_API_KEY']];
+// The providers the app itself holds keys for that opencode also knows by name (its own id, from models.dev), and the
+// names each one reads. A provider is named only when all of them are here, so the model picker never offers something
+// that cannot answer. `only` keeps the picker to the models that cost nothing: Z.ai's flash ones, and on Vercel the
+// one the app uses, since every other model there eats the $5 a month. SambaNova is not in opencode's list, so it is
+// left to the people.
+type Keyed = { id: string; keys: string[]; only?: string[]; baseURL?: (env: NodeJS.ProcessEnv) => string };
+export const KEYED: Keyed[] = [
+  { id: 'groq', keys: ['GROQ_API_KEY'] },
+  { id: 'google', keys: ['GEMINI_API_KEY'] },
+  { id: 'openrouter', keys: ['OPENROUTER_API_KEY'] },
+  { id: 'cerebras', keys: ['CEREBRAS_API_KEY'] },
+  { id: 'nvidia', keys: ['NVIDIA_API_KEY'] },
+  { id: 'zai', keys: ['ZAI_API_KEY'], only: ['glm-4.7-flash', 'glm-4.5-flash', 'glm-4.6v-flash'] },
+  { id: 'vercel', keys: ['AI_GATEWAY_API_KEY'], only: ['openai/gpt-oss-120b'] },
+  { id: 'ollama-cloud', keys: ['OLLAMA_API_KEY'] },
+  // opencode reads CLOUDFLARE_API_KEY; the app's token has another name, and the address carries the account id.
+  { id: 'cloudflare-workers-ai', keys: ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID'], baseURL: (env) => `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID!.trim()}/ai/v1` },
+];
 // The models on this machine. Ollama itself answers on 11434; the founder's bridge on 11435 sits in front of it and
 // gives every model a 16k window and tidy tool calls, so it is the door to use whenever it is open.
 const OLLAMA = 'http://127.0.0.1:11434';
@@ -53,18 +68,20 @@ export async function discoverLocal(fetcher: typeof fetch = fetch): Promise<Loca
 }
 
 export function coderConfig({ env, founder, local }: { env: NodeJS.ProcessEnv; founder?: Founder; local?: LocalModels }): { config: CoderConfig; keys: string[] } {
-  const keyed = KEYED.filter(([, key]) => env[key]?.trim());
-  const provider: Record<string, any> = Object.fromEntries(keyed.map(([id, key]) => [id, { env: [key] }]));
+  const keyed = KEYED.filter(({ keys }) => keys.every((key) => env[key]?.trim()));
+  const provider: Record<string, any> = Object.fromEntries(keyed.map(({ id, keys, only, baseURL }) => [id, {
+    env: [keys[0]], ...(only ? { whitelist: only } : {}), ...(baseURL ? { options: { baseURL: baseURL(env) } } : {}),
+  }]));
   const named = (env.OPENCODE_LOCAL_MODELS ?? '').split(',').map((one) => one.trim()).filter(Boolean);
   const models = [...new Set([...(local?.models ?? []), ...named])];
   // The bridge gives 16k of context; a model spoken to directly has whatever Ollama was started with.
   provider.ollama = { npm: '@ai-sdk/openai-compatible', name: 'Ollama', options: { baseURL: local?.baseURL ?? `${OLLAMA}/v1` }, models: Object.fromEntries(models.map((name) => [name, { name, tool_call: true, limit: { context: 16384, output: 4096 } }])) };
   const model = env.STAGE_CODER_MODEL?.trim();
   return {
-    keys: keyed.map(([, key]) => key),
+    keys: keyed.flatMap(({ keys }) => keys),
     config: {
       permission: PERMISSION, provider,
-      enabled_providers: ['opencode', ...keyed.map(([id]) => id), 'ollama'],
+      enabled_providers: ['opencode', ...keyed.map(({ id }) => id), 'ollama'],
       compaction: { auto: true },
       ...(founder?.tool_output ? { tool_output: founder.tool_output } : {}),
       autoupdate: false, share: 'disabled',
