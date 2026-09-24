@@ -10,10 +10,10 @@ async function remember(id: string, args: Record<string, string>) {
   if (!response.ok) throw new Error((await response.json().catch(() => null))?.error ?? 'that could not be remembered');
 }
 
-const TITLES: Record<string, [title: string, yes: string]> = { send_email: ['Send this email?', 'Send'], run_code: ['Run this code?', 'Run'], browse: ['Allow this step?', 'Allow'], code_task: ['Start this coding task?', 'Start'], code_reply: ['Send this to the coder?', 'Send'] };
-const FIXED = new Set(['from', 'language', 'action', 'ref', 'url', 'key', 'direction']);
+const TITLES: Record<string, [title: string, yes: string]> = { send_email: ['Send this email?', 'Send'], run_code: ['Run this code?', 'Run'], browse: ['Allow this step?', 'Allow'], code_task: ['Start this coding task?', 'Start'], code_reply: ['Send this to the coder?', 'Send'], browse_help: ['Do this step by hand?', 'Done'] };
+const FIXED = new Set(['from', 'language', 'action', 'ref', 'url', 'key', 'direction', 'card']);
 const LONG = new Set(['body', 'code', 'text', 'task', 'brief']);
-const LABELS: Record<string, string> = { to: 'To', subject: 'Subject', body: 'Message', from: 'From', reply_to: 'In reply to', language: 'Language', code: 'Code', brief: 'Brief' };
+const LABELS: Record<string, string> = { to: 'To', subject: 'Subject', body: 'Message', from: 'From', reply_to: 'In reply to', language: 'Language', code: 'Code', brief: 'Brief', card: 'Card', answer: 'Why not (if you won\'t)' };
 // What the founder was asked, when the step itself came with no question of its own. The needs panel says it back
 // in the same words, so an approval the app closed on reads there exactly as it read in the room.
 export const asked = (name: string) => TITLES[name]?.[0] ?? `Allow ${name}?`;
@@ -35,7 +35,8 @@ export function Approval({ tool }: { tool: ToolEvent }) {
     setSending(true);
     try {
       if (ok && always && reach) await remember(tool.id, args);
-      await answerApproval(tool.id, ok, ok ? args : undefined);
+      // A person asking for a hand is told why not, when the founder says why; every other "no" carries nothing.
+      await answerApproval(tool.id, ok, ok || tool.name === 'browse_help' ? args : undefined);
     } catch (error) { setProblem((error as Error).message); setSending(false); }
   }
 

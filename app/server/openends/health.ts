@@ -1,9 +1,11 @@
+import { execFile } from 'node:child_process';
 import { access, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
 import type { Check } from '../../shared/openends.ts';
 import models from '../models.json' with { type: 'json' };
 import type { ModelClient } from '../providers.ts';
 import type { EngineHealth } from '../opencode/server.ts';
+import { isoDay, parseFeed, REDDIT_AGENT } from '../slices/readers.ts';
 
 // Is everything this app leans on really here? One question a line, answered yes or no, and when the answer is no,
 // what the founder would do about it — in the words they would use, not ours.
@@ -40,7 +42,17 @@ export type HealthDeps = {
   outside: () => { name: string; ok: boolean; detail: string }[];
   // The coder card's opencode: where its program is, and whether its server is up. Absent when nothing owns it.
   coder?: () => (EngineHealth & { bin: string | null }) | null;
+  // Which yt-dlp is here, or null. Asked of the program itself, so a broken install says so too.
+  ytdlp?: () => Promise<string | null>;
 };
+
+// The version yt-dlp says it is, or null when it is not on the PATH or will not run.
+export async function ytdlpVersion(env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
+  if (!await onPath('yt-dlp', env)) return null;
+  return new Promise((settle) => {
+    execFile('yt-dlp', ['--version'], { env, timeout: 15_000 }, (error, stdout) => settle(error ? null : stdout.trim().split('\n')[0] || null));
+  });
+}
 
 export async function checkAll(deps: HealthDeps): Promise<Check[]> {
   const { workspace, root, env = process.env, now = Date.now } = deps;
@@ -88,6 +100,13 @@ export async function checkAll(deps: HealthDeps): Promise<Check[]> {
     fix: 'Install it with: curl -fsSL https://opencode.ai/install | bash. Everything else works without it.',
   });
 
+  const ytdlp = await (deps.ytdlp ?? (() => ytdlpVersion(env)))();
+  checks.push({
+    name: 'Reading videos', ok: !!ytdlp,
+    detail: ytdlp ? `yt-dlp ${ytdlp} is here, so people can read a YouTube video's transcript` : 'yt-dlp was not found, so nobody can read a YouTube video',
+    fix: 'Install it with: pipx install yt-dlp (or put the single yt-dlp file from its GitHub page in ~/.local/bin). Feeds and Reddit work without it.',
+  });
+
   const voice = await hasFiles(join(root, 'app', '.cache', 'voice'));
   checks.push({
     name: 'Speaking out loud', ok: voice,
@@ -129,4 +148,41 @@ export async function liveChecks(clients: ModelClient[]): Promise<Check[]> {
       return { name: `A word with ${client.name}`, ok: false, detail: (error as Error).message.slice(0, 200), fix: `Check this provider's key in .env, and whether today's free allowance is used up.` };
     }
   }));
+}
+
+// Can the people really read Reddit and a feed from this machine today? One request each, only when asked for, and
+// the answer as it came: Reddit in particular turns some machines away, and this is where the founder finds out.
+export const LIVE_FEED = 'https://hnrss.org/frontpage';
+export const LIVE_REDDIT = 'https://www.reddit.com/r/startups/new.json?limit=1&raw_json=1';
+export const LIVE_REDDIT_FEED = 'https://www.reddit.com/r/startups/new/.rss?limit=1';
+export async function liveReaders(http: typeof fetch = fetch): Promise<Check[]> {
+  const get = (url: string) => http(url, { headers: { 'user-agent': REDDIT_AGENT }, signal: AbortSignal.timeout(20_000) });
+  const said = (error: unknown) => ((error as Error).name === 'TimeoutError' ? 'it took more than 20 seconds to answer' : (error as Error).message.slice(0, 160));
+  const reddit = await (async (): Promise<Check> => {
+    const name = 'Reading Reddit';
+    const fix = 'Nothing to do: people read Reddit through its public feed instead, without scores. If both are refused, try again later; Reddit limits machines that ask often.';
+    try {
+      const data = await get(LIVE_REDDIT);
+      if (data.ok) {
+        const post = ((await data.json()) as { data?: { children?: { data?: { created_utc?: number } }[] } }).data?.children?.[0]?.data;
+        return { name, ok: true, detail: `Reddit's data answered${post?.created_utc ? `; the newest post in r/startups is from ${isoDay(post.created_utc * 1000)}` : ''}`, fix: '' };
+      }
+      const feed = await get(LIVE_REDDIT_FEED);
+      if (feed.ok) return { name, ok: true, detail: `Reddit refused its data (${data.status}) but its public feed answered, so posts come without scores`, fix: '' };
+      return { name, ok: false, detail: `Reddit refused both its data (${data.status}) and its feed (${feed.status})`, fix };
+    } catch (error) { return { name, ok: false, detail: `Reddit could not be reached: ${said(error)}`, fix }; }
+  })();
+  const feed = await (async (): Promise<Check> => {
+    const name = 'Reading a feed';
+    const fix = 'Check this machine is online. The feed used for the check is hnrss.org; one site being down does not stop the others.';
+    try {
+      const response = await get(LIVE_FEED);
+      if (!response.ok) return { name, ok: false, detail: `${LIVE_FEED} answered ${response.status}`, fix };
+      const read = parseFeed(await response.text());
+      if (!read) return { name, ok: false, detail: `${LIVE_FEED} did not send a feed`, fix };
+      const newest = read.items.map((one) => one.at ?? 0).reduce((a, b) => Math.max(a, b), 0);
+      return { name, ok: true, detail: `${read.items.length} posts from "${read.title}"${newest ? `, the newest from ${isoDay(newest)}` : ''}`, fix: '' };
+    } catch (error) { return { name, ok: false, detail: `${LIVE_FEED} could not be reached: ${said(error)}`, fix }; }
+  })();
+  return [reddit, feed];
 }

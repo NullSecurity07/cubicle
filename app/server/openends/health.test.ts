@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { checkAll, keyPools, keysOf, liveChecks, onPath } from './health.ts';
+import { checkAll, keyPools, keysOf, liveChecks, liveReaders, LIVE_FEED, LIVE_REDDIT, LIVE_REDDIT_FEED, onPath, ytdlpVersion } from './health.ts';
 
 const at = new Date('2026-09-20T09:00:00').getTime();
 const DAY = 86_400_000;
@@ -91,5 +91,39 @@ describe('a word with each model', () => {
     expect(checks[0]).toMatchObject({ name: 'A word with groq', ok: true });
     expect(checks[1]).toMatchObject({ name: 'A word with gemini', ok: false, detail: '401 the key is not valid' });
     expect((await liveChecks([]))[0].ok).toBe(false);
+  });
+});
+
+describe('reading videos, feeds and Reddit', () => {
+  it('names the yt-dlp that is here, and says what to do when there is none', async () => {
+    const here = row(await setup({ ytdlp: async () => '2026.08.19' }), 'Reading videos');
+    expect(here).toMatchObject({ ok: true, detail: 'yt-dlp 2026.08.19 is here, so people can read a YouTube video\'s transcript' });
+    const missing = row(await setup({ ytdlp: async () => null }), 'Reading videos');
+    expect(missing.ok).toBe(false);
+    expect(missing.fix).toContain('pipx install yt-dlp');
+    // Nothing on the PATH is nothing to run.
+    expect(await ytdlpVersion({ PATH: '/definitely/not/here' })).toBeNull();
+  });
+
+  const answers = (table: Record<string, () => Response>) => (async (url: string) => (table[String(url)] ?? (() => new Response('', { status: 404 })))()) as typeof fetch;
+  const rss = '<rss version="2.0"><channel><title>Hacker News: Front Page</title><item><title>A</title><pubDate>Wed, 23 Sep 2026 10:00:00 GMT</pubDate></item><item><title>B</title></item></channel></rss>';
+
+  it('asks Reddit and one feed once each, and says plainly what came back', async () => {
+    const [reddit, feed] = await liveReaders(answers({
+      [LIVE_REDDIT]: () => Response.json({ data: { children: [{ data: { created_utc: 1790150400 } }] } }),
+      [LIVE_FEED]: () => new Response(rss),
+    }));
+    expect(reddit).toMatchObject({ name: 'Reading Reddit', ok: true, detail: 'Reddit\'s data answered; the newest post in r/startups is from 2026-09-23' });
+    expect(feed).toMatchObject({ name: 'Reading a feed', ok: true, detail: '2 posts from "Hacker News: Front Page", the newest from 2026-09-23' });
+  });
+
+  it('counts Reddit\'s feed as a way in when its data is refused, and fails only when both are', async () => {
+    const [through] = await liveReaders(answers({ [LIVE_REDDIT]: () => new Response('', { status: 403 }), [LIVE_REDDIT_FEED]: () => new Response('<feed></feed>') }));
+    expect(through).toMatchObject({ ok: true, detail: 'Reddit refused its data (403) but its public feed answered, so posts come without scores' });
+    const [refused, feed] = await liveReaders(answers({ [LIVE_REDDIT]: () => new Response('', { status: 403 }), [LIVE_REDDIT_FEED]: () => new Response('', { status: 429 }), [LIVE_FEED]: () => new Response('<html></html>') }));
+    expect(refused).toMatchObject({ ok: false, detail: 'Reddit refused both its data (403) and its feed (429)' });
+    expect(feed).toMatchObject({ ok: false, detail: `${LIVE_FEED} did not send a feed` });
+    const [, offline] = await liveReaders((async () => { throw new Error('getaddrinfo ENOTFOUND hnrss.org'); }) as typeof fetch);
+    expect(offline).toMatchObject({ ok: false, detail: `${LIVE_FEED} could not be reached: getaddrinfo ENOTFOUND hnrss.org` });
   });
 });

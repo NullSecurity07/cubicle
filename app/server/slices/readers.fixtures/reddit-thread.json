@@ -1,0 +1,13 @@
+[
+{"kind":"Listing","data":{"children":[{"kind":"t3","data":{"title":"How did you price your first B2B product?","subreddit":"startups","author":"founder_one","score":412,"num_comments":5,"created_utc":1758326400,"permalink":"/r/startups/comments/abc123/how_did_you_price_your_first_b2b_product/","selftext":"We charge $29 a month and it feels too low.","is_self":true}}]}},
+{"kind":"Listing","data":{"children":[
+{"kind":"t1","data":{"author":"low_scorer","body":"I just guessed.","score":3,"created_utc":1758330000,"replies":""}},
+{"kind":"t1","data":{"author":"top_voice","body":"Talk to ten customers and ask what they pay now for the problem.","score":250,"created_utc":1758327000,"replies":{"kind":"Listing","data":{"children":[
+  {"kind":"t1","data":{"author":"reply_small","body":"Small reply.","score":2,"created_utc":1758328000,"replies":""}},
+  {"kind":"t1","data":{"author":"reply_big","body":"This worked for us: we tripled.","score":90,"created_utc":1758328500,"replies":{"kind":"Listing","data":{"children":[{"kind":"t1","data":{"author":"too_deep","body":"Nested two levels down.","score":80,"created_utc":1758329000,"replies":""}}]}}}}
+]}}}},
+{"kind":"t1","data":{"author":"[deleted]","body":"[removed]","score":999,"created_utc":1758327100,"replies":""}},
+{"kind":"t1","data":{"author":"middle","body":"Charge per seat.","score":40,"created_utc":1758331000,"replies":""}},
+{"kind":"more","data":{"count":12,"children":["x1","x2"]}}
+]}}
+]

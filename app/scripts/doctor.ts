@@ -1,12 +1,12 @@
 // Is everything this app leans on really here? The same checks the Health screen shows, on the console.
 // `pnpm doctor` answers without spending anything; `pnpm doctor --live` also says one word to each provider, which
-// costs a token each and is the only way to find out that a key still works.
+// costs a token each and is the only way to find out that a key still works, and asks Reddit and one feed once each.
 import { resolve } from 'node:path';
 
 const root = resolve(import.meta.dirname, '../..');
 try { process.loadEnvFile(resolve(root, '.env')); } catch { /* no .env: the keys check will say so */ }
 
-const { checkAll, liveChecks } = await import('../server/openends/health.ts');
+const { checkAll, liveChecks, liveReaders } = await import('../server/openends/health.ts');
 const { backupDir, listBackups } = await import('../server/openends/backup.ts');
 const { connectAll, loadEntries } = await import('../server/openends/mcp.ts');
 
@@ -23,6 +23,7 @@ const checks = await checkAll({ workspace, root, backupDir: dir, backups: () => 
 if (process.argv.includes('--live')) {
   const { realClients } = await import('../server/providers.ts');
   checks.push(...await liveChecks(realClients()));
+  checks.push(...await liveReaders());
 }
 for (const one of connections) await one.rpc?.close().catch(() => {});
 

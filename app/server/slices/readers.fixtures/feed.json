@@ -1,0 +1,9 @@
+{
+  "version": "https://jsonfeed.org/version/1.1",
+  "title": "Founder Weekly",
+  "home_page_url": "https://weekly.example.com/",
+  "items": [
+    { "id": "1", "url": "https://weekly.example.com/41", "title": "Issue 41: cold email that works", "date_published": "2026-09-18T07:00:00+02:00", "content_html": "<p>Three <a href=\"x\">examples</a>.</p>" },
+    { "id": "2", "url": "https://weekly.example.com/42", "title": "Issue 42: pricing pages", "date_published": "2026-09-24T07:00:00Z", "summary": "What the best pricing pages share." }
+  ]
+}

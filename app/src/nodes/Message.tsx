@@ -15,6 +15,7 @@ const VERBS: Record<string, [doing: string, done: string]> = {
   list_files: ['Looking at', 'Looked at'], read_file: ['Reading', 'Read'], write_file: ['Saving', 'Saved'],
   generate_image: ['Drawing', 'Drew'], generate_voice: ['Saying', 'Said'], generate_video: ['Filming', 'Filmed'],
   delegate_task: ['Handing to', 'Handed to'], search_source: ['Searching', 'Searched'], propose_source: ['Proposing', 'Proposed'],
+  read_youtube: ['Reading the video', 'Read the video'], read_feed: ['Reading the feed of', 'Read the feed of'], read_reddit: ['Reading Reddit:', 'Read Reddit:'],
 };
 const compact = (count: number) => (count < 1000 ? String(count) : `${(count / 1000).toFixed(1)}k`);
 // Where the founder was when they said it, when they were not at the stage.
@@ -39,6 +40,9 @@ function Chip({ tool }: { tool: ToolEvent }) {
     : tool.name === 'generate_voice' ? `"${String(tool.args.text ?? '').replace(/\s+/g, ' ').slice(0, 55)}"`
     : tool.name === 'generate_video' ? String(tool.args.title ?? '').replace(/\s+/g, ' ').slice(0, 60)
     : tool.name === 'run_code' ? `${tool.args.language ?? ''} code` : tool.name === 'read_inbox' ? 'the mailbox'
+    : tool.name === 'read_youtube' ? String(tool.args.url ?? '').replace(/^https?:\/\/(www\.)?/, '').slice(0, 60)
+    : tool.name === 'read_feed' ? safeHost(String(tool.args.url ?? '')) || String(tool.args.url ?? '').slice(0, 60)
+    : tool.name === 'read_reddit' ? String(tool.args.query ?? tool.args.url ?? (tool.args.subreddit ? `r/${tool.args.subreddit}` : '')).slice(0, 60)
     : String(tool.args.to ?? tool.args.doc ?? tool.args.title ?? tool.args.path ?? (tool.name === 'list_files' ? 'the shared files' : ''));
   return (
     <details className={`chip chip--${state}`}>

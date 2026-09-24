@@ -1,9 +1,14 @@
+import { mkdtemp, readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { preset, type AppPreset } from '../../shared/apps.ts';
 import { seedStage, type Card, type Stage } from '../../shared/model.ts';
 import type { Browser, Launch } from '../browser.ts';
 import type { Store } from '../store.ts';
-import { webTools, yearless } from './web.ts';
+import type { ToolEvent } from '../../shared/model.ts';
+import type { Answer } from '../approvals.ts';
+import { logStep, stepLogFile, webTools, yearless } from './web.ts';
 
 // Sunday 20 September 2026, noon where the machine is.
 const NOON = new Date(2026, 8, 20, 12).getTime();
@@ -129,5 +134,93 @@ describe('browse', () => {
     const { browse } = acting();
     expect(await (browse.approval as Function)({ action: 'click', ref: 'e1' }, ctx(stageWith([card('b1', preset('linkedin'))])))).toBe('on LinkedIn');
     expect(await (browse.approval as Function)({ action: 'click', ref: 'e1' }, ctx(stageWith([card('b1')])))).toBe('on undefined');
+  });
+});
+
+describe('browse, asking the founder for a hand', () => {
+  const card: Card = { id: 'b1', kind: 'browser', x: 0, y: 0, w: 1, h: 1, app: preset('linkedin') };
+  const stage: Stage = { ...seedStage, cards: [card], wires: [...seedStage.wires, { id: 'w', from: 'marketing', fromHandle: 'r', to: 'b1', toHandle: 'l' }] };
+  const setup = async (answer?: Answer) => {
+    const home = await mkdtemp(join(tmpdir(), 'browse-'));
+    const acted: string[] = [];
+    const browser = {
+      act: async (_s: string, action: string) => { acted.push(action); if (action === 'click') throw new Error('that element is gone'); return 'Now at https://www.linkedin.com/feed/\n- button "Post" [ref=e4]'; },
+      outward: async (_s: string, action: string) => (action === 'click' ? 'Click "Post" on LinkedIn?' : null),
+    } as unknown as Browser;
+    const browse = webTools(browser, (id) => ({ profile: join(home, 'browsers', id) }), () => NOON).find((tool) => tool.name === 'browse')!;
+    const asked: ToolEvent[] = [];
+    const context = { stage, roomId: 'marketing', store: {} as Store, granted: new Map<string, string>(), ...(answer ? { approve: async (event: ToolEvent) => { asked.push(event); return answer; } } : {}) };
+    const log = async () => (await readFile(join(home, 'browsers', 'b1', 'log.jsonl'), 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+    return { browse, asked, acted, context, log };
+  };
+
+  it('puts the one step to the founder, waits, and says it was done', async () => {
+    const { browse, asked, acted, context, log } = await setup({ ok: true });
+    const done = await browse.run({ action: 'help', text: 'Sign in to LinkedIn, then tell me.' }, context);
+    expect(done.text).toMatch(/^The founder did it\./);
+    expect(done.effect).toEqual({ kind: 'browser-moved', id: 'b1' });
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toMatchObject({ name: 'browse_help', waiting: true, question: 'Do this by hand in the LinkedIn card: Sign in to LinkedIn, then tell me.', args: { card: 'LinkedIn', text: 'Sign in to LinkedIn, then tell me.', answer: '' } });
+    // Nothing was done in the browser for it: the founder's hands are the step.
+    expect(acted).toEqual([]);
+    expect(await log()).toEqual([{ at: NOON, roomId: 'marketing', action: 'help', outward: false, ok: true }]);
+  });
+
+  it('carries the founder\'s words back when they say no', async () => {
+    const no = await setup({ ok: false, args: { answer: 'Not now, I am on my phone.' } });
+    expect((await no.browse.run({ action: 'help', text: 'Solve the check' }, no.context)).text).toBe('The founder declined: Not now, I am on my phone.');
+    expect((await no.log())[0]).toMatchObject({ action: 'help', ok: false });
+    const { browse, context } = await setup({ ok: false });
+    expect((await browse.run({ action: 'help', text: 'Choose the file' }, context)).text).toMatch(/^The founder declined\./);
+    await expect(browse.run({ action: 'help' }, context)).rejects.toThrow('"text" is missing');
+  });
+
+  it('says so when there is no way to ask from where it runs', async () => {
+    const { browse, context } = await setup();
+    expect((await browse.run({ action: 'help', text: 'Sign in' }, context)).text).toContain('cannot be asked from here');
+  });
+
+  it('never asks the model to type a password or pass a check itself', () => {
+    const description = webTools({} as Browser).find((tool) => tool.name === 'browse')!.description;
+    expect(description).toContain('Never create an account, type a password or pass a human check yourself');
+    expect(description).toContain('use action help');
+  });
+});
+
+describe('browse, the step log', () => {
+  it('writes one line for every step: where it went, whether the founder had to allow it, and whether it worked', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'browse-'));
+    const card: Card = { id: 'b1', kind: 'browser', x: 0, y: 0, w: 1, h: 1 };
+    const stage: Stage = { ...seedStage, cards: [card], wires: [...seedStage.wires, { id: 'w', from: 'marketing', fromHandle: 'r', to: 'b1', toHandle: 'l' }] };
+    const browser = {
+      act: async (_s: string, action: string) => { if (action === 'click') throw new Error('that element is gone'); return 'Now at https://example.com/after\n- link "x" [ref=e1]'; },
+      outward: async (_s: string, action: string) => (action === 'click' ? 'Click "Send"?' : null),
+    } as unknown as Browser;
+    let clock = NOON;
+    const browse = webTools(browser, (id) => ({ profile: join(home, 'browsers', id) }), () => clock).find((tool) => tool.name === 'browse')!;
+    const ctx = { stage, roomId: 'marketing', store: {} as Store, granted: new Map<string, string>() };
+    await browse.run({ action: 'open', url: 'example.com' }, ctx);
+    clock += 1000;
+    expect(await (browse.approval as Function)({ action: 'click', ref: 'e1' }, ctx)).toBe('Click "Send"?');
+    await expect(browse.run({ action: 'click', ref: 'e1' }, ctx)).rejects.toThrow('that element is gone');
+    clock += 1000;
+    await (browse.approval as Function)({ action: 'look' }, ctx);
+    await browse.run({ action: 'look' }, ctx);
+    const lines = (await readFile(join(home, 'browsers', 'b1', 'log.jsonl'), 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+    expect(lines).toEqual([
+      { at: NOON, roomId: 'marketing', action: 'open', url: 'https://example.com/after', outward: false, ok: true },
+      { at: NOON + 1000, roomId: 'marketing', action: 'click', ref: 'e1', outward: true, ok: false },
+      { at: NOON + 2000, roomId: 'marketing', action: 'look', url: 'https://example.com/after', outward: false, ok: true },
+    ]);
+  });
+
+  it('keeps only the newest lines, and writes none for a card with no folder of its own', async () => {
+    const file = join(await mkdtemp(join(tmpdir(), 'browse-')), 'b1', 'log.jsonl');
+    await Promise.all(Array.from({ length: 30 }, (_, index) => logStep(file, { at: index, roomId: 'r', action: 'look', outward: false, ok: true }, 20)));
+    const lines = (await readFile(file, 'utf8')).trim().split('\n').map((line) => JSON.parse(line).at);
+    expect(lines).toEqual(Array.from({ length: 20 }, (_, index) => index + 10));
+    expect(stepLogFile('b1', { profile: 'relative/folder' })).toBeNull();
+    expect(stepLogFile('b1', {})).toBeNull();
+    expect(stepLogFile('b1', { profile: '/w/browsers/b1' })).toBe('/w/browsers/b1/log.jsonl');
   });
 });

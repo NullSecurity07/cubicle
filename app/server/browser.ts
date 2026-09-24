@@ -48,7 +48,7 @@ export function ownUrl(raw: string): string {
 // is left for Chrome to fail on.
 export type Resolve = (host: string) => Promise<string[]>;
 export const dnsResolve: Resolve = async (host) => (await lookup(host, { all: true })).map((found) => found.address);
-async function publicUrl(raw: string, resolveHost?: Resolve): Promise<string> {
+export async function publicUrl(raw: string, resolveHost?: Resolve): Promise<string> {
   const href = webUrl(raw);
   if (!resolveHost) return href;
   const host = new URL(href).hostname.replace(/^\[|\]$/g, '');
