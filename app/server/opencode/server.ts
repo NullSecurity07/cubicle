@@ -1,10 +1,11 @@
 import { spawn as spawnChild } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { delimiter, dirname, join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { childEnv } from '../safety/env.ts';
+import { which } from '../which.ts';
 import { PERMISSION, type CoderHome } from './config.ts';
 import { readStream, type RawEvent } from './events.ts';
 
@@ -56,9 +57,7 @@ export const NOT_INSTALLED = 'opencode is not installed. The founder installs it
 
 export function findBin(env: NodeJS.ProcessEnv = process.env): string | null {
   if (env.OPENCODE_BIN) return env.OPENCODE_BIN;
-  const known = [join(homedir(), '.opencode/bin/opencode'), '/usr/local/bin/opencode', '/usr/bin/opencode'];
-  const onPath = (env.PATH ?? '').split(delimiter).filter(Boolean).map((dir) => join(dir, 'opencode'));
-  return [...known, ...onPath].find((path) => existsSync(path)) ?? null;
+  return which('opencode', { env, extra: [join(homedir(), '.opencode/bin'), '/usr/local/bin', '/usr/bin'] });
 }
 
 // A server left behind by a launch that was killed outright (nothing can catch that) is found by the number it wrote

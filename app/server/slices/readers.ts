@@ -1,9 +1,9 @@
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { delimiter, join } from 'node:path';
+import { join } from 'node:path';
 import { dnsResolve, webUrl, type Resolve } from '../browser.ts';
 import type { Deps, Slice } from '../install.ts';
+import { which } from '../which.ts';
 import {
   age, atomEntries, attr, clip, createPace, decode, failure, getPublic, htmlToText, isoDay, oneLine, parseFeed, reddit, REDDIT_AGENT, REDDIT_GAP, REDDIT_REST,
   resetReddit, when, type Feed, type Got, type Item,
@@ -61,7 +61,7 @@ export const execProgram: Exec = (command, args, { cwd, timeoutMs, signal }) => 
 });
 
 // Is a program on the PATH? Asked before a person is offered the tool, so it has to answer at once.
-export const hasProgram = (command: string, env: NodeJS.ProcessEnv = process.env) => (env.PATH ?? '').split(delimiter).filter(Boolean).some((where) => existsSync(join(where, command)));
+export const hasProgram = (command: string, env: NodeJS.ProcessEnv = process.env) => which(command, { env }) !== null;
 
 // ---------------------------------------------------------------- YouTube
 

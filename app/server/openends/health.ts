@@ -1,12 +1,13 @@
 import { execFile } from 'node:child_process';
-import { access, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
-import { delimiter, join } from 'node:path';
+import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { Check } from '../../shared/openends.ts';
 import models from '../models.json' with { type: 'json' };
 import type { ModelClient } from '../providers.ts';
 import type { EngineHealth } from '../opencode/server.ts';
 import { graphifyVersion, INSTALL, mcpCommand, PIN } from '../slices/graph.ts';
 import { isoDay, parseFeed, REDDIT_AGENT } from '../readers.ts';
+import { whichAsync } from '../which.ts';
 
 // Is everything this app leans on really here? One question a line, answered yes or no, and when the answer is no,
 // what the founder would do about it — in the words they would use, not ours.
@@ -27,10 +28,7 @@ export function keyPools(env: NodeJS.ProcessEnv): { provider: string; keys: numb
 
 // A program this machine can run, looked for the way a shell looks for it.
 export async function onPath(command: string, env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
-  for (const where of (env.PATH ?? '').split(delimiter).filter(Boolean)) {
-    if (await access(join(where, command)).then(() => true, () => false)) return true;
-  }
-  return false;
+  return (await whichAsync(command, { env })) !== null;
 }
 const hasFiles = async (dir: string) => (await readdir(dir).catch(() => [] as string[])).length > 0;
 const ago = (at: number, now: number) => {

@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { basename, delimiter, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { coderChannel, type CoderEvent, type CoderLine } from '../../shared/coder.ts';
 import { hub } from '../events.ts';
+import { which } from '../which.ts';
 import type { CardRef } from './cards.ts';
 
 export type { CardRef };
@@ -29,8 +30,7 @@ export const graphJson = (workspace: string, folder: string) => join(mapDir(work
 // A program in ~/.local/bin (where uv puts its tools) or on the PATH. The app may be started from a desktop entry
 // whose PATH never had ~/.local/bin in it, so that folder is looked in first. Only the environment given is read.
 export function findTool(name: string, env: NodeJS.ProcessEnv = process.env): string | null {
-  const places = [...(env.HOME ? [join(env.HOME, '.local/bin')] : []), ...(env.PATH ?? '').split(delimiter).filter(Boolean)];
-  return places.map((dir) => join(dir, name)).find((path) => existsSync(path)) ?? null;
+  return which(name, { env, extra: env.HOME ? [join(env.HOME, '.local/bin')] : [] });
 }
 
 // How the coder's opencode starts Graphify's own tool server for one map. graphify-mcp needs its `mcp` part: when the
