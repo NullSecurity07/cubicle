@@ -1,5 +1,6 @@
 import { useEffect, useImperativeHandle, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode, type Ref, type WheelEvent } from 'react';
 import { getBrowser, restartBrowser } from '../api';
+import { notePage } from '../where';
 import { listen } from '../bus';
 import { overlay, useFocused } from '../overlay/store';
 import { keyMessage, mouseMessage, toFrame, type MouseKind, type Point } from './live';
@@ -45,7 +46,7 @@ export function LivePicture({ id, kind, address, onAddress, idle, control }: { i
 
   useEffect(() => {
     let gone = false;
-    const say = (url: string) => told.current?.(/^about:/.test(url) ? '' : url);
+    const say = (url: string) => { const page = /^about:/.test(url) ? '' : url; notePage(id, page); told.current?.(page); };
     async function watch(restart = false) {
       try {
         const { port, url } = await (restart ? restartBrowser(id) : getBrowser(id));

@@ -90,3 +90,20 @@ export function useElapsed(making: boolean): string {
   }, [making]);
   return seconds < 60 ? `${seconds} s` : `${Math.floor(seconds / 60)} min ${String(seconds % 60).padStart(2, '0')} s`;
 }
+
+// How many pictures each of these image studios has made, kept fresh as they make more. The video card needs it to say
+// whether a wired studio has anything a film could use yet; a studio that cannot be read counts as none.
+export function usePictureCounts(ids: string[]): Record<string, number> {
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const key = ids.join(' ');
+  useEffect(() => {
+    if (!key) return;
+    let gone = false;
+    const read = (id: string) => getMedia(id).then((got) => { if (!gone) setCounts((held) => ({ ...held, [id]: got.results.length })); }).catch(() => {});
+    const wanted = key.split(' ');
+    for (const id of wanted) void read(id);
+    const stop = listen('effect', (effect) => { if (effect.kind === 'media-made' && wanted.includes(effect.id)) void read(effect.id); });
+    return () => { gone = true; stop(); };
+  }, [key]);
+  return counts;
+}
