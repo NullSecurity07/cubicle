@@ -6,7 +6,7 @@ import models from '../models.json' with { type: 'json' };
 import type { ModelClient } from '../providers.ts';
 import type { EngineHealth } from '../opencode/server.ts';
 import { graphifyVersion, INSTALL, mcpCommand, PIN } from '../slices/graph.ts';
-import { isoDay, parseFeed, REDDIT_AGENT } from '../slices/readers.ts';
+import { isoDay, parseFeed, REDDIT_AGENT } from '../readers.ts';
 
 // Is everything this app leans on really here? One question a line, answered yes or no, and when the answer is no,
 // what the founder would do about it — in the words they would use, not ours.

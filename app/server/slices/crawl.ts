@@ -4,11 +4,10 @@ import { join } from 'node:path';
 import { newMessageId, type Attention } from '../../shared/model.ts';
 import { dnsResolve, publicUrl, unwrapRedirect, webUrl, type Resolve } from '../browser.ts';
 import type { Deps, Slice } from '../install.ts';
-import { decode, htmlToText } from '../readers.ts';
+import { attr, clip, createPace, decode, failure, getPublic as getPublicWeb, htmlToText, isoDay, oneLine, when, type Got } from '../readers.ts';
 import type { Tool, ToolContext } from '../tools/registry.ts';
 import { webCache } from '../cache.ts';
 import { UNTRUSTED } from '../tools/web.ts';
-import { attr, createPace, isoDay, when } from './readers.ts';
 
 // A competitor's whole site read in one go, and a page kept an eye on. Both are plain reads of public pages from this
 // machine, the way a person with a browser would make them: robots.txt is obeyed, one site is asked gently, and a
@@ -32,46 +31,13 @@ const AGENT = 'cubicle-reader/1.0 (desktop app; reads a public site for its owne
 // Addresses that are never a page: documents, pictures, archives, media and feeds.
 const NOT_A_PAGE = /\.(pdf|png|jpe?g|gif|webp|svg|ico|bmp|tiff?|avif|zip|gz|tgz|bz2|xz|7z|rar|tar|dmg|exe|msi|pkg|deb|rpm|apk|mp3|mp4|m4a|wav|ogg|webm|mov|avi|css|js|mjs|json|xml|rss|atom|txt|csv|xlsx?|docx?|pptx?|woff2?|ttf|otf|eot)$/i;
 
-const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim();
-const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text);
-
 // ---------------------------------------------------------------- fetching
 
-export type Got = { status: number; url: string; type: string; body: string };
-
-// A read of the open web that can never be steered onto this machine: the address, and every address a redirect sends
-// it on to, is checked the way the browser checks one.
-export async function getPublic(raw: string, http: typeof fetch, resolveHost: Resolve | undefined, signal: AbortSignal): Promise<Got> {
-  let url = await publicUrl(raw, resolveHost);
-  for (let hop = 0; hop < 5; hop += 1) {
-    const response = await http(url, { headers: { 'user-agent': AGENT, accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5' }, redirect: 'manual', credentials: 'omit', signal });
-    const location = response.headers.get('location');
-    if (response.status >= 300 && response.status < 400 && location) { await response.body?.cancel().catch(() => {}); url = await publicUrl(unwrapRedirect(new URL(location, url).href), resolveHost); continue; }
-    const type = response.headers.get('content-type') ?? '';
-    // Only a page is worth its bytes; anything else is let go unread.
-    if (type && !/html/i.test(type) && !/^text\/plain/i.test(type)) { await response.body?.cancel().catch(() => {}); return { status: response.status, url, type, body: '' }; }
-    return { status: response.status, url, type, body: await capped(response) };
-  }
-  throw new Error('it redirected too many times');
-}
-async function capped(response: Response): Promise<string> {
-  if (!response.body) return (await response.text()).slice(0, BODY_BYTES);
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  while (size < BODY_BYTES) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    size += value.length;
-  }
-  await reader.cancel().catch(() => {});
-  return Buffer.concat(chunks).toString('utf8');
-}
-const failure = (error: unknown) => {
-  const message = (error as Error).message ?? String(error);
-  return /timeout|aborted/i.test((error as Error).name ?? '') || /timeout|aborted/i.test(message) ? 'it took too long to answer' : message;
-};
+export type { Got };
+const ACCEPT = 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5';
+// The crawl reads pages only, follows a link-tracker to where it really points, and keeps the body under 3 MB.
+export const getPublic = (raw: string, http: typeof fetch, resolveHost: Resolve | undefined, signal: AbortSignal): Promise<Got> =>
+  getPublicWeb(raw, { http, resolveHost, signal, agent: AGENT, accept: ACCEPT, htmlOnly: true, unwrap: true, bodyBytes: BODY_BYTES });
 
 // ---------------------------------------------------------------- one page
 

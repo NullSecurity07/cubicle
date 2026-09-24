@@ -2,9 +2,15 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
-import { dnsResolve, publicUrl, webUrl, type Resolve } from '../browser.ts';
+import { dnsResolve, webUrl, type Resolve } from '../browser.ts';
 import type { Deps, Slice } from '../install.ts';
-import { decode, htmlToText } from '../readers.ts';
+import {
+  age, atomEntries, attr, clip, createPace, decode, failure, getPublic, htmlToText, isoDay, oneLine, parseFeed, reddit, REDDIT_AGENT, REDDIT_GAP, REDDIT_REST,
+  resetReddit, when, type Feed, type Got, type Item,
+} from '../readers.ts';
+
+// Kept where they were first found: the tests and the health checks read them from here.
+export { age, attr, createPace, isoDay, parseFeed, REDDIT_AGENT, REDDIT_GAP, resetReddit, when, type Feed, type Item };
 import type { Tool, ToolContext } from '../tools/registry.ts';
 import { webCache } from '../cache.ts';
 import { UNTRUSTED } from '../tools/web.ts';
@@ -13,7 +19,6 @@ import { UNTRUSTED } from '../tools/web.ts';
 // a news site has put out lately, and how people on Reddit talk about a problem in their own words. All three only
 // read, never sign in and never send anything, so they are offered to everyone the way web_fetch is.
 
-const DAY = 86_400_000;
 export const TRANSCRIPT_CHARS = 20_000;
 export const REDDIT_CHARS = 20_000;
 export const SUMMARY_CHARS = 400;
@@ -21,22 +26,8 @@ export const FEED_LIMIT = 15;
 export const FEED_MAX = 40;
 export const YTDLP_MS = 90_000;
 export const FEED_MS = 20_000;
-export const REDDIT_GAP = 2000;
-export const REDDIT_AGENT = 'cubicle-reader/1.0 (desktop app; reads public Reddit for its owner)';
 const FEED_AGENT = 'cubicle-reader/1.0 (desktop app; reads one feed for its owner)';
-const BODY_BYTES = 5_000_000;
 export const REDDIT_REFUSED = 'Reddit refused this request; try again in a minute.';
-
-// A moment as a day, and how long ago that was. A small model reads "2024-03-02" as news unless told it is old.
-export const isoDay = (at: number) => new Date(at).toISOString().slice(0, 10);
-// Counted in calendar days, so last night is yesterday and not "today".
-export function age(at: number, now: number): string {
-  const days = Math.floor(now / DAY) - Math.floor(at / DAY);
-  return days <= 0 ? 'today' : days === 1 ? 'yesterday' : days < 60 ? `${days} days ago` : days < 730 ? `${Math.floor(days / 30)} months ago` : `${Math.floor(days / 365)} years ago`;
-}
-export const when = (at: number, now: number) => `${isoDay(at)} (${age(at, now)})`;
-const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim();
-const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text);
 
 // ---------------------------------------------------------------- programs
 
@@ -232,106 +223,6 @@ function header(info: Info, url: string, now: number): string {
 
 // ---------------------------------------------------------------- fetching
 
-type Got = { status: number; url: string; type: string; body: string };
-
-// A read of the open web that can never be steered onto this machine: every address, and every address a redirect
-// points to, is checked the way the browser checks one. `only` keeps Reddit's reads on Reddit.
-async function getPublic(raw: string, options: { http: typeof fetch; resolveHost?: Resolve; agent: string; timeoutMs: number; signal?: AbortSignal; only?: RegExp; accept?: string }): Promise<Got> {
-  const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeoutMs)]) : AbortSignal.timeout(options.timeoutMs);
-  let url = await publicUrl(raw, options.resolveHost);
-  for (let hop = 0; hop < 5; hop += 1) {
-    if (options.only && !options.only.test(new URL(url).hostname)) throw new Error(`it was sent on to ${new URL(url).hostname}, which this reader does not follow`);
-    const response = await options.http(url, { headers: { 'user-agent': options.agent, accept: options.accept ?? '*/*' }, redirect: 'manual', credentials: 'omit', signal });
-    const location = response.headers.get('location');
-    if (response.status >= 300 && response.status < 400 && location) { url = await publicUrl(new URL(location, url).href, options.resolveHost); continue; }
-    return { status: response.status, url, type: response.headers.get('content-type') ?? '', body: await capped(response) };
-  }
-  throw new Error('it redirected too many times');
-}
-async function capped(response: Response): Promise<string> {
-  if (!response.body) return (await response.text()).slice(0, BODY_BYTES);
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  while (size < BODY_BYTES) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    size += value.length;
-  }
-  await reader.cancel().catch(() => {});
-  return Buffer.concat(chunks).toString('utf8');
-}
-const failure = (error: unknown) => {
-  const message = (error as Error).message ?? String(error);
-  return /timeout|aborted/i.test((error as Error).name ?? '') || /timeout|aborted/i.test(message) ? 'it took too long to answer' : message;
-};
-
-// ---------------------------------------------------------------- feeds
-
-export type Item = { title: string; link: string; at: number | null; summary: string };
-export type Feed = { title: string; kind: 'RSS' | 'Atom' | 'JSON Feed'; items: Item[] };
-
-// A tolerant reader for the few tags a feed is made of. Feeds in the wild are too often broken XML for a strict parser
-// to be the better choice: a regular expression over each item reads what is there and skips what is not.
-const escape = (name: string) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-function inner(block: string, names: string[]): string {
-  for (const name of names) {
-    const found = new RegExp(`<${escape(name)}(?:\\s[^>]*)?>([\\s\\S]*?)</${escape(name)}>`, 'i').exec(block);
-    if (found) return found[1];
-  }
-  return '';
-}
-// Text inside CDATA is already what it says; outside it, entities are still to be read.
-const unwrap = (value: string) => (value.includes('<![CDATA[') ? [...value.matchAll(/<!\[CDATA\[([\s\S]*?)\]\]>/g)].map((one) => one[1]).join('') : decode(value));
-const plain = (value: string) => oneLine(htmlToText(unwrap(value)));
-export const attr = (tag: string, name: string) => {
-  const found = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i').exec(tag);
-  return found ? decode(found[1] ?? found[2] ?? found[3] ?? '') : null;
-};
-const dateOf = (value: string) => { const at = Date.parse(unwrap(value).trim()); return Number.isFinite(at) ? at : null; };
-
-export function parseFeed(body: string): Feed | null {
-  const text = body.replace(/^﻿/, '').trim();
-  if (text.startsWith('{')) {
-    let data: { version?: string; title?: string; items?: Record<string, unknown>[] };
-    try { data = JSON.parse(text); } catch { return null; }
-    if (!Array.isArray(data.items) || !/jsonfeed/i.test(String(data.version ?? ''))) return null;
-    const items = data.items.map((item) => {
-      const html = typeof item.content_html === 'string' ? htmlToText(item.content_html) : '';
-      const at = Date.parse(String(item.date_published ?? item.date_modified ?? ''));
-      return { title: oneLine(String(item.title ?? '')), link: String(item.url ?? item.external_url ?? ''), at: Number.isFinite(at) ? at : null, summary: oneLine(String(item.summary ?? item.content_text ?? html)) };
-    });
-    return { title: oneLine(String(data.title ?? '')), kind: 'JSON Feed', items };
-  }
-  const head = text.replace(/<\?xml[\s\S]*?\?>/, '').replace(/<!--[\s\S]*?-->/g, '').slice(0, 2000);
-  if (/<(rss|rdf:RDF)[\s>]/i.test(head)) {
-    const items = [...text.matchAll(/<item(?:\s[^>]*)?>([\s\S]*?)<\/item>/gi)].map(([, item]) => {
-      const guid = /<guid(?![^>]*isPermaLink\s*=\s*["']false)[^>]*>([\s\S]*?)<\/guid>/i.exec(item)?.[1] ?? '';
-      return {
-        title: plain(inner(item, ['title'])),
-        link: unwrap(inner(item, ['link'])).trim() || unwrap(guid).trim(),
-        at: dateOf(inner(item, ['pubDate', 'dc:date', 'published', 'updated'])),
-        summary: plain(inner(item, ['description', 'content:encoded', 'summary'])),
-      };
-    });
-    return { title: plain(inner(text.split(/<item[\s>]/i)[0], ['title'])), kind: 'RSS', items };
-  }
-  if (/<feed[\s>]/i.test(head)) {
-    const items = [...text.matchAll(/<entry(?:\s[^>]*)?>([\s\S]*?)<\/entry>/gi)].map(([, entry]) => {
-      const links = [...entry.matchAll(/<link\b[^>]*>/gi)].map(([tag]) => ({ rel: attr(tag, 'rel') ?? 'alternate', href: attr(tag, 'href') ?? '' }));
-      return {
-        title: plain(inner(entry, ['title'])),
-        link: (links.find((one) => one.rel === 'alternate') ?? links[0])?.href ?? '',
-        at: dateOf(inner(entry, ['published', 'updated'])),
-        summary: plain(inner(entry, ['summary', 'content'])),
-      };
-    });
-    return { title: plain(inner(text.split(/<entry[\s>]/i)[0], ['title'])), kind: 'Atom', items };
-  }
-  return null;
-}
-
 // A site's own page names its feed in a `<link rel="alternate">` in its head.
 export function feedLinks(html: string, base: string): string[] {
   const found: string[] = [];
@@ -378,19 +269,6 @@ async function readFeed(raw: string, limit: number, options: ReaderOptions, sign
 }
 
 // ---------------------------------------------------------------- Reddit
-
-// Reddit asks for no more than one request a second from anyone without a login; one every two keeps well clear.
-// One pace for the whole app, because every person's reads come from the same machine.
-export function createPace(gap: number, now: () => number = Date.now, sleep: (ms: number) => Promise<void> = (ms) => new Promise((done) => { setTimeout(done, ms); })) {
-  let next = 0;
-  return async () => {
-    const at = Math.max(now(), next);
-    next = at + gap;
-    const wait = at - now();
-    if (wait > 0) await sleep(wait);
-  };
-}
-const redditPace = createPace(REDDIT_GAP);
 
 type Post = { title?: string; subreddit?: string; author?: string; score?: number; num_comments?: number; created_utc?: number; permalink?: string; selftext?: string; url?: string; is_self?: boolean };
 type Comment = { author?: string; body?: string; score?: number; created_utc?: number; replies?: Listing<Comment> | '' };
@@ -472,12 +350,10 @@ export function showThread(data: [Listing<Post>, Listing<Comment>], now: number)
 // The same read through Reddit's public feed: authors, dates and words, but no scores. A thread's feed is the post
 // first, then its comments in Reddit's own order.
 export function showRedditFeed(body: string, ask: RedditAsk, now: number): string | null {
-  const entries = [...body.matchAll(/<entry(?:\s[^>]*)?>([\s\S]*?)<\/entry>/gi)].map(([, entry]) => ({
-    title: plain(inner(entry, ['title'])),
-    author: plain(inner(entry, ['name'])).replace(/^\/u\//, 'u/'),
-    at: dateOf(inner(entry, ['published', 'updated'])),
-    link: attr(/<link\b[^>]*>/i.exec(entry)?.[0] ?? '', 'href') ?? '',
-    text: oneLine(htmlToText(unwrap(inner(entry, ['content']))).replace(/\s*submitted by[\s\S]*$/, '')),
+  const entries = atomEntries(body).map((entry) => ({
+    ...entry,
+    author: entry.author.replace(/^\/u\//, 'u/'),
+    text: oneLine(htmlToText(entry.content).replace(/\s*submitted by[\s\S]*$/, '')),
   }));
   if (!/<feed[\s>]/i.test(body)) return null;
   const note = 'Reddit refused its data, so this came through its public feed: no scores or comment counts.';
@@ -494,18 +370,17 @@ export function showRedditFeed(body: string, ask: RedditAsk, now: number): strin
 
 // Where Reddit has refused its data from this machine, its feed is asked first for a while instead of being asked
 // twice every time. Kept per process, like the pace.
-let jsonRefusedUntil = 0;
-export const resetReddit = () => { jsonRefusedUntil = 0; };
 
 async function readReddit(args: Record<string, unknown>, options: ReaderOptions, signal?: AbortSignal): Promise<string> {
-  const { http = fetch, now = Date.now, pace = redditPace } = options;
+  const { http = fetch, now = Date.now, pace = reddit.pace } = options;
   let ask: RedditAsk;
   try { ask = redditAsk(args); } catch (error) { return (error as Error).message; }
   const get = async (url: string) => { await pace(); return getPublic(url, { http, agent: REDDIT_AGENT, timeoutMs: FEED_MS, signal, only: REDDIT_HOST }); };
   try {
-    if (now() >= jsonRefusedUntil) {
+    if (now() < reddit.refusedUntil) return REDDIT_REFUSED;
+    if (now() >= reddit.jsonRefusedUntil) {
       const got = await get(ask.json);
-      if (got.status === 429) return REDDIT_REFUSED;
+      if (got.status === 429) { reddit.refusedUntil = now() + REDDIT_REST; return REDDIT_REFUSED; }
       if (got.status === 404) return 'Reddit has no such thread or community.';
       if (got.status < 400) {
         let data: unknown;
@@ -513,10 +388,11 @@ async function readReddit(args: Record<string, unknown>, options: ReaderOptions,
         if (data) return UNTRUSTED + (ask.kind === 'thread' ? showThread(data as [Listing<Post>, Listing<Comment>], now()) : showPosts(data as Listing<Post>, ask.about, now()));
       }
       // Refused (403) or handed a page instead of data: Reddit walls this machine's JSON; its feed often still works.
-      jsonRefusedUntil = now() + 10 * 60_000;
+      reddit.jsonRefusedUntil = now() + 10 * 60_000;
     }
     const feed = await get(ask.rss);
     if (feed.status === 404) return 'Reddit has no such thread or community.';
+    if (feed.status === 429) reddit.refusedUntil = now() + REDDIT_REST;
     if (feed.status >= 400) return REDDIT_REFUSED;
     const shown = showRedditFeed(feed.body, ask, now());
     return shown ? UNTRUSTED + shown : REDDIT_REFUSED;
