@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { suggest, type Known } from './commands';
+import { commandWords, suggest, type Command, type Known } from './commands';
 
 const known: Known = {
   cards: [
@@ -69,5 +69,33 @@ describe('command bar', () => {
     // Only these offers may be outranked by what the workspace search finds; an outright "ask maya …" may not.
     expect(offered.every((one) => one.fallback)).toBe(true);
     expect(first('ask maya draft three taglines').fallback).toBeUndefined();
+  });
+});
+
+// The cheatsheet lists these words; each one it lists must really be answered by the bar, never only offered around.
+describe('command bar words', () => {
+  const slices: Command[] = [
+    { section: 'Do', label: 'Health', hint: 'Is everything working?', action: { do: 'idle' } },
+    { section: 'Do', label: 'Health', hint: 'Is everything working?', action: { do: 'idle' }, when: (typed) => typed === 'checkup' },
+    { section: 'Do', label: 'Dashboard', action: { do: 'fit' }, when: (typed) => typed === 'numbers', say: ['numbers'] },
+  ];
+
+  it('are all answered outright', () => {
+    const words = commandWords(slices);
+    for (const word of words.slice(0, -1)) {
+      for (const say of word.say) {
+        const typed = say.replace('…', 'Maya');
+        expect(suggest(typed, known, slices).filter((one) => !one.fallback).length, typed).toBeGreaterThan(0);
+      }
+    }
+    // Anything else is a search, and a question for the people.
+    expect(suggest(words.at(-1)!.say[0], known, slices).every((one) => one.fallback)).toBe(true);
+  });
+
+  it('list a slice command once, by its own words when it gives them', () => {
+    const words = commandWords(slices);
+    expect(words.filter((word) => word.does.startsWith('Health'))).toEqual([{ say: ['health'], does: 'Health: is everything working?' }]);
+    expect(words.find((word) => word.does === 'Dashboard')?.say).toEqual(['numbers']);
+    expect(words.find((word) => word.does.startsWith('Keyboard'))?.say).toContain('shortcuts');
   });
 });

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { CoderModels } from '../../shared/coder';
 import { getCoderModels } from '../api';
+import { pressed } from '../keys';
 
 // Read once per window: the list only changes when the founder adds a key or a local model and starts the app again.
 let known: Promise<CoderModels> | null = null;
@@ -33,7 +34,7 @@ export function CoderModel({ model, onPick }: { model?: string; onPick: (model: 
   const pick = (next: string | undefined) => { onPick(next); setOpen(false); };
 
   return (
-    <div className="coder-model nodrag" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false); }} onKeyDown={(event) => { if (event.key === 'Escape') setOpen(false); }}>
+    <div className="coder-model nodrag" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false); }} onKeyDown={(event) => { if (pressed(event, 'cancel')) setOpen(false); }}>
       <button type="button" className="coder-model__pill" aria-haspopup="menu" aria-expanded={open} aria-label={`Model: ${plain(name)}`} title="The model the coder thinks with" onClick={() => setOpen(!open)}>
         <span>{plain(name)}</span>
         <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M2.500 4 5 6.500 7.500 4" /></svg>

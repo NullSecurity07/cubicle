@@ -7,6 +7,7 @@ import { addAsset, fileUrl, getVoices, removeAsset, stopMedia } from '../api';
 import { useElapsed, useMedia } from '../media';
 import type { ImageGenNodeType, VideoGenNodeType, VoiceGenNodeType } from '../stage';
 import { CardActions, Frame } from './Frame';
+import { pressed } from '../keys';
 
 const SHAPE_WORDS: Record<Shape, string> = { square: 'Square', wide: 'Wide', tall: 'Tall' };
 
@@ -55,7 +56,7 @@ export function ImageGenNode({ id, data, selected }: NodeProps<ImageGenNodeType>
           <textarea
             aria-label="What to draw" placeholder="A quiet desk at dawn, soft light, photo…" rows={2} value={prompt}
             onChange={(event) => updateNodeData(id, { prompt: event.target.value })}
-            onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); draw(); } }}
+            onKeyDown={(event) => { if (pressed(event, 'send')) { event.preventDefault(); draw(); } }}
           />
           <div className="studio__end">
             <select aria-label="Shape" value={data.shape ?? 'square'} onChange={(event) => updateNodeData(id, { shape: event.target.value as Shape })}>
@@ -160,7 +161,7 @@ export function VoiceGenNode({ id, data, selected }: NodeProps<VoiceGenNodeType>
           <textarea
             aria-label="What to say" placeholder="Thanks for stopping by. Here is what we built this week…" rows={2} value={words}
             onChange={(event) => updateNodeData(id, { text: event.target.value })}
-            onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); say(); } }}
+            onKeyDown={(event) => { if (pressed(event, 'send')) { event.preventDefault(); say(); } }}
           />
           <div className="studio__end">
             {omni
@@ -377,7 +378,7 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
           <textarea
             aria-label="What the film is about" placeholder="A one-minute update for investors: what shipped this month, the numbers, what is next…" rows={2} value={brief}
             onChange={(event) => updateNodeData(id, { brief: event.target.value })}
-            onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); shoot(); } }}
+            onKeyDown={(event) => { if (pressed(event, 'send')) { event.preventDefault(); shoot(); } }}
           />
           <div className="studio__end">
             <select aria-label="What it is for" value={data.purpose ?? ''} onChange={(event) => updateNodeData(id, { purpose: event.target.value || undefined })}>

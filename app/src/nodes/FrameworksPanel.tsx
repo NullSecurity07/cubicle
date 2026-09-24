@@ -12,6 +12,7 @@ import { ForgeView } from './ForgeView';
 import { Runs, ScorePill } from './EvalsView';
 import { toFlow, type StageNode } from '../stage';
 import { useFlushStage } from '../sync';
+import { pressed } from '../keys';
 
 // The icon frameworks wear in the dock and here: blocks stacked into a group, the shape of a team that lands in one
 // press. Drawn in the same stroked line as everything else on the dock.
@@ -34,7 +35,7 @@ function CaseForm({ held, onSave, onCancel }: { held?: Case; onSave: (one: Case)
     <form
       className="cases__form"
       data-holds-escape
-      onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); onCancel(); } }}
+      onKeyDown={(event) => { if (pressed(event, 'cancel')) { event.stopPropagation(); onCancel(); } }}
       onSubmit={(event) => {
         event.preventDefault();
         onSave({ id: held?.id ?? '', keys: keys.split(',').map((key) => key.trim()).filter(Boolean), input, expected, rubric, addedBy: held?.addedBy ?? 'founder' });

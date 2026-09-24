@@ -8,6 +8,7 @@ import type { LeadsNodeType, StageNode } from '../stage';
 import { useFlushStage } from '../sync';
 import { CardActions, Frame } from './Frame';
 import './leads.css';
+import { pressed } from '../keys';
 
 const day = (at: number) => new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 const SOURCE: Record<Lead['source'], string> = { founder: 'added by you', person: 'added by a person', openoutreach: 'found by OpenOutreach', twenty: 'added in Twenty' };
@@ -144,7 +145,7 @@ export function LeadsNode({ id, selected }: NodeProps<LeadsNodeType>) {
             </div>
             <form className="leadview__add" onSubmit={(event) => { event.preventDefault(); if (note.trim()) act(noteLead(id, open.id, note).then(() => setNote(''))); }}>
               <textarea rows={2} aria-label="New note" placeholder="Add a note" value={note} onChange={(event) => setNote(event.target.value)}
-                onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} />
+                onKeyDown={(event) => { if (pressed(event, 'send')) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} />
             </form>
             <p className="leadview__quiet">{SOURCE[open.source]} · {day(open.addedAt)}</p>
             {problem && <p className="leadview__problem">{problem}</p>}

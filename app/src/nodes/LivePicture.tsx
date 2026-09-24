@@ -3,6 +3,7 @@ import { getBrowser, restartBrowser } from '../api';
 import { listen } from '../bus';
 import { overlay, useFocused } from '../overlay/store';
 import { keyMessage, mouseMessage, toFrame, type MouseKind, type Point } from './live';
+import { pressed } from '../keys';
 
 const LARGE = <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M9.500 2.500h4v4M13.500 2.500 9 7M6.500 13.500h-4v-4M2.500 13.500 7 9" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" /></svg>;
 
@@ -100,7 +101,7 @@ export function LivePicture({ id, kind, address, onAddress, idle, control }: { i
   }
 
   function key(event: KeyboardEvent<HTMLImageElement>, down: boolean) {
-    if (event.key === 'Escape') { if (down) { event.preventDefault(); event.currentTarget.blur(); } return; }
+    if (pressed(event, 'leave-page')) { if (down) { event.preventDefault(); event.currentTarget.blur(); } return; }
     event.preventDefault();
     event.stopPropagation();
     send(keyMessage(event, down ? 'keyDown' : 'keyUp'));

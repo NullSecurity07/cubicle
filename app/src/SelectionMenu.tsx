@@ -5,6 +5,7 @@ import { saveFramework } from './api';
 import { refreshFrameworks } from './frameworks';
 import { BlocksIcon } from './nodes/FrameworksPanel';
 import { useFlushStage } from './sync';
+import { pressed } from './keys';
 
 // What the founder can do with several cards at once. Two or more selected is somebody treating them as a group, and
 // the one thing worth offering about a group is keeping it: saved as a framework, the same people, docs, cards and
@@ -45,7 +46,7 @@ export function SelectionMenu() {
         <form
           className="chosen__name"
           data-holds-escape
-          onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); setNaming(false); } }}
+          onKeyDown={(event) => { if (pressed(event, 'cancel')) { event.stopPropagation(); setNaming(false); } }}
           onSubmit={(event) => { event.preventDefault(); void save(); }}
         >
           <input ref={field} aria-label="Framework name" placeholder="What is this team called?" value={name} onChange={(event) => setName(event.target.value)} />

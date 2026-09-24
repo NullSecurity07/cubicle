@@ -16,6 +16,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 const put = (body: unknown): RequestInit => ({ method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
 export const getStage = () => request<Stage>('/api/stage');
+// The founder's own keys from keys.json, as the server checked them, and where that file is.
+export const getKeys = () => request<{ keys: Record<string, string[]>; problems: string[]; file: string }>('/api/keys');
 export const putStage = (stage: Stage) => request('/api/stage', put(stage));
 export const getDoc = (id: string) => request<{ text: string }>(`/api/docs/${id}`).then((doc) => doc.text);
 // `last` is a save made as the page goes away: the browser is asked to finish it even though nobody is left to hear the answer.

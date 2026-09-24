@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { CoderAsk as Asked } from '../../shared/coder';
 import { answerCoder } from '../api';
+import { pressed } from '../keys';
 
 // What the coder wants to do, in the founder's words: run a command, change a file.
 export const askedFor = (ask: Asked) => (ask.tool === 'bash' ? 'Run this command?' : ask.tool === 'edit' || ask.tool === 'write' ? 'Change this file?' : `Allow ${ask.tool}?`);
@@ -26,7 +27,7 @@ export function CoderAsk({ cardId, ask }: { cardId: string; ask: Asked }) {
       <div className="approval__title">{askedFor(ask)}</div>
       <code className="coder-ask__what">{ask.what || ask.tool}</code>
       <input aria-label="Reason, if you say no" placeholder="Reason, if you say no (optional)" value={why} disabled={sending} onChange={(event) => setWhy(event.target.value)}
-        onKeyDown={(event) => { if (event.key === 'Enter' && why.trim()) void answer('reject'); }} />
+        onKeyDown={(event) => { if (pressed(event, 'send') && why.trim()) void answer('reject'); }} />
       {problem && <p className="msg--problem">{problem}</p>}
       <div className="approval__end">
         <button type="button" disabled={sending} onClick={() => void answer('reject')}>Reject</button>

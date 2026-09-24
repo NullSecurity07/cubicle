@@ -1,0 +1,52 @@
+/* The cheatsheet: the app's glass panel, a little wider, two calm columns that fold into one on a narrow window.
+   The app is dark; the light values are here for a page that asks for them with data-theme="light". */
+.panel:has(.cheatsheet) {
+  --sheet-cap: rgba(255, 255, 255, 0.1);
+  --sheet-cap-edge: rgba(255, 255, 255, 0.14);
+  --sheet-rule: var(--card-border);
+  --sheet-quiet: var(--muted);
+  --sheet-say: rgba(143, 181, 255, 0.12);
+  --sheet-say-text: var(--accent-soft);
+  top: 6vh; max-height: 88vh; width: min(900px, calc(100% - 32px));
+}
+:root[data-theme="light"] .panel:has(.cheatsheet) {
+  --text: #1c1e24; --muted: #5d6472; --card-border: rgba(0, 0, 0, 0.1);
+  --sheet-cap: rgba(0, 0, 0, 0.05); --sheet-cap-edge: rgba(0, 0, 0, 0.14);
+  --sheet-say: rgba(78, 140, 255, 0.1); --sheet-say-text: #2a5fc4;
+  background: rgba(250, 250, 252, 0.9); border-color: rgba(0, 0, 0, 0.12); color: var(--text);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.22);
+}
+
+.cheatsheet { display: flex; flex-direction: column; gap: 22px; font-size: 13px; line-height: 1.45; }
+.cheatsheet h3 { margin: 0 0 8px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.07em; text-transform: uppercase; color: var(--sheet-quiet); }
+.cheatsheet ul { margin: 0; padding: 0; list-style: none; }
+
+.cheatsheet__columns { columns: 2; column-gap: 36px; }
+.cheatsheet__group { break-inside: avoid; padding-bottom: 16px; }
+.cheatsheet__group li { display: grid; grid-template-columns: 118px 1fr; gap: 12px; align-items: baseline; padding: 5px 0; }
+.cheatsheet__keys { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; }
+.cheatsheet__chord { display: inline-flex; align-items: baseline; gap: 3px; white-space: nowrap; }
+.cheatsheet kbd {
+  display: inline-block; min-width: 20px; box-sizing: border-box; padding: 1px 6px; border-radius: 6px;
+  border: 1px solid var(--sheet-cap-edge); border-bottom-width: 2px; background: var(--sheet-cap);
+  font: inherit; font-size: 11.5px; font-weight: 550; line-height: 17px; text-align: center; color: var(--text);
+}
+.cheatsheet__or, .cheatsheet__with { font-size: 11.5px; color: var(--sheet-quiet); }
+.cheatsheet__with { margin-left: 3px; }
+.cheatsheet__does { color: var(--text); }
+
+.cheatsheet__words { border-top: 1px solid var(--sheet-rule); padding-top: 18px; }
+.cheatsheet__words ul { columns: 2; column-gap: 36px; }
+.cheatsheet__words li { break-inside: avoid; display: flex; flex-direction: column; gap: 3px; padding: 5px 0 7px; }
+.cheatsheet__say { display: flex; flex-wrap: wrap; gap: 4px; }
+.cheatsheet q { quotes: none; padding: 0 7px; border-radius: 6px; background: var(--sheet-say); color: var(--sheet-say-text); font-size: 12px; line-height: 20px; white-space: nowrap; }
+.cheatsheet__words .cheatsheet__does { color: var(--sheet-quiet); font-size: 12.5px; }
+
+.cheatsheet__foot { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; border-top: 1px solid var(--sheet-rule); padding-top: 14px; font-size: 12px; color: var(--sheet-quiet); }
+.cheatsheet__foot code { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11.5px; color: var(--text); overflow-wrap: anywhere; user-select: text; }
+.cheatsheet__problem { flex-basis: 100%; margin: 2px 0 0; color: var(--needs); }
+
+@media (max-width: 760px) {
+  .cheatsheet__columns, .cheatsheet__words ul { columns: 1; }
+  .cheatsheet__group li { grid-template-columns: 104px 1fr; }
+}

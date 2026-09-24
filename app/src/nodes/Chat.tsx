@@ -8,6 +8,7 @@ import { watchRoom } from '../rooms';
 import { SLICES } from '../slices';
 import { useFlushStage } from '../sync';
 import { Message } from './Message';
+import { pressed } from '../keys';
 
 export type Status = 'idle' | 'thinking' | 'waiting' | 'error';
 type Live = { text: string; tools: ToolEvent[] };
@@ -175,8 +176,8 @@ export function Chat({ id, name, role, onStatus }: { id: string; name: string; r
   const insert = (text: string) => { setDraft((held) => `${held ? `${held} ` : ''}${text}`.trim()); box.current?.focus(); };
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === 'Escape' && editing) { setEditing(null); setDraft(''); }
-    if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); }
+    if (pressed(event, 'cancel') && editing) { setEditing(null); setDraft(''); }
+    if (pressed(event, 'send')) { event.preventDefault(); void send(); }
   }
 
   return (
