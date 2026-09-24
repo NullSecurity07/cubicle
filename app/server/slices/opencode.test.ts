@@ -1,4 +1,4 @@
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readdir, writeFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,13 +6,17 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { CoderEvent } from '../../shared/coder.ts';
 import type { Attention, ToolEvent } from '../../shared/model.ts';
 import { createApprovals } from '../approvals.ts';
+import { NOT_INSTALLED } from '../opencode/server.ts';
+import type { Coder } from '../opencode/session.ts';
+import { createSeams } from '../seams.ts';
 import { hub } from '../events.ts';
 import type { Deps } from '../install.ts';
 import { runTurn } from '../loop.ts';
 import type { ModelClient } from '../providers.ts';
 import { createStore } from '../store.ts';
 import { createUsage } from '../usage.ts';
-import opencode from './opencode.ts';
+import opencode, { coderTools } from './opencode.ts';
+import safety from './safety.ts';
 
 // A model that asks for one tool once, then says it is done.
 const client = (name: string, args: Record<string, unknown>): ModelClient => {
@@ -110,5 +114,35 @@ describe('the coder card', () => {
     expect(heard.findLast((one) => one.data.line)?.data.line?.text).toBe('undone · "Run the tests please"');
     await call('/api/coder/nobody/stop');
     expect(answered.at(-1)).toMatchObject({ status: 404 });
+  });
+
+  // On a machine without opencode the task cannot start, so the founder is not asked to approve it and the safety net
+  // does not copy the whole folder first: the refusal comes before both.
+  it('refuses to start work where opencode is missing, before any question and before any checkpoint', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'coder-missing-'));
+    const folder = await mkdtemp(join(tmpdir(), 'coder-folder-'));
+    await writeFile(join(folder, 'a.ts'), 'export const a = 1;\n');
+    const store = createStore(workspace);
+    const stage = await store.loadStage();
+    stage.cards = [{ id: 'coder-1', kind: 'project', path: folder, x: 0, y: 0, w: 1, h: 1 }];
+    stage.wires.push({ id: 'w', from: 'build', fromHandle: 'r', to: 'coder-1', toHandle: 'l' });
+    await store.saveStage(stage);
+    const seams = createSeams();
+    await safety.install({ workspace, root: workspace, store, seams, approvals: createApprovals(), attention: { list: async () => [] } } as unknown as Deps);
+    const prompted: string[] = [];
+    const coder = { prompt: async () => { prompted.push('prompt'); } } as unknown as Coder;
+    const asked: ToolEvent[] = [];
+    const events: ToolEvent[] = [];
+    const reply = await runTurn({
+      messages: [{ role: 'user', content: 'go' }], tools: coderTools(coder, [workspace], () => NOT_INSTALLED), clients: [client('code_task', { brief: 'Add a test' })], usage: createUsage(null), seams,
+      approve: async (event) => { asked.push(event); return { ok: true }; },
+      context: { stage: await store.loadStage(), roomId: 'build', store, granted: new Map() }, events: { token: () => {}, tool: (event) => events.push(event) },
+    });
+    expect(reply.tools[0]).toMatchObject({ ok: false });
+    expect(reply.tools[0].result).toContain('opencode is not installed');
+    expect(asked).toEqual([]);
+    expect(events.some((one) => one.waiting)).toBe(false);
+    expect(prompted).toEqual([]);
+    expect(await readdir(join(workspace, '.index', 'checkpoints')).catch(() => [])).toEqual([]);
   });
 });

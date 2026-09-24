@@ -51,6 +51,9 @@ const TOO_BIG = 2 * 1024 ** 3;
 // A server that has grown past 2 GB is started afresh, but never under somebody's work.
 export const needsRestart = (rss: number, busy: boolean) => rss > TOO_BIG && !busy;
 
+// What a person is told when this machine has no opencode: before the founder is asked anything, not after.
+export const NOT_INSTALLED = 'opencode is not installed. The founder installs it with: curl -fsSL https://opencode.ai/install | bash';
+
 export function findBin(env: NodeJS.ProcessEnv = process.env): string | null {
   if (env.OPENCODE_BIN) return env.OPENCODE_BIN;
   const known = [join(homedir(), '.opencode/bin/opencode'), '/usr/local/bin/opencode', '/usr/bin/opencode'];
@@ -106,7 +109,7 @@ export function createOpencodeServer(options: Options): Engine {
   }
 
   async function start() {
-    if (!options.bin) throw new Error('opencode is not installed. The founder installs it with: curl -fsSL https://opencode.ai/install | bash');
+    if (!options.bin) throw new Error(NOT_INSTALLED);
     const home = await options.home();
     const pidFile = join(dirname(home.configPath), 'server.pid');
     await reap(pidFile);

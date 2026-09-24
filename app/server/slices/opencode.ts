@@ -7,7 +7,7 @@ import { projectDir } from '../folder.ts';
 import type { Deps, Slice } from '../install.ts';
 import { graphMcp, writeCoderHome } from '../opencode/config.ts';
 import { fakeEngine } from '../opencode/fake.ts';
-import { coderHealth, createOpencodeServer, findBin } from '../opencode/server.ts';
+import { coderHealth, createOpencodeServer, findBin, NOT_INSTALLED } from '../opencode/server.ts';
 import { createCoder, type Coder } from '../opencode/session.ts';
 import { wired } from '../prompt.ts';
 import { text, type Tool, type ToolContext } from '../tools/registry.ts';
@@ -24,8 +24,9 @@ const NO_CARD = 'no coder card is connected to your room. Ask the founder to add
 const refOf = (card: Project, forbidden: string[]) => ({ id: card.id, dir: projectDir(card.path, forbidden), name: nameOf(card), session: card.session, model: card.model });
 
 // What a wired person may do with the coder. Starting work and following it up wait for the founder's yes, with the
-// words editable; stopping and looking never do.
-export function coderTools(coder: Coder, forbidden: string[]): Tool[] {
+// words editable; stopping and looking never do. `ready` refuses the two that start work on a machine with no opencode,
+// before the founder is asked and before the safety net copies the folder: both would be for nothing.
+export function coderTools(coder: Coder, forbidden: string[], ready: () => string | null = () => null): Tool[] {
   const cardFor = (context: ToolContext) => {
     const cards = projects(context.stage);
     const [id] = wired(context.stage, context.roomId, cards.map((one) => one.id));
@@ -58,7 +59,7 @@ export function coderTools(coder: Coder, forbidden: string[]): Tool[] {
       description: 'Give the coder wired to your room a piece of coding work. It works inside that project folder: reads the code, edits files and runs commands, each step shown to the founder, then reports what it did and what changed. '
         + 'Write a complete brief: the goal, the files or area, how to check it works. It remembers earlier work in the same folder. The founder approves the brief before it starts, and approves each edit and command.',
       parameters: { type: 'object', properties: { brief: { type: 'string', description: 'The full brief for the coder' } }, required: ['brief'] },
-      ready: () => null,
+      ready,
       approval: async (_args, context) => (cardFor(context) ? `Start this coding task in ${folder(context)}?` : null),
       run: (args, context) => send(context, text(args, 'brief', 8000)),
     },
@@ -66,7 +67,7 @@ export function coderTools(coder: Coder, forbidden: string[]): Tool[] {
       name: 'code_reply', perTurn: 3,
       description: 'Say something more to the coder in the same session: steer it, answer what it asked, or ask for changes to what it just did. Same wait and report as code_task, and the founder approves it the same way.',
       parameters: { type: 'object', properties: { text: { type: 'string', description: 'What to tell the coder' } }, required: ['text'] },
-      ready: () => null,
+      ready,
       approval: async (_args, context) => (cardFor(context) ? `Send this to the coder in ${folder(context)}?` : null),
       run: (args, context) => send(context, text(args, 'text', 8000)),
     },
@@ -129,7 +130,7 @@ export default {
     const cardOf = async (cardId: string) => projects(await deps.store.loadStage()).find((one) => one.id === cardId);
 
     return {
-      tools: coderTools(coder, forbidden),
+      tools: coderTools(coder, forbidden, () => (deps.fake || bin ? null : NOT_INSTALLED)),
       async route(req, res, path) {
         if (path === '/api/coder/models' && req.method === 'GET') {
           try { deps.json(res, 200, await coder.models()); } catch (error) { deps.json(res, 503, { error: (error as Error).message }); }
