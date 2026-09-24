@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import type { Clip, ClipAsk, Clips, Help } from './clips.ts';
 import { ff, FFMPEG } from './ff.ts';
 import { makeRoom, NEEDS_MB, plainLine, whatWentWrong, WRONG } from './gpu-room.ts';
-import { fetchModels, inTurn, modelsDir, REAL_DISK, SETUP_DIR, vulkanHere, type Model } from './on-this-machine.ts';
+import { fetchModels, inTurn, modelsDir, REAL_DISK, vulkanHere, type Model } from './on-this-machine.ts';
 import { moveOf } from './moves.ts';
 import { CAPS } from './spec.ts';
 
@@ -127,8 +127,6 @@ export function roomToFilm(
     line: `there is ${Math.round(ram)} GB of memory free, so this leans on swap: the clip will still be made, but slower than the usual ${MINUTES_EACH} minutes.`,
   };
 }
-
-export const SLOW_HINT = `Making a clip on this computer takes about ${MINUTES_EACH} minutes and needs ${NEEDS_RAM_GB} GB of memory and swap together.`;
 
 const run = (command: string, args: string[], at: string, onLine: (line: string) => void, signal?: AbortSignal): Promise<number> =>
   runLines(command, args, {

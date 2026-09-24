@@ -271,15 +271,6 @@ export const fakeImages: Maker = {
   },
 };
 
-// Several ways of drawing as one, tried in the order given. This exists because a free day ends: Cloudflare's ten
-// thousand neurons go at some point in the afternoon and, until this, that was the end of pictures for the day.
-//
-// The one thing worth remembering between scenes is which backend has already said "nothing left today". A film is
-// thirty scenes; being told the same thing thirty times, a minute apart, is the difference between a film that
-// finishes and one that does not. So a backend that says it is spent is skipped for the rest of the day without
-// being asked again, and the founder hears about it once, in a line that says what happens next.
-export const firstImages = (...makers: Maker[]): Maker => firstOf(makers);
-
 // Where "spent today" is kept between one run of the app and the next. A service finds out it is empty by being
 // asked, and the app is restarted many times a day — so without this the first film after every restart told the
 // founder "about two minutes" and then spent eight drawing on this computer. It is read once and written on the
@@ -290,6 +281,13 @@ export const spentFile = (file: string): SpentKept => ({
   write(all) { try { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, JSON.stringify(all)); } catch { /* remembered for this run only */ } },
 });
 
+// Several ways of drawing as one, tried in the order given. This exists because a free day ends: Cloudflare's ten
+// thousand neurons go at some point in the afternoon and, until this, that was the end of pictures for the day.
+//
+// The one thing worth remembering between scenes is which backend has already said "nothing left today". A film is
+// thirty scenes; being told the same thing thirty times, a minute apart, is the difference between a film that
+// finishes and one that does not. So a backend that says it is spent is skipped for the rest of the day without
+// being asked again, and the founder hears about it once, in a line that says what happens next.
 export function firstOf(makers: Maker[], kept?: SpentKept): Maker {
   // Which backends have gone quiet, and on which day they did, so tomorrow starts clean without anyone restarting
   // anything. The day is the plain calendar-ish one a free quota resets on; near enough for "come back tomorrow".

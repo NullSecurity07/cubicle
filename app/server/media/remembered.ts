@@ -68,4 +68,3 @@ export function filmMemory(dir: string | undefined) {
     },
   };
 }
-export type FilmMemory = ReturnType<typeof filmMemory>;

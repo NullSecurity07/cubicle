@@ -9,7 +9,10 @@ import { createMedia, type Maker } from './jobs.ts';
 import { crowdsCaptions } from './spec.ts';
 import { composition, FORMATS, PACKS, quietOf, SAFE_1080, safeArea, sceneSeconds, startsOf, type Shot } from './templates/index.ts';
 import { meansAPicture, spendingScenes } from '../tools/media.ts';
-import { docsFor, estimate, fakeVideos, hands, LENGTHS, MAX_AI, MAX_IMAGES, MAX_LOCAL_AI, parseSpec, PURPOSE, PURPOSES, scenesFor, sourcesFor, withinCaps, withinLength, wordsFor, type Scene, type Spec, type VideoAsk } from './video.ts';
+import { docsFor, fakeVideos, sourcesFor, type VideoAsk } from './video.ts';
+import { LENGTHS, MAX_AI, MAX_IMAGES, MAX_LOCAL_AI, parseSpec, PURPOSE, PURPOSES, scenesFor, withinCaps, withinLength, wordsFor, type Scene, type Spec } from './spec.ts';
+import { hands } from './turns.ts';
+import { makingWords as estimate } from '../../shared/film-time.ts';
 import { bibleFor, jsonIn, layoutsFor, planPrompt, specPrompt, understandingOf, type Material, type Plan } from './director.ts';
 import { budgetOf } from './spec.ts';
 

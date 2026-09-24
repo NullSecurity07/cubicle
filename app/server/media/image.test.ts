@@ -7,7 +7,7 @@ import { seedStage, type Stage } from '../../shared/model.ts';
 import { createStore } from '../store.ts';
 import { mediaTools } from '../tools/media.ts';
 import {
-  askedFor, cachedImages, pictureKey, cloudflareImages, DRAWN_BEFORE, firstOf, spentFile, fakeImages, firstImages, HF_SPENT, huggingFaceImages, outOfPictures,
+  askedFor, cachedImages, pictureKey, cloudflareImages, DRAWN_BEFORE, firstOf, spentFile, fakeImages, HF_SPENT, huggingFaceImages, outOfPictures,
   type Picture, type PictureConnect, pictureOf, pictureSpaces, pictureUrlOf, SETUP_HINT,
 } from './image.ts';
 import { createMedia } from './jobs.ts';
@@ -20,6 +20,9 @@ const answers = (make: () => Response): typeof fetch => (async (url: any, init?:
   asked.push({ url: String(url), body: JSON.parse(String(init?.body)), headers: init?.headers });
   return make();
 }) as typeof fetch;
+
+// Several makers as one, as the studio chains them, with nothing remembered between runs.
+const firstImages = (...makers: Maker[]): Maker => firstOf(makers);
 
 describe('Cloudflare pictures', () => {
   it('says what the founder must set up, and nothing once the keys are there', () => {

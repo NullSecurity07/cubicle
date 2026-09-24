@@ -5,13 +5,9 @@ import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { BED, duckExpr, MOODS, musicBed, SFX, sfxFile, SFX_DIR } from './audio.ts';
 import { ffReady } from './ff.ts';
-import type { Shot } from './templates/index.ts';
-import type { Scene } from './video.ts';
 import { wavSeconds } from './voice.ts';
 import { readFile } from 'node:fs/promises';
 
-const shots = (scenes: Scene[], seconds = 4): Shot[] => scenes.map((scene) => ({ scene, seconds }));
-const startsOf = (list: Shot[]) => list.map((_, index) => index * 4);
 
 describe('the bed under a film', () => {
   it('holds full volume between the lines and drops under every one of them', () => {

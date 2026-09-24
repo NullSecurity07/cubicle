@@ -1,10 +1,10 @@
 import type { Shape } from '../../../shared/model.ts';
 import { SFX, type Cue } from '../audio.ts';
 import { countWords, crowdsCaptions, saysWhatItShows } from '../spec.ts';
-import { capHtml, capLines, capSteps, wordTimes, type CapLine, type Word } from './captions.ts';
+import { capHtml, capLines, capSteps, type CapLine, type Word } from './captions.ts';
 import { breakMove, captionPiece, type BreakMove } from '../registry/index.ts';
 import { actBreaks, cutSteps } from './cuts.ts';
-import { dataGraphic, groundHtml, MOVING, onscreen, sceneHtml, sceneSteps, type Shot } from './layouts.ts';
+import { dataGraphic, groundHtml, onscreen, sceneHtml, sceneSteps, type Shot } from './layouts.ts';
 import { cutAt, FORMATS, PACE, PACK, paintOf, styleSheet, type Brand, type Pace, type Pack } from './looks.ts';
 
 export { FORMATS, SAFE_1080, safeArea, LOOKS, PACKS, PACES, PACK, PACE, paintOf, lightOf, cutAt, isPack, type Brand, type Look, type Pack, type Pace, type Paint } from './looks.ts';
@@ -137,7 +137,7 @@ export function captionLines(film: Film): CapLine[] {
 // The whole video as one HTML file: the scenes in order with their timing on them, the narration and the music beside
 // them, and one paused timeline the renderer steps through frame by frame.
 export function composition(film: Film): string {
-  const { width, height, scale, capChars, margin, safeRight, caps } = FORMATS[film.shape];
+  const { width, height, scale, margin, safeRight, caps } = FORMATS[film.shape];
   const pack: Pack = film.look;
   const style = PACK[pack];
   const sketch = pack === 'sketch';

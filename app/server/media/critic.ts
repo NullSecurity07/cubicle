@@ -1,5 +1,5 @@
 import {
-  budgetOf, content, countWords, echoes, HEADING_WORDS, MAX_SCENES, saidWords, saysWhatItShows, STOP, TEXT_WORDS,
+  budgetOf, content, countWords, echoes, HEADING_WORDS, MAX_SCENES, saidWords, STOP, TEXT_WORDS,
   VISUAL_LAYOUTS, type Layout, type Purpose, type Scene, type Spec,
 } from './spec.ts';
 import type { Pace } from './templates/looks.ts';

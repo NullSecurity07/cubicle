@@ -1,6 +1,6 @@
 import type { Shape } from '../../shared/model.ts';
 import { MOODS, type Mood } from './audio.ts';
-import { contrasty, criticise, drawnWord, figureIn, hasNumber, headlineOf, keywords, listy, photographic, mendShots, repair, trimTo, type Want } from './critic.ts';
+import { contrasty, criticise, drawnWord, figureIn, headlineOf, keywords, listy, photographic, mendShots, repair, trimTo, type Want } from './critic.ts';
 import {
   AI_LAYOUTS, budgetOf, CAPS, HEADING_WORDS, isPurpose, LAYOUTS, MAX_SCENES, parseSpec, PURPOSE, PURPOSES,
   saidWords, scenesFor, TEXT_WORDS, type Layout, type Purpose, type Scene, type Spec,
@@ -481,7 +481,6 @@ export async function direct(asked: Asked, material: Material, think: Think,
 // recording, makes the actual mouth match it. When none is ready the film does not fake it — it becomes the
 // faceless edit, which the same research says performs no worse for informational content, and the card says what
 // would be needed to get a real one instead.
-export const MOST_FACES = 2;
 // The shapes an opening can take and still be somebody talking. A wordmark or a title card is the one thing a
 // person cannot be put inside.
 const OPENS = new Set<Layout>(['hook', 'statement', 'picture', 'quote', 'outro', 'cta', 'stat']);

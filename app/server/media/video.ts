@@ -6,7 +6,7 @@ import { CHROMES } from '../browser.ts';
 import { projectDir } from '../folder.ts';
 import { createLibrary } from '../library/notes.ts';
 import { musicBed, MOODS, SFX, SFX_DIR, sfxFile, type Mood } from './audio.ts';
-import { fakeMusic, type Credit, type Music, type Mood as MusicMood } from './music.ts';
+import { type Credit, type Music, type Mood as MusicMood } from './music.ts';
 import { noClips, type Clips } from './clips.ts';
 import { headlineOf, mendShots, repair, trimTo, type Want } from './critic.ts';
 import { lensPhrase } from './moves.ts';
@@ -23,9 +23,9 @@ import { ff, ffReady, FFMPEG } from './ff.ts';
 import { fitStill, normalise } from './footage.ts';
 import { cachedImages, DRAWN_BEFORE, mayDrawHere, outOfPictures } from './image.ts';
 import type { Maker, Piece } from './jobs.ts';
-import { availableRam, availableSwap, MINUTES_EACH, needsRam, roomToFilm as room } from './local-clips.ts';
+import { availableRam, availableSwap, needsRam, roomToFilm as room } from './local-clips.ts';
 import {
-  AI_LAYOUTS, content, countWords, isPurpose, MAX_AI, MAX_LOCAL_AI, PURPOSE, PURPOSES,
+  AI_LAYOUTS, content, countWords, MAX_AI, MAX_LOCAL_AI, PURPOSES,
   fallbackOf, withinCaps, type Spec,
 } from './spec.ts';
 import { broll, creditOf, photoCredits, type Stock } from './stock.ts';
@@ -48,21 +48,10 @@ import { timeWords, type Part, type Word } from './timings.ts';
 import { castLine, castVoice, engineOf, isVoice, VOICES, wavSeconds } from './voice.ts';
 import { creditsOf, designOf, NONCOMMERCIAL, OMNI_ENGINE } from './omnivoice.ts';
 
-// The spec vocabulary lives in `spec.ts` now, so the director and the critic can share it without importing the
-// whole renderer. Everything that used to be here is still here, by the same names.
-export {
-  LAYOUTS, AI_LAYOUTS, MAX_SCENES, MAX_IMAGES, MAX_AI, MAX_LOCAL_AI, MAX_BACKGROUNDS, LENGTHS, PURPOSES, PURPOSE,
-  isPurpose, parseSpec, scenesFor, wordsFor, withinCaps, withinLength, fallbackOf, WORDS_A_SECOND, budgetOf,
-  type Layout, type Scene, type Spec, type Purpose,
-} from './spec.ts';
-export { FRAMES } from './templates/index.ts';
-export type { Material, Understanding } from './director.ts';
-
 export const SETUP_HINT = 'No video renderer is set up. The founder installs Chrome and ffmpeg — both are free — and restarts the app.';
 
 // The bed under a film is written by `media/music.ts`, which is asked for a mood and a length and hands back a
 // finished loop at −23 LUFS with its own beats and its own credit. Nothing about it is decided here.
-export type { Credit, Music } from './music.ts';
 
 // Where Chrome is on this machine. The renderer takes it by name in the environment, not as a flag.
 export const chromePath = (): string | null => CHROMES.find((path) => existsSync(path)) ?? null;
@@ -77,17 +66,6 @@ const run = (command: string, args: string[], at: string, onLine: (line: string)
   }).then((ran) => ({ ...ran, out: ran.out.replace(ANSI, '') }));
 // What a render printed is kept only as its last few kilobytes: it is read for its last line when it fails.
 const RENDER_TAIL = 8192;
-
-// A handful of slow things at a time rather than all of them: a dozen pictures asked for at once is a dozen refusals.
-export async function pool<T>(jobs: (() => Promise<T>)[], most = 3): Promise<T[]> {
-  const out: T[] = new Array(jobs.length);
-  let next = 0;
-  const hands = Array.from({ length: Math.min(most, jobs.length) }, async () => {
-    for (let mine = next++; mine < jobs.length; mine = next++) out[mine] = await jobs[mine]();
-  });
-  await Promise.all(hands);
-  return out;
-}
 
 // What a video studio was asked for: the brief in `prompt`, everything the founder set on the card — where 'auto' and
 // nothing at all both mean "you decide" — and for a person who wrote one, the storyboard itself.
@@ -202,15 +180,6 @@ const chose = <T extends string>(value: unknown, allowed: readonly T[]): T | und
 // summon lettering struck out of it, and a texture wherever a frame was already full of type — is all in there,
 // with a critic over it that no single function could have.
 
-// About how long this is going to take, said before it starts rather than found out. Nothing here is precise; it is
-// honest, which is what a founder watching a spinner actually needs.
-export function estimate(ask: { scenes: number; seconds: number; pictures: number; clips: number; narrate: boolean; here?: boolean; draft?: boolean }): string {
-  // The sum itself is in `shared/film-time.ts`, so the card says the same minutes before Make is pressed.
-  return makingWords(ask);
-}
-
-// Three hands at a time for pictures: `turns.ts`, which the remake uses too.
-export { hands } from './turns.ts';
 
 // The renderer: our own scenes written as one HTML page, which headless Chrome steps through frame by frame and ffmpeg
 // turns into an MP4. Nothing leaves this machine except what the founder wired to the card, and the same storyboard
@@ -490,7 +459,6 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // Memory and swap together, because a machine leaning on swap makes the clip slowly rather than not at all —
         // and a founder refused at 21 GB when 22 was wanted has been told no for a gigabyte.
         const filming = here && able ? room({ ram: spare, swap: await availableSwap(), needs: needsRam() }) : { answer: 'no' as const, line: '' };
-        const roomToFilm = here && able && filming.answer !== 'no';
         if (understanding.person && here && able && filming.line) report(filming.line);
         // A real picture of a real person, already on the card, is who the film puts on camera. Nothing is drawn and
         // nothing is filmed for a face the founder has already made.
@@ -544,7 +512,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // guess until the film has been read aloud and cut — a scene is one shot or it is three — so it is said
         // again, exactly, the moment the shot list exists and before anything slow has happened.
         const guessed = drawing ? afforded(Math.round(spec.scenes.length * 1.6), drawnHere, 8, draft) : 0;
-        report(`${draft ? 'a draft, ' : ''}${spec.scenes.length} scenes, ${estimate({ scenes: spec.scenes.length, seconds, pictures: guessed, clips: here ? wantsClips : 0, narrate: !!saying, here: drawnHere, draft })}`);
+        report(`${draft ? 'a draft, ' : ''}${spec.scenes.length} scenes, ${makingWords({ seconds, pictures: guessed, clips: here ? wantsClips : 0, narrate: !!saying, here: drawnHere, draft })}`);
         report('cutting what you gave it and recording the narration…');
         const shots: Shot[] = spec.scenes.map((scene) => ({ scene, seconds: 0 }));
         const said = (index: number, line: string) => report(`scene ${index + 1}: ${line}`);
@@ -872,7 +840,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           const fresh = [...new Set(owners)].filter((which) => !have.has(which));
           if (tell) {
             const drawn = new Set(owners).size;
-            report(`${drawn} picture${drawn === 1 ? '' : 's'} for ${cut.length} shots — ${estimate({ scenes: spec.scenes.length, seconds, pictures: drawn, clips: 0, narrate: false, here: drawsHere(), draft })}`);
+            report(`${drawn} picture${drawn === 1 ? '' : 's'} for ${cut.length} shots — ${makingWords({ seconds, pictures: drawn, clips: 0, narrate: false, here: drawsHere(), draft })}`);
           }
           if (!fresh.length) return { needing, owners };
           const slots: Slot[] = cut.map((one) => ({
@@ -1331,9 +1299,4 @@ function fakeRecord(spec: Spec, narrate: boolean): FilmRecord {
   });
 }
 
-// The bed the tests and the fake-model runs get: the real synthesiser, four seconds of it.
-export const fakeMusicBed: Music = fakeMusic;
 
-// The rules the critic holds a film to, exported for whatever wants to check one without rendering it.
-export type { Want } from './critic.ts';
-export { criticise, repair } from './critic.ts';

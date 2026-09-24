@@ -263,7 +263,6 @@ export function ungrounded(scene: Scene, sources: Sources): string | null {
   }
   return null;
 }
-export const grounded = (scene: Scene, sources: Sources): boolean => ungrounded(scene, sources) === null;
 
 // A real sentence out of the material, to put where an invented one was. Each is used once, so a film that loses
 // three claims does not get the same line back three times.

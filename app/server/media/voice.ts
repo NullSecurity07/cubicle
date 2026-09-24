@@ -56,7 +56,6 @@ export const VOICES: Voice[] = [
 ];
 export const DEFAULT_VOICE = VOICES[0].id;
 export const isVoice = (id: unknown): id is string => typeof id === 'string' && VOICES.some((voice) => voice.id === id);
-export const voiceOf = (id: string): Voice | undefined => VOICES.find((one) => one.id === id);
 // The picker's order: best first, and within a grade the women before the men only because that is how the grades
 // already fall. Nothing here hides a voice — a founder who wants the low-graded British man can still pick him.
 export const byGrade = (voices: Voice[] = VOICES): Voice[] =>

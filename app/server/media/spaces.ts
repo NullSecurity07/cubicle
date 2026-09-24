@@ -2,7 +2,7 @@
 // keep the server from starting.
 const gradio = () => import('@gradio/client');
 import listed from './spaces.json' with { type: 'json' };
-import type { Clip, ClipAsk, Clips, Help, PresenterAsk } from './clips.ts';
+import type { Clip, Clips, Help } from './clips.ts';
 import { connectWithin } from './turns.ts';
 import { wavSeconds } from './wav.ts';
 

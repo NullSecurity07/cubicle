@@ -197,14 +197,3 @@ const run = (command: string, args: string[], at: string, onLine: (line: string)
     cwd: at, env: { ...process.env, LD_LIBRARY_PATH: `${join(at, 'bin')}:${process.env.LD_LIBRARY_PATH ?? ''}` },
     split: /[\n\r]/, onLine: (line) => onLine(line.trim()), signal,
   }).then((ran) => ran.code);
-
-// A picture that costs nothing and needs no machine, for the checks and the fake-model runs.
-const PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
-export const fakeLocalImages: Maker = {
-  name: 'this computer',
-  ready: () => null,
-  async make(_ask, { report }) {
-    report('drawing it on this computer — about 55 seconds');
-    return { ext: 'png', bytes: Buffer.from(PIXEL, 'base64') };
-  },
-};
