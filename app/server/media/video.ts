@@ -94,7 +94,7 @@ export async function pool<T>(jobs: (() => Promise<T>)[], most = 3): Promise<T[]
 export type VideoAsk = {
   prompt: string; format?: string; look?: string; narrate?: boolean; spec?: Spec; cardId?: string;
   purpose?: string; length?: number | string; pace?: string; music?: string; sfx?: boolean; captions?: boolean;
-  ai?: boolean | string; address?: string; voice?: string; person?: boolean;
+  ai?: boolean | string; address?: string; voice?: string;
   // The voice engine, set by the founder by hand or not at all, and for OmniVoice the few words its voice is designed from.
   engine?: string; design?: string;
   // How long the founder is willing to wait: 'draft' is the film to look at before the film, 'full' and nothing are the film.
@@ -392,7 +392,8 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           pack: chose(asked.look, PACKS),
           music: chose(asked.music, MOODS),
           captions: asked.captions,
-          person: asked.person,
+          // Nothing asks for somebody on camera by a switch: the card has a `person` field, but neither the card nor
+          // a person's call ever sets it, so whether a film wants a face is read out of the brief alone.
         };
         // The founder's AI-clips switch: on, off, or theirs to work out.
         const wantsAi = asked.ai === true || asked.ai === 'on';

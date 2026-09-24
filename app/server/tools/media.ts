@@ -182,7 +182,7 @@ export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = ()
         purpose: { type: 'string', enum: [...PURPOSES], description: 'What the film is for; the director reads it from the brief when it is left out' },
         length: { type: 'number', description: 'How many seconds the film should run' },
         pace: { type: 'string', enum: [...PACES], description: 'calm holds each scene, punchy cuts fast for a reel' },
-        music: { type: 'string', enum: [...MOODS], description: "The mood of the bed under it, or none. It plays only if the founder dropped a music file on the card" },
+        music: { type: 'string', enum: [...MOODS], description: 'The mood of the bed under it, or none. A music file the founder dropped on the card is used first; otherwise the studio finds or writes free music in that mood' },
         captions: { type: 'boolean', description: 'Whether the spoken words are captioned on screen, word by word' },
         narrate: { type: 'boolean', description: 'Whether the spoken lines are recorded; true when left out' },
         sfx: { type: 'boolean', description: 'Whether the cuts and the entrances carry sound; true when left out' },

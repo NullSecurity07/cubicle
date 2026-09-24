@@ -35,7 +35,7 @@ const film = (): FilmRecord => {
   });
 };
 
-const setup = async (over: { sight?: Sight; fileOf?: (path: string) => string } = {}) => {
+const setup = async (over: { sight?: Sight; fileOf?: (path: string) => string; record?: FilmRecord } = {}) => {
   const dir = await mkdtemp(join(tmpdir(), 'remake-'));
   const bin = join(dir, 'hyperframes');
   await writeFile(bin, FAKE_BIN);
@@ -60,7 +60,7 @@ const setup = async (over: { sight?: Sight; fileOf?: (path: string) => string } 
     readFile: async () => Buffer.from('old picture'),
   };
   const lines: string[] = [];
-  const remake = (ops: EditOp[]) => remakeFilm({ path: 'media/four.mp4', record: film() }, ops, { report: (line) => lines.push(line) }, deps, { bin, vendor });
+  const remake = (ops: EditOp[]) => remakeFilm({ path: 'media/four.mp4', record: over.record ?? film() }, ops, { report: (line) => lines.push(line) }, deps, { bin, vendor });
   return { remake, lines, asked, most: () => most };
 };
 
@@ -96,5 +96,15 @@ describe('a film remade from notes', () => {
     expect(lines).toContain('outside.png could not be read, so shot 2 keeps its picture');
     expect(made.record!.scenes[1].shots[0].bg).toBe('frame-1-0.png');
     expect(made.bytes.toString()).toBe('film');
+  });
+
+  it('carries the credit of a stock photograph it keeps into the new record and the credits file', async () => {
+    const record = film();
+    const credit = 'a desk at dawn by Ana Lima on Pexels — https://www.pexels.com/photo/1';
+    record.pictures['frame-0-0.png'] = { kind: 'stock', hash: 'stock:1', subject: 'a desk at dawn', credit };
+    const { remake } = await setup({ record });
+    const made = await remake([{ op: 'drop', scene: 4 }]);
+    expect(made.record!.pictures['frame-0-0.png'].credit).toBe(credit);
+    expect(made.credits).toContain(`- ${credit}`);
   });
 });
