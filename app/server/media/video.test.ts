@@ -706,9 +706,9 @@ describe('what a film is allowed to draw on', () => {
 
   it('carries what is wired to whoever is making the film', () => {
     const found = sourcesFor(stage, 'video', 'sam').map((one) => one.id).sort();
-    expect(found).toEqual(['note', 'picture', 'studio']);
-    // A browser card of theirs is not material for a film, and a studio wired to nobody is nobody's.
-    expect(found).not.toContain('browser');
+    // A browser card of theirs is the page they were pointed at, so the film photographs it too; a studio wired
+    // to nobody is nobody's.
+    expect(found).toEqual(['browser', 'note', 'picture', 'studio']);
     expect(found).not.toContain('elsewhere');
   });
 
@@ -722,6 +722,12 @@ describe('what a film is allowed to draw on', () => {
   it('reads the documents wired to the studio and to whoever asked', () => {
     expect(docsFor(stage, 'video')).toEqual([]);
     expect(docsFor(stage, 'video', 'sam')).toEqual(['brief-doc']);
+  });
+
+  it('reads every pinned doc, wired or not, and the docs that person wrote this turn', () => {
+    const pinned = { ...stage, docs: [...stage.docs, { id: 'company', title: 'Company', pinned: true, x: 0, y: 0, w: 1, h: 1 }] };
+    expect(docsFor(pinned, 'video')).toEqual(['company']);
+    expect(docsFor(pinned, 'video', 'sam', ['doc-new', 'company'])).toEqual(['brief-doc', 'company', 'doc-new']);
   });
 });
 

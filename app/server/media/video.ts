@@ -4,6 +4,7 @@ import { extname, join, resolve } from 'node:path';
 import type { Card, MediaAsset, Shape, Stage } from '../../shared/model.ts';
 import { CHROMES } from '../browser.ts';
 import { projectDir } from '../folder.ts';
+import { createLibrary } from '../library/notes.ts';
 import { musicBed, MOODS, SFX, SFX_DIR, sfxFile, type Mood } from './audio.ts';
 import { fakeMusic, type Credit, type Music, type Mood as MusicMood } from './music.ts';
 import { noClips, type Clips } from './clips.ts';
@@ -101,6 +102,8 @@ export type VideoAsk = {
   // Who asked for the film. A person's own wires are the founder pointing at things just as much as the studio's
   // are, so what is joined to them is joined to the film.
   roomId?: string;
+  // Docs that person wrote this turn, which the film may read although no wire covers them yet.
+  granted?: { id: string; title: string }[];
   // Pictures the caller named outright — paths a person got back from drawing one, or the word "latest".
   images?: string[];
   // Notes on a finished film: the film's path in the shared files, and the record kept beside it. The notes
@@ -149,7 +152,8 @@ export const wiredTo = (stage: Stage, cardId: string): Card[] => {
 // What kinds of card a person carries into a film they are asked to make. A founder who wires an image studio to
 // Sam and then asks Sam for a film has already said which pictures to use; making them wire it a second time, to
 // the video card as well, is a rule they have to learn rather than a thing that works.
-const THEIRS = new Set<Card['kind']>(['imagegen', 'image', 'note', 'link', 'project']);
+// A browser card is one too: the page it has open is what the founder pointed that person at.
+const THEIRS = new Set<Card['kind']>(['imagegen', 'image', 'note', 'link', 'project', 'browser']);
 
 // Everything a film may draw on, found the way a founder would point at it rather than the way a graph is stored.
 // Three reaches, in the order they matter: what is wired to the studio; what is wired to *that* — a picture card on
@@ -172,14 +176,18 @@ export function sourcesFor(stage: Stage, cardId?: string, roomId?: string): Card
   return [...found.values()];
 }
 
-// The documents a film may read: the ones wired to the studio, and the ones wired to whoever is making it.
-export const docsFor = (stage: Stage, cardId?: string, roomId?: string): string[] => {
+// The documents a film may read: the ones wired to the studio, the ones wired to whoever is making it, every
+// pinned doc (which every person reads each turn, wired or not, as `readableDocIds` in prompt.ts says), and the
+// ones that person wrote this very turn, which no wire covers yet and are not on the stage until the page puts them
+// there. Pinned and wired docs come in the stage's own order; the ones written this turn follow.
+export const docsFor = (stage: Stage, cardId?: string, roomId?: string, granted: string[] = []): string[] => {
   const ends = new Set((stage.wires ?? []).flatMap((wire) => {
-    if (wire.from === cardId || wire.from === roomId) return [wire.to];
-    if (wire.to === cardId || wire.to === roomId) return [wire.from];
+    if ((cardId && wire.from === cardId) || (roomId && wire.from === roomId)) return [wire.to];
+    if ((cardId && wire.to === cardId) || (roomId && wire.to === roomId)) return [wire.from];
     return [];
   }));
-  return (stage.docs ?? []).filter((doc) => ends.has(doc.id)).map((doc) => doc.id);
+  const onStage = (stage.docs ?? []).filter((doc) => doc.pinned || ends.has(doc.id)).map((doc) => doc.id);
+  return [...new Set([...onStage, ...granted])];
 };
 
 // Where each of a page's shots is taken from: the top, then what is under it, on a desktop and on a phone.
@@ -249,6 +257,18 @@ export async function gather(deps: VideoDeps, asked: VideoAsk, at: string, repor
           }
           if (product.screens.length) material.using.push(`${product.screens.length} screenshot${product.screens.length === 1 ? '' : 's'} out of the project`);
         } else if (card.kind === 'link' && card.url) addresses.push({ url: card.url, own: false, label: card.url });
+        // A website the founder trusts is a page to photograph exactly as a link is.
+        else if (card.kind === 'source' && card.url) addresses.push({ url: card.url, own: false, label: card.title || card.url });
+        // A note out of the founder's library is words, the same as a note on the stage.
+        else if (card.kind === 'library' && card.noteId) {
+          const library = createLibrary(deps.dir);
+          const text = await library.read(card.noteId);
+          if (text?.trim()) {
+            const title = (await library.list()).find((one) => one.id === card.noteId)?.title ?? card.noteId;
+            material.lines.push(`${title}:\n${text.slice(0, 2400)}`);
+            material.using.push(title);
+          }
+        }
         else if (card.kind === 'browser') {
           const where = await deps.browser?.where(`card-${card.id}`).catch(() => null);
           if (where && !/^about:/.test(where)) addresses.push({ url: where, own: false, label: where });
@@ -273,11 +293,12 @@ export async function gather(deps: VideoDeps, asked: VideoAsk, at: string, repor
       } catch (error) { report(`could not read ${card.kind === 'project' ? card.path : card.kind}: ${(error as Error).message}`); }
     }
     // Documents wired to the card are words, the same as a note is — and so are the ones wired to whoever asked.
-    const readable = stage ? new Set(docsFor(stage, asked.cardId, asked.roomId)) : new Set<string>();
-    for (const doc of stage?.docs ?? []) {
-      if (!readable.has(doc.id)) continue;
-      const text = await deps.readDoc?.(doc.id).catch(() => '');
-      if (text?.trim()) { material.lines.push(`${doc.title}:\n${text.slice(0, 2400)}`); material.using.push(doc.title); }
+    const granted = asked.granted ?? [];
+    const readable = stage ? docsFor(stage, asked.cardId, asked.roomId, granted.map((one) => one.id)) : [];
+    for (const id of readable) {
+      const title = stage?.docs.find((doc) => doc.id === id)?.title ?? granted.find((one) => one.id === id)?.title ?? 'a document';
+      const text = await deps.readDoc?.(id).catch(() => '');
+      if (text?.trim()) { material.lines.push(`${title}:\n${text.slice(0, 2400)}`); material.using.push(title); }
     }
 
     // The product's own screens. Two addresses at most, and a handful of shots each: this is the slow part.

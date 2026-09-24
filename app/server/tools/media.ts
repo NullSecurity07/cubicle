@@ -239,6 +239,8 @@ export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = ()
         engine: settings?.engine, design: settings?.design,
         // Who asked, so the film can reach the things wired to them, and whatever pictures they are holding.
         roomId: context.roomId, ...(images.length ? { images: [...new Set(images)] } : {}),
+        // Docs this person wrote this turn: no wire covers them yet, but they are theirs to put in a film.
+        ...(context.granted?.size ? { granted: [...context.granted].map(([id, title]) => ({ id, title })) } : {}),
       }, { signal: context.signal });
       // A finished film is also a project an editor opens, and the founder hears where it is in the same breath.
       const project = made.mlt ? ` It is also at ${made.mlt} as tracks for Shotcut or Kdenlive, with its pictures and sound beside it.` : '';
