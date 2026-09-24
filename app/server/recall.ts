@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Hit, Stage } from '../shared/model.ts';
-import { readableDocIds, wired } from './prompt.ts';
+import { readableDocIds, wiredCards } from './prompt.ts';
+import { writeAtomic } from './fsx.ts';
 
 // One source of text as it is handed in: a whole doc, a room's conversation, a memory, a decision, a file, a page.
 export type Piece = Omit<Hit, 'score'>;
@@ -72,7 +73,7 @@ export function localEmbedder(cacheDir: string, model = process.env.STAGE_RECALL
 // cards wired to them, the shared files and the founder's decisions. The same rule that decides what they can touch.
 export function mayRecall(stage: Stage, roomId: string): (piece: Piece) => boolean {
   const docs = new Set(readableDocIds(stage, roomId));
-  const cards = new Set(wired(stage, roomId, (stage.cards ?? []).map((card) => card.id)));
+  const cards = new Set(wiredCards(stage, roomId).map((card) => card.id));
   return (piece) => (piece.kind === 'doc' ? docs.has(piece.id) : piece.kind === 'link' ? cards.has(piece.id)
     : piece.kind === 'chat' || piece.kind === 'memory' ? piece.roomId === roomId : true);
 }
@@ -111,7 +112,7 @@ export function createRecall(deps: { dir: string; embed: Embedder; gather: (kind
           for (const hash of [...vectors.keys()]) if (!live.has(hash)) vectors.delete(hash);
         }
         const packed = Object.fromEntries([...vectors].map(([hash, vector]) => [hash, Buffer.from(new Float32Array(vector).buffer).toString('base64')]));
-        queue = queue.then(async () => { await mkdir(join(deps.dir, '.index'), { recursive: true }); await writeFile(`${path}.tmp`, JSON.stringify({ vectors: packed })); await rename(`${path}.tmp`, path); }).catch(() => {});
+        queue = queue.then(async () => { await writeAtomic(path, JSON.stringify({ vectors: packed }), { mkdir: true }); }).catch(() => {});
       } catch { mode = 'words'; }
     }
     return all.map((passage) => ({ ...passage, vector: vectors.get(passage.hash) }));

@@ -2,7 +2,7 @@ import type { Card } from '../../shared/model.ts';
 import { findSource, safeHost, sourceCards } from '../../shared/sources.ts';
 import { webUrl, type Browser } from '../browser.ts';
 import type { Sources } from '../sources.ts';
-import { text, type Tool } from './registry.ts';
+import { speaker, text, type Tool } from './registry.ts';
 import { browserSession, howFar, list, MAX_EACH, RECENT, SNIPPETS, UNTRUSTED } from './web.ts';
 
 export { findSource, hostOf } from '../../shared/sources.ts';
@@ -111,7 +111,7 @@ export function sourceTools(browser: Pick<Browser, 'search' | 'read'>, sources: 
         const url = webUrl(typeof args.url === 'string' ? args.url.trim() : '');
         const about = text(args, 'about', 160).trim().replace(/\s+/g, ' ');
         const why = text(args, 'why', 400).trim().replace(/\s+/g, ' ');
-        const by = context.stage.rooms.find((room) => room.id === context.roomId)?.name || 'A person';
+        const by = speaker(context)?.name || 'A person';
         const existing = sourceCards(context.stage.cards).map((card) => safeHost(card.url)).filter(Boolean);
         const made = await sources.propose({ url, about, why, by }, existing);
         return { text: `Proposed ${safeHost(made.url)}. It waits for the founder in Needs you.` };

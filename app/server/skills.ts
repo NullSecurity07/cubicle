@@ -1,6 +1,7 @@
 import { mkdir, readdir, readFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
-import { folderCache, writeAtomic } from './fsx.ts';
+import { trashStamp } from './clock.ts';
+import { folderCache, freshId, safeId, slugOf, writeAtomic } from './fsx.ts';
 import type { Skill, SkillEvent, SkillSource, SkillState, SkillVersion } from '../shared/model.ts';
 
 export type Skills = ReturnType<typeof createSkills>;
@@ -15,8 +16,7 @@ export const CAPS = { name: 60, when: 160, steps: 8, step: 240, pitfalls: 5, pit
 const HISTORY = 5;
 const SAME_WORK = 10 * 60_000;
 const FIELDS = ['name', 'when', 'procedure', 'pitfalls', 'verify'] as const;
-const safe = (id: string) => { if (!/^[a-z0-9][a-z0-9-]{0,79}$/.test(id)) throw new Error(`bad id: ${id}`); return id; };
-const slug = (name: string) => name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'skill';
+const safe = (id: string) => safeId(id, 80);
 const flat = (value: unknown) => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '');
 
 function line(value: unknown, what: string, max: number): string {
@@ -112,11 +112,7 @@ export function createSkills(dir: string, now: () => number = Date.now) {
   async function tellAll() { if (watchers.size) { const skills = await list(); for (const tell of watchers) tell({ skills }); } }
   const version = (skill: Skill): SkillVersion => ({ name: skill.name, when: skill.when, procedure: skill.procedure, pitfalls: skill.pitfalls, verify: skill.verify, at: now() });
   const held = async (id: string) => { const skill = await get(id); if (!skill) throw new Error('unknown skill'); return skill; };
-  async function freshId(name: string) {
-    const taken = new Set((await readdir(folder).catch(() => [] as string[])).map((one) => one.replace(/\.json$/, '')));
-    const base = slug(name);
-    for (let count = 1; ; count += 1) { const id = count === 1 ? base : `${base}-${count}`; if (!taken.has(id)) return id; }
-  }
+  const newId = (name: string) => freshId(folder, slugOf(name, 'skill'), '.json');
 
   return {
     list,
@@ -124,7 +120,7 @@ export function createSkills(dir: string, now: () => number = Date.now) {
     settled: () => queue,
     async create(input: Record<string, unknown> & { by: Skill['by']; source: SkillSource }): Promise<Skill> {
       const fields = checkFields(input);
-      return save({ id: await freshId(fields.name), ...fields, state: 'active', by: input.by, source: input.source, uses: 0, patches: 0, createdAt: now(), history: [] });
+      return save({ id: await newId(fields.name), ...fields, state: 'active', by: input.by, source: input.source, uses: 0, patches: 0, createdAt: now(), history: [] });
     },
     // What the learner sends back: a field and the line to swap. Anything it cannot find is an error, because a patch
     // that half lands leaves a procedure nobody wrote.
@@ -178,7 +174,7 @@ export function createSkills(dir: string, now: () => number = Date.now) {
     async remove(id: string) {
       await queue;
       await mkdir(join(dir, 'trash'), { recursive: true });
-      await rename(path(id), join(dir, 'trash', `${new Date(now()).toISOString().replace(/[:.]/g, '-')}-${safe(id)}.json`));
+      await rename(path(id), join(dir, 'trash', `${trashStamp(now())}-${safe(id)}.json`));
       cache.drop();
       await tellAll();
     },

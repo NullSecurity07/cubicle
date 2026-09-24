@@ -4,6 +4,8 @@ import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import type { Readable } from 'node:stream';
 import { newMessageId, seedDocs, seedStage, type ChatMessage, type Stage } from '../shared/model.ts';
+import { trashStamp } from './clock.ts';
+import { safeId, writeAtomic } from './fsx.ts';
 import type { Memory } from './memory.ts';
 
 export type Store = ReturnType<typeof createStore>;
@@ -14,10 +16,7 @@ const idsOf = (stage: Stage) => [...stage.rooms, ...stage.docs, ...(stage.cards 
 
 const uploadPath = (name: string) => `uploads/${Date.now().toString(36)}-${name.normalize('NFKD').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[.-]+/, '').slice(-60) || 'file'}`;
 
-const safe = (id: string) => {
-  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(id)) throw new Error(`bad id: ${id}`);
-  return id;
-};
+const safe = (id: string) => safeId(id, 64);
 
 // `onChat` is told whenever a conversation changed, whoever changed it. It lives here rather than at each of the
 // half-dozen callers so that a writer added later cannot forget it: there is nowhere else a message can be written.
@@ -29,7 +28,6 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
   const pagePath = (id: string) => join(dir, 'links', `${safe(id)}.json`);
   const filesDir = resolve(dir, 'files');
   let queue: Promise<unknown> = Promise.resolve();
-  const stamp = () => new Date().toISOString().replace(/[:.]/g, '-');
 
   // People name shared files themselves, so the path is checked hard: plain segments, no dot files, never outside the folder.
   const filePath = (name: string) => {
@@ -43,9 +41,7 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
   // Writes go through one queue and land by rename, so a crash never leaves half a file.
   const write = (path: string, text: string) => {
     const job = queue.then(async () => {
-      await mkdir(dirname(path), { recursive: true });
-      await writeFile(`${path}.tmp`, text);
-      await rename(`${path}.tmp`, path);
+      await writeAtomic(path, text, { mkdir: true });
     });
     queue = job.catch(() => {});
     return job;
@@ -54,7 +50,7 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
   const keep = (path: string) => {
     const job = queue.then(async () => {
       await mkdir(join(dir, 'trash'), { recursive: true });
-      await copyFile(path, join(dir, 'trash', `${stamp()}-${basename(path)}`)).catch((error: NodeJS.ErrnoException) => {
+      await copyFile(path, join(dir, 'trash', `${trashStamp()}-${basename(path)}`)).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== 'ENOENT') throw error;
       });
     });
@@ -122,7 +118,7 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
     await queue;
     await mkdir(join(dir, 'trash'), { recursive: true });
     for (const path of moves) {
-      await rename(path, join(dir, 'trash', `${stamp()}-${basename(path)}`)).catch((error: NodeJS.ErrnoException) => {
+      await rename(path, join(dir, 'trash', `${trashStamp()}-${basename(path)}`)).catch((error: NodeJS.ErrnoException) => {
         if (error.code !== 'ENOENT') throw error;
       });
     }
@@ -196,7 +192,7 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
       const at = messages.findIndex((message) => message.id === messageId);
       if (at < 0) throw new Error('unknown message');
       const gone = andAfter ? messages.splice(at) : messages.splice(at, 1);
-      await write(join(dir, 'trash', `${stamp()}-${safe(id)}-messages.json`), JSON.stringify(gone, null, 2));
+      await write(join(dir, 'trash', `${trashStamp()}-${safe(id)}-messages.json`), JSON.stringify(gone, null, 2));
       await write(chatPath(id), JSON.stringify(messages, null, 2));
       onChat(id);
       return messages;

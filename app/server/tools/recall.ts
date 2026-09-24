@@ -3,7 +3,8 @@ import { shortDay } from '../clock.ts';
 import { mayRecall, type createRecall } from '../recall.ts';
 import { text, type Tool } from './registry.ts';
 
-const WHERE: Record<string, string> = { doc: 'Doc', chat: 'Conversation', memory: 'Your memory', decision: 'Decision', file: 'Shared file', link: 'Web page', skill: 'Playbook skill', library: "The founder's notes" };
+// What each kind of passage is called when a person is told where something came from.
+export const WHERE: Record<Hit['kind'], string> = { doc: 'Doc', chat: 'Conversation', memory: 'Your memory', decision: 'Decision', file: 'Shared file', link: 'Web page', skill: 'Playbook skill', library: "The founder's notes" };
 // This is the one tool that reaches across time, so what it brings back says when it is from, in the words that fit
 // where it came from. A memory keeps no date of its own and so says nothing rather than something made up.
 const WHEN: Record<Hit['kind'], string> = { doc: 'last changed', chat: 'said on', memory: '', decision: 'decided on', file: 'last changed', link: 'read on', skill: 'from', library: 'added on' };

@@ -3,6 +3,7 @@ import OpenAI from 'openai';
 import type { Usage } from '../shared/model.ts';
 import models from './models.json' with { type: 'json' };
 import { discoverLocal } from './opencode/config.ts';
+import { headerWait } from './breaker.ts';
 import type { ModelMessage } from './prompt.ts';
 
 export type Limits = { rpm?: number; rpd?: number; tpm?: number; tpd?: number };
@@ -59,10 +60,7 @@ const sleep = (milliseconds: number, signal?: AbortSignal) => new Promise<void>(
 
 // Milliseconds a provider asked us to wait after a 429, if it said.
 export function retryAfter(error: unknown): number | undefined {
-  const { status, headers } = error as { status?: number; headers?: Headers };
-  if (status !== 429) return undefined;
-  const seconds = Number(headers?.get?.('retry-after'));
-  return seconds > 0 ? seconds * 1000 : undefined;
+  return (error as { status?: number }).status === 429 ? headerWait(error) : undefined;
 }
 
 // Tries each client in order. Moves on when one throws before saying anything, answers with nothing,

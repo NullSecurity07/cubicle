@@ -5,7 +5,7 @@ import { decidedLines, type createDecisions } from './decisions.ts';
 import { TEXT_FILE } from './gather.ts';
 import { typeOf } from './http.ts';
 import { recent, type createMemory } from './memory.ts';
-import { buildMessages, colleagueIds, readableDocIds, wired, type Attached } from './prompt.ts';
+import { buildMessages, colleagueIds, readableDocIds, wiredCards, type Attached } from './prompt.ts';
 import type { Store } from './store.ts';
 
 const IMAGE_FILE = /\.(png|jpe?g|webp|gif)$/i;
@@ -50,7 +50,7 @@ export function createPromptFor(deps: Deps) {
     const talk = fresh ? [] : await store.readChat(roomId);
     // Link cards wired to this person: the page text, read once and kept until the address changes.
     const pages: Record<string, { title: string; text: string }> = {};
-    const mine = new Set(wired(stage, roomId, (stage.cards ?? []).map((card) => card.id)));
+    const mine = new Set(wiredCards(stage, roomId).map((card) => card.id));
     for (const card of stage.cards ?? []) {
       if (card.kind !== 'link' || !card.url || !mine.has(card.id)) continue;
       let page = await store.readPage(card.id);

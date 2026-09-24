@@ -1,5 +1,5 @@
 import { playbookOf } from '../shared/apps.ts';
-import { STANCE, type ChatMessage, type Stage } from '../shared/model.ts';
+import { STANCE, type Card, type ChatMessage, type Stage } from '../shared/model.ts';
 import { safeHost, sourceCards } from '../shared/sources.ts';
 import { dayKey, fullDay, shortDay, weekDay, zoneName } from './clock.ts';
 import { recent, type Memory } from './memory.ts';
@@ -24,6 +24,12 @@ export function wired(stage: Stage, roomId: string, ids: string[]): string[] {
     if (wire.to === roomId && wanted.has(wire.from)) found.add(wire.from);
   }
   return [...found];
+}
+
+// The cards wired to this room, in the order their wires were drawn; only those of one kind when a kind is named.
+export function wiredCards(stage: Stage, roomId: string, kind?: Card['kind']): Card[] {
+  const cards = (stage.cards ?? []).filter((card) => !kind || card.kind === kind);
+  return wired(stage, roomId, cards.map((card) => card.id)).map((id) => cards.find((card) => card.id === id)!);
 }
 
 // A wire between a room and a doc lets that person read and write the doc.
@@ -115,8 +121,7 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
     return `- ${other.name}, ${other.role}. ${other.brief}${recent.length ? `\n  Lately in ${other.name}'s room:\n${recent.join('\n')}` : ''}`;
   });
   // A person only uses what it knows it has: say which cards are wired to the room, and what each is for.
-  const cards = stage.cards ?? [];
-  const mineCards = wired(stage, roomId, cards.map((card) => card.id)).map((id) => cards.find((card) => card.id === id)!);
+  const mineCards = wiredCards(stage, roomId);
   const notes = mineCards.flatMap((card) => (card.kind === 'note' && card.text.trim() ? [`- ${card.text.trim().replace(/\n+/g, '\n  ')}`] : []));
   const links = mineCards.flatMap((card) => (card.kind === 'link' && card.url ? [`## Page: ${pages[card.id]?.title || card.url}\n${card.url}\n${pages[card.id]?.text ?? '(the page could not be read yet)'}`] : []));
   const reach = mineCards.filter((card) => card.kind === 'project' || card.kind === 'board' || card.kind === 'browser' || card.kind === 'imagegen' || card.kind === 'voicegen' || card.kind === 'videogen').map((card) => (card.kind === 'project'

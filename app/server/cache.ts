@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ModelClient } from './providers.ts';
 import type { ModelMessage } from './prompt.ts';
+import { writeAtomic } from './fsx.ts';
 
 // What was asked before and answered the same way need not be asked again. Two kinds, both on disk under the
 // workspace's own `cache/` folder, both counted: a side call (a summary, a reflection, a compaction note: never a turn,
@@ -57,9 +58,7 @@ export function diskCache<T>(dir: string, ttl: number, now: () => number = Date.
     },
     async put(key: string, value: T) {
       try {
-        await mkdir(dir, { recursive: true });
-        await writeFile(`${file(key)}.tmp`, JSON.stringify({ at: now(), value }));
-        await rename(`${file(key)}.tmp`, file(key));
+        await writeAtomic(file(key), JSON.stringify({ at: now(), value }), { mkdir: true });
         if (now() - (swept.get(dir) ?? 0) > SWEEP_EVERY) await sweep();
       } catch { /* a cache that cannot be written is only a cache that misses */ }
     },

@@ -1,9 +1,9 @@
 import type { Boards } from '../boards.ts';
 import { shortDay } from '../clock.ts';
-import { wired } from '../prompt.ts';
-import { text, type Tool, type ToolContext } from './registry.ts';
+import { wiredCards } from '../prompt.ts';
+import { speaker, text, type Tool, type ToolContext } from './registry.ts';
 
-const board = (context: ToolContext) => wired(context.stage, context.roomId, (context.stage.cards ?? []).filter((card) => card.kind === 'board').map((card) => card.id))[0];
+const board = (context: ToolContext) => wiredCards(context.stage, context.roomId, 'board')[0]?.id;
 const NO_BOARD = 'no task board is connected to your room. The founder adds one from the dock and draws a wire to it.';
 
 // People suggest work; the founder decides what gets done. A proposal waits in the first column until the founder takes it.
@@ -17,7 +17,7 @@ export function taskTools(boards: Boards): Tool[] {
       async run(args, context) {
         const id = board(context);
         if (!id) throw new Error(NO_BOARD);
-        const me = context.stage.rooms.find((room) => room.id === context.roomId)!;
+        const me = speaker(context)!;
         const task = await boards.add(id, { title: text(args, 'title', 200), detail: typeof args.detail === 'string' ? args.detail : '', column: 'proposed', proposedBy: me.name });
         return { text: `Proposed "${task.title}". It waits for the founder.` };
       },

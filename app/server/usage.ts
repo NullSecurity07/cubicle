@@ -1,9 +1,10 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { ModelInfo, Usage } from '../shared/model.ts';
 import { createBreaker } from './breaker.ts';
 import { fromCache, onCache } from './cache.ts';
 import { providerOf, type ModelClient, type Quota } from './providers.ts';
+import { writeAtomic } from './fsx.ts';
 
 type Count = { requests: number; input: number; output: number };
 // What a call was for. A turn is a person answering; the rest are the calls around it.
@@ -39,9 +40,7 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     if (!path) return;
     const text = JSON.stringify(state, null, 2);
     saving = saving.then(async () => {
-      await mkdir(dirname(path), { recursive: true });
-      await writeFile(`${path}.tmp`, text);
-      await rename(`${path}.tmp`, path);
+      await writeAtomic(path, text, { mkdir: true });
     }).catch(() => {});
   };
 

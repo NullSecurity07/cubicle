@@ -1,6 +1,6 @@
 import type { Card, Stage } from '../../shared/model.ts';
 import { sourceCards } from '../../shared/sources.ts';
-import { colleagueIds, wired, wiredDocIds } from '../prompt.ts';
+import { colleagueIds, wiredCards, wiredDocIds } from '../prompt.ts';
 import type { Tool } from '../tools/registry.ts';
 
 // What one room can reach: the kinds of card wired to it, whether it may write a document, whether anybody is there
@@ -13,9 +13,8 @@ type Reach = { kinds: Set<Card['kind']>; docs: boolean; colleagues: boolean; sou
 
 const reachOf = (stage: Stage, roomId: string, tools: Tool[]): Reach => {
   const cards = stage.cards ?? [];
-  const mine = new Set(wired(stage, roomId, cards.map((card) => card.id)));
   return {
-    kinds: new Set(cards.filter((card) => mine.has(card.id)).map((card) => card.kind)),
+    kinds: new Set(wiredCards(stage, roomId).map((card) => card.kind)),
     docs: wiredDocIds(stage, roomId).length > 0 || tools.some((tool) => tool.name === 'create_doc'),
     colleagues: colleagueIds(stage, roomId).length > 0,
     sources: sourceCards(cards).length > 0,

@@ -11,7 +11,8 @@ export const REST_MOST = 5 * 60_000;
 type Key = { fails: number; openUntil?: number; probeUntil?: number; half?: boolean; rest?: number; restUntil?: number };
 
 const statusOf = (error: unknown) => (error as { status?: number })?.status;
-const headerWait = (error: unknown) => {
+// How long a provider said to wait before asking again, from its Retry-After header, whatever the status.
+export const headerWait = (error: unknown) => {
   const seconds = Number((error as { headers?: Headers })?.headers?.get?.('retry-after'));
   return seconds > 0 ? seconds * 1000 : undefined;
 };
