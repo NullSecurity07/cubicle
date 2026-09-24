@@ -1,5 +1,6 @@
 import { useReactFlow } from '@xyflow/react';
 import { useCallback } from 'react';
+import { DOC_SIZE } from '../shared/frameworks';
 import { freeSpot } from './place';
 import type { StageNode } from './stage';
 import { CARD } from './stage';
@@ -10,7 +11,8 @@ const newId = (kind: string) => `${kind}-${Math.random().toString(36).slice(2, 8
 // What a new card of each kind starts as.
 const NEW = {
   room: { size: [380, 440], data: { name: '', role: '', brief: '' } },
-  doc: { size: [340, 300], data: { title: 'Untitled doc' } },
+  // The size a framework lands its docs at too: one doc size across the window.
+  doc: { size: [DOC_SIZE.w, DOC_SIZE.h], data: { title: 'Untitled doc' } },
   browser: { size: [560, 353], data: {} },
   project: { size: [420, 440], data: { path: '' } },
   board: { size: [980, 440], data: {} },
