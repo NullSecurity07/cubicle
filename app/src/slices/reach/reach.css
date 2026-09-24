@@ -9,19 +9,19 @@
 .reach__trouble { margin: 0; padding: 8px 11px; border-radius: 10px; border: 1px solid rgba(240, 179, 90, 0.45); background: rgba(240, 179, 90, 0.07); font-size: 12.5px; line-height: 1.5; color: var(--needs); }
 
 .reach__row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.reach__row input, .reach__row select, .reach-talk__ask textarea {
+.reach__row input, .reach__row select {
   flex: 1 1 140px; min-width: 0; border: 1px solid var(--card-border); border-radius: 9px; padding: 7px 9px; outline: 0;
   background: rgba(255, 255, 255, 0.05); color: var(--text); font: inherit; font-size: 13px;
 }
-.reach__row input:focus, .reach__row select:focus, .reach-talk__ask textarea:focus { border-color: rgba(78, 140, 255, 0.7); }
+.reach__row input:focus, .reach__row select:focus { border-color: var(--focus); }
 .reach__row option { background: #16181d; color: var(--text); }
-.reach button, .reach-talk__ask button, .reach-talk__speak {
+.reach button {
   flex: none; border: 0; border-radius: 9px; padding: 7px 14px; font: inherit; font-size: 12.5px; font-weight: 550;
   color: var(--text); background: rgba(255, 255, 255, 0.1); cursor: pointer; transition: background 0.15s, opacity 0.15s;
 }
-.reach button:hover, .reach-talk__ask button:hover, .reach-talk__speak:hover { background: rgba(255, 255, 255, 0.16); }
-.reach .primary, .reach-talk__ask .primary { background: var(--accent); color: #fff; }
-.reach button:disabled, .reach-talk__ask button:disabled { opacity: 0.4; cursor: default; }
+.reach button:hover { background: rgba(255, 255, 255, 0.16); }
+.reach .primary { background: var(--accent); color: #fff; }
+.reach button:disabled { opacity: 0.4; cursor: default; }
 
 .reach__switch { display: flex; align-items: flex-start; gap: 9px; font-size: 13px; line-height: 1.5; cursor: pointer; }
 .reach__switch input { margin: 2px 0 0; accent-color: var(--accent); width: 15px; height: 15px; }

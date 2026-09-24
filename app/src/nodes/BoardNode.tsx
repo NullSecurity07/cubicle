@@ -4,7 +4,7 @@ import { sayRepeat } from '../../shared/automation';
 import { COLUMNS, type Column, type Task } from '../../shared/model';
 import { addTask, changeTask, learnFromTask, removeTask, runTask, stopTask, watchBoard } from '../api';
 import { emit } from '../bus';
-import { Automation } from '../slices/automation/Automation';
+import { Automation } from './automation/Automation';
 import type { BoardNodeType, StageNode } from '../stage';
 import { useFlushStage } from '../sync';
 import { Approval } from './Approval';

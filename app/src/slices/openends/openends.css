@@ -49,7 +49,7 @@
 .insights__fill { display: block; height: 100%; border-radius: 4px; background: var(--accent); transition: width 0.25s cubic-bezier(0.2, 0.8, 0.2, 1); }
 /* The dock's rings already say amber under a fifth and red when it is gone; these bars say it the same way. */
 .insights__today .insights__fill.ring--low { background: #f0b35a; }
-.insights__today .insights__fill.ring--out { background: #e5645a; }
+.insights__today .insights__fill.ring--out { background: var(--danger); }
 .insights__numbers { flex: none; width: 108px; text-align: right; font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .insights__numbers small { display: block; font-size: 11px; color: var(--muted); white-space: nowrap; }
 

@@ -8,9 +8,9 @@
   --dash-line: rgba(255, 255, 255, 0.08);
   --dash-bar: rgba(255, 255, 255, 0.2);
   --dash-bar-hover: rgba(255, 255, 255, 0.34);
-  --dash-good: #6fcf97;
+  --dash-good: var(--ok);
   --dash-low: #f0b35a;
-  --dash-bad: #e5645a;
+  --dash-bad: var(--danger);
   top: 24px; bottom: 24px; max-height: none;
   width: min(1080px, calc(100% - 48px));
 }

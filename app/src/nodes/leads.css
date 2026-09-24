@@ -6,7 +6,7 @@
 .leads__add { flex: none; display: flex; flex-wrap: wrap; gap: 6px; }
 .leads__add input { flex: 1 1 120px; min-width: 0; box-sizing: border-box; border: 1px solid var(--card-border); border-radius: 8px; padding: 6px 9px; outline: 0; background: rgba(255, 255, 255, 0.05); color: var(--text); font: inherit; font-size: 12.5px; transition: border-color 0.15s; }
 .leads__add input.leads__line { flex: 3 1 200px; }
-.leads__add input:focus { border-color: rgba(78, 140, 255, 0.7); }
+.leads__add input:focus { border-color: var(--focus); }
 .leads__add button { flex: none; border: 0; border-radius: 8px; padding: 6px 14px; font: inherit; font-size: 12.5px; font-weight: 550; color: #fff; background: var(--accent); cursor: pointer; transition: opacity 0.15s; }
 .leads__add button:disabled { opacity: 0.35; cursor: default; }
 
@@ -30,7 +30,7 @@
 .lead__name { grid-area: name; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; font-weight: 550; }
 .lead__company { grid-area: company; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--muted); }
 .lead__fit { grid-area: fit; min-width: 22px; padding: 2px 6px; border-radius: 7px; text-align: center; font-size: 11px; font-weight: 650; color: var(--muted); background: rgba(255, 255, 255, 0.08); }
-.lead__fit.is-good { color: #0b0c10; background: #6fcf97; }
+.lead__fit.is-good { color: #0b0c10; background: var(--ok); }
 
 .leadview { position: absolute; top: 0; right: 0; bottom: 0; z-index: 2; width: min(340px, 100%); display: flex; flex-direction: column; border-left: 1px solid var(--card-border); border-radius: 0 13px 13px 0; background: rgba(14, 15, 19, 0.985); box-shadow: -18px 0 40px rgba(0, 0, 0, 0.35); cursor: auto; animation: leadview-in 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 .leadview__head { flex: none; display: flex; align-items: flex-start; gap: 8px; padding: 12px 12px 10px 14px; border-bottom: 1px solid var(--card-border); }
@@ -44,7 +44,7 @@
 .leadview__body label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--muted); }
 .leadview select, .leadview textarea { border: 1px solid var(--card-border); border-radius: 8px; padding: 6px 8px; outline: 0; resize: none; background: rgba(255, 255, 255, 0.05); color: var(--text); font: inherit; font-size: 12.5px; color-scheme: dark; }
 .leadview option { background: #16181d; }
-.leadview textarea:focus, .leadview select:focus { border-color: rgba(78, 140, 255, 0.7); }
+.leadview textarea:focus, .leadview select:focus { border-color: var(--focus); }
 .leadview__links { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 0; font-size: 12px; }
 .leadview__links a { color: var(--accent-soft); text-decoration: none; overflow-wrap: anywhere; }
 .leadview__links a:hover { text-decoration: underline; }
@@ -61,7 +61,7 @@
 .leadview__end select { min-width: 0; flex: 0 1 auto; }
 .leadview__end .primary { margin-left: auto; background: var(--accent); color: #fff; }
 .leadview__end .primary:disabled { opacity: 0.35; cursor: default; }
-.leadview__end .danger { background: transparent; color: #f0968e; }
+.leadview__end .danger { background: transparent; color: var(--problem); }
 
 @keyframes leads-in { from { opacity: 0; } }
 @keyframes leadview-in { from { opacity: 0; transform: translateX(16px); } }
