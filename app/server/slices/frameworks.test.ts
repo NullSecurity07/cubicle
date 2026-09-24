@@ -16,6 +16,8 @@ import slice from './frameworks.ts';
 const root = resolve(import.meta.dirname, '../../..');
 const BUILT_IN = 'startup-evaluation';
 const NOTE = 'evaluating-a-startup-idea-first-time-founder-notes';
+const BUILT_INS = ['launch-team', 'pitch-practice', BUILT_IN];
+const NOTES = ['documents-that-moved-capital', NOTE, 'linkedin-craft', 'where-to-post-your-startup'];
 
 // Everything the frameworks extra reaches for: a workspace, the stage as it is, and the two http helpers.
 async function setup() {
@@ -41,14 +43,14 @@ async function setup() {
 afterEach(() => { inUse.by = () => null; });
 
 describe('the frameworks extra', () => {
-  it('gives the founder the built-in team and its note the first time the workspace opens', async () => {
+  it('gives the founder the built-in teams and their notes the first time the workspace opens', async () => {
     const { call, library } = await setup();
     const { answer, last } = await call('/api/frameworks');
     expect(answer).toBe(true);
     const listed = last.body as Framework[];
-    expect(listed.map((one) => one.id)).toEqual([BUILT_IN]);
-    expect(listed[0].rooms).toHaveLength(5);
-    expect((await library.list()).map((note) => note.id)).toEqual([NOTE]);
+    expect(listed.map((one) => one.id).sort()).toEqual(BUILT_INS);
+    expect(listed.find((one) => one.id === BUILT_IN)?.rooms).toHaveLength(5);
+    expect((await library.list()).map((note) => note.id).sort()).toEqual(NOTES);
   });
 
   it('will not let the library drop a note a framework was built from', async () => {
@@ -58,7 +60,7 @@ describe('the frameworks extra', () => {
     // And once the framework is gone, the note is the founder's to delete again.
     await call(`/api/frameworks/${BUILT_IN}`, 'DELETE');
     await library.remove(NOTE);
-    expect(await library.list()).toEqual([]);
+    expect((await library.list()).map((note) => note.id)).not.toContain(NOTE);
   });
 
   it('places the team on the stage with fresh ids, and writes the doc it shares', async () => {

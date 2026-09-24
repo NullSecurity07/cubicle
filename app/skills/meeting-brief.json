@@ -1,0 +1,18 @@
+{
+  "name": "Prepare the founder for a call",
+  "when": "The founder has a call or meeting coming up with a named person and wants to walk in prepared.",
+  "procedure": [
+    "Ask who the call is with, their company, the date, and what the founder wants out of it.",
+    "Use web_search for the person and company, with this year in the query, and web_fetch to read the 3 to 5 most useful pages.",
+    "Write who they are: role, company, what the company does, in three lines.",
+    "Write what they have said in public recently, each point with its date and link.",
+    "Write three questions the founder should ask, each tied to something they said.",
+    "Write one risk: the objection or conflict most likely to come up, and one line on how to meet it."
+  ],
+  "pitfalls": [
+    "Old pages look current: put the date beside every fact and prefer this year's sources.",
+    "Two people can share a name: confirm the company before using a page.",
+    "No private data, and nothing that is not on a public page."
+  ],
+  "verify": "The brief has who they are, at least three dated public statements each with a link, three questions tied to those statements, and one risk, and fits on one screen."
+}

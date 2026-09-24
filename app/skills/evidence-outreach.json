@@ -1,0 +1,17 @@
+{
+  "name": "Write a first message from evidence",
+  "when": "The founder wants to write to someone for the first time: a lead, an investor, a possible partner or hire.",
+  "procedure": [
+    "Find one thing this person actually said or did in public: a post, a talk, a launch, a hire. Keep the link.",
+    "Open with it, quoted or named exactly, and say in one sentence why it made the founder write.",
+    "Say who the founder is and what they do in one sentence.",
+    "Make one ask that is easy to say yes to: a 15-minute call, one question answered, feedback on one thing.",
+    "Keep the whole message under 80 words, then run the \"Humanize a draft\" skill on it. The founder sends it by hand."
+  ],
+  "pitfalls": [
+    "Flattery (\"I love your work\") is not evidence; name the specific thing.",
+    "Two asks in one message get neither answered.",
+    "Never invent a shared connection or a detail you did not read."
+  ],
+  "verify": "The message is under 80 words, names one specific public thing the person said or did with its link, contains exactly one ask, and every claim in it is true."
+}

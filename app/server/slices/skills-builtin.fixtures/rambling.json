@@ -1,0 +1,7 @@
+{
+  "name": "Rambling",
+  "when": "Never: this one has more steps than a skill may.",
+  "procedure": ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine"],
+  "pitfalls": [],
+  "verify": "It never gets copied."
+}

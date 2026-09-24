@@ -1,0 +1,17 @@
+{
+  "name": "Rewrite a LinkedIn profile",
+  "when": "The founder wants their LinkedIn headline, About section or Featured items to match what they do now.",
+  "procedure": [
+    "Ask for the current headline, About and Featured, and the goal: customers, hiring or authority.",
+    "Headline, up to 220 characters: what you do | who you help | the result, with a real number if the founder has one.",
+    "About, 200 to 300 words, first person (\"I help\"): hook with a number, what you do and for whom, one or two wins, how you solve it, one human line, keywords, next step.",
+    "Check the first 265 characters of About alone: they must carry the pitch, because the rest hides behind \"see more\".",
+    "Featured: three items matched to the goal, e.g. a case study and a booking link for customers.",
+    "Show before and after for each part. The founder edits the profile by hand."
+  ],
+  "pitfalls": [
+    "Third person (\"Jane is a passionate…\") and words like passionate, driven, results-oriented, thought leader read as filler.",
+    "A win without a number is a claim; ask for the number or leave the win out."
+  ],
+  "verify": "The headline is at most 220 characters in the what | who | result shape, About is 200 to 300 words in first person with the pitch inside its first 265 characters, and every number came from the founder."
+}

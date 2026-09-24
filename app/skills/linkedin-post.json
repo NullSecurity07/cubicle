@@ -1,0 +1,18 @@
+{
+  "name": "Write a LinkedIn post",
+  "when": "The founder wants a LinkedIn post about something that happened, a lesson, a number or a launch.",
+  "procedure": [
+    "Ask for the material and wait: the moment, fact or number the post is about, and who should read it. Never invent any of them.",
+    "Pick one post shape: story, list, contrarian, lesson or question. Pick two different hooks, e.g. an odd-precision number and a dated reversal.",
+    "Write line one as a statement or a number under 140 characters. Never a question, never \"Here's what\", never \"Stop X, start Y\".",
+    "Write the body: 900 to 1,300 characters, one or two sentences a paragraph, a blank line between ideas, at most one contrast and one list of three.",
+    "Close with a specific question about the reader's own experience, not \"Thoughts?\". Put any link in the first comment, never in the body.",
+    "Run the \"Humanize a draft\" skill on both versions, then give version A and B with each hook named. The founder posts it by hand."
+  ],
+  "pitfalls": [
+    "Two hooks blended in one post weaken both: one hook per version.",
+    "A round number (\"almost $5k\") reads as made up; use the exact one the founder gave, with what it refers to.",
+    "More than three hashtags, or any in the middle of a sentence, looks like spam."
+  ],
+  "verify": "Two versions exist; each first line is under 140 characters and is not a question; each is 900 to 1,300 characters; no link in the body; every number and name came from the founder."
+}

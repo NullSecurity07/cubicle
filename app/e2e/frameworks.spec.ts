@@ -37,7 +37,8 @@ test('the built-in team lands on the stage, answers from the founder\'s note, an
   await expect(panel(page).getByText(`Built from ${NOTE}`)).toBeVisible();
 
   // One press, and the whole team is standing there: the five steps, the doc they share, the browser and the note.
-  await panel(page).getByRole('button', { name: 'Place' }).click();
+  // Other teams ship beside it, so the press is on this one's own row.
+  await panel(page).locator('.frameworks__one').filter({ hasText: 'Startup evaluation' }).getByRole('button', { name: 'Place' }).click();
   await expect(panel(page)).toBeHidden();
   for (const role of ['Assumption finder', 'Death hunter', 'Pain validator', 'Founder-fit', 'Verdict judge']) {
     await expect(person(page, role)).toHaveCount(1);

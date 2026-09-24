@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Framework } from '../../shared/frameworks.ts';
-import { sizeLine } from '../../shared/frameworks.ts';
+import { DOC_SIZE, FRAMEWORK_ID, sizeLine } from '../../shared/frameworks.ts';
+import { MOST_BRIEF_CHARS } from '../forge/propose.ts';
 import { idOf } from '../library/notes.ts';
 import { titleOfNote } from './store.ts';
 
-// The one framework that ships with the app. It is a hand-written file, so nothing else in the build would notice if
+// The first framework that shipped with the app. It is a hand-written file, so nothing else in the build would notice if
 // a brief grew past what a prompt should carry, a wire pointed at a key nobody has, or the note it was built from was
 // edited without its hash being written again. This does.
 const here = resolve(import.meta.dirname, '../../frameworks/startup-evaluation');
@@ -97,5 +98,134 @@ describe('the startup evaluation framework', () => {
     }
     // Every person has something to be tested on, so no brief goes unmeasured when the evals round comes.
     for (const key of people) expect(framework.dataset.some((held) => held.keys.includes(key))).toBe(true);
+  });
+});
+
+// Every framework that ships, whoever wrote it: the rules a hand-written file can break without anything else in the
+// build noticing, checked the same way for each.
+const shelf = resolve(import.meta.dirname, '../../frameworks');
+const builtIns = async () => (await readdir(shelf, { withFileTypes: true })).filter((one) => one.isDirectory()).map((one) => one.name).sort();
+const loadOne = async (dir: string) => JSON.parse(await readFile(resolve(shelf, dir, 'framework.json'), 'utf8')) as Framework;
+type Box = { x: number; y: number; w: number; h: number };
+const overlap = (one: Box, other: Box) => one.x < other.x + other.w && other.x < one.x + one.w && one.y < other.y + other.h && other.y < one.y + one.h;
+
+describe('every built-in framework', () => {
+  it('ships the three teams', async () => {
+    expect(await builtIns()).toEqual(['launch-team', 'pitch-practice', 'startup-evaluation']);
+  });
+
+  it('is named by its folder, and gives every person a name, a colour and a brief the forge would accept', async () => {
+    for (const dir of await builtIns()) {
+      const framework = await loadOne(dir);
+      expect(framework.id).toBe(dir);
+      expect(FRAMEWORK_ID.test(framework.id)).toBe(true);
+      expect(framework.name.trim() && framework.intent.trim()).toBeTruthy();
+      for (const room of framework.rooms) {
+        expect(room.name.trim() && room.role.trim()).toBeTruthy();
+        expect(room.accent).toMatch(/^#[0-9a-f]{6}$/);
+        expect(room.brief.length).toBeLessThanOrEqual(MOST_BRIEF_CHARS);
+      }
+      expect(new Set(framework.rooms.map((room) => room.name)).size).toBe(framework.rooms.length);
+    }
+  });
+
+  it('wires and places only what it has, and nothing it places stands on anything else', async () => {
+    for (const dir of await builtIns()) {
+      const framework = await loadOne(dir);
+      const all = [...framework.rooms, ...framework.docs.map((doc) => ({ ...doc, w: doc.w ?? DOC_SIZE.w, h: doc.h ?? DOC_SIZE.h })), ...framework.cards];
+      const keys = all.map((one) => one.key);
+      expect(new Set(keys).size).toBe(keys.length);
+      for (const wire of framework.wires) { expect(keys).toContain(wire.from); expect(keys).toContain(wire.to); }
+      expect(Object.keys(framework.layout).sort()).toEqual([...keys].sort());
+      const boxes = all.map((one) => ({ key: one.key, ...framework.layout[one.key], w: one.w, h: one.h }));
+      for (const [at, one] of boxes.entries()) for (const other of boxes.slice(at + 1)) expect(overlap(one, other), `${dir}: ${one.key} and ${other.key}`).toBe(false);
+      // Everybody is wired to a doc they write into.
+      const docs = new Set(framework.docs.map((doc) => doc.key));
+      for (const room of framework.rooms) expect(framework.wires.some((wire) => (wire.from === room.key && docs.has(wire.to)) || (wire.to === room.key && docs.has(wire.from)))).toBe(true);
+      for (const card of framework.cards) if (card.kind === 'source') { expect(card.url).toMatch(/^https:\/\//); expect(card.about.trim()).not.toBe(''); }
+    }
+  });
+
+  it('was built from the notes beside it, each named by its title and hashed from its words', async () => {
+    for (const dir of await builtIns()) {
+      const framework = await loadOne(dir);
+      const files = (await readdir(resolve(shelf, dir, 'notes'))).filter((name) => /\.(md|markdown|txt)$/i.test(name));
+      const found = await Promise.all(files.map(async (file) => {
+        const words = await readFile(resolve(shelf, dir, 'notes', file), 'utf8');
+        return { id: idOf(titleOfNote(file, words)), hash: createHash('sha1').update(words).digest('hex') };
+      }));
+      const byId = (one: { id: string }, other: { id: string }) => one.id.localeCompare(other.id);
+      expect([...framework.notes].sort(byId)).toEqual(found.sort(byId));
+      // Every note it was built from is on the stage as a card, and no card holds a note it was not built from.
+      const onCards = framework.cards.flatMap((card) => (card.kind === 'library' ? [card.noteId] : []));
+      expect([...onCards].sort()).toEqual(framework.notes.map((one) => one.id).sort());
+    }
+  });
+
+  it('comes with a dataset that tests every person, judged by an answer or a rubric', async () => {
+    for (const dir of await builtIns()) {
+      const framework = await loadOne(dir);
+      const people = new Set(framework.rooms.map((room) => room.key));
+      expect(framework.dataset.length).toBeGreaterThanOrEqual(3);
+      expect(new Set(framework.dataset.map((held) => held.id)).size).toBe(framework.dataset.length);
+      for (const held of framework.dataset) {
+        expect(held.keys.length).toBeGreaterThan(0);
+        for (const key of held.keys) expect(people.has(key)).toBe(true);
+        expect(held.input.trim()).not.toBe('');
+        expect(held.expected?.trim() || held.rubric?.trim()).toBeTruthy();
+        expect(held.addedBy).toBe('founder');
+      }
+      for (const key of people) expect(framework.dataset.some((held) => held.keys.includes(key)), `${dir}: ${key}`).toBe(true);
+    }
+  });
+});
+
+describe('the launch team', () => {
+  it('plans, benchmarks, writes and replies, and says so in one line', async () => {
+    const framework = await loadOne('launch-team');
+    expect(framework.rooms.map((room) => room.role)).toEqual(['Launch planner', 'Benchmark reader', 'Post writer', 'Reply drafter']);
+    expect(sizeLine(framework)).toBe('4 people · 2 docs · 2 notes · 1 source · 1 browser');
+    expect(framework.docs.map((doc) => doc.title)).toEqual(['Launch plan', 'Posts']);
+    expect(framework.docs[0].text).toContain('| Place | Why | What to post | Rules checked | Status | Date |');
+    const source = framework.cards.find((card) => card.kind === 'source');
+    expect(source && 'url' in source && source.url).toBe('https://trustmrr.com');
+  });
+
+  it('never lets anybody post: the founder presses send', async () => {
+    const [planner, benchmarks, writer, replies] = (await loadOne('launch-team')).rooms.map((room) => room.brief);
+    expect(planner).toContain('Where to post your startup');
+    expect(planner).toContain('the founder presses send');
+    expect(benchmarks).toContain('never an estimate');
+    for (const brief of [writer, replies]) expect(brief).toContain('LinkedIn craft');
+    expect(writer).toContain('You never post');
+    for (const word of ['delve', 'game-changer', 'unlock', 'leverage']) expect(writer).toContain(word);
+    expect(replies).toContain('Nothing is automated');
+  });
+
+  it('wires each note only to the people who work from it, and the browser to the two who look things up', async () => {
+    const framework = await loadOne('launch-team');
+    const wired = new Set(framework.wires.map((wire) => `${wire.from}>${wire.to}`));
+    for (const pair of ['places>planner', 'craft>writer', 'craft>replies', 'planner>browser', 'benchmarks>browser', 'benchmarks>trustmrr', 'planner>plan', 'benchmarks>plan', 'writer>posts', 'replies>posts']) {
+      expect(wired.has(pair), pair).toBe(true);
+    }
+    expect(wired.has('places>writer')).toBe(false);
+  });
+});
+
+describe('pitch practice', () => {
+  it('is four investors, each reading the pitch and the note and writing a verdict into the feedback', async () => {
+    const framework = await loadOne('pitch-practice');
+    expect(framework.rooms.map((room) => room.role)).toEqual(['Seed angel', 'Growth VC', 'Operator', 'Skeptic']);
+    expect(sizeLine(framework)).toBe('4 people · 2 docs · 1 note');
+    for (const heading of ['## Problem', '## Who has it', '## Product', '## Traction', '## Why now', '## Business model', '## Team', '## The ask']) {
+      expect(framework.docs[0].text).toContain(heading);
+    }
+    const wired = new Set(framework.wires.map((wire) => `${wire.from}>${wire.to}`));
+    for (const room of framework.rooms) {
+      for (const pair of [`pitch>${room.key}`, `${room.key}>feedback`, `reading>${room.key}`]) expect(wired.has(pair), pair).toBe(true);
+      for (const words of ['ONE question', 'Never lecture', 'INVEST', 'PASS', 'COME BACK WHEN', 'three hardest questions', 'Documents that moved capital']) {
+        expect(room.brief, `${room.role}: ${words}`).toContain(words);
+      }
+    }
   });
 });

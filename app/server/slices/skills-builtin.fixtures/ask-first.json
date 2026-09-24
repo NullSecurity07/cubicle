@@ -1,0 +1,7 @@
+{
+  "name": "Ask before drafting",
+  "when": "Before writing anything the founder will send under their own name.",
+  "procedure": ["Ask for the facts the text needs and wait.", "Write it from those facts only."],
+  "pitfalls": ["Never invent a number."],
+  "verify": "Every fact in the text came from the founder."
+}

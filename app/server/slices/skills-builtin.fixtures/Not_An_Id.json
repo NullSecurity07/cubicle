@@ -1,0 +1,1 @@
+{ "name": "Bad file name", "when": "Never.", "procedure": ["Nothing."], "pitfalls": [], "verify": "It never gets copied." }
