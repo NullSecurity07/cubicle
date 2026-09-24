@@ -398,7 +398,7 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
               aria-label="Notes on this film" rows={1} value={notes}
               placeholder="Trim shot 3, swap the picture in shot 5 for the office, say the last line slower"
               onChange={(event) => setNotes(event.target.value)}
-              onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); reedit(); } }}
+              onKeyDown={(event) => { if (pressed(event, 'send')) { event.preventDefault(); reedit(); } }}
             />
             <button type="submit" disabled={!notes.trim()} title="Only what the notes touch is made again. Everything else is this film's own.">Edit</button>
           </form>
