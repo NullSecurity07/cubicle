@@ -84,6 +84,13 @@ export function LinkNode({ id, data, selected }: NodeProps<LinkNodeType>) {
       setState({ preview: page.preview });
     } catch (error) { setState({ problem: (error as Error).message }); }
   }
+  // A web address dropped on the stage arrives asking to be read.
+  useEffect(() => {
+    if (!data.read) return;
+    updateNodeData(id, { read: undefined });
+    void read(data.url);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.read]);
   return (
     <Frame selected={!!selected} minWidth={240} minHeight={120}>
       <header className="card__header card__header--doc">

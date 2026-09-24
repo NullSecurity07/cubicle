@@ -12,7 +12,8 @@ export type BoardNodeType = Node<Record<string, never>, 'board'>;
 export type LeadsNodeType = Node<Record<string, never>, 'leads'>;
 export type NoteNodeType = Node<{ text: string; color?: string }, 'note'>;
 export type ImageNodeType = Node<{ path: string }, 'image'>;
-export type LinkNodeType = Node<{ url: string; title?: string }, 'link'>;
+// `read` is only ever set by a drop, for a moment: the new card reads its page at once, as Enter would, and clears it.
+export type LinkNodeType = Node<{ url: string; title?: string; read?: boolean }, 'link'>;
 export type SourceNodeType = Node<{ url: string; about: string; title?: string }, 'source'>;
 // A note out of the founder's library. The card carries which note it is; the words stay in the library.
 export type LibraryNodeType = Node<{ noteId: string }, 'library'>;

@@ -9,8 +9,8 @@ import { Dock } from './Dock';
 import { Missions } from './Missions';
 import { edgeTypes } from './edges';
 import { nodeTypes } from './nodes';
-import { NoteDrop } from './nodes/LibraryCard';
 import { SelectionMenu } from './SelectionMenu';
+import { StageDrop } from './StageDrop';
 import { Overlay } from './overlay/Overlay';
 import { flowKeys, onOverrides, overridesVersion, setOverrides } from './keys';
 import { NEW_SIZE } from './addCard';
@@ -98,7 +98,7 @@ function Canvas({ initial }: { initial: ReturnType<typeof toFlow> }) {
       <Background variant={BackgroundVariant.Dots} gap={24} size={1.5} color="rgba(255, 255, 255, 0.24)" bgColor="transparent" />
       <Dock />
       <Missions />
-      <NoteDrop />
+      <StageDrop />
       <SelectionMenu />
       <Overlay />
     </ReactFlow>

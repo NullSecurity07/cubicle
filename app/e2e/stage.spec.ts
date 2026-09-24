@@ -640,6 +640,38 @@ test('replies render diagrams and a live, sandboxed page preview', async ({ page
   await expect(reply.locator('.artifact pre')).toContainText('<!doctype html>');
 });
 
+// Lets something go over an empty piece of the stage, as a drag from the desktop or another window would.
+async function dropOnStage(page: Page, what: { file?: { name: string; type: string; base64: string }; link?: string }) {
+  await page.evaluate(({ file, link }) => {
+    const data = new DataTransfer();
+    if (file) data.items.add(new File([Uint8Array.from(atob(file.base64), (c) => c.charCodeAt(0))], file.name, { type: file.type }));
+    if (link) data.setData('text/uri-list', link);
+    const pane = document.querySelector('.react-flow__pane')!;
+    for (const type of ['dragenter', 'dragover', 'drop']) pane.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, clientX: 300, clientY: 800, dataTransfer: data }));
+  }, what);
+}
+
+test('a note file, a picture and a web address dropped on the stage become cards where they land', async ({ page }) => {
+  await tidy(page);
+  await dropOnStage(page, { file: { name: 'launch-plan.md', type: 'text/markdown', base64: Buffer.from('# Launch plan\n\nShip on Friday.').toString('base64') } });
+  await expect(page.locator('.react-flow__node-library')).toContainText('launch plan');
+
+  const dot = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  await dropOnStage(page, { file: { name: 'logo.png', type: 'image/png', base64: dot } });
+  await expect(page.locator('.react-flow__node-image img')).toHaveAttribute('src', /logo\.png$/);
+
+  await dropOnStage(page, { link: '# a comment line\nhttps://example.com' });
+  const link = page.locator('.react-flow__node-link');
+  await expect(link.getByLabel('Web address')).toHaveValue('https://example.com');
+  await expect(link.locator('.card__name')).toHaveText('Example Domain');
+
+  // Anything else is refused in words, and the stage stays where it was.
+  await dropOnStage(page, { file: { name: 'numbers.xlsx', type: 'application/vnd.ms-excel', base64: 'AAAA' } });
+  await expect(page.locator('.drop-problem')).toContainText('Drop a note');
+  await expect(page.locator('.react-flow__node')).toHaveCount(7);
+  expect(page.url()).not.toContain('numbers');
+});
+
 test('a sticky note and a link are context for the person they are wired to', async ({ page }) => {
   await tidy(page);
   await addCard(page, 'Add sticky note');
