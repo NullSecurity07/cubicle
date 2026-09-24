@@ -26,6 +26,7 @@ const safe = (id: string) => { if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(id)) throw 
 const newLeadId = () => newId('lead-', 4, '');
 const line = (value: unknown, max: number) => (typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').slice(0, max) : '');
 const optional = (value: unknown, max: number) => line(value, max) || undefined;
+export const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export const isStage = (value: unknown): value is LeadStage => (LEAD_STAGES as readonly unknown[]).includes(value);
 
 // Leads live beside the stage, one file per leads card, the way a board's tasks do. The server owns them: people and
@@ -96,6 +97,12 @@ export function createLeads(dir: string, tell: (cardId: string, event: LeadsEven
       leads.push(lead);
       save(cardId);
       return { lead, added: true };
+    },
+    // An address for a lead: what lets the founder's mail to them move them to Contacted on its own.
+    async email(cardId: string, leadId: string, email: string): Promise<Lead> {
+      const address = line(email, 200);
+      if (!EMAIL.test(address)) throw new Error(`"${address}" is not an email address`);
+      return change(cardId, leadId, (lead) => { lead.person.email = address; });
     },
     async move(cardId: string, leadId: string, stage: LeadStage): Promise<Lead> {
       if (!isStage(stage)) throw new Error(`a stage is one of ${LEAD_STAGES.join(', ')}`);

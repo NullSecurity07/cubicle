@@ -4,7 +4,7 @@ import { shortDay } from '../clock.ts';
 import { hub } from '../events.ts';
 import type { Slice } from '../install.ts';
 import { createOutreach, fakeRunner, outreachEnv, uvxRunner } from '../leads/openoutreach.ts';
-import { isStage, leadsCardIds, leadsFor, type Leads } from '../leads/store.ts';
+import { EMAIL, isStage, leadsCardIds, leadsFor, type Leads } from '../leads/store.ts';
 import { wired } from '../prompt.ts';
 import { withSystem, type Handler } from '../seams.ts';
 import { offerWhenWired } from '../slice-kit.ts';
@@ -37,13 +37,21 @@ export function leadTools(leads: Leads, outreach: ReturnType<typeof createOutrea
   return [
     {
       name: 'add_lead', perTurn: 5,
-      description: 'Add a person to the Leads card wired to you. Name them and their company.',
-      parameters: { type: 'object', properties: { person: { type: 'string', description: 'Full name' }, company: { type: 'string' }, why: { type: 'string', description: 'Why they may buy, with a link' } }, required: ['person', 'company'] },
+      description: 'Add a person to the Leads card wired to you. Name them and their company. Give their email when you know it; for someone already on the card, it sets theirs.',
+      parameters: { type: 'object', properties: { person: { type: 'string', description: 'Full name' }, company: { type: 'string' }, email: { type: 'string', description: 'Their work email, if known' }, why: { type: 'string', description: 'Why they may buy, with a link' } }, required: ['person', 'company'] },
       async run(args, context) {
         const id = need(context);
         const why = typeof args.why === 'string' ? args.why : '';
-        const { lead, added } = await leads.add(id, { name: text(args, 'person', 120), company: text(args, 'company', 120), source: 'person', ...(why.trim() ? { note: { by: nameOf(context), text: why } } : {}) });
-        return { text: added ? `Added ${leadName(lead)}.` : `${leadName(lead)} is already here, in ${STAGE_NAMES[lead.stage]}.` };
+        const email = typeof args.email === 'string' ? args.email.trim() : '';
+        if (email && !EMAIL.test(email)) return { text: `"${email.slice(0, 200)}" is not an email address. Add them without it, or with the right one.` };
+        const { lead, added } = await leads.add(id, { name: text(args, 'person', 120), company: text(args, 'company', 120), source: 'person', ...(email ? { email } : {}), ...(why.trim() ? { note: { by: nameOf(context), text: why } } : {}) });
+        if (added) return { text: `Added ${leadName(lead)}.` };
+        // Already here: an email given now fills in, or corrects, the one on the card.
+        if (email && email !== lead.person.email) {
+          await leads.email(id, lead.id, email);
+          return { text: `${leadName(lead)} is already here, in ${STAGE_NAMES[lead.stage]}. Their email is now ${email}.` };
+        }
+        return { text: `${leadName(lead)} is already here, in ${STAGE_NAMES[lead.stage]}.` };
       },
     },
     {
@@ -168,7 +176,8 @@ export default {
           if (!leadId && method === 'POST') {
             const sent = await deps.body(req);
             const line = typeof sent?.line === 'string' ? sent.line : '';
-            const { lead, added } = await leads.add(cardId, { name: String(sent?.name ?? ''), company: String(sent?.company ?? ''), source: 'founder', ...(line.trim() ? { note: { by: 'Founder', text: line } } : {}) });
+            const email = typeof sent?.email === 'string' && EMAIL.test(sent.email.trim()) ? sent.email.trim() : '';
+            const { lead, added } = await leads.add(cardId, { name: String(sent?.name ?? ''), company: String(sent?.company ?? ''), source: 'founder', ...(email ? { email } : {}), ...(line.trim() ? { note: { by: 'Founder', text: line } } : {}) });
             if (added) deps.json(res, 200, lead);
             else deps.json(res, 409, { error: `${leadName(lead)} is already here` });
             return true;
