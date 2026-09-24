@@ -10,7 +10,7 @@ import type { Reader } from './readers.ts';
 export type Launch = { profile?: string; headed?: boolean; pace?: [number, number] };
 // Runs one agent-browser command in a named session and returns what it printed.
 export type Runner = (session: string, args: string[], launch?: Launch) => Promise<string>;
-export type SearchHit = { title: string; url: string; snippet: string; date?: string };
+type SearchHit = { title: string; url: string; snippet: string; date?: string };
 // How far back a search may look. Only an engine that really supports it gets it; see ENGINES.
 export type Recent = 'day' | 'week' | 'month' | 'year';
 export type Browser = ReturnType<typeof createBrowser>;
@@ -37,7 +37,7 @@ export function webUrl(raw: string): string {
 // The one address this app will open on this machine: the product the founder is building, typed by the founder on
 // their own Video studio card. A product in the middle of being built lives on localhost, so a screenshot of it has to
 // be allowed — but only here, only for a founder-typed address, and never down any path a person can reach.
-export function ownUrl(raw: string): string {
+function ownUrl(raw: string): string {
   let url: URL;
   try { url = new URL(/^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `http://${raw}`); } catch { throw new Error(`not a web address: ${raw}`); }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error(`only http and https pages can be opened, not ${url.protocol}`);
@@ -89,9 +89,9 @@ export function aged(hit: SearchHit): { when: string; snippet: string } {
 }
 // A site that answers with a human check instead of its page. The person must hear that plainly, or it will guess the content.
 const WALL = /prove your humanity|verify (that )?you('| a)re (a )?human|are you a robot|unusual traffic|complete the (following )?challenge|checking your browser|just a moment|access denied|attention required|enable javascript and cookies|captcha/i;
-export const walled = (title: string, text: string) => WALL.test(title) || (text.length < 1200 && WALL.test(text));
+const walled = (title: string, text: string) => WALL.test(title) || (text.length < 1200 && WALL.test(text));
 export const WALL_NOTE = 'This site asked for a human check and did not show its page. Do not guess what it says, and do not try to pass the check. Tell the founder it is behind a bot wall; another source may have the same facts.';
-export const CARD_WALL_NOTE = 'On a browser card the founder can press "Show window", pass the check or sign in by hand, and you carry on from there.';
+const CARD_WALL_NOTE = 'On a browser card the founder can press "Show window", pass the check or sign in by hand, and you carry on from there.';
 const THIN = 400;
 
 const READ_PAGE = `JSON.stringify((()=>{const pick=document.querySelector("article")||document.querySelector("main")||document.querySelector("[role=main]")||document.body;return{title:document.title,url:location.href,text:(pick.innerText||"").replace(/\\n{3,}/g,"\\n\\n").trim()}})())`;
@@ -156,7 +156,7 @@ export const fakeRunner: Runner = async (session, args) => {
 // that Chrome exits. Sites such as Google refuse sign-in in an automated browser, and this one is not.
 // `end` closes it for the founder, since Chrome can keep running after its last window closes.
 export type Hand = (profile: string, home: string) => { done: Promise<void>; end: () => void };
-export function chromeByHand(env: NodeJS.ProcessEnv = process.env): Hand {
+function chromeByHand(env: NodeJS.ProcessEnv = process.env): Hand {
   return (profile, home) => {
     const chrome = env.AGENT_BROWSER_EXECUTABLE_PATH ?? CHROMES.find((path) => existsSync(path));
     if (!chrome) return { done: Promise.reject(new Error('no Chrome was found on this machine')), end: () => {} };
@@ -166,10 +166,8 @@ export function chromeByHand(env: NodeJS.ProcessEnv = process.env): Hand {
     return { done, end: () => { child.kill('SIGTERM'); } };
   };
 }
-// Stand-in for journeys: records what would have opened and "closes" after a moment or when ended, whichever comes first.
-export const fakeHands: { profile: string; home: string }[] = [];
-export const fakeHand: Hand = (profile, home) => {
-  fakeHands.push({ profile, home });
+// Stand-in for journeys: "closes" after a moment or when ended, whichever comes first.
+export const fakeHand: Hand = () => {
   let end = () => {};
   const done = new Promise<void>((settle) => { const timer = setTimeout(settle, 300); end = () => { clearTimeout(timer); settle(); }; });
   return { done, end };
@@ -194,7 +192,7 @@ const MAIL_HOSTS = /(^|\.)(mail\.google\.com|outlook\.live\.com|outlook\.office\
 export const nameOfRef = (tree: string, ref: string) => { const found = new RegExp(`^\\s*- \\w+(?: "((?:[^"\\\\]|\\\\.)*)")?[^\\n]*\\[ref=${ref.replace(/^@/, '')}\\]`, 'm').exec(tree); return found ? found[1] ?? '' : null; };
 
 // `direct` readers know a site's feed or API and go first; `fallback` readers are asked, in order, when the local browser got nothing.
-export type Readers = { direct: Reader[]; fallback: Reader[] };
+type Readers = { direct: Reader[]; fallback: Reader[] };
 
 export function createBrowser(run: Runner, readers: Readers = { direct: [], fallback: [] }, resolveHost?: Resolve, hand: Hand = chromeByHand()) {
   const outer = run;
@@ -371,7 +369,9 @@ export function createBrowser(run: Runner, readers: Readers = { direct: [], fall
     },
     // Where a card's browser is sitting right now, without opening anything: nothing when it is not running.
     where: (session: string) => run(session, ['get', 'url']).then((printed) => printed.trim() || null, () => null),
-    close: (session: string) => run(session, ['close']).then(() => {}, () => {}),
+    // What the session last looked like goes with it: it is only there to say what changed since, and a session
+    // opened again under the same name starts from a new page.
+    close: (session: string) => { seen.delete(session); return run(session, ['close']).then(() => {}, () => {}); },
     // The caller closes the card's session first: a second Chrome on the same folder would only hand the address to it.
     byHand(profile: string, home: string): Promise<void> {
       const open = hands.get(profile);

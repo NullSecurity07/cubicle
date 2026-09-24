@@ -198,6 +198,17 @@ describe('browser', () => {
     expect(await browser.outward('card-fresh', 'press', { key: 'Enter' })).toBeNull();
   });
 
+  it('forgets what a session looked like once it is closed', async () => {
+    const tree = '- button "Send" [ref=e3]';
+    const run: Runner = async (session, args) => (args[0] === 'snapshot' ? tree : args[0] === 'get' && args[1] === 'url' ? 'https://mail.google.com/mail/u/0/' : fakeRunner(session, args));
+    const browser = createBrowser(run);
+    await browser.act('card-m', 'look', {});
+    expect(await browser.outward('card-m', 'press', { key: 'Enter' })).toMatch(/can send the message/);
+    await browser.close('card-m');
+    // The address it was at went with it: a closed session is nobody's webmail.
+    expect(await browser.outward('card-m', 'press', { key: 'Enter' })).toBeNull();
+  });
+
   it('turns a step into a command and answers with the page tree', async () => {
     const seen: string[][] = [];
     const run: Runner = async (session, args) => { seen.push(args); return fakeRunner(session, args); };
