@@ -13,7 +13,7 @@
     "shell:dev": "shell/target/release/stage-shell --url http://localhost:7420",
     "e2e": "playwright test",
     "assets": "node scripts/to-webp.mjs",
-    "doctor": "node scripts/doctor.ts",
+    "health": "node scripts/doctor.ts",
     "restore": "node scripts/restore.ts",
     "check:providers": "node scripts/check-providers.ts",
     "check:media": "node scripts/check-media.ts",

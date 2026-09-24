@@ -1,5 +1,5 @@
 // Is everything this app leans on really here? The same checks the Health screen shows, on the console.
-// `pnpm doctor` answers without spending anything; `pnpm doctor --live` also says one word to each provider, which
+// `pnpm health` answers without spending anything; `pnpm health --live` also says one word to each provider, which
 // costs a token each and is the only way to find out that a key still works, and asks Reddit and one feed once each.
 import { resolve } from 'node:path';
 

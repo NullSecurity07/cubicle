@@ -74,11 +74,13 @@ export const OFF_HINT = 'OmniVoice is switched off. The founder turns it on in a
 const DESIGN: [kind: string, value: string, words: RegExp][] = [
   ['gender', 'male', /\b(man|men|male|guy|gentleman|boy|father|dad|grandfather|grandpa|masculine|he|his)\b/],
   ['gender', 'female', /\b(woman|women|female|lady|girl|mother|mum|mom|grandmother|grandma|feminine|she|her)\b/],
-  ['age', 'child', /\b(child|kid|little)\b/],
+  // An age is matched as a whole phrase before its single words: "young adult" is one age, not "young" and an "adult"
+  // the model cannot do.
+  ['age', 'child', /\b(young child|small child|little (boy|girl)|child|kid|little)\b/],
   ['age', 'teenager', /\b(teen|teens|teenage|teenager|adolescent)\b/],
-  ['age', 'middle-aged', /\b(middle[- ]aged|mature|forties|fifties)\b/],
-  ['age', 'elderly', /\b(old|older|elderly|(?<!-)aged|senior|grandfather|grandmother|grandpa|grandma)\b/],
-  ['age', 'young adult', /\b(young|youthful|twenties)\b/],
+  ['age', 'middle-aged', /\b(middle[- ]aged( adult)?|mature( adult)?|forties|fifties)\b/],
+  ['age', 'elderly', /\b(older adult|old|older|elderly|(?<!-)aged|senior|grandfather|grandmother|grandpa|grandma)\b/],
+  ['age', 'young adult', /\b(young adult|young|youthful|twenties)\b/],
   ['pitch', 'very low pitch', /\b(very (deep|low)|booming)\b/],
   ['pitch', 'very high pitch', /\b(very high|squeaky)\b/],
   ['pitch', 'low pitch', /\b(deep|low|bass|baritone|gravelly)\b/],
@@ -108,14 +110,18 @@ export function designOf(text: unknown): Design {
   if (!said) return { instruct: DEFAULT_DESIGN, kept: DEFAULT_DESIGN.split(', '), dropped: [] };
   const taken = new Set<string>();
   const kept: string[] = [];
-  let rest = said;
+  // What was matched is marked on the description as said, not cut out of a copy one entry at a time: "little girl"
+  // is a child even though "girl" was already read as female, and neither word is left over to report.
+  const used = new Array<boolean>(said.length).fill(false);
   for (const [kind, value, words] of DESIGN) {
-    if (!words.test(said)) continue;
-    rest = rest.replace(new RegExp(words.source, 'g'), ' ');
+    const found = [...said.matchAll(new RegExp(words.source, 'g'))];
+    if (!found.length) continue;
+    for (const match of found) used.fill(true, match.index, match.index + match[0].length);
     if (taken.has(kind)) continue;
     taken.add(kind);
     kept.push(value);
   }
+  const rest = said.split('').map((char, at) => (used[at] ? ' ' : char)).join('');
   const dropped = [...new Set(rest.split(/[^a-z-]+/).filter((word) => word.length > 1 && !FILLER.has(word)))];
   // Nothing it could use: the house voice rather than a random one, so two takes of the same card sound alike.
   if (!kept.length) return { instruct: DEFAULT_DESIGN, kept: DEFAULT_DESIGN.split(', '), dropped };

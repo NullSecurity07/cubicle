@@ -33,28 +33,57 @@ export const retainPrompt = (today: number) => `You read one exchange between a 
   + 'Write NONE when there is nothing lasting. No preamble.';
 
 const SMALL = new Set('the a an and or but of to in on at for with by from as is are was were be been it its this that these those we you they he she i our your their my me us them has have had do does did will would can could should not no so if then than there here what which who when where how about into over just also very really'.split(' '));
-const wordsOf = (text: string) => (text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter((word) => !SMALL.has(word));
+// A day, a month or a year, written any of the ways the local model writes them: "1 October 2026", "24 Sept 2026",
+// "Oct 1, 2026", "2026-10-01", "Thursday". A date is not what a fact is about, so it never counts as one of its words.
+const MONTH = 'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?';
+const DATE = `(?:\\d{4}-\\d{1,2}-\\d{1,2}|(?:\\d{1,2}(?:st|nd|rd|th)?\\s+)?(?:${MONTH})\\.?(?:\\s+\\d{1,2}(?:st|nd|rd|th)?\\b)?,?(?:\\s+\\d{4})?|(?:19|20)\\d{2}|(?:mon|tues|wednes|thurs|fri|satur|sun)day)`;
+const DATES = new RegExp(`\\b${DATE}\\b`, 'giu');
+const LEADING_DATE = new RegExp(`^${DATE}\\s*[-–—:·|,]\\s*`, 'iu');
+const undated = (text: string) => text.replace(DATES, ' ');
+const wordsOf = (text: string) => (undated(text).toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).filter((word) => !SMALL.has(word));
+const numbersOf = (text: string): string[] => undated(text).match(/\d+(?:[.,]\d+)?/g) ?? [];
 // A note's words without its date and its mark: what the fact itself says.
 const bodyOf = (line: string) => line.replace(/^\s*-\s*/, '').replace(/^\d{1,2} \p{L}{3,9} \d{4} · /u, '').replace(KEPT_MARK, '').trim();
+const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// What a line says once its dates and numbers are gone, counted in words.
+const wordCount = (line: string) => undated(line).split(/\s+/).filter((word) => /\p{L}/u.test(word)).length;
 
 // The model's answer as lines worth keeping. A bullet or a number in front goes; a line that only introduces the
 // others, a NONE, and anything too long to be one fact go too. An answer that starts with NONE is NONE: on the live
 // check the local model wrote "NONE", then the day and the person's name under it, as if they were facts.
-// A line of one or two words is a label, not a fact.
-export function parseFacts(raw: string): string[] {
+// qwen2.5:7b also put the day in front of a line ("24 September 2026 - Our first-year…"), echoed the exchange with its
+// speaker in front ("Maya: Got it…"), wrote a bare "1 October 2026" and a label with only a day after it ("Effective
+// date: 1 Oct 2026"). The day and the speaker in front go; a line of fewer than three words once its dates and
+// numbers are gone is a label, not a fact.
+export function parseFacts(raw: string, speakers: string[] = []): string[] {
+  const names = speakers.map((name) => name.trim()).filter(Boolean).map(escape);
+  const speaker = names.length ? new RegExp(`^(?:${names.join('|')})\\s*:\\s*`, 'iu') : null;
   const lines = raw.split('\n').map((line) => line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').replace(/^["']|["']$/g, '').trim()).filter(Boolean);
   if (/^none\b/i.test(lines[0] ?? '')) return [];
-  return lines.filter((line) => !/^none\b/i.test(line) && !line.endsWith(':') && line.length <= LINE_CHARS && line.split(/\s+/).length >= 3).slice(0, MOST);
+  return lines
+    .map((line) => { const bare = line.replace(LEADING_DATE, ''); return (speaker ? bare.replace(speaker, '') : bare).trim(); })
+    .filter((line) => !/^none\b/i.test(line) && !line.endsWith(':') && line.length <= LINE_CHARS)
+    // "Effective date: 1 Oct 2026": a label and a day, nothing else.
+    .filter((line) => !/^[^:]{1,40}:[\s\p{P}]*$/u.test(undated(line)))
+    .filter((line) => wordCount(line) >= 3)
+    .slice(0, MOST);
 }
 
-// Already in the notes: most of this fact's words are in one line there. Matched on words, so "the price is 19 a
-// month" and "price: 19 a month" are one fact.
+// Already in the notes: most of this fact's words are in one line there, the person's own remember lines included.
+// Matched on words without dates, so "the price is 19 a month" and "price: 19 a month" are one fact, and the same
+// line with a day in front is still the same line. A number the line does not have is news: a changed price is not
+// the price already kept.
 export function isKnown(fact: string, notes: string): boolean {
   const mine = [...new Set(wordsOf(fact))];
   if (!mine.length) return true;
+  const numbers = numbersOf(fact);
   return notes.split('\n').some((line) => {
-    const held = new Set(wordsOf(bodyOf(line)));
-    return mine.filter((word) => held.has(word)).length / mine.length >= 0.8;
+    const body = bodyOf(line);
+    const held = new Set(wordsOf(body));
+    if (!held.size) return false;
+    const have = numbersOf(body);
+    if (numbers.some((number) => !have.includes(number))) return false;
+    return mine.filter((word) => held.has(word)).length / mine.length >= 0.7;
   });
 }
 
@@ -115,11 +144,13 @@ export function createRetain(deps: {
         { role: 'system', content: retainPrompt(now()) },
         { role: 'user', content: `Founder: ${payload.query.trim().slice(0, 2000)}\n\n${name}: ${payload.reply.text.trim().slice(0, 3000)}` },
       ]);
-      const facts = parseFacts(raw);
+      const facts = parseFacts(raw, [name, 'Founder']);
       if (!facts.length) return [];
       const docs = await Promise.all(readableDocIds(stage, roomId).map((id) => deps.store.readDoc(id).catch(() => '')));
       const kept: string[] = [];
       for (const fact of facts) {
+        // Read again right before each line is written, not once before the model was asked: a remember from this
+        // same turn, and the line kept just before, are in the notes by now.
         const notes = (await deps.memory.read(roomId)).notes;
         if (isKnown(fact, notes) || fromDoc(fact, docs)) continue;
         // Through the same door as the remember tool, so its cap and its dedupe hold here too. Full is the end.
