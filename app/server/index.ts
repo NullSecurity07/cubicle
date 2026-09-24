@@ -65,6 +65,7 @@ import { taskTools } from './tools/tasks.ts';
 import { teamTools, type Consult } from './tools/team.ts';
 import { browserSession, webTools } from './tools/web.ts';
 import { createUsage } from './usage.ts';
+import { fileRoutes } from './routes/files.ts';
 
 const root = resolve(import.meta.dirname, '../..');
 try { process.loadEnvFile(resolve(root, '.env')); } catch { /* no .env: only the fake model will work */ }
@@ -306,6 +307,7 @@ const learner = createLearner({
 });
 seams.on('turn:after', learner.after);
 const curator = createCurator(skills);
+const files = fileRoutes({ store });
 setInterval(() => { void runs.tick().catch(() => {}); void curator.tick().catch(() => {}); void extras.tick(); }, 30_000).unref();
 
 // Started by the desktop shell: leave when the shell does, even if it was killed.
@@ -409,7 +411,8 @@ async function chat(roomId: string, text: string, res: ServerResponse, extra: { 
 
 createServer(async (req, res) => {
   try {
-    const path = new URL(req.url ?? '/', 'http://localhost').pathname;
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    const path = url.pathname;
     const refused = guard({ path, method: req.method ?? 'GET', headers: req.headers }, own);
     if (refused) return json(res, 403, { error: refused });
     const doc = /^\/api\/docs\/([^/]+)$/.exec(path)?.[1];
@@ -430,8 +433,8 @@ createServer(async (req, res) => {
       return;
     }
     if (path === '/api/stage' && req.method === 'PUT') {
-      const [before, next] = [await store.loadStage(), (await body(req)) as Stage];
-      await store.saveStage(next);
+      // In turn with every change made here, and keeping whatever one of those put down that this window has not heard of.
+      const { before, next } = await store.putStage((await body(req)) as Stage);
       // The window's one feed follows the stage: a board card put down here is live before this answer goes back.
       events.restage(next);
       // A browser or source card that left the stage takes its Chrome session with it.
@@ -665,28 +668,7 @@ createServer(async (req, res) => {
       if (busy.has(cut[1])) return json(res, 409, { error: 'this person is still replying' });
       return json(res, 200, await store.cutChat(cut[1], cut[2], false));
     }
-    if (path === '/api/files' && req.method === 'POST') {
-      const name = new URL(req.url ?? '/', 'http://localhost').searchParams.get('name') ?? 'file';
-      const data = await raw(req, 15_000_000);
-      const saved = await store.saveUpload(name, data);
-      return json(res, 200, { path: saved, type: typeOf(saved), size: data.length });
-    }
-    if (path.startsWith('/api/files/') && req.method === 'GET') {
-      const name = decodeURIComponent(path.slice('/api/files/'.length));
-      const bytes = await store.readFileBytes(name).catch(() => null);
-      if (!bytes) return json(res, 404, { error: 'no such file' });
-      // Files may hold anything a person or a page produced: never let one run as a page of this app.
-      const headers = { 'content-type': typeOf(name), 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox", 'x-content-type-options': 'nosniff', 'cache-control': 'no-cache', 'accept-ranges': 'bytes' };
-      // A player asks for a piece at a time, and will not play or seek a sound or a video that answers with the lot.
-      const piece = rangeOf(Array.isArray(req.headers.range) ? req.headers.range[0] : req.headers.range, bytes.length);
-      if (piece === 'bad') { res.writeHead(416, { ...headers, 'content-range': `bytes */${bytes.length}` }); return res.end(); }
-      if (piece) {
-        res.writeHead(206, { ...headers, 'content-range': `bytes ${piece.from}-${piece.to}/${bytes.length}`, 'content-length': String(piece.to - piece.from + 1) });
-        return res.end(bytes.subarray(piece.from, piece.to + 1));
-      }
-      res.writeHead(200, { ...headers, 'content-length': String(bytes.length) });
-      return res.end(bytes);
-    }
+    if (await files(req, res, path, url)) return;
     const remembered = /^\/api\/rooms\/([^/]+)\/memory$/.exec(path)?.[1];
     if (remembered && req.method === 'GET') { const { notes, summary } = await memory.read(remembered); return json(res, 200, { notes, summary }); }
     if (remembered && req.method === 'PUT') { await memory.write(remembered, await body(req)); return json(res, 200, { ok: true }); }

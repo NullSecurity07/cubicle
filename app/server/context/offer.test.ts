@@ -15,6 +15,7 @@ import { createMail, fakeMailHttp } from '../mail.ts';
 import { wireTools } from '../providers.ts';
 import { wordEmbedder, createRecall } from '../recall.ts';
 import { createSkills } from '../skills.ts';
+import { createSources } from '../sources.ts';
 import { createStore } from '../store.ts';
 import { decisionTools } from '../tools/decisions.ts';
 import { docTools } from '../tools/docs.ts';
@@ -29,6 +30,8 @@ import { recallTools } from '../tools/recall.ts';
 import type { Tool } from '../tools/registry.ts';
 import { memoryTools } from '../tools/remember.ts';
 import { skillTools } from '../tools/skills.ts';
+import { sourceTools } from '../tools/sources.ts';
+import { runTool } from '../tools/registry.ts';
 import { taskTools } from '../tools/tasks.ts';
 import { teamTools } from '../tools/team.ts';
 import { webTools } from '../tools/web.ts';
@@ -76,8 +79,9 @@ describe('what a person is offered', () => {
       + ` · fully wired room ${size(wholly)} (${wholly.length} tools)`);
     expect(size(mine) + told).toBeLessThan(size(all) / 2);
     // A person alone on the stage keeps what needs nothing: the web, the files, their notes, the decisions, the playbook.
+    // Making a document is always offered, and so is writing to the one just made.
     expect(mine.map((tool) => tool.name)).toEqual([
-      'create_doc', 'list_files', 'read_file', 'write_file', 'web_search', 'web_fetch', 'run_code',
+      'read_doc', 'write_doc', 'append_doc', 'create_doc', 'list_files', 'read_file', 'write_file', 'web_search', 'web_fetch', 'run_code',
       'propose_decision', 'read_decision', 'remember', 'recall', 'use_skill', 'note_founder',
     ]);
     // Wired to one of everything, and with mail set up, nothing at all is taken away.
@@ -94,10 +98,13 @@ describe('what a person is offered', () => {
       // A card on the stage that nobody drew a wire to is nobody's.
       expect(has({ ...withCard(kind), wires: [] }, 'marketing', name)).toBe(false);
     }
-    // Writing a document needs one connected; making a new one never did.
+    // Writing a document needs one connected, or one made this turn, which is only possible where create_doc is offered.
     expect(has(seedStage, 'marketing', 'write_doc')).toBe(true);
-    expect(has(seedStage, 'build', 'write_doc')).toBe(false);
+    expect(has(seedStage, 'build', 'write_doc')).toBe(true);
     expect(has(seedStage, 'build', 'create_doc')).toBe(true);
+    const noMaking = all.filter((tool) => tool.name !== 'create_doc');
+    expect(offered(noMaking, seedStage, 'build').some((tool) => tool.name === 'write_doc')).toBe(false);
+    expect(offered(noMaking, seedStage, 'marketing').some((tool) => tool.name === 'append_doc')).toBe(true);
     // Somebody to ask, and a mailbox to send from.
     expect(has({ ...seedStage, wires: [...seedStage.wires, wire('t', 'marketing', 'build')] }, 'marketing', 'ask_person')).toBe(true);
     expect(has(seedStage, 'marketing', 'ask_person')).toBe(false);
@@ -120,5 +127,34 @@ describe('what a person is offered', () => {
       // By whole words: the line that says what to connect talks about a browser card, which is not the browse tool.
       for (const tool of all) expect([tool.name, new RegExp(`\\b${tool.name}\\b`).test(system)]).toEqual([tool.name, mine.includes(tool)]);
     }
+  });
+
+  it('offers searching inside a trusted website only once there is one on the stage, wired or not', async () => {
+    const tools = sourceTools(createBrowser(fakeRunner), createSources(await mkdtemp(join(tmpdir(), 'offer-sources-'))));
+    const names = (stage: Stage) => offered(tools, stage, 'marketing').map((tool) => tool.name);
+    expect(names(bare)).toEqual(['propose_source']);
+    const source = { ...card('site', 'source'), url: 'https://startups.rip', about: 'Why startups died' } as Card;
+    expect(names({ ...bare, cards: [source] })).toEqual(['search_source', 'propose_source']);
+  });
+
+  it('lets a person in a room with no documents write to the one they just made, and to nothing else', async () => {
+    const store = createStore(await mkdtemp(join(tmpdir(), 'offer-docs-')));
+    const stage: Stage = { ...(await store.loadStage()), wires: [] };
+    const mine = offered(docTools, stage, 'build');
+    expect(mine.map((tool) => tool.name)).toEqual(['read_doc', 'write_doc', 'append_doc', 'create_doc']);
+    const context = { stage, roomId: 'build', store, granted: new Map<string, string>() };
+    expect((await runTool(mine, 'create_doc', JSON.stringify({ title: 'Launch plan', text: 'v1' }), context)).ok).toBe(true);
+    // Its card and its wire are on the stage whether or not a window is open to put them there.
+    const saved = await store.loadStage();
+    const made = saved.docs.find((one) => one.title === 'Launch plan')!;
+    expect(saved.wires).toContainEqual(expect.objectContaining({ id: `build-${made.id}`, from: 'build', to: made.id }));
+    expect(saved.docs.filter((one) => one.id !== made.id).some((one) => Math.abs(one.x - made.x) < 380 && Math.abs(one.y - made.y) < 340)).toBe(false);
+    const added = await runTool(mine, 'append_doc', JSON.stringify({ doc: 'Launch plan', text: 'v2' }), context);
+    expect(added).toMatchObject({ ok: true, effect: { kind: 'doc-changed' } });
+    // The company's own documents are still out of reach until the founder draws a wire.
+    const refused = await runTool(mine, 'write_doc', JSON.stringify({ doc: 'Brand doc', text: 'x' }), context);
+    expect(refused.ok).toBe(false);
+    expect(refused.text).toMatch(/no connected document is called "Brand doc"/);
+    expect(await store.readDoc('brand-doc')).toContain('What we are building');
   });
 });

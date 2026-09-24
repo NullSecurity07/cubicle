@@ -136,7 +136,9 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
     : '- A browser card the founder watches live. Use browse for anything that needs clicking, typing or being signed in.'));
   // Of the things a room can be given, the ones nobody gave this one: worked out from the tools really offered, so
   // it stays true whoever narrowed the list. Nothing is said to somebody who was offered no tools at all.
-  const cannot = toolNames.length ? CONNECT.filter(([name]) => !toolNames.includes(name)).map(([, what]) => what) : [];
+  // Writing documents is offered to anybody who may make one; the founder still has to wire one to them before
+  // they can change the company's own.
+  const cannot = toolNames.length ? CONNECT.filter(([name]) => !toolNames.includes(name) || (name === 'write_doc' && !mine.length)).map(([, what]) => what) : [];
   // What never changes goes first and what changes every turn goes last, because a provider's prefix cache keeps
   // whatever it recognises from the start of the prompt: who this person is, then the rules, then the documents,
   // then the cards, and only at the end the decisions, the memory and what colleagues said lately. The playbook
@@ -148,9 +150,11 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
     'Reply in short markdown: brief paragraphs, lists where they help, a table only for real comparisons.',
     toolNames.length
       ? `You can act with these tools: ${toolNames.join(', ')}. Use one when the founder asks for the work itself, not for advice about it. `
-        + (toolNames.includes('write_doc')
-          ? `You may change only the documents connected to your room${mine.length ? ` (${mine.map((id) => `"${stage.docs.find((doc) => doc.id === id)!.title}"`).join(', ')})` : ''}, with write_doc or append_doc, naming the document by its title. `
+        + (toolNames.includes('write_doc') && mine.length
+          ? `You may change only the documents connected to your room (${mine.map((id) => `"${stage.docs.find((doc) => doc.id === id)!.title}"`).join(', ')}), with write_doc or append_doc, naming the document by its title. `
             + 'Their text is already below: never look for a document with read_file or list_files, which only see the separate shared files folder. '
+          // Nothing wired, but a document made in this turn is theirs to go on writing.
+          : toolNames.includes('write_doc') && toolNames.includes('create_doc') ? 'A document you make with create_doc is yours to go on writing in this turn, with write_doc or append_doc, naming it by its title. '
           : '')
         + 'For anything on the web, search and read with all your queries or addresses in one call. Say where a fact came from. '
         + 'The founder sees a receipt for every tool call, and work without a receipt did not happen: never write that you saved, created or changed '

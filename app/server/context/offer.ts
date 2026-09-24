@@ -1,18 +1,24 @@
 import type { Card, Stage } from '../../shared/model.ts';
+import { sourceCards } from '../../shared/sources.ts';
 import { colleagueIds, wired, wiredDocIds } from '../prompt.ts';
 import type { Tool } from '../tools/registry.ts';
 
 // What one room can reach: the kinds of card wired to it, whether it may write a document, whether anybody is there
-// to ask. Worked out once, because a turn asks this of every tool on the list.
-type Reach = { kinds: Set<Card['kind']>; docs: boolean; colleagues: boolean };
+// to ask, whether there is a trusted website anywhere on the stage to search inside. Worked out once, because a turn
+// asks this of every tool on the list.
+// `docs` is also true when the person may make a document this turn: one made with create_doc is theirs to write and
+// add to straight away, and a room with nothing wired to it is exactly where that happens. The doc tools themselves
+// still refuse any document that is neither wired to the person nor made by them in this turn.
+type Reach = { kinds: Set<Card['kind']>; docs: boolean; colleagues: boolean; sources: boolean };
 
-const reachOf = (stage: Stage, roomId: string): Reach => {
+const reachOf = (stage: Stage, roomId: string, tools: Tool[]): Reach => {
   const cards = stage.cards ?? [];
   const mine = new Set(wired(stage, roomId, cards.map((card) => card.id)));
   return {
     kinds: new Set(cards.filter((card) => mine.has(card.id)).map((card) => card.kind)),
-    docs: wiredDocIds(stage, roomId).length > 0,
+    docs: wiredDocIds(stage, roomId).length > 0 || tools.some((tool) => tool.name === 'create_doc'),
     colleagues: colleagueIds(stage, roomId).length > 0,
+    sources: sourceCards(cards).length > 0,
   };
 };
 
@@ -38,12 +44,14 @@ const NEEDS: Record<string, (reach: Reach, tool: Tool) => boolean> = {
   read_doc: (reach) => reach.docs,
   write_doc: (reach) => reach.docs,
   append_doc: (reach) => reach.docs,
+  // A source is searched whether or not it is wired to anybody; with none on the stage the call can only fail.
+  search_source: (reach) => reach.sources,
   // Mail is the one that is not on the stage: a tool that already knows it cannot work is not worth a schema either.
   send_email: (_reach, tool) => !tool.ready?.(),
   read_inbox: (_reach, tool) => !tool.ready?.(),
 };
 
 export function offered(tools: Tool[], stage: Stage, roomId: string): Tool[] {
-  const reach = reachOf(stage, roomId);
+  const reach = reachOf(stage, roomId, tools);
   return tools.filter((tool) => NEEDS[tool.name]?.(reach, tool) ?? true);
 }
