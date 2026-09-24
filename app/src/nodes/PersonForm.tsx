@@ -1,10 +1,9 @@
-import { useEffect, useState } from 'react';
-import type { ModelInfo } from '../../shared/model';
+import { useState } from 'react';
 import { GENDERS, type Gender, guessGender, poolsOf, voiceFor, type VoiceBy } from '../../shared/voices';
-import { getModels } from '../api';
 import { everyoneIn, useFlowPick } from '../flow';
 import { SLICES } from '../slices';
 import { useVoices } from './MediaCards';
+import { useModels } from '../models';
 
 export type Person = { name: string; role: string; brief: string; model?: string; gender?: Gender; voice?: string; voiceBy?: VoiceBy };
 
@@ -12,14 +11,13 @@ export type Person = { name: string; role: string; brief: string; model?: string
 // today; the gender is guessed from the name the moment it is typed, and the voice follows from it.
 export function PersonForm({ id, person, onSave, onCancel }: { id: string; person: Person; onSave: (next: Person) => void; onCancel?: () => void }) {
   const [form, setForm] = useState({ ...person, model: person.model ?? 'auto' });
-  const [models, setModels] = useState<ModelInfo[]>([]);
+  const models = useModels() ?? [];
   // A voice the founder chose by hand in this sitting is theirs: changing gender after that leaves it alone.
   const [picked, setPicked] = useState(false);
   const [allVoices, setAllVoices] = useState(false);
   const voices = useVoices();
   // Only the people and how they sound: a card dragged elsewhere does not draw the form again.
   const everyone = useFlowPick(({ nodes }) => everyoneIn(nodes));
-  useEffect(() => { getModels().then(setModels).catch(() => {}); }, []);
   const ready = form.name.trim() && form.role.trim();
 
   const gender = form.gender ?? guessGender(form.name);

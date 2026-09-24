@@ -1,9 +1,6 @@
 import { Panel } from '@xyflow/react';
 import { useEffect, useState } from 'react';
 import { preset, type AppKey } from '../shared/apps';
-import type { ModelInfo } from '../shared/model';
-import { getModels } from './api';
-import { listen } from './bus';
 import { useAttention } from './overlay/attention';
 import { overlay } from './overlay/store';
 import { useAddCard, type CardKind } from './addCard';
@@ -11,16 +8,12 @@ import { openFrameworks } from './frameworks';
 import { openLibrary } from './library';
 import { BlocksIcon } from './nodes/FrameworksPanel';
 import { keyHint, pressed } from './keys';
+import { useModels } from './models';
 
 // One ring per model provider: how much of today's free quota is left. Amber under a fifth, red when gone.
 function Quota() {
-  const [models, setModels] = useState<ModelInfo[]>([]);
+  const models = useModels() ?? [];
   const [open, setOpen] = useState(false);
-  useEffect(() => {
-    const load = () => { getModels().then(setModels).catch(() => {}); };
-    load();
-    return listen('usage', load);
-  }, []);
   if (!models.length) return null;
   const tone = (left: number) => (left <= 0.05 ? 'out' : left < 0.2 ? 'low' : 'fine');
   return (

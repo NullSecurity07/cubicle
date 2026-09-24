@@ -4,6 +4,7 @@ import { scoreLine, staleWhy } from '../../shared/evals';
 import type { Framework } from '../../shared/frameworks';
 import type { Note } from '../../shared/library';
 import { getEvals, promoteRun } from '../api';
+import { usePoll } from '../poll';
 
 // What a framework scored, and the history of every time it was asked. This is the part of the panel that makes a
 // framework a building block rather than a folder: a number the founder can see before they place a team, a reason
@@ -39,27 +40,15 @@ export function Runs({ framework, watch, onChanged }: { framework: Framework; wa
   // So a finished run refreshes the frameworks once, rather than on every look at a job that is already over.
   const told = useRef(0);
 
-  useEffect(() => {
-    let gone = false;
-    let timer: ReturnType<typeof setInterval> | undefined;
-    const look = async () => {
-      try {
-        const view = await getEvals(framework.id);
-        if (gone) return;
-        setHeld(view);
-        // Nothing moves on its own once the run is over, so nothing is asked either — and the panel is told once,
-        // because the framework it is drawing may have just been given a new score.
-        if (view.job?.state !== 'testing') {
-          clearInterval(timer);
-          if (view.job && told.current !== watch) { told.current = watch; void onChanged(); }
-        }
-      } catch (error) { if (!gone) setProblem((error as Error).message); }
-    };
-    void look();
-    timer = setInterval(() => { void look(); }, HOW_OFTEN);
-    return () => { gone = true; clearInterval(timer); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- a new look is wanted when a run starts, not when the panel redraws
-  }, [framework.id, watch]);
+  // A new watch is wanted when a run starts, not when the panel redraws.
+  usePoll(() => getEvals(framework.id), HOW_OFTEN, (view) => {
+    setHeld(view);
+    // Nothing moves on its own once the run is over, so nothing is asked either — and the panel is told once,
+    // because the framework it is drawing may have just been given a new score.
+    if (view.job?.state === 'testing') return true;
+    if (view.job && told.current !== watch) { told.current = watch; void onChanged(); }
+    return false;
+  }, (error) => setProblem(error.message), [framework.id, watch]);
 
   useEffect(() => { lines.current?.scrollTo({ top: lines.current.scrollHeight }); }, [held?.job?.lines.length]);
 

@@ -1,16 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { Case, Framework } from '../../shared/frameworks';
 import { sizeLine } from '../../shared/frameworks';
-import { getModels, removeFramework, rerunEvals, saveFramework } from '../api';
+import { removeFramework, rerunEvals, saveFramework } from '../api';
 import { refreshFrameworks, useFrameworks, usePlaceFramework } from '../frameworks';
 import { useNotes } from '../library';
 import { overlay } from '../overlay/store';
 import { PanelShell } from '../overlay/PanelShell';
 import { ForgeView } from './ForgeView';
 import { Runs, ScorePill } from './EvalsView';
-import { toFlow, type StageNode } from '../stage';
-import { useFlushStage } from '../sync';
 import { pressed } from '../keys';
+import { useModels } from '../models';
 
 // The icon frameworks wear in the dock and here: blocks stacked into a group, the shape of a team that lands in one
 // press. Drawn in the same stroked line as everything else on the dock.
@@ -135,10 +134,9 @@ export function FrameworksPanel() {
   const [busy, setBusy] = useState('');
   // Which models are set up here right now. A scorecard turns amber when the model that made it has gone, so the
   // panel has to know what is configured, and it is one small question asked once.
-  const [models, setModels] = useState<string[]>([]);
+  const models = (useModels() ?? []).map((model) => model.name);
   // Bumped when a rerun starts, so the runs list under that framework starts watching again.
   const [watch, setWatch] = useState(0);
-  useEffect(() => { getModels().then((held) => setModels(held.map((model) => model.name))).catch(() => {}); }, []);
   // Which framework is being asked "really?". Throwing a team away takes two presses, in the place the first one was.
   const [sure, setSure] = useState<string | null>(null);
   // The forge lives inside this panel rather than beside it in the dock: forging a team and keeping one are the same

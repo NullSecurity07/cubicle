@@ -9,6 +9,7 @@ import { SLICES } from '../slices';
 import { useFlushStage } from '../sync';
 import { Message } from './Message';
 import { pressed } from '../keys';
+import { SEND_ICON, STOP_ICON } from './icons';
 
 export type Status = 'idle' | 'thinking' | 'waiting' | 'error';
 type Live = { text: string; tools: ToolEvent[] };
@@ -226,11 +227,11 @@ export function Chat({ id, name, role, onStatus }: { id: string; name: string; r
         <textarea ref={box} rows={1} value={draft} placeholder={`Ask ${name}…`} onChange={(event) => setDraft(event.target.value)} onKeyDown={onKeyDown} {...(editing ? { 'data-holds-escape': '' } : {})} />
         {thinking ? (
           <button type="button" className="ask__stop" aria-label="Stop" title="Stop" onClick={() => stop.current?.abort()}>
-            <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4.5" y="4.500" width="7" height="7" rx="1.5" fill="currentColor" /></svg>
+            {STOP_ICON}
           </button>
         ) : (
           <button type="button" aria-label="Send" disabled={busy || (!draft.trim() && !files.length)} onClick={() => void send()}>
-            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            {SEND_ICON}
           </button>
         )}
       </div>

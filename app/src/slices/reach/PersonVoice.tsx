@@ -3,7 +3,8 @@ import { voiceFor, voiceNamed } from '../../../shared/voices';
 import { useVoices } from '../../nodes/MediaCards';
 import { everyoneIn, useFlowPick } from '../../flow';
 import type { RoomData } from '../../stage';
-import { SPEAKER, STOP } from './Speak';
+import { STOP_ICON } from '../../nodes/icons';
+import { SPEAKER } from './Speak';
 import { quiet, say, spokenOnce, useSaying, useVoiceOn, VOICE_SIZE } from './voice';
 
 // How this person sounds, beside who they are wired to and what they remember. It is only worth saying while their
@@ -39,7 +40,7 @@ export function HearVoice({ text, voice }: { text: string; voice: string }) {
   const what = mine ? 'Stop' : spokenOnce() ? 'Hear this voice' : `Hear this voice (it runs on this machine; ${VOICE_SIZE} is fetched the first time)`;
   return (
     <span className="reach-hear">
-      <button type="button" aria-label={what} title={what} disabled={!voice} onClick={() => void press()}>{mine ? STOP : SPEAKER}</button>
+      <button type="button" aria-label={what} title={what} disabled={!voice} onClick={() => void press()}>{mine ? STOP_ICON : SPEAKER}</button>
       {getting && <span className="reach-hear__note">getting the voice ready — {VOICE_SIZE} the first time…</span>}
       {problem && <span className="reach-hear__note reach-hear__problem">{problem}</span>}
     </span>
