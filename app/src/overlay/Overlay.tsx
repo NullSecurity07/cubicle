@@ -3,7 +3,8 @@ import { useEffect, useRef } from 'react';
 import type React from 'react';
 import { createPortal } from 'react-dom';
 import { NeedsPanel } from './NeedsPanel';
-import { CommandBar, KeysSheet } from './CommandBar';
+import { CommandBar } from './CommandBar';
+import { Cheatsheet } from './Cheatsheet';
 import { DecisionsPanel } from './DecisionsPanel';
 import { Guard } from './Guard';
 import { MessagesPanel } from './MessagesPanel';
@@ -11,12 +12,14 @@ import { FrameworksPanel } from '../nodes/FrameworksPanel';
 import { LibraryPanel, NotePanel } from '../nodes/LibraryPanel';
 import { PlaybookPanel } from '../nodes/PlaybookPanel';
 import { SLICES } from '../slices';
+import { held, pressed } from '../keys';
 import { overlay, setHostElement, useLayers } from './store';
 
 // The founder's views, by layer name.
-const PANELS: Record<string, () => React.JSX.Element> = { needs: NeedsPanel, messages: MessagesPanel, decisions: DecisionsPanel, playbook: PlaybookPanel, library: LibraryPanel, note: NotePanel, frameworks: FrameworksPanel, command: CommandBar, keys: KeysSheet };
-// Single keys that open a view, when nothing is open and nobody is typing.
-const OPENERS: Record<string, string> = { n: 'needs', m: 'messages', d: 'decisions', '/': 'command', '?': 'keys' };
+const PANELS: Record<string, () => React.JSX.Element> = { needs: NeedsPanel, messages: MessagesPanel, decisions: DecisionsPanel, playbook: PlaybookPanel, library: LibraryPanel, note: NotePanel, frameworks: FrameworksPanel, command: CommandBar, keys: Cheatsheet };
+// Keys that open a view, when nothing is open and nobody is typing, and the view each one opens.
+const opens = (event: KeyboardEvent) => (pressed(event, 'needs') ? 'needs' : pressed(event, 'messages') ? 'messages' : pressed(event, 'decisions') ? 'decisions'
+  : pressed(event, 'command-bar-slash') ? 'command' : pressed(event, 'cheatsheet') ? 'keys' : null);
 const focusHost = setHostElement('focus');
 
 // A browser card's live page takes every key while it is focused, as a text field would.
@@ -37,8 +40,8 @@ export function Overlay() {
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       // Something inside the layer may hold Escape for itself first (an edit in progress): it goes back one thing at a time.
-      if (event.key === 'Escape' && overlay.layers().length && !(event.target instanceof Element && event.target.closest('[data-holds-escape]'))) { event.preventDefault(); overlay.back(); return; }
-      if (event.key === 'Tab' && overlay.layers().length && top.current && !live(event.target)) {
+      if (pressed(event, 'back') && overlay.layers().length && !(event.target instanceof Element && event.target.closest('[data-holds-escape]'))) { event.preventDefault(); overlay.back(); return; }
+      if (pressed(event, 'next-stop') && overlay.layers().length && top.current && !live(event.target)) {
         const stops = [...top.current.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((stop) => stop.offsetParent !== null);
         if (!stops.length) return;
         const [first, last] = [stops[0], stops[stops.length - 1]];
@@ -47,11 +50,12 @@ export function Overlay() {
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
         return;
       }
-      // Ctrl K opens the command bar from anywhere, even while typing.
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); overlay.open({ kind: 'panel', name: 'command' }); return; }
-      const opener = OPENERS[event.key.length === 1 ? event.key.toLowerCase() : ''];
-      if (opener && !event.ctrlKey && !event.metaKey && !event.altKey && !typing(event.target) && (!overlay.layers().length || (opener === 'keys' && overlay.layers().at(-1)?.kind !== 'panel'))) { event.preventDefault(); overlay.open({ kind: 'panel', name: opener }); return; }
-      if (event.key.toLowerCase() !== 'f' || event.ctrlKey || event.metaKey || event.altKey || typing(event.target) || overlay.layers().length) return;
+      // The command bar opens from anywhere, even while typing.
+      if (pressed(event, 'command-bar')) { event.preventDefault(); overlay.open({ kind: 'panel', name: 'command' }); return; }
+      // The sheet may also open over a focused card, never over another view, and with ⌘ or Ctrl even from a field.
+      const opener = opens(event);
+      if (opener && (!typing(event.target) || (opener === 'keys' && held(event))) && (!overlay.layers().length || (opener === 'keys' && overlay.layers().at(-1)?.kind !== 'panel'))) { event.preventDefault(); overlay.open({ kind: 'panel', name: opener }); return; }
+      if (!pressed(event, 'focus-card') || typing(event.target) || overlay.layers().length) return;
       const chosen = getNodes().filter((node) => node.selected);
       if (chosen.length === 1) { event.preventDefault(); overlay.open({ kind: 'focus', id: chosen[0].id }); }
     }

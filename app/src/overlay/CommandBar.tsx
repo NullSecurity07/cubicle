@@ -7,7 +7,8 @@ import { fileUrl, getThreads, search, searchNotes } from '../api';
 import { emit } from '../bus';
 import { labelOf } from '../nodes/RoomSide';
 import type { StageNode } from '../stage';
-import { KEYS, suggest, type Action, type Suggestion } from './commands';
+import { suggest, type Action, type Suggestion } from './commands';
+import { capsOf, keysOf, pressed } from '../keys';
 import { openNote } from '../library';
 import { overlay, showDecision, showPlaybook, showThread } from './store';
 
@@ -91,9 +92,9 @@ export function CommandBar() {
   }
 
   function onKeyDown(event: React.KeyboardEvent) {
-    if (event.key === 'ArrowDown') { event.preventDefault(); setAt((at + 1) % Math.max(1, offered.length)); }
-    if (event.key === 'ArrowUp') { event.preventDefault(); setAt((at - 1 + offered.length) % Math.max(1, offered.length)); }
-    if (event.key === 'Enter' && offered[at]) { event.preventDefault(); run(offered[at].action); }
+    if (pressed(event, 'command-down')) { event.preventDefault(); setAt((at + 1) % Math.max(1, offered.length)); }
+    if (pressed(event, 'command-up')) { event.preventDefault(); setAt((at - 1 + offered.length) % Math.max(1, offered.length)); }
+    if (pressed(event, 'command-run') && offered[at]) { event.preventDefault(); run(offered[at].action); }
   }
 
   let section = '';
@@ -114,16 +115,10 @@ export function CommandBar() {
           );
         })}
       </ul>
-      <footer><span><kbd>↑</kbd><kbd>↓</kbd> move</span><span><kbd>Enter</kbd> run</span><span><kbd>Esc</kbd> close</span></footer>
+      <footer><span><Caps id="command-up" /><Caps id="command-down" /> move</span><span><Caps id="command-run" /> run</span><span><Caps id="back" /> close</span></footer>
     </section>
   );
 }
 
-export function KeysSheet() {
-  return (
-    <section className="command command--keys" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
-      <h2>Keyboard shortcuts</h2>
-      <dl>{KEYS.map((key) => <div key={key.keys}><dt>{key.keys.split(' ').map((part) => <kbd key={part}>{part}</kbd>)}</dt><dd>{key.what}</dd></div>)}</dl>
-    </section>
-  );
-}
+// The first key a shortcut answers to, as the key caps the founder sees on their own keyboard.
+const Caps = ({ id }: { id: string }) => <>{capsOf(keysOf(id)[0]).map((cap) => <kbd key={cap}>{cap}</kbd>)}</>;

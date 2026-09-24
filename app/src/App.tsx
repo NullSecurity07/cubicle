@@ -2,8 +2,8 @@ import {
   Background, BackgroundVariant, ConnectionLineType, ConnectionMode, ReactFlow,
   addEdge, useEdgesState, useNodesState, type Connection, type Edge,
 } from '@xyflow/react';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { getStage, putStage } from './api';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { getKeys, getStage, putStage } from './api';
 import { listen } from './bus';
 import { Dock } from './Dock';
 import { Missions } from './Missions';
@@ -12,6 +12,7 @@ import { nodeTypes } from './nodes';
 import { NoteDrop } from './nodes/LibraryCard';
 import { SelectionMenu } from './SelectionMenu';
 import { Overlay } from './overlay/Overlay';
+import { flowKeys, onOverrides, overridesVersion, setOverrides } from './keys';
 import { freeSpot } from './place';
 import { CARD, WIRE, fromFlow, toFlow, type StageNode } from './stage';
 import { SyncContext } from './sync';
@@ -20,6 +21,8 @@ function Canvas({ initial }: { initial: ReturnType<typeof toFlow> }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<StageNode>(initial.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initial.edges);
   const [connecting, setConnecting] = useState(false);
+  // The canvas's own keys come from the shortcut table, and change when the founder's keys.json arrives.
+  useSyncExternalStore(onOverrides, overridesVersion);
   const lastSaved = useRef(JSON.stringify(fromFlow(initial.nodes, initial.edges)));
 
   const onConnect = useCallback(
@@ -75,6 +78,9 @@ function Canvas({ initial }: { initial: ReturnType<typeof toFlow> }) {
       minZoom={0.25}
       maxZoom={2}
       proOptions={{ hideAttribution: true }}
+      deleteKeyCode={flowKeys('delete-cards')}
+      multiSelectionKeyCode={flowKeys('pick-several')}
+      selectionKeyCode={flowKeys('select-area')}
     >
       <Background variant={BackgroundVariant.Dots} gap={24} size={1.5} color="rgba(255, 255, 255, 0.24)" bgColor="transparent" />
       <Dock />
@@ -91,6 +97,8 @@ export default function App() {
   const [initial, setInitial] = useState<ReturnType<typeof toFlow> | null>(null);
   const [problem, setProblem] = useState('');
 
+  // The founder's own keys, if they wrote any. Without them, or without an answer, every key is the table's.
+  useEffect(() => { getKeys().then((found) => setOverrides(found.keys)).catch(() => {}); }, []);
   useEffect(() => { getStage().then((stage) => setInitial(toFlow(stage))).catch((error: Error) => setProblem(error.message)); }, []);
 
   return (

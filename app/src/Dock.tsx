@@ -10,6 +10,7 @@ import { useAddCard, type CardKind } from './addCard';
 import { openFrameworks } from './frameworks';
 import { openLibrary } from './library';
 import { BlocksIcon } from './nodes/FrameworksPanel';
+import { pressed } from './keys';
 
 // One ring per model provider: how much of today's free quota is left. Amber under a fifth, red when gone.
 function Quota() {
@@ -120,7 +121,7 @@ export function Dock() {
       <button type="button" aria-label="Add doc" title="Add doc" onClick={() => add('doc')}>
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.5 2.5h6L15 6v11.5H5.5zM11.5 2.5V6H15M8 10h4.5M8 13h4.5" /></svg>
       </button>
-      <div className="dock__more" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) close(); }} onKeyDown={(event) => { if (event.key === 'Escape') close(); }}>
+      <div className="dock__more" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) close(); }} onKeyDown={(event) => { if (pressed(event, 'cancel')) close(); }}>
         <button type="button" aria-label="More cards" aria-expanded={more} title="More cards" onClick={() => (more ? close() : setMore(true))}>
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.500v11M4.500 10h11" /></svg>
         </button>

@@ -3,6 +3,7 @@ import { parseSchedule, sayRepeat } from '../../../shared/automation';
 import type { Skill, Task } from '../../../shared/model';
 import { listSkills, setAutomation, type AutomationPatch } from './api';
 import './automation.css';
+import { pressed } from '../../keys';
 
 // What a task does without the founder: when it runs, whether it is a script rather than a person, the skill it works
 // from and the task it waits for. It lives inside the task view and uses that view's own labels and boxes, so it reads
@@ -41,7 +42,7 @@ export function Automation({ boardId, task, tasks, act }: { boardId: string; tas
         <input
           aria-label="When it runs" placeholder="every day at 9am" value={typed}
           onChange={(event) => setTyped(event.target.value)} onBlur={keep}
-          onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); keep(); } }}
+          onKeyDown={(event) => { if (pressed(event, 'send')) { event.preventDefault(); keep(); } }}
         />
       </label>
       {read && 'problem' in read && <p className="taskview__hint automation__problem">{read.problem}</p>}

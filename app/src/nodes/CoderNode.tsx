@@ -11,6 +11,7 @@ import { CoderModel } from './CoderModel';
 import { CardActions, Frame } from './Frame';
 import { Words } from './Rich';
 import './coder.css';
+import { pressed } from '../keys';
 
 type View = { lines: CoderLine[]; state: CoderState; permission: Asked | null; waiting: number };
 const SAID: Record<CoderState, string> = { idle: 'Idle', working: 'Working', waiting: 'Waiting for you', stopped: 'Stopped' };
@@ -168,7 +169,7 @@ export function CoderNode({ id, data, selected }: NodeProps<ProjectNodeType>) {
     if (!data.path.trim()) { setProblem('Set the folder first.'); return; }
     await attempt(async () => { await flushStage(); await askCoder(id, text, { path: data.path, model: data.model }); setDraft(''); });
   }
-  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } };
+  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => { if (pressed(event, 'send')) { event.preventDefault(); void send(); } };
   const openChanges = () => { setReport(false); setChanges(true); if (!focused) overlay.open({ kind: 'focus', id }); };
   const openReport = () => { setChanges(false); setReport(true); if (!focused) overlay.open({ kind: 'focus', id }); };
   async function mapFolder() {
