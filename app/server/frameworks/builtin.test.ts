@@ -178,6 +178,24 @@ describe('every built-in framework', () => {
       for (const key of people) expect(framework.dataset.some((held) => held.keys.includes(key)), `${dir}: ${key}`).toBe(true);
     }
   });
+
+  // An eval answers with no tools at all (a team is measured on its judgement, not on what it can fetch), so a case
+  // that can only be met by searching, reading a page or writing a doc is a case nobody can pass. The three teams
+  // that lean on tools test the rules that hold without them: asking first, refusing, never inventing, the shape.
+  it('asks nothing of the three tool-using teams that only a tool could do, one case per person', async () => {
+    const needsTool = /search_source|web_search|web_fetch|read_youtube|read_reddit|read_feed|\bsearches\b|\bopens? the\b|writes? .* into the .* doc|each with its link|ends with a link|linked\)/i;
+    for (const dir of ['launch-team', 'pitch-practice', 'due-diligence']) {
+      const framework = await loadOne(dir);
+      for (const held of framework.dataset) expect(held.rubric ?? '', `${dir}: ${held.id}`).not.toMatch(needsTool);
+      for (const room of framework.rooms) expect(framework.dataset.filter((held) => held.keys.includes(room.key)), `${dir}: ${room.key}`).toHaveLength(1);
+    }
+    const said = async (dir: string, key: string) => (await loadOne(dir)).dataset.find((held) => held.keys.includes(key))!.rubric!;
+    expect(await said('launch-team', 'benchmarks')).toMatch(/no revenue figure/i);
+    expect(await said('launch-team', 'writer')).toMatch(/asks for the story/i);
+    expect(await said('due-diligence', 'profiler')).toMatch(/gives no funding amount/i);
+    expect(await said('due-diligence', 'people')).toMatch(/no words in her mouth/i);
+    expect(await said('due-diligence', 'risks')).toMatch(/invents no third risk/i);
+  });
 });
 
 describe('the launch team', () => {

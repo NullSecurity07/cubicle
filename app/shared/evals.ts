@@ -7,7 +7,18 @@ import type { Note } from './library.ts';
 
 // One case, answered and scored. The same shape the forge writes, so a run written by a build and a run written by
 // "Rerun evals" are the same file and read by the same code.
-export type RunCase = { id: string; key: string; briefHash: string; output: string; scores: Record<string, number>; critique: string };
+// `judged: false` is a case no judge could read (every provider refused, or answered in the wrong shape); `failed` is a
+// case whose answer never came, with the sentence that said why. Neither scores anything: they are left out of every
+// mean, and a run holding one is never promoted on its own. Both are absent on a case that was simply scored.
+export type RunCase = {
+  id: string; key: string; briefHash: string; output: string; scores: Record<string, number>; critique: string;
+  judged?: false; failed?: string;
+};
+
+// Whether a case counts towards a score. The one rule every mean, every regression and every promotion goes through.
+export const counted = (one: { judged?: false; failed?: string }) => one.judged !== false && !one.failed;
+// A case that was not scored, as the panel lists it: which one, and why in one word.
+export type Unscored = { id: string; key: string; why: 'not judged' | 'failed' };
 
 // One experiment, kept beside the framework it was an experiment on. `previous` is the mean this run was measured
 // against, so a rejection can be read months later without the run it lost to still being there; `rejected` and
@@ -24,7 +35,7 @@ export type Regression = { id: string; key: string; was: number; now: number };
 // for. `regressed` is filled in for a rejected run, so the founder reads why without opening anything.
 export type RunLine = {
   at: number; mean: number; version: number; models: string[]; calls: number;
-  rejected?: true; forced?: true; previous?: number; regressed?: Regression[];
+  rejected?: true; forced?: true; previous?: number; regressed?: Regression[]; unscored?: Unscored[];
 };
 
 // What one framework's evals look like right now: what has been run, and what is running.

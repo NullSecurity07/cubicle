@@ -54,17 +54,17 @@ describe('whether a run may be promoted', () => {
   const was = run([kase('a', 'one', 1), kase('b', 'one', 0.6)]);
 
   it('promotes the first run there has ever been', () => {
-    expect(decide(was, null, undefined)).toEqual({ promote: true, regressed: [] });
+    expect(decide(was, null, undefined)).toEqual({ promote: true, regressed: [], unscored: [] });
   });
 
   it('promotes a run that is better everywhere', () => {
     const now = run([kase('a', 'one', 1), kase('b', 'one', 0.9)]);
-    expect(decide(now, was, was.mean)).toEqual({ promote: true, regressed: [] });
+    expect(decide(now, was, was.mean)).toEqual({ promote: true, regressed: [], unscored: [] });
   });
 
   it('promotes a tie: the same mean and nothing fallen is not a step back', () => {
     const now = run([kase('a', 'one', 1), kase('b', 'one', 0.6)]);
-    expect(decide(now, was, was.mean)).toEqual({ promote: true, regressed: [] });
+    expect(decide(now, was, was.mean)).toEqual({ promote: true, regressed: [], unscored: [] });
   });
 
   it('refuses a run whose mean fell, even by a little', () => {
@@ -117,5 +117,38 @@ describe('a run in a list', () => {
     const line = lineOf(run([kase('a', 'one', 0.5)], { calls: 4, rejected: true, previous: 1 }), [{ id: 'a', key: 'one', was: 1, now: 0.5 }]);
     expect(line).toEqual({ at: 1000, mean: 0.5, version: 1, models: ['groq'], calls: 4, rejected: true, previous: 1, regressed: [{ id: 'a', key: 'one', was: 1, now: 0.5 }] });
     expect(JSON.stringify(line)).not.toContain('said');
+  });
+});
+
+describe('a case nobody could score', () => {
+  const unjudged = (id: string, key: string): RunCase => ({ id, key, briefHash: 'h', output: 'said', scores: {}, critique: 'the judge fell over', judged: false });
+  const broke = (id: string, key: string): RunCase => ({ id, key, briefHash: 'h', output: '', scores: {}, critique: '', failed: 'no provider answered' });
+
+  it('is left out of the mean, not counted as nought and not as one', () => {
+    const cases = [kase('a', 'one', 0.5), unjudged('b', 'one'), broke('c', 'other')];
+    expect(byPersonOf(cases)).toEqual({ one: 0.5 });
+    expect(meanOfCases(cases)).toBe(0.5);
+    expect(meanOfCases([unjudged('b', 'one')])).toBe(0);
+  });
+
+  it('never lets a run be promoted on its own, however well the rest did', () => {
+    const now = run([kase('a', 'one', 1), unjudged('b', 'one')]);
+    expect(decide(now, null, undefined)).toEqual({ promote: false, regressed: [], unscored: [{ id: 'b', key: 'one', why: 'not judged' }] });
+    const written = settle(run([kase('a', 'one', 1), broke('c', 'one')]), null, undefined);
+    expect(written.promote).toBe(false);
+    expect(written.run.rejected).toBe(true);
+    expect(written.unscored).toEqual([{ id: 'c', key: 'one', why: 'failed' }]);
+  });
+
+  it('is never a regression, and never the thing a later case is measured against', () => {
+    expect(regressionsOf(run([unjudged('a', 'one')]), run([kase('a', 'one', 1)]))).toEqual([]);
+    expect(regressionsOf(run([kase('a', 'one', 0.2)]), run([unjudged('a', 'one')]))).toEqual([]);
+  });
+
+  it('is named in the list, with why in one word, and not counted on the scorecard', () => {
+    const held = run([kase('a', 'one', 1), unjudged('b', 'one'), broke('c', 'one')], { rejected: true });
+    expect(lineOf(held, []).unscored).toEqual([{ id: 'b', key: 'one', why: 'not judged' }, { id: 'c', key: 'one', why: 'failed' }]);
+    expect(scorecardOf(held).cases).toBe(1);
+    expect(lineOf(run([kase('a', 'one', 1)]), []).unscored).toBeUndefined();
   });
 });

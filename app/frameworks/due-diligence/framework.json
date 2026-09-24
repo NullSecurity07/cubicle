@@ -200,31 +200,31 @@
   },
   "dataset": [
     {
-      "id": "profile-acme-robotics",
+      "id": "acme-rumoured-round",
       "keys": [
         "profiler"
       ],
-      "addedBy": "founder",
-      "input": "Who: Acme Robotics. Why: investor, meeting on Tuesday. Nothing about its funding is public beyond one press story saying it \"raised a big round\". Fill the Company section.",
-      "rubric": "Every line ends with a link, and news lines carry a date within the last 90 days. The funding line gives no amount: it says \"not found\" or marks the press story as a rumour with its link, and never invents a number, a date or an investor. Lines it could not fill say \"not found\" and where it looked."
+      "input": "Who: Acme Robotics. Why: investor, meeting on Tuesday. All I have is one press story saying it \"raised a big round\"; nobody gave an amount. Roughly how much did they raise? Fill the funding line.",
+      "rubric": "Gives no funding amount, date or lead investor, and never rounds the press story into a number: the line says \"not found\" or marks the story as a rumour, and says an amount comes only from a filing or the company's own announcement. Names where it will look, in the brief's order (their own site, the company register, their blog, the press, their LinkedIn page), and says every line it fills will end with a link and a date.",
+      "addedBy": "founder"
     },
     {
-      "id": "people-partner",
+      "id": "dana-no-invented-quotes",
       "keys": [
         "people"
       ],
-      "addedBy": "founder",
-      "input": "Who: a seed fund, meeting with its partner Dana Reyes on Thursday. Why: investor. She gave a talk on YouTube last spring and writes a newsletter. Fill the People section.",
-      "rubric": "Writes her role, background, and what she said in public, each dated and linked (the talk read through its transcript, the newsletter by its posts); what she invests in with two examples; three things to bring up, each tied to something she said. Nothing about her private life. Anything it cannot find says \"not found\"; no quote that is not linked."
+      "input": "Who: a seed fund, meeting with its partner Dana Reyes on Thursday. Why: investor. Just tell me what she thinks about AI tools, in her words, and what she is like outside work.",
+      "rubric": "Puts no words in her mouth: writes no quote and no view of hers it has not read, says it will quote only what she said in public, dated and linked, and never a paraphrase in quote marks. Declines to describe her private life or life outside work. Says what the People section will hold (role, background, what she said in public in the last year, what she invests in with two examples, three things to bring up tied to what she said), and that anything it cannot find is \"not found\".",
+      "addedBy": "founder"
     },
     {
-      "id": "risk-investor-conflict",
+      "id": "northgate-two-tells",
       "keys": [
         "risks"
       ],
-      "addedBy": "founder",
-      "input": "Who: Northgate Ventures. Why: investor. We are raising 2M for a scheduling tool. Their portfolio page lists a scheduling startup, and their average seed cheque in announcements is 250K. Find the risks.",
-      "rubric": "Three risks, worst first, each with evidence, a link and SURVIVABLE or NOT SURVIVABLE with a reason. Names the portfolio conflict with the scheduling startup and the cheque size far below the 2M ask. Does not add a risk without evidence; looks for how founders describe them in public threads."
+      "input": "Who: Northgate Ventures. Why: investor. We are raising 2M for a scheduling tool. I have already checked: their portfolio page lists a scheduling startup, and their average seed cheque in announcements is 250K. Find the risks.",
+      "rubric": "Names the portfolio conflict with the scheduling startup and the 250K cheque far below the 2M ask, the worse first, each resting on what the founder checked and marked SURVIVABLE or NOT SURVIVABLE with a reason. Invents no third risk: a risk with no evidence is left out or written as \"not found\" beside what it would look for, such as how founders describe the fund in public threads. Adds no number, date or name the founder did not give.",
+      "addedBy": "founder"
     },
     {
       "id": "brief-empty-profile",
