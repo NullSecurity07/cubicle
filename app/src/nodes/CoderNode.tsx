@@ -12,6 +12,9 @@ import { CardActions, Frame } from './Frame';
 import { Words } from './Rich';
 import './coder.css';
 import { pressed } from '../keys';
+import { useAttempt } from '../attempt';
+import { SEND_ICON, STOP_ICON } from './icons';
+import { useGrowOnce } from '../flow';
 
 type View = { lines: CoderLine[]; state: CoderState; permission: Asked | null; waiting: number };
 const SAID: Record<CoderState, string> = { idle: 'Idle', working: 'Working', waiting: 'Waiting for you', stopped: 'Stopped' };
@@ -130,12 +133,12 @@ function Changes({ id, onBack }: { id: string; onBack: () => void }) {
 // A running OpenCode in one folder. The founder asks it directly here, or a wired person hands it work; every step,
 // every question and every change shows here as it happens.
 export function CoderNode({ id, data, selected }: NodeProps<ProjectNodeType>) {
-  const { updateNodeData, updateNode } = useReactFlow();
+  const { updateNodeData } = useReactFlow();
   const flushStage = useFlushStage();
   const focused = useFocused(id);
   const view = useCoder(id, (session) => updateNodeData(id, { session }));
   const [draft, setDraft] = useState('');
-  const [problem, setProblem] = useState('');
+  const { problem, setProblem, attempt } = useAttempt();
   const [changes, setChanges] = useState(false);
   const [report, setReport] = useState(false);
   const map = useMap(id, (graph) => updateNodeData(id, { graph }));
@@ -145,12 +148,7 @@ export function CoderNode({ id, data, selected }: NodeProps<ProjectNodeType>) {
   const busy = view.state === 'working' || view.state === 'waiting';
 
   // A card saved when this was the one-shot project card was too small for a conversation, so it grows once.
-  useEffect(() => {
-    updateNode(id, (node) => {
-      const [width, height] = [node.width ?? node.measured?.width ?? 0, node.height ?? node.measured?.height ?? 0];
-      return height >= 380 && width >= 380 ? {} : { width: Math.max(width, 420), height: Math.max(height, 440) };
-    });
-  }, [id, updateNode]);
+  useGrowOnce(id, { width: 380, height: 380 }, { width: 420, height: 440 });
   useEffect(() => { log.current?.scrollTo({ top: log.current.scrollHeight, behavior: 'smooth' }); }, [view.lines.length, view.permission, view.state]);
   // Back on the stage, the log is what the card shows.
   useEffect(() => { if (!focused) { setChanges(false); setReport(false); } }, [focused]);
@@ -162,7 +160,6 @@ export function CoderNode({ id, data, selected }: NodeProps<ProjectNodeType>) {
     return () => clearInterval(timer);
   }, [map.mapped, map.at]);
 
-  const attempt = async (work: () => Promise<unknown>) => { setProblem(''); try { await work(); } catch (error) { setProblem((error as Error).message); } };
   async function send() {
     const text = draft.trim();
     if (!text || busy) return;
@@ -214,11 +211,11 @@ export function CoderNode({ id, data, selected }: NodeProps<ProjectNodeType>) {
         <textarea rows={1} value={draft} aria-label="Tell the coder" placeholder="Tell the coder what to do…" onChange={(event) => setDraft(event.target.value)} onKeyDown={onKeyDown} />
         {busy ? (
           <button type="button" className="ask__stop" aria-label="Stop" title="Stop the coder" onClick={() => void attempt(() => stopCoder(id))}>
-            <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4.5" y="4.500" width="7" height="7" rx="1.5" fill="currentColor" /></svg>
+            {STOP_ICON}
           </button>
         ) : (
           <button type="button" aria-label="Send to the coder" disabled={!draft.trim()} onClick={() => void send()}>
-            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            {SEND_ICON}
           </button>
         )}
       </div>

@@ -1,5 +1,5 @@
-import { useStore, type Edge } from '@xyflow/react';
-import { useMemo } from 'react';
+import { useReactFlow, useStore, type Edge } from '@xyflow/react';
+import { useCallback, useEffect, useMemo } from 'react';
 import type { StageNode } from './stage';
 
 type Flow = { nodes: StageNode[]; edges: Edge[] };
@@ -34,3 +34,27 @@ export const useWired = (id: string, kind?: string) => useFlowPick((flow) => wir
 // Everybody on the stage, as voice casting reads them: who they are and how they sound.
 export const everyoneIn = (nodes: StageNode[]) => nodes.flatMap((node) => (node.type === 'room'
   ? [{ id: node.id, name: node.data.name, gender: node.data.gender, voice: node.data.voice }] : []));
+
+// Picks one card and glides the view to it: the way every list in the window takes the founder to a card.
+export function useJumpTo() {
+  const { fitView, setNodes } = useReactFlow();
+  return useCallback((id: string) => {
+    setNodes((nodes) => nodes.map((node) => ({ ...node, selected: node.id === id })));
+    void fitView({ nodes: [{ id }], duration: 450, maxZoom: 1, padding: 0.35 });
+  }, [fitView, setNodes]);
+}
+
+// The size a card grows to when it was saved smaller than it now needs: each side under `least` grows to `to`.
+export function grown(size: { width: number; height: number }, least: { width: number; height: number }, to: { width: number; height: number }) {
+  if (size.width >= least.width && size.height >= least.height) return {};
+  return { width: size.width < least.width ? Math.max(size.width, to.width) : size.width, height: size.height < least.height ? Math.max(size.height, to.height) : size.height };
+}
+
+// A card saved before it needed the room it needs now grows once, as it first appears; one resized since is left be.
+export function useGrowOnce(id: string, least: { width: number; height: number }, to: { width: number; height: number }) {
+  const { updateNode } = useReactFlow();
+  useEffect(() => {
+    updateNode(id, (node) => grown({ width: node.width ?? node.measured?.width ?? 0, height: node.height ?? node.measured?.height ?? 0 }, least, to));
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- once per card, whatever sizes it is given
+  }, [id, updateNode]);
+}

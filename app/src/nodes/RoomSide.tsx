@@ -6,6 +6,7 @@ import { getChat, getMemory, watchMemory } from '../api';
 import { listen } from '../bus';
 import { useFlowPick, useWired } from '../flow';
 import { useFrameworks } from '../frameworks';
+import { compact } from '../numbers';
 import { useNotes } from '../library';
 import { SLICES } from '../slices';
 import type { StageNode } from '../stage';
@@ -34,7 +35,6 @@ export function labelOf(node: StageNode, notes: { id: string; title: string }[] 
   return 'Board';
 }
 const KIND: Record<string, string> = { room: 'can ask', doc: 'reads and writes', browser: 'drives', project: 'gives coding work to', board: 'proposes tasks on', leads: 'keeps leads on', note: 'reads', image: 'sees', link: 'reads', source: 'searches', imagegen: 'makes pictures in', voicegen: 'speaks in', videogen: 'makes films in', library: 'reads' };
-const compact = (count: number) => (count >= 1000 ? `${(count / 1000).toFixed(count >= 10_000 ? 0 : 1)}k` : String(count));
 
 // Where a person came from, when they came from a saved team: which of the founder's notes they were written out of,
 // and what they scored on the founder's own test cases the last time anybody asked. Nothing is said at all about a

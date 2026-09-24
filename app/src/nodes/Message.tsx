@@ -1,6 +1,7 @@
 import type { ChatMessage, ToolEvent } from '../../shared/model';
 import { safeHost } from '../../shared/sources';
 import { fileUrl } from '../api';
+import { compact } from '../numbers';
 import { SLICES } from '../slices';
 import { Approval } from './Approval';
 import { Words } from './Rich';
@@ -22,7 +23,6 @@ const VERBS: Record<string, [doing: string, done: string]> = {
   use_skill: ['Reading the skill', 'Read the skill'], note_founder: ['Noting about you:', 'Noted about you:'], ask_founder: ['Asking you:', 'Asked you:'],
   crawl_site: ['Reading the site', 'Read the site'], watch_page: ['Watching', 'Watching'], list_watches: ['Listing', 'Listed'], stop_watching: ['Stopping the watch on', 'Stopped watching'],
 };
-const compact = (count: number) => (count < 1000 ? String(count) : `${(count / 1000).toFixed(1)}k`);
 // Where the founder was when they said it, when they were not at the stage.
 const VIA: Record<NonNullable<ChatMessage['via']>, string> = { phone: 'from your phone', call: 'from another program' };
 

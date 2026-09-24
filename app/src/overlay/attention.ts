@@ -12,3 +12,16 @@ function subscribe(tell: () => void) {
   return () => { watchers.delete(tell); };
 }
 export const useAttention = () => useSyncExternalStore(subscribe, () => list);
+
+// What each kind of entry is waiting for, said after who is asking ("Maya needs your OK"). The needs panel and the
+// dashboard both say it, in the same words.
+export const WHAT: Record<Attention['kind'], string> = {
+  approval: 'needs your OK', 'run-approval': 'needs your OK on a task', 'proposed-task': 'suggests a task', 'proposed-decision': 'asks for a decision',
+  'run-failed': 'could not finish', missed: 'missed a repeat', 'review-due': 'Decision to look at again', 'proposed-source': 'suggests a website', 'page-changed': 'saw a watched page change',
+};
+export const ago = (at: number, now = Date.now()) => {
+  const minutes = Math.max(0, Math.round((now - at) / 60_000));
+  return minutes < 1 ? 'now' : minutes < 60 ? `${minutes} min` : minutes < 1440 ? `${Math.round(minutes / 60)} h` : `${Math.round(minutes / 1440)} d`;
+};
+// How long ago, said in a sentence the way the clock beside it says it.
+export const since = (at: number) => (ago(at) === 'now' ? 'just now' : `${ago(at)} ago`);

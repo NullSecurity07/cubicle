@@ -1,4 +1,5 @@
 import { useReactFlow } from '@xyflow/react';
+import { useJumpTo } from '../flow';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { plainLine } from '../../shared/library';
 import type { Hit } from '../../shared/model';
@@ -28,7 +29,7 @@ const fromNote = (hit: Hit): Suggestion => ({ section: 'Notes', label: hit.title
 // One bar for everything: type a few letters of a name, a command in plain words, or what you are looking for.
 // Patterns and names answer at once; the workspace search joins a moment later. Nothing typed here is ever guessed at.
 export function CommandBar() {
-  const { getNodes, setNodes, fitView } = useReactFlow<StageNode>();
+  const { getNodes, fitView } = useReactFlow<StageNode>();
   const addCard = useAddCard();
   const [input, setInput] = useState('');
   const [hits, setHits] = useState<Hit[]>([]);
@@ -60,7 +61,7 @@ export function CommandBar() {
   useEffect(() => { list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' }); }, [at]);
 
   const close = () => overlay.close({ kind: 'panel', name: 'command' });
-  const goTo = (id: string) => { setNodes((nodes) => nodes.map((node) => ({ ...node, selected: node.id === id }))); void fitView({ nodes: [{ id }], duration: 450, maxZoom: 1, padding: 0.35 }); };
+  const goTo = useJumpTo();
 
   function run(action: Action) {
     if (action.do === 'idle') {

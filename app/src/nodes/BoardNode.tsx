@@ -10,6 +10,8 @@ import { useFlushStage } from '../sync';
 import { Approval } from './Approval';
 import { CardActions, Frame } from './Frame';
 import { Words } from './Rich';
+import { useWired } from '../flow';
+import { useAttempt } from '../attempt';
 
 const NAMES: Record<Column, string> = { proposed: 'Proposed', todo: 'To do', doing: 'Doing', review: 'Review', done: 'Done' };
 const active = (task: Task) => task.run?.state === 'running' || task.run?.state === 'waiting';
@@ -19,11 +21,11 @@ export function BoardNode({ id, selected }: NodeProps<BoardNodeType>) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
-  const [problem, setProblem] = useState('');
+  const { problem, attempt: act } = useAttempt();
   // "Learn this": what the person took away from a run the founder can see is finished, said in one line.
   const [learning, setLearning] = useState(false);
   const [learned, setLearned] = useState('');
-  const { getNodes, getEdges } = useReactFlow<StageNode>();
+  const { getNodes } = useReactFlow<StageNode>();
   const flushStage = useFlushStage();
 
   useEffect(() => {
@@ -34,13 +36,10 @@ export function BoardNode({ id, selected }: NodeProps<BoardNodeType>) {
     return () => { gone = true; stop(); };
   }, [id, flushStage]);
 
-  // People wired to this board, whichever way the wire was drawn.
-  const people = () => {
-    const linked = new Set(getEdges().flatMap((edge) => (edge.source === id ? [edge.target] : edge.target === id ? [edge.source] : [])));
-    return getNodes().filter((node) => node.type === 'room' && linked.has(node.id) && node.data.name).map((node) => ({ id: node.id, name: (node.data as { name: string }).name, accent: (node.data as { accent: string }).accent }));
-  };
+  // People wired to this board, whichever way the wire was drawn, kept up to date as wires come and go.
+  const wired = useWired(id, 'room');
+  const people = () => wired.filter((node) => node.data.name).map((node) => ({ id: node.id, name: String(node.data.name), accent: String(node.data.accent ?? '') }));
   const who = (roomId?: string) => getNodes().find((node) => node.id === roomId)?.data as { name?: string; accent?: string } | undefined;
-  const act = (job: Promise<unknown>) => { setProblem(''); job.catch((error: Error) => setProblem(error.message)); };
   const open = tasks.find((task) => task.id === openId);
   const waiting = tasks.filter((task) => task.run?.state === 'waiting').length;
 
