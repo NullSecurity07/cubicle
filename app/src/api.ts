@@ -3,6 +3,7 @@ import type { EvalsView } from '../shared/evals';
 import type { Framework, Placed } from '../shared/frameworks';
 import type { ForgeJob, ForgeMode, Proposal } from '../shared/forge';
 import type { Note } from '../shared/library';
+import { DASHBOARD_CHANNEL, type Dashboard } from '../shared/dashboard';
 import type { CoderAsk, CoderLine, CoderModels, CoderPatch, CoderState, GraphView } from '../shared/coder';
 import { leadsChannel, TWENTY_CHANNEL, type Lead, type LeadsEvent, type LeadStage, type TwentyStatus } from '../shared/leads';
 import { MEMORY_CHANNEL } from '../shared/model';
@@ -113,6 +114,9 @@ export const refreshLink = (id: string) => request<{ title: string; preview: str
 
 // Everything that waits for the founder, pushed whole after every change.
 export const watchAttention = (onList: (list: Attention[]) => void) => feed<Attention[]>('attention', onList);
+// The founder's dashboard, read whole, and the nudge that says something under it moved.
+export const getDashboard = () => request<Dashboard>('/api/dashboard');
+export const watchDashboard = (changed: () => void) => feed<{ dashboard: true }>(DASHBOARD_CHANNEL, () => changed(), (again) => { if (again) changed(); });
 export const dismissAttention = (id: string) => request(`/api/attention/${encodeURIComponent(id)}/dismiss`, { method: 'POST' });
 // The founder turns down a website a person proposed as a source, or has just added it to the stage.
 export const dropSource = (id: string) => request(`/api/sources/${id}/drop`, { method: 'POST' });

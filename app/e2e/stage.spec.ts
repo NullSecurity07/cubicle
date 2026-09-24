@@ -83,9 +83,9 @@ test.beforeEach(async ({ page }) => {
 
 test('shows two rooms, a doc and the company brief, one wire, a dock with usage rings and nothing else', async ({ page }) => {
   await expect(page.locator('.react-flow__node')).toHaveCount(4);
-  // The dock, by name: three ways to add, the frameworks that land a whole team, the founder's views, and the usage rings (which arrive once the models are known).
+  // The dock, by name: three ways to add, the frameworks that land a whole team, the dashboard and the founder's views, and the usage rings (which arrive once the models are known).
   await expect(page.getByRole('button', { name: 'Model usage today' })).toBeVisible();
-  expect(await page.locator('.dock button').evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label')))).toEqual(['Add person', 'Add doc', 'More cards', 'Frameworks', 'Command bar', 'Messages', 'Decisions', 'Needs you: nothing waiting', 'Model usage today']);
+  expect(await page.locator('.dock button').evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label')))).toEqual(['Add person', 'Add doc', 'More cards', 'Frameworks', 'Dashboard', 'Command bar', 'Messages', 'Decisions', 'Needs you: nothing waiting', 'Model usage today']);
   await expect(page.locator('.react-flow__edge')).toHaveCount(1);
   await expect(node(page, 'marketing')).toContainText('Maya');
   await expect(node(page, 'brand-doc').locator('textarea.doc')).toHaveValue(/# Brand/);

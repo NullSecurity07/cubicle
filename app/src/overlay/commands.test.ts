@@ -17,6 +17,10 @@ describe('command bar', () => {
     expect(labels).toContain('Add a person');
   });
 
+  it('opens the dashboard by the words a founder reaches for', () => {
+    for (const typed of ['dashboard', 'Home', 'today', 'my day', 'dash']) expect(actions(typed)).toContainEqual({ do: 'panel', name: 'dashboard' });
+  });
+
   it('hires by role and adds cards by name', () => {
     expect(first('hire a designer').action).toEqual({ do: 'add', kind: 'room', data: { role: 'Designer' } });
     expect(first('add a growth marketer').action).toEqual({ do: 'add', kind: 'room', data: { role: 'Growth marketer' } });

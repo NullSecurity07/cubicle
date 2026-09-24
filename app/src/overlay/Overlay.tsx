@@ -4,6 +4,7 @@ import type React from 'react';
 import { createPortal } from 'react-dom';
 import { NeedsPanel } from './NeedsPanel';
 import { CommandBar, KeysSheet } from './CommandBar';
+import { Dashboard } from './Dashboard';
 import { DecisionsPanel } from './DecisionsPanel';
 import { Guard } from './Guard';
 import { MessagesPanel } from './MessagesPanel';
@@ -14,7 +15,7 @@ import { SLICES } from '../slices';
 import { overlay, setHostElement, useLayers } from './store';
 
 // The founder's views, by layer name.
-const PANELS: Record<string, () => React.JSX.Element> = { needs: NeedsPanel, messages: MessagesPanel, decisions: DecisionsPanel, playbook: PlaybookPanel, library: LibraryPanel, note: NotePanel, frameworks: FrameworksPanel, command: CommandBar, keys: KeysSheet };
+const PANELS: Record<string, () => React.JSX.Element> = { needs: NeedsPanel, messages: MessagesPanel, decisions: DecisionsPanel, playbook: PlaybookPanel, library: LibraryPanel, note: NotePanel, frameworks: FrameworksPanel, command: CommandBar, keys: KeysSheet, dashboard: Dashboard };
 // Single keys that open a view, when nothing is open and nobody is typing.
 const OPENERS: Record<string, string> = { n: 'needs', m: 'messages', d: 'decisions', '/': 'command', '?': 'keys' };
 const focusHost = setHostElement('focus');
@@ -49,6 +50,13 @@ export function Overlay() {
       }
       // Ctrl K opens the command bar from anywhere, even while typing.
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); overlay.open({ kind: 'panel', name: 'command' }); return; }
+      // Ctrl D opens the dashboard from anywhere, and closes it again when it is the view on top.
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'd' && !live(event.target)) {
+        event.preventDefault();
+        const top = overlay.layers().at(-1);
+        if (top?.kind === 'panel' && top.name === 'dashboard') overlay.back(); else overlay.open({ kind: 'panel', name: 'dashboard' });
+        return;
+      }
       const opener = OPENERS[event.key.length === 1 ? event.key.toLowerCase() : ''];
       if (opener && !event.ctrlKey && !event.metaKey && !event.altKey && !typing(event.target) && (!overlay.layers().length || (opener === 'keys' && overlay.layers().at(-1)?.kind !== 'panel'))) { event.preventDefault(); overlay.open({ kind: 'panel', name: opener }); return; }
       if (event.key.toLowerCase() !== 'f' || event.ctrlKey || event.metaKey || event.altKey || typing(event.target) || overlay.layers().length) return;

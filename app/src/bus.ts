@@ -3,7 +3,8 @@ import type { ToolEffect } from '../shared/model';
 // Carries what a person's tool changed from their chat to the cards that show it, and tells the dock that usage moved.
 // `ask` puts a question into one person's own ask box, from elsewhere in the window (the command bar).
 // `media-feed` says the studios' feed has (re)opened, so a studio card reads itself again.
-type Events = { effect: ToolEffect & { roomId: string }; usage: null; ask: { roomId: string; text: string }; 'media-feed': null };
+// `memory` opens one person's memory panel from elsewhere (the dashboard), the way their own card's button does.
+type Events = { effect: ToolEffect & { roomId: string }; usage: null; ask: { roomId: string; text: string }; 'media-feed': null; memory: { roomId: string } };
 const target = new EventTarget();
 
 export function emit<K extends keyof Events>(type: K, detail: Events[K]) {

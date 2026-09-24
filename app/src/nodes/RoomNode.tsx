@@ -1,5 +1,6 @@
 import { useReactFlow, type NodeProps } from '@xyflow/react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { listen } from '../bus';
 import type { RoomNodeType } from '../stage';
 import { Avatar } from './Avatar';
 import { Chat, type Status } from './Chat';
@@ -17,6 +18,7 @@ export function RoomNode({ id, data, selected }: NodeProps<RoomNodeType>) {
   const { updateNodeData } = useReactFlow();
   const focused = useFocused(id);
   const setup = editing || !data.name;
+  useEffect(() => listen('memory', (asked) => { if (asked.roomId === id) setRemembering(true); }), [id]);
   const doing = status === 'waiting' ? 'needs your OK' : status === 'thinking' ? 'working…' : status === 'error' ? 'could not reply' : lastAsk ?? 'Ready when you are';
 
   return (

@@ -1,0 +1,66 @@
+import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { expect, test } from '@playwright/test';
+
+// The dashboard: Ctrl D opens it, its four sections are there, and a row in "Needs you" is a door. A watched page that
+// changed is written straight into the workspace, the way the half-minute check writes one, and it names Maya's room;
+// pressing it closes the dashboard and brings Maya forward. The file is taken away afterwards.
+const WATCH = join(process.env.STAGE_WORKSPACE!, 'watch', 'marketing.json');
+
+const broke: string[] = [];
+test.beforeEach(async ({ page }) => {
+  broke.length = 0;
+  page.on('pageerror', (error) => broke.push(error.message));
+  const now = Date.now();
+  await mkdir(join(process.env.STAGE_WORKSPACE!, 'watch'), { recursive: true });
+  await writeFile(WATCH, JSON.stringify([{
+    id: 'dash-e2e', url: 'https://rival.example/pricing', what: 'their prices', roomId: 'marketing', title: 'Rival pricing', hash: 'x', text: '',
+    addedAt: now - 86_400_000, checkedAt: now, changedAt: now - 60_000, diff: '+ Pro is now $29 a month',
+  }]));
+});
+
+test.afterEach(async ({ page }) => {
+  await page.goto('about:blank');
+  await rm(WATCH, { force: true });
+  expect(broke).toEqual([]);
+});
+
+test('the dashboard opens on the founder\'s day, and a needs-you row lands in the right room', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('.react-flow__node[data-id="marketing"]')).toBeVisible();
+
+  const dash = page.getByRole('dialog', { name: 'Dashboard' });
+  // Pressed again if a cold dev server reloads the page under the first press (Vite optimising a dependency).
+  await expect(async () => {
+    if (!await dash.isVisible()) await page.keyboard.press('Control+d');
+    await expect(dash).toBeVisible({ timeout: 1_500 });
+  }).toPass({ timeout: 15_000 });
+  for (const name of ['Today', 'Tokens and health', 'Teams', 'Made this week']) await expect(dash.getByRole('heading', { name, exact: true })).toBeVisible();
+  for (const name of ['Today', 'Tokens and health', 'Teams', 'Made this week']) await expect(dash.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name })).toBeVisible();
+  await expect(dash.locator('.dash__chart svg')).toBeVisible();
+  // The built-in teams are there whether placed or not.
+  await expect(dash.locator('.dash__team', { hasText: 'Startup evaluation' })).toBeVisible();
+
+  // The rail jumps: the section it names comes to the top of the view.
+  await dash.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Teams' }).click();
+  await expect(dash.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Teams' })).toHaveAttribute('aria-current', 'true');
+  await dash.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Today' }).click();
+
+  const row = dash.locator('.dash__group', { hasText: 'Needs you' }).getByRole('button', { name: /The page Rival pricing changed/ });
+  await expect(row).toBeVisible({ timeout: 10_000 });
+  await row.click();
+  await expect(dash).toBeHidden();
+  const sheet = page.getByRole('dialog', { name: 'Focused card' });
+  await expect(sheet.locator('.card--focused')).toBeVisible();
+  await expect(sheet.getByPlaceholder('Ask Maya…')).toBeVisible();
+
+  // The command bar knows it by the words a founder reaches for.
+  await page.keyboard.press('Escape');
+  await expect(sheet).toBeHidden();
+  await page.keyboard.press('Control+k');
+  await page.getByRole('combobox', { name: 'Command or search' }).fill('today');
+  await page.getByRole('option', { name: /Dashboard/ }).click();
+  await expect(dash).toBeVisible();
+  await page.keyboard.press('Control+d');
+  await expect(dash).toBeHidden();
+});
