@@ -34,12 +34,15 @@ export const normalised = (messages: ModelMessage[]) => JSON.stringify(messages.
 
 type Kept<T> = { at: number; value: T };
 
+// When each folder was last swept. Kept here rather than in each cache, because a cache is made afresh for every side
+// call and every web read: held per cache, every single write swept the whole folder.
+const swept = new Map<string, number>();
+
 // One folder of json files, one per key. What is out of date is ignored when read, and swept away once an hour.
 export function diskCache<T>(dir: string, ttl: number, now: () => number = Date.now) {
-  let swept = 0;
   const file = (key: string) => join(dir, `${key}.json`);
   async function sweep() {
-    swept = now();
+    swept.set(dir, now());
     for (const name of await readdir(dir).catch(() => [] as string[])) {
       const info = await stat(join(dir, name)).catch(() => null);
       if (info && now() - info.mtimeMs > ttl) await rm(join(dir, name), { force: true }).catch(() => {});
@@ -57,7 +60,7 @@ export function diskCache<T>(dir: string, ttl: number, now: () => number = Date.
         await mkdir(dir, { recursive: true });
         await writeFile(`${file(key)}.tmp`, JSON.stringify({ at: now(), value }));
         await rename(`${file(key)}.tmp`, file(key));
-        if (now() - swept > SWEEP_EVERY) await sweep();
+        if (now() - (swept.get(dir) ?? 0) > SWEEP_EVERY) await sweep();
       } catch { /* a cache that cannot be written is only a cache that misses */ }
     },
   };

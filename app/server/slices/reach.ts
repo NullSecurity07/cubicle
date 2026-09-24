@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import type { Attention, Stage } from '../../shared/model.ts';
 import { LISTEN_RATE, UPDATES, type ReachState, type ReachUpdates } from '../../shared/reach.ts';
 import { guessGender, recast, voiceFor } from '../../shared/voices.ts';
+import { putToFounder } from '../approvals.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
 import { DEFAULT_VOICE, fakeVoices, isVoice, kokoroVoices, VOICES } from '../media/voice.ts';
 import type { Source } from '../seams.ts';
@@ -151,15 +152,16 @@ export default {
         const choices = (Array.isArray(args.choices) ? args.choices : []).filter((one): one is string => typeof one === 'string' && !!one.trim()).slice(0, 5);
         const id = `ask-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
         const who = context.stage.rooms.find((room) => room.id === context.roomId)?.name;
-        const entry: Attention = {
+        const entry: Attention & { event: { id: string } } = {
           id: `approval:${id}`, kind: 'approval', title: question, at: Date.now(), roomId: context.roomId, who,
           ...(choices.length ? { detail: `Their options: ${choices.join(' · ')}` } : {}),
           event: { id, name: 'ask_founder', args: { answer: choices[0] ?? '' }, waiting: true, question },
         };
-        await deps.attention.raise(entry);
         // In a background run the run waits here, exactly as it waits for an outward step to be allowed.
-        if (sources.get(context.roomId) === 'run') {
-          const answer = await deps.approvals.ask(id, context.signal).finally(() => deps.attention.clear(entry.id));
+        const run = sources.get(context.roomId) === 'run';
+        const asking = await putToFounder(deps.attention, deps.approvals, entry, run ? context.signal : undefined);
+        if (run) {
+          const answer = await asking.answer;
           const said = String(answer.args?.answer ?? '').trim();
           if (!answer.ok) return { text: 'The founder did not answer. Do what you can without it, and say plainly what is still missing.' };
           return { text: `The founder says: ${said.slice(0, 2000) || '(they said yes without words)'}` };
@@ -167,9 +169,8 @@ export default {
         asks.set(context.roomId, { id, attentionId: entry.id });
         // In a conversation the turn ends on the question. An answer given in the app or on the phone is carried
         // into the room as the founder's next message, which is what the person is waiting for anyway.
-        void deps.approvals.ask(id).then(async (answer) => {
+        void asking.answer.then(async (answer) => {
           asks.delete(context.roomId);
-          await deps.attention.clear(entry.id);
           const said = String(answer.args?.answer ?? '').trim();
           if (!answer.ok || !said) return;
           // The turn that asked may still be closing; one more try is enough for that to be over.

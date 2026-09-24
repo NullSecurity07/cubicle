@@ -51,20 +51,39 @@ export function createEvents(deps: Deps) {
     restage(stage: Stage) { onStage = boardsOn(stage); },
     // A window joining is sent what each of the old feeds sent on opening, so it is whole the moment it arrives,
     // and then everything as it happens. What comes back stops it listening.
+    // It is listening from the very start, because reading the openings takes a moment and whatever changed in that
+    // moment would otherwise never reach it. What arrives meanwhile is held and sent after the openings, except what
+    // a feed said before its own opening was read: that opening already has it, and sent after it, it would be older.
     async join(hear: (envelope: Envelope) => void) {
       if (!stops.length) stops = attach();
-      onStage = boardsOn(await deps.stage());
-      say(hear, { channel: 'attention', data: await deps.attention.list(), snapshot: true });
-      say(hear, { channel: 'skills', data: { skills: await deps.skills.list() } satisfies SkillEvent, snapshot: true });
-      for (const boardId of onStage) say(hear, { channel: `board:${boardId}`, data: { tasks: await deps.boards.list(boardId) } satisfies BoardEvent, snapshot: true });
-      for (const open of hub.opening) for (const one of await open().catch(() => [])) say(hear, { ...one, snapshot: true });
-      windows.add(hear);
-      return () => {
-        windows.delete(hear);
+      const held: Envelope[] = [];
+      let live = false;
+      const window = (envelope: Envelope) => { if (live) say(hear, envelope); else held.push(envelope); };
+      windows.add(window);
+      const leave = () => {
+        windows.delete(window);
         if (windows.size) return;
         for (const stop of stops) stop();
         stops = [];
       };
+      // Where in what was held each feed's opening was read from.
+      const from = new Map<string, number>();
+      const opening = (channel: string, data: unknown, at: number) => { from.set(channel, at); say(hear, { channel, data, snapshot: true }); };
+      try {
+        onStage = boardsOn(await deps.stage());
+        let at = held.length;
+        opening('attention', await deps.attention.list(), at);
+        at = held.length;
+        opening('skills', { skills: await deps.skills.list() } satisfies SkillEvent, at);
+        for (const boardId of onStage) { at = held.length; opening(`board:${boardId}`, { tasks: await deps.boards.list(boardId) } satisfies BoardEvent, at); }
+        for (const open of hub.opening) { at = held.length; for (const one of await open().catch(() => [])) opening(one.channel, one.data, at); }
+      } catch (error) {
+        leave();
+        throw error;
+      }
+      held.forEach((envelope, at) => { if (at >= (from.get(envelope.channel) ?? 0)) say(hear, envelope); });
+      live = true;
+      return leave;
     },
   };
 }
