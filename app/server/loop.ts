@@ -1,6 +1,6 @@
 import type { ToolEvent, Usage } from '../shared/model.ts';
 import type { ModelMessage } from './prompt.ts';
-import { complete, retryAfter, type Failure, type ModelClient } from './providers.ts';
+import { complete, type Failure, type ModelClient } from './providers.ts';
 import type { Answer } from './approvals.ts';
 import type { Seams, Source } from './seams.ts';
 import { runTool, type Tool, type ToolContext } from './tools/registry.ts';
@@ -38,7 +38,8 @@ export async function runTurn(input: {
   const onFailure = ({ client, error }: Failure) => {
     const status = (error as { status?: number }).status;
     failed.push(`${client.name} could not answer (${status === 429 ? 'free limit reached' : (error.message || 'error').slice(0, 120)})`);
-    if (status === 429) usage.cool(client.name, retryAfter(error));
+    // A 429 rests the key, five breakdowns in a row open its breaker; either way its siblings serve meanwhile.
+    usage.failed(client.name, error);
   };
 
   if (seams) messages = (await seams.run('turn:before', { roomId, source, query, messages })).messages;
@@ -51,7 +52,7 @@ export async function runTurn(input: {
     const ask = () => complete(messages, {
       tools: offered, signal,
       onToken: (token) => { const piece = first ? gap + token : token; first = false; text += piece; events.token(piece); },
-    }, clients, onFailure);
+    }, clients, onFailure, (client) => usage.admit(client.name));
     // A step every model refused — usually because the prompt outgrew them — gets one more chance: whatever listens
     // here shortens it and says so, and we ask again with what it left.
     const turn = seams ? await ask().catch(async (error: Error) => {

@@ -32,7 +32,8 @@ export default {
     const insights = createInsights({
       workspace: deps.workspace, skills: deps.skills,
       nameOf: async (roomId) => (await deps.store.loadStage()).rooms.find((one) => one.id === roomId)?.name ?? roomId,
-      today: () => deps.usage.info(deps.clients),
+      today: () => deps.usage.info(deps.clients, true),
+      counts: () => deps.usage.today(),
     });
     const health = () => checkAll({
       workspace: deps.workspace, root: deps.root, backupDir: dir,

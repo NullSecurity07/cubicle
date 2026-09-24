@@ -249,3 +249,22 @@ describe('watching a page', () => {
     expect(await watches.read('marketing')).toHaveLength(9);
   });
 });
+
+describe('crawl_site, asked twice', () => {
+  it('crawls a site once in fifteen minutes for the same question, and says when it was read', async () => {
+    let fetched = 0;
+    const { http: base } = acme();
+    const http = (async (url: string) => { fetched += 1; return base(url); }) as typeof fetch;
+    const workspace = await mkdtemp(join(tmpdir(), 'crawl-cache-'));
+    const [tool] = crawlTools(options(http, { workspace, cache: true, save: async () => {} }), createWatches(await mkdtemp(join(tmpdir(), 'crawl-'))));
+    const context: ToolContext = { stage: seedStage, roomId: 'marketing', store: {} as Store, granted: new Map(), query: 'pricing' };
+    const first = await tool.run({ url: 'https://acme.test/' }, context);
+    const once = fetched;
+    const second = await tool.run({ url: 'https://acme.test/' }, context);
+    expect(fetched).toBe(once);
+    expect(second.text).toBe(`(Read ${new Date(NOW).toISOString().slice(0, 16).replace('T', ' ')} UTC, just now, and kept: the same read within 15 minutes comes from here.)\n${first.text}`);
+    // Another question is another crawl: the best pages depend on it.
+    await tool.run({ url: 'https://acme.test/' }, { ...context, query: 'careers' });
+    expect(fetched).toBeGreaterThan(once);
+  });
+});

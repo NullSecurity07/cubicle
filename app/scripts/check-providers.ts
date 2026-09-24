@@ -39,8 +39,12 @@ const extras = await installSlices(await loadSlices(resolve(import.meta.dirname,
 } as any, said);
 const tools = [...docTools, ...fileTools, ...webTools({} as any), ...outwardTools({ ready: () => true, ways: () => ({}) } as any, '/tmp'), ...teamTools((async () => '') as any), ...taskTools({} as any), ...memoryTools({} as any), ...decisionTools({} as any), ...recallTools({} as any), ...mediaTools({ ready: () => null } as any), ...skillTools({} as any), ...founderTools({} as any), ...extras.tools];
 const refused: string[] = [];
+// A client without tools (the small side model) is only ever asked without them, so it is checked the same way.
 for (const client of realClients()) {
-  try { const turn = await client.step([{ role: 'user', content: 'List the shared files with your tool.' }], { tools, onToken: () => {} }); console.log(client.name, 'OK with', tools.length, 'tools ->', turn.calls.map((c: any) => c.name).join(',') || 'text'); }
+  const offered = client.tools ? tools : [];
+  // Asked about a tool it was not offered, a small model tries to call one anyway; it is asked for words instead.
+  const content = client.tools ? 'List the shared files with your tool.' : 'Say in five words what a summary is for.';
+  try { const turn = await client.step([{ role: 'user', content }], { tools: offered, onToken: () => {} }); console.log(client.name, client.tools ? `OK with ${tools.length} tools ->` : 'OK without tools (side model) ->', turn.calls.map((c: any) => c.name).join(',') || 'text'); }
   catch (error: any) { refused.push(client.name); console.log(client.name, 'ERROR', error.status, String(error.message).slice(0, 200)); }
 }
 // A check that cannot fail is not one: a slice left out or a provider that refused the list ends this with a red exit.

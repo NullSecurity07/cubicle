@@ -24,7 +24,8 @@ const ASK = 'You are shortening the middle of one person\'s piece of work so the
   + 'what their tools answered and what they wrote back. Write what somebody picking the work up now would need: what was asked for, what has been '
   + `done, what came back, and what is still open. Plain sentences, no preamble, at most ${SUMMARY_CHARS} characters.`;
 
-export const budgetOf = (clients: ModelClient[]) => Math.min(...clients.map((client) => client.maxPromptChars)) * SHARE;
+// The side model never answers a turn, so its small window is no turn's limit.
+export const budgetOf = (clients: ModelClient[]) => Math.min(...clients.filter((client) => !client.side).map((client) => client.maxPromptChars)) * SHARE;
 
 // Where each of an assistant's rounds of tool calls begins. A call and the results that answer it are one thing:
 // providers refuse a result whose call they cannot see, so the two travel together or they go together.
@@ -70,9 +71,9 @@ const said = (message: ModelMessage) => {
 async function noteOf(middle: ModelMessage[], deps: Shrinking): Promise<string> {
   const material = middle.map(said).join('\n\n').slice(0, MATERIAL_CHARS);
   const messages: ModelMessage[] = [{ role: 'system', content: ASK }, { role: 'user', content: material }];
-  const { order } = route(deps.clients, deps.usage, { promptChars: promptSize(messages), tools: false });
+  const { order } = route(deps.clients, deps.usage, { promptChars: promptSize(messages), tools: false, kind: 'side' });
   const reply = await complete(messages, { onToken: () => {} }, order);
-  deps.usage.record(reply.client.name, reply.usage, reply.quota);
+  deps.usage.record(reply.client.name, reply.usage, reply.quota, 'compaction');
   return reply.text.trim().slice(0, SUMMARY_CHARS);
 }
 

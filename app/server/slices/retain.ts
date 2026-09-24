@@ -8,6 +8,7 @@ import { readableDocIds } from '../prompt.ts';
 import type { ModelClient } from '../providers.ts';
 import type { Handler, Payloads } from '../seams.ts';
 import { reflectTools } from '../tools/reflect.ts';
+import type { UsageBook } from '../usage.ts';
 
 // Retain: after a conversation turn, a person writes down on its own the one or two things worth keeping from it —
 // a price, a name, a promise — the way it would if the founder had said "remember that". Hindsight's idea without its
@@ -177,12 +178,14 @@ export function createRetain(deps: {
 
 // The local model, asked plainly: no tools, no streaming to anyone. Only a client marked as this machine's is used.
 // A step streams its words out through `onToken` and hands back no text of its own, so the words are gathered here.
-export const localExtract = (clients: ModelClient[]): Extract | undefined => {
+// What it spent is written down as retain's, so the insights can tell it from a turn.
+export const localExtract = (clients: ModelClient[], usage?: Pick<UsageBook, 'record'>): Extract | undefined => {
   const local = clients.find((client) => client.local);
   if (!local) return undefined;
   return async (messages) => {
     let said = '';
     const turn = await local.step(messages, { onToken: (token) => { said += token; } });
+    usage?.record(local.name, turn.usage, turn.quota, 'retain');
     return turn.text || said;
   };
 };
@@ -192,7 +195,7 @@ export default {
   install(deps) {
     // Fake mode asks no model at all, so the browser checks never wait on one.
     const retain = createRetain({
-      memory: deps.memory, store: deps.store, extract: deps.fake ? undefined : localExtract(deps.clients),
+      memory: deps.memory, store: deps.store, extract: deps.fake ? undefined : localExtract(deps.clients, deps.usage),
       changed: (roomId) => hub.say(MEMORY_CHANNEL, { id: roomId }),
       ...(deps.fake ? { log: () => {} } : {}),
     });

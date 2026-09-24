@@ -126,11 +126,11 @@ export async function reflect(evidence: Evidence, nearest: { id: string; name: s
     if (verdict.action === 'patch') checkLesson(lessonOf(verdict.changes), ground, false);
     return verdict;
   };
-  const { order } = route(clients, options.usage, { promptChars: promptSize(messages), tools: false });
+  const { order } = route(clients, options.usage, { promptChars: promptSize(messages), tools: false, kind: 'side' });
   try {
     return await completeJson(messages, check, order.length ? order : clients, {
       signal: options.signal,
-      onReply: (reply) => options.usage.record(reply.client.name, reply.usage, reply.quota),
+      onReply: (reply) => options.usage.record(reply.client.name, reply.usage, reply.quota, 'reflect'),
     });
   } catch (error) {
     // Twice told what was wrong and twice wrong: there was no lesson here. A model that could not answer at all is

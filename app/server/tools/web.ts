@@ -4,6 +4,7 @@ import { appName } from '../../shared/apps.ts';
 import type { Card, Stage } from '../../shared/model.ts';
 import { safeHost, sourceCards } from '../../shared/sources.ts';
 import type { Browser, Launch, Recent } from '../browser.ts';
+import { webCache } from '../cache.ts';
 import { wired } from '../prompt.ts';
 import type { Tool, ToolContext } from './registry.ts';
 
@@ -45,6 +46,23 @@ export function yearless(queries: string[], asked: string, year: number): string
 }
 
 export const browserSession = (cardId: string) => `card-${cardId}`;
+
+// Where this workspace keeps its web reads for fifteen minutes: beside the shared files folder. Not in fake mode,
+// where every read is a stand-in and a browser check wants to see each one happen.
+const cacheOf = (context: ToolContext, now: () => number) => webCache(typeof context.store?.filesDir === 'string' && process.env.STAGE_FAKE_MODEL !== '1' ? dirname(context.store.filesDir) : null, now);
+// The answer to several queries, back into one block per query: each opens with its own "## query" line.
+export function splitSearch(raw: string, queries: string[]): string[] | null {
+  const starts: number[] = [];
+  let from = 0;
+  for (const query of queries) {
+    const at = raw.indexOf(`## ${query}\n`, from);
+    if (at < 0 || (starts.length === 0 && at !== 0)) return null;
+    starts.push(at);
+    from = at + 1;
+  }
+  return starts.map((at, index) => raw.slice(at, index + 1 < starts.length ? starts[index + 1] : raw.length).replace(/\n\n$/, ''));
+}
+const PAGE_BREAK = '\n\n---\n\n';
 
 // Every step a person takes in a browser card, one JSON line each, in a file beside the card's own browser profile.
 // Nothing shows it: it is there for the founder to open when they want to know exactly what was done on their
@@ -103,9 +121,16 @@ export function webTools(browser: Browser, launchFor: (cardId: string, card: Car
         const queries = list(args, 'queries');
         const year = new Date(now()).getFullYear();
         const again = yearless(queries, context.query ?? '', year);
-        const found = await browser.search(queries, howFar(args));
+        // Each query is kept fifteen minutes on its own, with how far back it looked: the same query asked again by
+        // anyone in the workspace is not searched again. An engine that answered nothing is asked again next time.
+        const cache = cacheOf(context, now);
+        const search = async (asked: string[], recent?: Recent) => (await cache.many(asked, (query) => ['search', recent ?? '', query], async (missing) => {
+          const raw = await browser.search(missing, recent);
+          return { blocks: splitSearch(raw, missing), raw };
+        }, (block) => !/No results: every search engine refused/.test(block))).join('\n\n');
+        const found = await search(queries, howFar(args));
         if (!again.length) return { text: UNTRUSTED + found + SNIPPETS };
-        const fresh = await browser.search(again, 'year');
+        const fresh = await search(again, 'year');
         return { text: `One of your queries names a year that is past and the founder did not ask for it. It is now ${year}, so the same search ran again without that year and limited to the last twelve months (${again.map((one) => `"${one}"`).join(', ')}); work from that second set.\n\n${UNTRUSTED}${found}\n\n${fresh}${SNIPPETS}` };
       },
     },
@@ -122,7 +147,14 @@ export function webTools(browser: Browser, launchFor: (cardId: string, card: Car
         const source = urls.map((url) => sourceCards(context.stage.cards).find((card) => safeHost(card.url) && safeHost(card.url) === safeHost(url))).find(Boolean);
         const mine = source ? urls.filter((url) => safeHost(url) === safeHost(source.url)) : [];
         const rest = urls.filter((url) => !mine.includes(url));
-        const [shown, others] = await Promise.all([mine.length ? browser.read(mine, browserSession(source!.id)) : '', rest.length ? browser.read(rest) : '']);
+        // A page read in a card is read again every time, because the founder watches it happen there. Any other page
+        // is kept fifteen minutes by its address, and says when it was read.
+        const readRest = async () => (await cacheOf(context, now).many(rest, (url) => ['read', url], async (missing) => {
+          const raw = await browser.read(missing);
+          const blocks = raw.split(PAGE_BREAK);
+          return { blocks: blocks.length === missing.length ? blocks : null, raw };
+        })).join(PAGE_BREAK);
+        const [shown, others] = await Promise.all([mine.length ? browser.read(mine, browserSession(source!.id)) : '', rest.length ? readRest() : '']);
         const text = UNTRUSTED + [shown, others].filter(Boolean).join('\n\n---\n\n');
         return source ? { text, effect: { kind: 'browser-moved', id: source.id } } : { text };
       },

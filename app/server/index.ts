@@ -88,9 +88,9 @@ const browser = fake ? createBrowser(fakeRunner, undefined, undefined, fakeHand)
 const approvals = createApprovals();
 // Summaries go to a model with room to spare: the last configured providers are the large free ones.
 const memory = createMemory(store, async (messages) => {
-  const { order } = route([...clients].reverse(), usage, { promptChars: promptSize(messages), tools: false });
+  const { order } = route([...clients].reverse(), usage, { promptChars: promptSize(messages), tools: false, kind: 'side' });
   const reply = await complete(messages, { onToken: () => {} }, order);
-  usage.record(reply.client.name, reply.usage, reply.quota);
+  usage.record(reply.client.name, reply.usage, reply.quota, 'side');
   return reply.text;
 });
 const boards = createBoards(workspace);

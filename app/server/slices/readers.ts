@@ -6,6 +6,7 @@ import { dnsResolve, publicUrl, webUrl, type Resolve } from '../browser.ts';
 import type { Deps, Slice } from '../install.ts';
 import { decode, htmlToText } from '../readers.ts';
 import type { Tool, ToolContext } from '../tools/registry.ts';
+import { webCache } from '../cache.ts';
 import { UNTRUSTED } from '../tools/web.ts';
 
 // Three ways to hear customers and a market that a web page does not give: what was said in a video, what a blog or
@@ -171,6 +172,8 @@ export type ReaderOptions = {
   workspace: string;
   exec?: Exec; http?: typeof fetch; resolveHost?: Resolve; now?: () => number;
   pace?: () => Promise<void>; hasYtdlp?: () => boolean;
+  // Keep each read fifteen minutes under the workspace's cache folder. On in the app, off in fake mode and in tests.
+  cache?: boolean;
 };
 
 async function readYoutube(raw: string, options: ReaderOptions, signal?: AbortSignal): Promise<string> {
@@ -527,6 +530,8 @@ async function readReddit(args: Record<string, unknown>, options: ReaderOptions,
 export function readerTools(options: ReaderOptions): Tool[] {
   const { hasYtdlp = () => hasProgram('yt-dlp') } = options;
   const words = (args: Record<string, unknown>, key: string) => (typeof args[key] === 'string' ? (args[key] as string) : '');
+  // The same video, feed or Reddit ask within fifteen minutes is read once; the second answer says when it was read.
+  const cache = webCache(options.cache ? options.workspace : null, options.now);
   return [
     {
       name: 'read_youtube',
@@ -537,7 +542,7 @@ export function readerTools(options: ReaderOptions): Tool[] {
       ready: () => (hasYtdlp() ? null : 'Videos cannot be read on this machine yet: yt-dlp is not installed. Tell the founder; pnpm health says how to add it.'),
       async run(args, context: ToolContext) {
         if (!words(args, 'url').trim()) return { text: 'Give the video\'s address in "url".' };
-        return { text: await readYoutube(words(args, 'url'), options, context.signal) };
+        return { text: await cache.one(['youtube', words(args, 'url').trim()], () => readYoutube(words(args, 'url'), options, context.signal)) };
       },
     },
     {
@@ -555,7 +560,7 @@ export function readerTools(options: ReaderOptions): Tool[] {
         if (!words(args, 'url').trim()) return { text: 'Give the feed or the site in "url".' };
         const asked = Number(args.limit);
         const limit = Number.isFinite(asked) && asked >= 1 ? Math.min(FEED_MAX, Math.floor(asked)) : FEED_LIMIT;
-        return { text: await readFeed(words(args, 'url'), limit, options, context.signal) };
+        return { text: await cache.one(['feed', words(args, 'url').trim(), limit], () => readFeed(words(args, 'url'), limit, options, context.signal)) };
       },
     },
     {
@@ -574,12 +579,15 @@ export function readerTools(options: ReaderOptions): Tool[] {
           time: { type: 'string', enum: [...TIMES], description: 'How far back: hour, day, week, month, year or all' },
         },
       },
-      async run(args, context) { return { text: await readReddit(args, options, context.signal) }; },
+      async run(args, context) {
+        const ask = ['query', 'subreddit', 'url', 'sort', 'time'].map((key) => words(args, key).trim());
+        return { text: await cache.one(['reddit', ...ask], () => readReddit(args, options, context.signal)) };
+      },
     },
   ];
 }
 
 export default {
   name: 'readers',
-  install(deps: Deps) { return { tools: readerTools({ workspace: deps.workspace }) }; },
+  install(deps: Deps) { return { tools: readerTools({ workspace: deps.workspace, cache: !deps.fake }) }; },
 } satisfies Slice;

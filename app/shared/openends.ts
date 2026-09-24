@@ -17,7 +17,16 @@ export type Outside = { file: string; servers: OutsideServer[] };
 export type Share = { name: string; turns: number; tokens: number; failed: number };
 // Where one provider stands right now: `left` is the share of today's free allowance still there, 0 to 1.
 export type Today = { name: string; left: number; requests: number; tokens: number };
+// Today's calls by what they were for (a turn, a side call, an eval, retain, reflect, compaction), biggest first.
+export type KindShare = { kind: string; requests: number; tokens: number };
+// Today's tool results on their way into prompts: how many, and the characters before and after they were shrunk.
+export type ToolShare = { tool: string; results: number; before: number; after: number };
+// What the savers kept off the free quotas today: characters folded out of tool results, calls and web reads answered
+// from the cache, and the tokens those cached calls cost the first time.
+export type Saved = { foldedChars: number; cacheHits: number; cacheMisses: number; cacheTokensSaved: number; webHits: number; webMisses: number };
 export type Insights = {
   days: number; turns: number; input: number; output: number; tools: number; failed: number;
   people: Share[]; providers: Share[]; today: Today[]; skills: { learned: number; active: number; used: number };
+  // Added later, and only there when the usage book is: older screens read on without them.
+  byKind?: KindShare[]; byTool?: ToolShare[]; saved?: Saved;
 };

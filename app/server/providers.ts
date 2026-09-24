@@ -25,6 +25,9 @@ export type ModelClient = {
   // A model on this machine: free and private, slower and weaker than the hosted ones, so it answers last unless it is
   // pinned, and only when the hosted ones have no room left.
   local?: boolean;
+  // A small model kept for the calls around a turn (a summary, a reflection, a compaction note): it is asked first
+  // for those, so the big model's per-minute tokens stay with the people, and it never answers a turn.
+  side?: boolean;
   // The OpenAI-compatible handle behind this client, when there is one. Nothing in a turn uses it — a turn goes
   // through `step`, which streams and counts — but a library that speaks the OpenAI API for us (the eval scorers)
   // needs the very same key and base URL rather than a second one the founder would have to go and get.
@@ -66,12 +69,15 @@ export function retryAfter(error: unknown): number | undefined {
 // or cannot hold the prompt. A reply cut off mid-stream is kept: the founder has already seen it.
 export async function complete(
   messages: ModelMessage[], options: StepOptions, clients: ModelClient[], onFailure: (failure: Failure) => void = () => {},
+  // Asked right before a client is tried: a key whose breaker is open is passed over, as one too small would be.
+  admit: (client: ModelClient) => boolean = () => true,
 ): Promise<Completion> {
   const size = promptSize(messages);
   const failures: string[] = [];
   for (const client of clients) {
     if (size > client.maxPromptChars) { failures.push(`${client.name}: prompt too large`); continue; }
     if (options.tools?.length && !client.tools) { failures.push(`${client.name}: no tool support`); continue; }
+    if (!admit(client)) { failures.push(`${client.name}: resting after failing several times in a row`); continue; }
     let text = '';
     const onToken = (token: string) => {
       if (!token || (!text && !token.trim())) return;
@@ -155,7 +161,7 @@ export function collectCalls(calls: ToolCall[], parts: CallPart[]) {
   }
 }
 
-type Entry = (typeof models)[number] & { vision?: boolean; streamUsage?: boolean; callSignature?: string; extra?: Record<string, unknown>; limits?: Limits };
+type Entry = (typeof models)[number] & { side?: boolean; vision?: boolean; streamUsage?: boolean; callSignature?: string; extra?: Record<string, unknown>; limits?: Limits };
 
 // The provider behind a client's name: `groq#2` is Groq's second key. Everything that counts what a key has spent
 // works on the name; everything the founder reads works on this.
@@ -169,7 +175,7 @@ function keysOf(env: NodeJS.ProcessEnv, keyEnv: string): { key: string; at: numb
   return [...(env[keyEnv] ? [{ key: env[keyEnv]!, at: 1 }] : []), ...spare.sort((one, other) => one.at - other.at)];
 }
 
-type Shape = { model: string; maxPromptChars: number; maxTokens: number; tools: boolean; vision?: boolean; streamUsage?: boolean; callSignature?: string; extra?: Record<string, unknown>; limits?: Limits; local?: boolean };
+type Shape = { model: string; maxPromptChars: number; maxTokens: number; tools: boolean; side?: boolean; vision?: boolean; streamUsage?: boolean; callSignature?: string; extra?: Record<string, unknown>; limits?: Limits; local?: boolean };
 
 function clientOf(name: string, entry: Shape, api: OpenAI): ModelClient {
   return {
@@ -180,6 +186,7 @@ function clientOf(name: string, entry: Shape, api: OpenAI): ModelClient {
     vision: !!entry.vision,
     limits: entry.limits ?? {},
     ...(entry.local ? { local: true } : {}),
+    ...(entry.side ? { side: true } : {}),
     openai: api,
     async step(history, { tools, signal, onToken }) {
       const messages = withImages(portable(history, entry.callSignature), !!entry.vision);

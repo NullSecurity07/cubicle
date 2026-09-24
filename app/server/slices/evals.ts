@@ -72,7 +72,7 @@ export default {
       const reply = await complete(messages, { onToken: () => {}, signal: held.stop.signal }, order);
       held.calls += 1;
       held.models.add(reply.client.name);
-      deps.usage.record(reply.client.name, reply.usage, reply.quota);
+      deps.usage.record(reply.client.name, reply.usage, reply.quota, 'eval');
       return reply.text;
     };
 
