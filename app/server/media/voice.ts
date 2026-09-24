@@ -1,6 +1,7 @@
 import { dirname, join } from 'node:path';
 import type { Maker, Piece } from './jobs.ts';
 import { OMNI_ENGINE, omniVoices } from './omnivoice.ts';
+import { gradeRank } from '../../shared/voices.ts';
 
 const RATE = 24_000;
 const GEMINI = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -20,13 +21,8 @@ export const SETUP_HINT = 'No voice maker is set up. The voice model runs on thi
 // mismatch — see `castVoice`.
 export type Grade = 'A' | 'A-' | 'B+' | 'B' | 'B-' | 'C+' | 'C' | 'C-' | 'D+' | 'D' | 'D-' | 'F+' | 'F';
 export type Voice = { id: string; name: string; who: string; gender: 'f' | 'm'; accent: 'American' | 'British'; grade: Grade };
-// How good a grade is as one number, so voices sort without a table of special cases.
-export const gradeRank = (grade: string): number => {
-  const letters = 'FEDCBA';
-  const at = letters.indexOf(grade[0]?.toUpperCase() ?? 'F');
-  const sign = grade.includes('+') ? 0.33 : grade.includes('-') ? -0.33 : 0;
-  return (at < 0 ? 0 : at) + sign;
-};
+// How good a grade is as one number lives with the casting rules, which the window runs too.
+export { gradeRank };
 export const VOICES: Voice[] = [
   { id: 'af_heart', who: 'Heart', gender: 'f', accent: 'American', grade: 'A', name: 'Heart · American woman' },
   { id: 'af_bella', who: 'Bella', gender: 'f', accent: 'American', grade: 'A-', name: 'Bella · American woman' },

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import type { Attention, Stage } from '../../shared/model.ts';
 import { LISTEN_RATE, UPDATES, type ReachState, type ReachUpdates } from '../../shared/reach.ts';
-import { guessGender, voiceFor } from '../../shared/voices.ts';
+import { guessGender, recast, voiceFor } from '../../shared/voices.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
 import { DEFAULT_VOICE, fakeVoices, isVoice, kokoroVoices, VOICES } from '../media/voice.ts';
 import type { Source } from '../seams.ts';
@@ -66,6 +66,15 @@ export default {
     // Today, as one screen: what finished, what waits for the founder, what is coming, what the people learned.
     const digest = createDigest({ boards: deps.boards, stage: () => deps.store.loadStage(), skills: deps.skills, attention: () => deps.attention.list(), workspace: deps.workspace });
     const since = async () => (await book.read()).digestAt || Date.now() - DAY;
+
+    // A voice the app cast under an older, looser rule is cast again under today's, once, as the app starts: people
+    // were once handed D-grade voices by the luck of their id. A voice the founder picked is theirs and stays.
+    await deps.store.loadStage().then(async (stage) => {
+      const { rooms, changed } = recast(stage.rooms, VOICES);
+      if (!changed.length) return;
+      await deps.store.saveStage({ ...stage, rooms });
+      console.log(`[reach] cast better voices: ${changed.map((one) => `${one.name} ${one.from} to ${one.to}`).join(', ')}`);
+    }).catch(() => {});
 
     const phone = createPhone({
       api, outbox, reach, book, topics, stage: () => deps.store.loadStage(),
@@ -181,7 +190,7 @@ export default {
       if (!room) return DEFAULT_VOICE;
       if (isVoice(room.voice)) return room.voice;
       const given = voiceFor(room, stage.rooms, VOICES);
-      const mine = { ...room, gender: room.gender ?? guessGender(room.name), voice: given };
+      const mine = { ...room, gender: room.gender ?? guessGender(room.name), voice: given, voiceBy: 'cast' as const };
       await deps.store.saveStage({ ...stage, rooms: stage.rooms.map((one) => (one.id === room.id ? mine : one)) }).catch(() => {});
       return given;
     }

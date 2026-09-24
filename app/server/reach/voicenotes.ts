@@ -36,8 +36,11 @@ export async function samplesOf(sound: Buffer, run: Runner): Promise<Float32Arra
 }
 
 // The other way: the voice this app already makes, as the Ogg Opus that Telegram draws as a voice note with a waveform.
+// 48 kbps: at 32 the model's breath and sibilants came out smeared on a phone speaker, and a minute of talking is
+// still well under half a megabyte.
+export const VOICE_NOTE_RATE = '48k';
 export const oggOf = (wav: Buffer, run: Runner): Promise<Buffer> =>
-  run(['-hide_banner', '-loglevel', 'error', '-i', 'pipe:0', '-map', '0:a:0', '-c:a', 'libopus', '-b:a', '32k', '-ar', '48000', '-ac', '1', '-f', 'ogg', 'pipe:1'], wav);
+  run(['-hide_banner', '-loglevel', 'error', '-i', 'pipe:0', '-map', '0:a:0', '-c:a', 'libopus', '-b:a', VOICE_NOTE_RATE, '-ar', '48000', '-ac', '1', '-f', 'ogg', 'pipe:1'], wav);
 
 // A reply is written to be read: asterisks, headings, tables and a block of code. Read out as it stands it is
 // gibberish, so this is the same words as somebody would actually say them, and it stops on a full stop near a

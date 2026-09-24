@@ -16,6 +16,9 @@ describe('a recording, on its way in and out', () => {
     await oggOf(Buffer.from('RIFF'), async (args) => { asked.push(args); return Buffer.from('OggS'); });
     expect(asked[0]).toContain('libopus');
     expect(asked[0]).toContain('ogg');
+    // At 48 kbps, one channel: 32 smeared the voice on a phone.
+    expect(asked[0][asked[0].indexOf('-b:a') + 1]).toBe('48k');
+    expect(asked[0][asked[0].indexOf('-ac') + 1]).toBe('1');
   });
 
   it('says in plain words when this machine has no ffmpeg at all', async () => {
