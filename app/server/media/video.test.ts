@@ -5,11 +5,11 @@ import { describe, expect, it } from 'vitest';
 import { seedStage, type Stage } from '../../shared/model.ts';
 import { createStore } from '../store.ts';
 import { mediaTools } from '../tools/media.ts';
-import { createMedia } from './jobs.ts';
+import { createMedia, type Maker } from './jobs.ts';
 import { crowdsCaptions } from './spec.ts';
 import { composition, FORMATS, PACKS, SAFE_1080, safeArea, sceneSeconds, type Shot } from './templates/index.ts';
 import { meansAPicture, spendingScenes } from '../tools/media.ts';
-import { docsFor, estimate, fakeVideos, hands, LENGTHS, MAX_AI, MAX_IMAGES, MAX_LOCAL_AI, parseSpec, PURPOSE, PURPOSES, scenesFor, sourcesFor, withinCaps, withinLength, wordsFor, type Scene, type Spec } from './video.ts';
+import { docsFor, estimate, fakeVideos, hands, LENGTHS, MAX_AI, MAX_IMAGES, MAX_LOCAL_AI, parseSpec, PURPOSE, PURPOSES, scenesFor, sourcesFor, withinCaps, withinLength, wordsFor, type Scene, type Spec, type VideoAsk } from './video.ts';
 import { bibleFor, jsonIn, layoutsFor, planPrompt, specPrompt, understandingOf, type Material, type Plan } from './director.ts';
 import { budgetOf } from './spec.ts';
 
@@ -259,6 +259,27 @@ describe('generate_video', () => {
     await expect(tool.run(film as unknown as Record<string, unknown>, { ...context, roomId: 'build' })).rejects.toThrow(/no video studio is connected/);
     const { tool: alone, context: nowhere } = await turn({ ...wired, wires: seedStage.wires });
     await expect(alone.run(film as unknown as Record<string, unknown>, nowhere)).rejects.toThrow(/no video studio is connected to your room/);
+  });
+
+  it('falls back to the switches the founder set on the card for whatever the person left out', async () => {
+    const asks: VideoAsk[] = [];
+    const spy: Maker = { ...fakeVideos, make: (ask, help) => { asks.push(ask as VideoAsk); return fakeVideos.make(ask, help); } };
+    const dir = await mkdtemp(join(tmpdir(), 'videotool-'));
+    const store = createStore(dir);
+    const media = createMedia({ dir, store, makers: { videogen: [spy] } });
+    const tool = mediaTools(media).find((one) => one.name === 'generate_video')!;
+    const off: Stage = { ...wired, cards: [{ id: 'studio-3', kind: 'videogen', x: 0, y: 0, w: 1, h: 1, captions: 'off', sfx: 'off', silent: true }] };
+    const context = { stage: off, roomId: 'marketing', store, granted: new Map<string, string>() };
+    await tool.run({ ...film }, context);
+    expect(asks[0]).toMatchObject({ captions: false, sfx: false, narrate: false });
+    // What the person says outright still wins over the card.
+    await tool.run({ ...film, narrate: true, sfx: true }, context);
+    expect(asks[1]).toMatchObject({ captions: false, sfx: true, narrate: true });
+    // A card left on Auto leaves captions to the director, and sound and narration on.
+    const auto: Stage = { ...wired, cards: [{ id: 'studio-3', kind: 'videogen', x: 0, y: 0, w: 1, h: 1, captions: 'on' }] };
+    await tool.run({ ...film }, { ...context, stage: auto });
+    expect(asks[2]).toMatchObject({ captions: true, narrate: true });
+    expect(asks[2].sfx).toBeUndefined();
   });
 
   it('keeps its parameters flat and simple, the way every provider accepts them', async () => {

@@ -30,6 +30,9 @@ export const spendingScenes = (scenes: unknown, localReady = false): Layout[] =>
     .filter((layout): layout is Layout => typeof layout === 'string' && AI_LAYOUTS.has(layout as Layout))
     .filter((layout) => layout === 'presenter' || !localReady);
 
+// A switch on the card as the film reads it: on, off, or left to the director.
+const switchOf = (value: 'on' | 'off' | undefined): boolean | undefined => (value === 'on' ? true : value === 'off' ? false : undefined);
+
 // Pictures and spoken words, made in the studio cards the founder connected to this person. Free and local to this
 // machine's account, so nothing waits for the founder's yes; the per-turn caps are what keep a person from making all day.
 // `localClipsReady` says whether the moving pictures would be made here; when they would, nothing goes out and
@@ -225,8 +228,11 @@ export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = ()
         format: args.format ?? settings?.format, look: args.look ?? settings?.look,
         purpose: args.purpose ?? settings?.purpose, length: typeof args.length === 'number' ? args.length : settings?.length,
         pace: spec?.pace ?? args.pace ?? settings?.pace, music: spec?.music ?? args.music ?? settings?.music,
-        captions: spec?.captions ?? (typeof args.captions === 'boolean' ? args.captions : undefined),
-        sfx: spec?.sfx ?? (typeof args.sfx === 'boolean' ? args.sfx : undefined), narrate: args.narrate !== false,
+        // What the person left out falls back to the card's own switches, exactly as the card's Make button reads
+        // them: a founder who turned captions or sound off, or the narration, gets the same film whoever asks.
+        captions: spec?.captions ?? (typeof args.captions === 'boolean' ? args.captions : switchOf(settings?.captions)),
+        sfx: spec?.sfx ?? (typeof args.sfx === 'boolean' ? args.sfx : switchOf(settings?.sfx)),
+        narrate: typeof args.narrate === 'boolean' ? args.narrate : !settings?.silent,
         // The switch on the card is the founder's, not the person's: a film only spends the quota when it is on.
         ai: settings?.ai ?? 'auto', address: settings?.address, voice: settings?.voice, speed: settings?.speed,
         // The narrator's engine is the founder's alone to set: a person never reads a film in a non-commercial voice.
