@@ -434,6 +434,24 @@ test('a coder card: a wired person hands it work, the founder approves each step
   await card.getByRole('button', { name: 'Undo last' }).click();
   await expect(log.locator('.coder__line--note').last()).toHaveText('undone · "Tidy the readme"');
 
+  // Two questions asked at once: the first waits at the foot of the log, the second behind it, and the card waits
+  // for the founder until both are answered.
+  await card.getByLabel('Tell the coder').fill('Change the file and run the tests, both');
+  await card.getByLabel('Tell the coder').press('Enter');
+  const edit = card.getByRole('group', { name: 'Change this file?' });
+  await expect(edit).toContainText('src/example.ts');
+  await expect(card.locator('.coder__more')).toHaveText('and 1 more waiting');
+  await expect(card.getByRole('group', { name: 'Run this command?' })).toHaveCount(0);
+  await edit.getByRole('button', { name: 'Allow' }).click();
+  const command = card.getByRole('group', { name: 'Run this command?' });
+  await expect(command).toContainText('pnpm test');
+  await expect(card.locator('.coder__more')).toHaveCount(0);
+  await expect(card.getByRole('status', { name: 'Coder: Waiting for you' })).toBeVisible();
+  await command.getByRole('button', { name: 'Allow' }).click();
+  await expect(log).toContainText('allowed · edit src/example.ts');
+  await expect(log.locator('.coder__line--reply').last()).toHaveText('Did: Change the file and run the tests, both');
+  await expect(card.getByRole('status', { name: 'Coder: Idle' })).toBeVisible();
+
   // The session is kept on the card, so the conversation carries on after a restart.
   await expect.poll(async () => (await (await page.request.get('/api/stage')).json()).cards.find((one: { id: string }) => one.id === id)?.session).toMatch(/^ses_/);
 });

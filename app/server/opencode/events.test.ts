@@ -22,6 +22,8 @@ describe('what the coder does, as lines a founder reads', () => {
     expect(translate(part({ type: 'text', text: '', time: { start: 1 } }), DIR)?.line).toBeUndefined();
     expect(translate(part({ type: 'text', text: 'Done. README has world.', time: { start: 1, end: 2 } }), DIR)?.line).toMatchObject({ kind: 'reply', text: 'Done. README has world.' });
     expect(translate(part({ type: 'reasoning', text: 'hmm' }), DIR)).toEqual({ session: 'ses_1', progress: true });
+    // A patch part is opencode saying the folder changed under this step, whichever tool did it.
+    expect(translate(part({ type: 'patch', files: [`${DIR}/README.md`] }), DIR)).toEqual({ session: 'ses_1', progress: true, changed: true });
     expect(translate({ type: 'message.part.delta', properties: { sessionID: 'ses_1', delta: 'x' } }, DIR)).toEqual({ session: 'ses_1', progress: true });
   });
 
@@ -35,7 +37,7 @@ describe('what the coder does, as lines a founder reads', () => {
     expect(asked?.permission).toMatchObject({ id: 'per_1', tool: 'bash', what: 'ls -la', always: ['ls *'] });
     const edit = translate({ type: 'permission.asked', properties: { id: 'per_2', sessionID: 'ses_1', permission: 'edit', patterns: [`${DIR}/src/x.ts`], metadata: {}, always: ['*'] } }, DIR);
     expect(edit?.permission?.what).toBe('src/x.ts');
-    expect(translate({ type: 'permission.replied', properties: { sessionID: 'ses_1', requestID: 'per_1', reply: 'once' } }, DIR)).toEqual({ session: 'ses_1', replied: 'per_1' });
+    expect(translate({ type: 'permission.replied', properties: { sessionID: 'ses_1', requestID: 'per_1', reply: 'once' } }, DIR)).toEqual({ session: 'ses_1', replied: 'per_1', reply: 'once' });
     expect(translate({ type: 'session.idle', properties: { sessionID: 'ses_1' } }, DIR)).toEqual({ session: 'ses_1', idle: true });
     expect(translate({ type: 'session.status', properties: { sessionID: 'ses_1', status: { type: 'idle' } } }, DIR)).toEqual({ session: 'ses_1', idle: true });
     expect(translate({ type: 'session.status', properties: { sessionID: 'ses_1', status: { type: 'busy' } } }, DIR)).toEqual({ session: 'ses_1', busy: true });

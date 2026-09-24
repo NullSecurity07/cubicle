@@ -11,14 +11,14 @@ import { CoderModel } from './CoderModel';
 import { CardActions, Frame } from './Frame';
 import './coder.css';
 
-type View = { lines: CoderLine[]; state: CoderState; permission: Asked | null };
+type View = { lines: CoderLine[]; state: CoderState; permission: Asked | null; waiting: number };
 const SAID: Record<CoderState, string> = { idle: 'Idle', working: 'Working', waiting: 'Waiting for you', stopped: 'Stopped' };
 
 // The card's log, its question and its state, as the server has them: the whole of it when the window opens (or the
 // feed comes back after a gap), then one step at a time. The session the server started is written onto the card, so
 // the stage the window saves never loses it.
 function useCoder(id: string, keep: (session: string | undefined) => void): View {
-  const [view, setView] = useState<View>({ lines: [], state: 'idle', permission: null });
+  const [view, setView] = useState<View>({ lines: [], state: 'idle', permission: null, waiting: 0 });
   const kept = useRef(keep);
   kept.current = keep;
   useEffect(() => {
@@ -26,8 +26,9 @@ function useCoder(id: string, keep: (session: string | undefined) => void): View
       lines: event.lines ?? (event.line ? [...was.lines.slice(-199), event.line] : was.lines),
       state: event.state ?? was.state,
       permission: event.permission === undefined ? was.permission : event.permission,
+      waiting: event.waiting ?? (event.permission === null ? 0 : was.waiting),
     }));
-    const read = () => { getCoder(id).then((now) => apply({ lines: now.lines, state: now.state, permission: now.permission ?? null }), () => {}); };
+    const read = () => { getCoder(id).then((now) => apply({ lines: now.lines, state: now.state, permission: now.permission ?? null, waiting: now.waiting ?? 0 }), () => {}); };
     const stop = feed<CoderEvent>(coderChannel(id), (event) => {
       apply(event);
       if (event.session !== undefined && !event.lines) kept.current(event.session || undefined);
@@ -133,6 +134,7 @@ export function CoderNode({ id, data, selected }: NodeProps<ProjectNodeType>) {
             ? <p className="chat__empty">Set the folder, then tell the coder what to build or fix, here or through a person wired to this card. It works inside this folder only, and asks you before it changes a file or runs a command.</p>
             : view.lines.map((line) => <Line key={`${line.at}:${line.kind}:${line.text.slice(0, 48)}`} line={line} onChanges={openChanges} />)}
           {view.permission && <CoderAsk key={view.permission.id} cardId={id} ask={view.permission} />}
+          {view.permission && view.waiting > 0 && <p className="coder__more">and {view.waiting} more waiting</p>}
           {view.state === 'working' && <div className="coder__working" aria-hidden="true"><i /><i /><i /></div>}
         </div>
       )}

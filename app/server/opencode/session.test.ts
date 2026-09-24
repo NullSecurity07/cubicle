@@ -74,6 +74,42 @@ describe('a coder card', () => {
     expect(coder.snapshot(card.id).permission).toBeUndefined();
   });
 
+  it('holds two questions asked together, shows them one after another, and stays waiting until both are answered', async () => {
+    let now = 1_000_000;
+    const { coder, said, raised, calls, approvals, lines } = setup(fakeEngine({ step: 2, gap: 200 }), { now: () => now });
+    await coder.prompt(card, 'Change the file and run the tests, both', {});
+    await until(() => raised.length === 2);
+    const [edit, bash] = raised.map((one) => one.coder!);
+    expect([edit.tool, bash.tool]).toEqual(['edit', 'bash']);
+    // The first waits at the foot of the log, the second behind it.
+    expect(coder.snapshot(card.id)).toMatchObject({ state: 'waiting', permission: { id: edit.id }, waiting: 1 });
+    expect(said.at(-1)).toMatchObject({ waiting: 1 });
+    // Time spent waiting for the founder is never the coder going quiet.
+    now += 5 * 60_000;
+    await coder.tick();
+    expect(calls.some((one) => one.path.endsWith('/abort'))).toBe(false);
+    approvals.answer(`coder:${edit.id}`, { ok: true, args: { reply: 'once' } });
+    await until(() => coder.snapshot(card.id).permission?.id === bash.id);
+    expect(coder.snapshot(card.id)).toMatchObject({ state: 'waiting', waiting: 0 });
+    approvals.answer(`coder:${bash.id}`, { ok: true, args: { reply: 'once' } });
+    expect(await coder.wait(card.id)).toBe('done');
+    expect(calls.filter((one) => one.path.startsWith('/permission/')).map((one) => one.path)).toEqual([`/permission/${edit.id}/reply`, `/permission/${bash.id}/reply`]);
+    expect(lines()).toEqual(expect.arrayContaining(['note: allowed · edit src/example.ts', 'note: allowed · bash pnpm test', 'tool: bash pnpm test']));
+    expect(coder.snapshot(card.id)).toMatchObject({ state: 'idle', permission: undefined, waiting: 0 });
+  });
+
+  it('settles every waiting question by its own id when the coder is stopped or answers them itself', async () => {
+    const { coder, raised, approvals, lines } = setup(fakeEngine({ step: 2, gap: 5 }));
+    await coder.prompt(card, 'Both at once', {});
+    await until(() => raised.length === 2);
+    await coder.stop(card.id);
+    expect(coder.snapshot(card.id)).toMatchObject({ state: 'stopped', permission: undefined, waiting: 0 });
+    expect(lines().filter((one) => one.startsWith('note: said no'))).toHaveLength(2);
+    // Nothing is left in the book for anybody to answer.
+    expect(approvals.answer(`coder:${raised[0].coder!.id}`, { ok: true })).toBe(false);
+    expect(approvals.answer(`coder:${raised[1].coder!.id}`, { ok: true })).toBe(false);
+  });
+
   it('says no for the founder when nobody answered in time', async () => {
     const { coder, approvals, calls } = setup();
     await coder.prompt(card, 'Run the test suite', {});
@@ -148,13 +184,26 @@ describe('a coder card', () => {
     expect(remembered.length).toBe(before + 1);
   });
 
+  it('never counts changes already in the folder as the coder\'s work', async () => {
+    // A session diff that is empty (a command changed nothing, or nothing was asked to change) and a folder with an
+    // old uncommitted change in it: the coder did not do that, and the card does not say it did.
+    const fake = fakeEngine({ step: 2 });
+    const theirs = [{ file: 'README.md', patch: '', additions: 1, deletions: 1 }];
+    const engine = { ...fake, call: async (method: string, path: string, options?: any) => (path.endsWith('/diff') && path.startsWith('/session/') ? [] : path.startsWith('/vcs/diff') ? theirs : fake.call(method, path, options)) };
+    const { coder, lines } = setup(engine as never);
+    await coder.prompt(card, 'Reply with ok', {});
+    await coder.wait(card.id);
+    expect(lines().filter((one) => one.startsWith('diff:'))).toEqual(['diff: +12 −3 in 1 file']);
+    expect(await coder.result(card.id)).toContain('No files changed.');
+  });
+
   it('lists the models in the order the founder picks from, the free ones first', async () => {
     const { coder } = setup();
     expect(await coder.models()).toEqual({
       default: 'opencode/fake-free',
       groups: [
         { name: 'Free (OpenCode Zen)', models: [{ id: 'opencode/fake-free', name: 'Fake Free' }, { id: 'opencode/other-free', name: 'Other Free' }] },
-        { name: 'Your keys', models: [] },
+        { name: 'Your keys', models: [{ id: 'google/gemini-3-flash', name: 'Gemini 3 Flash' }, { id: 'groq/llama-3.3-70b-versatile', name: 'Llama 3.3 70B' }] },
         { name: 'Local', models: [{ id: 'ollama/qwen2.5-coder:7b', name: 'qwen2.5-coder:7b' }] },
       ],
     });

@@ -109,8 +109,8 @@ export default {
     });
     // A window that opens late gets each card's log, its question and its state at once.
     const opening = async () => coder.cards().map(({ id }) => {
-      const { lines, state, permission, session, model } = coder.snapshot(id);
-      return { channel: coderChannel(id), data: { lines, state, permission: permission ?? null, session, model } satisfies CoderEvent };
+      const { lines, state, permission, waiting, session, model } = coder.snapshot(id);
+      return { channel: coderChannel(id), data: { lines, state, permission: permission ?? null, waiting, session, model } satisfies CoderEvent };
     });
     hub.opening.push(opening);
 

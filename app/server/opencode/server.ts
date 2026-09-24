@@ -34,6 +34,10 @@ export function serverEnv(env: NodeJS.ProcessEnv, home: CoderHome, password: str
     OPENCODE_CONFIG: home.configPath, OPENCODE_DISABLE_PROJECT_CONFIG: '1',
     XDG_DATA_HOME: home.dataHome, XDG_CONFIG_HOME: home.configHome,
     OPENCODE_SERVER_PASSWORD: password,
+    // opencode reads skills and instructions from ~/.claude and ~/.agents whatever its config says (an empty
+    // `skills.paths` changes nothing): 115 of the founder's skills rode in every prompt. These two switches are the
+    // only way to keep them out.
+    OPENCODE_DISABLE_EXTERNAL_SKILLS: '1', OPENCODE_DISABLE_CLAUDE_CODE: '1',
   };
 }
 

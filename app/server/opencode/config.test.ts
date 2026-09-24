@@ -24,8 +24,11 @@ describe('the coder config', () => {
 
   it('asks before an edit or a command, and never lets the coder out of the folder, onto the web or into a subagent', () => {
     const { permission } = coderConfig({ env: {} }).config;
-    expect(permission).toMatchObject({ edit: 'ask', bash: 'ask', doom_loop: 'ask', webfetch: 'deny', websearch: 'deny', external_directory: 'deny', task: 'deny', question: 'deny', read: 'allow', glob: 'allow', grep: 'allow', lsp: 'allow' });
+    expect(permission).toMatchObject({ edit: 'ask', bash: 'ask', doom_loop: 'ask', webfetch: 'deny', websearch: 'deny', external_directory: 'deny', task: 'deny', question: 'deny', skill: 'deny', read: 'allow', glob: 'allow', grep: 'allow', lsp: 'allow' });
     expect(permission).not.toHaveProperty('*');
+    // Skills: every one found rides in the prompt by name and description, which a free model's small window cannot
+    // afford. The founder's own folders are kept out by the server's environment; the built-in one is denied here.
+    expect(permission.skill).toBe('deny');
   });
 
   it('copies the founder\'s local bridge as it is, and nothing else of theirs but the output caps', () => {

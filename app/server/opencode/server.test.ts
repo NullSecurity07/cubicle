@@ -18,6 +18,8 @@ describe('the one opencode server', () => {
       PATH: '/bin', HOME: '/home/me', GROQ_API_KEY: 'gsk',
       OPENCODE_CONFIG: home.configPath, OPENCODE_DISABLE_PROJECT_CONFIG: '1', XDG_DATA_HOME: home.dataHome, XDG_CONFIG_HOME: home.configHome,
       OPENCODE_SERVER_PASSWORD: 'pw-123',
+      // None of the founder's skills or Claude Code files (~/.claude, ~/.agents) are read into the coder's prompt.
+      OPENCODE_DISABLE_EXTERNAL_SKILLS: '1', OPENCODE_DISABLE_CLAUDE_CODE: '1',
     });
     for (const gone of ['GEMINI_API_KEY', 'GITHUB_TOKEN', 'AWS_SECRET_ACCESS_KEY']) expect(env).not.toHaveProperty(gone);
   });

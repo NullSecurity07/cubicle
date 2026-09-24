@@ -7,7 +7,9 @@ export type Heard = {
   session: string;
   // Any sign of life: a part moved, a token arrived. The watchdog counts from the last one.
   progress?: true; busy?: true; idle?: true;
-  line?: CoderLine; permission?: CoderAsk; replied?: string; error?: string;
+  // The folder changed under this step (opencode's patch part), whichever tool changed it.
+  changed?: true;
+  line?: CoderLine; permission?: CoderAsk; replied?: string; reply?: string; error?: string;
 };
 
 // A path as the founder would say it inside their own folder.
@@ -39,6 +41,7 @@ export function translate(event: RawEvent, dir = ''): Heard | null {
     const part = said.part ?? {};
     if (part.type === 'tool') { const line = toolLine(part, dir); return { session, progress: true, ...(line ? { line } : {}) }; }
     if (part.type === 'text' && part.time?.end && String(part.text ?? '').trim()) return { session, progress: true, line: { kind: 'reply', text: String(part.text).trim().slice(0, 4000), at: Date.now() } };
+    if (part.type === 'patch') return { session, progress: true, changed: true };
     return { session, progress: true };
   }
   if (type === 'session.diff') return Array.isArray(said.diff) && said.diff.length ? { session, line: { kind: 'diff', text: diffLine(said.diff), at: Date.now() } } : null;
@@ -46,7 +49,7 @@ export function translate(event: RawEvent, dir = ''): Heard | null {
     const what = flat(said.metadata?.command ?? short(String((said.patterns ?? [])[0] ?? ''), dir), 400);
     return { session, permission: { id: String(said.id), tool: String(said.permission ?? 'step'), what, always: Array.isArray(said.always) ? said.always.map(String) : [], at: Date.now() } };
   }
-  if (type === 'permission.replied') return { session, replied: String(said.requestID ?? said.permissionID ?? '') };
+  if (type === 'permission.replied') return { session, replied: String(said.requestID ?? said.permissionID ?? ''), ...(said.reply ? { reply: String(said.reply) } : {}) };
   if (type === 'session.idle') return { session, idle: true };
   if (type === 'session.status') return said.status?.type === 'idle' ? { session, idle: true } : said.status?.type === 'busy' ? { session, busy: true } : null;
   if (type === 'session.error') {

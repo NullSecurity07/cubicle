@@ -3,11 +3,13 @@ import type { CallOptions, Engine } from './server.ts';
 
 // For journeys and unit tests: an opencode that lives in this process and answers the same paths the real one does.
 // One prompt takes a step, edits `src/example.ts`, asks before `bash pnpm test` when the brief mentions a test,
-// says what it did, reports a one-file diff and goes idle. Nothing here reads the network.
+// says what it did, reports a one-file diff and goes idle. A brief that says "both" makes it ask before the edit and
+// the command at once, `gap` apart, the way a real model asks when it calls two tools in one step. Nothing here reads
+// the network.
 type Session = { id: string; directory: string; created: number; busy: boolean; messages: { id: string; role: 'user' | 'assistant'; text: string }[]; run?: AbortController; reverted?: string };
 const PATCH = '--- a/src/example.ts\n+++ b/src/example.ts\n@@ -1,3 +1,12 @@\n-export const ok = false;\n+export const ok = true;\n';
 
-export function fakeEngine({ step = 120, now = Date.now }: { step?: number; now?: () => number } = {}): Engine & { sessions: Map<string, Session> } {
+export function fakeEngine({ step = 120, gap = 0, now = Date.now }: { step?: number; gap?: number; now?: () => number } = {}): Engine & { sessions: Map<string, Session> } {
   const hearers = new Set<(event: RawEvent) => void>();
   const sessions = new Map<string, Session>();
   const waiting = new Map<string, { session: string; answer: (reply: string) => void }>();
@@ -30,16 +32,24 @@ export function fakeEngine({ step = 120, now = Date.now }: { step?: number; now?
       await pause(run.signal);
       part({ type: 'step-start' });
       await pause(run.signal);
-      part({ type: 'tool', tool: 'edit', state: { status: 'completed', input: { filePath: `${session.directory}/src/example.ts` }, title: 'src/example.ts' } });
-      if (/test/i.test(text)) {
-        const permission = id('per');
-        const reply = await new Promise<string>((answer) => {
-          waiting.set(permission, { session: sessionID, answer });
-          run.signal.addEventListener('abort', () => answer('reject'), { once: true });
-          tell('permission.asked', { id: permission, sessionID, permission: 'bash', patterns: ['pnpm test'], metadata: { command: 'pnpm test' }, always: ['pnpm *'], tool: { messageID: 'msg', callID: 'call' } }, session.directory);
-        });
-        waiting.delete(permission);
-        tell('permission.replied', { sessionID, requestID: permission, reply }, session.directory);
+      // One question, answered by the founder; the reply comes back on the stream the way opencode says it.
+      const ask = (permission: string, rest: Record<string, unknown>) => new Promise<string>((answer) => {
+        waiting.set(permission, { session: sessionID, answer: (reply) => { waiting.delete(permission); tell('permission.replied', { sessionID, requestID: permission, reply }, session.directory); answer(reply); } });
+        run.signal.addEventListener('abort', () => answer('reject'), { once: true });
+        tell('permission.asked', { id: permission, sessionID, tool: { messageID: 'msg', callID: permission }, ...rest }, session.directory);
+      });
+      const edit = { permission: 'edit', patterns: ['src/example.ts'], metadata: {}, always: ['*'] };
+      const bash = { permission: 'bash', patterns: ['pnpm test'], metadata: { command: 'pnpm test' }, always: ['pnpm *'] };
+      if (/\bboth\b/i.test(text)) {
+        const first = ask(id('per'), edit);
+        await new Promise((settle) => setTimeout(settle, gap));
+        const [edited, ran] = await Promise.all([first, ask(id('per'), bash)]);
+        if (run.signal.aborted) throw new Error('aborted');
+        part({ type: 'tool', tool: 'edit', state: edited === 'reject' ? { status: 'error', input: { filePath: `${session.directory}/src/example.ts` }, error: 'the founder said no' } : { status: 'completed', input: { filePath: `${session.directory}/src/example.ts` }, title: 'src/example.ts' } });
+        part({ type: 'tool', tool: 'bash', state: ran === 'reject' ? { status: 'error', input: { command: 'pnpm test' }, error: 'the founder said no' } : { status: 'completed', input: { command: 'pnpm test' }, output: '12 passed' } });
+      } else part({ type: 'tool', tool: 'edit', state: { status: 'completed', input: { filePath: `${session.directory}/src/example.ts` }, title: 'src/example.ts' } });
+      if (/test/i.test(text) && !/\bboth\b/i.test(text)) {
+        const reply = await ask(id('per'), bash);
         if (run.signal.aborted) throw new Error('aborted');
         await pause(run.signal);
         if (reply === 'reject') part({ type: 'tool', tool: 'bash', state: { status: 'error', input: { command: 'pnpm test' }, error: 'the founder said no' } });
@@ -103,6 +113,9 @@ export function fakeEngine({ step = 120, now = Date.now }: { step?: number; now?
       if (method === 'GET' && path.startsWith('/config/providers')) {
         return { default: { opencode: 'fake-free' }, providers: [
           { id: 'opencode', name: 'OpenCode Zen', models: { 'fake-free': { id: 'fake-free', name: 'Fake Free', cost: { input: 0, output: 0 } }, 'fake-paid': { id: 'fake-paid', name: 'Fake Paid', cost: { input: 1, output: 2 } }, 'other-free': { id: 'other-free', name: 'Other Free', cost: { input: 0, output: 0 } } } },
+          // Keyed models, among them the kinds a coder has no use for: research agents, speech, pictures, guards.
+          { id: 'google', name: 'Google', models: Object.fromEntries([['gemini-3-flash', 'Gemini 3 Flash'], ['deep-research-max-preview', 'Deep Research Max Preview'], ['gemini-2.5-flash-preview-tts', 'Gemini TTS'], ['gemini-embedding-001', 'Gemini Embedding'], ['gemini-3-pro-image-preview', 'Nano Banana'], ['veo-3', 'Veo 3'], ['imagen-4', 'Imagen 4']].map(([id, name]) => [id, { id, name }])) },
+          { id: 'groq', name: 'Groq', models: Object.fromEntries([['llama-3.3-70b-versatile', 'Llama 3.3 70B'], ['openai/gpt-oss-safeguard-20b', 'Safeguard'], ['meta-llama/llama-guard-4-12b', 'Llama Guard 4'], ['whisper-large-v3', 'Whisper'], ['text-moderation', 'Moderation'], ['playai-audio', 'Audio']].map(([id, name]) => [id, { id, name }])) },
           { id: 'ollama', name: 'Ollama', models: { 'qwen2.5-coder:7b': { id: 'qwen2.5-coder:7b', name: 'qwen2.5-coder:7b' }, whisper: { id: 'whisper', name: 'Whisper', capabilities: { toolcall: false } } } },
         ] };
       }

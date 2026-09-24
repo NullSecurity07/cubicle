@@ -142,7 +142,7 @@ export const learnFromTask = (boardId: string, taskId: string) => request<{ lear
 
 // The coder card. Asking answers at once and the card's channel carries the rest, the way a studio's does. The card's
 // folder and model go with each ask, because the stage is saved a moment after they change.
-export const getCoder = (id: string) => request<{ lines: CoderLine[]; state: CoderState; permission?: CoderAsk; session?: string }>(`/api/coder/${id}`);
+export const getCoder = (id: string) => request<{ lines: CoderLine[]; state: CoderState; permission?: CoderAsk; waiting?: number; session?: string }>(`/api/coder/${id}`);
 export const getCoderModels = () => request<CoderModels>('/api/coder/models');
 export const askCoder = (id: string, text: string, card: { path: string; model?: string }) => request(`/api/coder/${id}/ask`, send('POST', { text, path: card.path, model: card.model ?? '' }));
 export const stopCoder = (id: string) => request(`/api/coder/${id}/stop`, send('POST'));

@@ -22,8 +22,13 @@ type Deps = {
 };
 type Held = {
   id: string; dir: string; name: string; session?: string; model?: string;
-  state: CoderState; lines: CoderLine[]; permission?: CoderAsk;
+  state: CoderState; lines: CoderLine[];
+  // Every question the coder is waiting on, in the order it asked them. A model that calls two tools in one step asks
+  // two at once, and both must reach the founder: the first shows, the rest wait behind it.
+  permissions: CoderAsk[];
   heard: number; prompted: number; seenBusy: boolean; reply: string; error?: string;
+  // Whether this piece of work changed the folder at all, as opencode reported it.
+  changed: boolean;
   done: Set<(how: 'done' | 'stopped') => void>;
 };
 
@@ -35,6 +40,8 @@ const MONTH = 30 * 86_400_000;
 const LOCAL: Record<string, string> = { ollama: 'http://127.0.0.1:11434/v1', 'ollama-bridge': 'http://127.0.0.1:11435/v1' };
 const FREE = 'Free (OpenCode Zen)';
 const KEYED = new Set(['groq', 'google', 'openrouter']);
+// Models a provider lists that are not for writing code: research agents, speech, pictures, video, guards, filters.
+const NOT_A_CODER = /deep-research|tts|embedding|image|veo|imagen|guard|whisper|moderation|audio/i;
 
 const lookedAt = async (url: string) => {
   try { return (await fetch(`${url}/models`, { signal: AbortSignal.timeout(1500) })).ok; } catch { return false; }
@@ -70,7 +77,7 @@ export function createCoder(deps: Deps) {
   function open(card: CoderCard): Held {
     let mine = cards.get(card.id);
     if (!mine) {
-      mine = { id: card.id, dir: card.dir, name: card.name, session: card.session || undefined, model: card.model, state: 'idle', lines: [], heard: now(), prompted: 0, seenBusy: false, reply: '', done: new Set() };
+      mine = { id: card.id, dir: card.dir, name: card.name, session: card.session || undefined, model: card.model, state: 'idle', lines: [], permissions: [], changed: false, heard: now(), prompted: 0, seenBusy: false, reply: '', done: new Set() };
       cards.set(card.id, mine);
       if (mine.session) bySession.set(mine.session, card.id);
     }
@@ -111,6 +118,7 @@ export function createCoder(deps: Deps) {
       for (const [key, model] of Object.entries(provider.models ?? {})) {
         // A coder works through tools: a model that cannot call one (speech, a guard model) is no use here.
         if (model.capabilities?.toolcall === false || model.status === 'deprecated') continue;
+        if (KEYED.has(provider.id) && (NOT_A_CODER.test(key) || NOT_A_CODER.test(model.name ?? ''))) continue;
         const one = { id: `${provider.id}/${key}`, name: model.name || key };
         const free = !model.cost?.input && !model.cost?.output;
         if (provider.id === 'opencode' && free) groups.free.push(one);
@@ -134,7 +142,7 @@ export function createCoder(deps: Deps) {
     if (!model) throw new Error('opencode offers no free model right now. The founder picks one on the card, or sets STAGE_CODER_MODEL in .env.');
     const [providerID, ...rest] = model.split('/');
     line(mine, { kind: 'ask', text: text.trim().slice(0, 4000), ...(by ? { by } : {}) });
-    Object.assign(mine, { reply: '', error: undefined, seenBusy: false, prompted: now(), heard: now() });
+    Object.assign(mine, { reply: '', error: undefined, seenBusy: false, changed: false, prompted: now(), heard: now() });
     if (providerID in LOCAL && !(await reachable(bases[providerID]))) {
       const where = bases[providerID].replace(/^https?:\/\//, '').replace(/\/v1$/, '');
       mine.error = `the local model server at ${where} is not answering`;
@@ -184,7 +192,9 @@ export function createCoder(deps: Deps) {
     if (!card.session) return [];
     const own = await engine.call<CoderPatch[]>('GET', `/session/${card.session}/diff`, { directory: card.dir }).catch(() => []);
     if (own?.length) return own;
-    // A change made by a command rather than an edit is not in the session's own diff; the folder's is.
+    // A change made by a command rather than an edit is not in the session's own diff; the folder's is. It is only
+    // read when opencode said this work changed something: otherwise it is the founder's own uncommitted work.
+    if (!card.changed) return [];
     return (await engine.call<CoderPatch[]>('GET', '/vcs/diff?mode=git', { directory: card.dir }).catch(() => [])) ?? [];
   }
 
@@ -198,37 +208,49 @@ export function createCoder(deps: Deps) {
     finish(card, card.error ? 'stopped' : 'done');
   }
 
+  // What the card shows of its questions: the first one, and how many wait behind it.
+  const shown = (card: Held): CoderEvent => ({ permission: card.permissions[0] ?? null, waiting: Math.max(0, card.permissions.length - 1) });
+
   // A question from the coder: on the card, in "Needs you", and held in the one book every approval waits in, so the
-  // safety net's timeout and the founder's answer anywhere reach it the same way.
+  // safety net's timeout and the founder's answer anywhere reach it the same way. Each one is its own entry, raised
+  // the moment it arrives, however many are already waiting.
   async function asked(card: Held, ask: CoderAsk) {
-    card.permission = ask;
+    card.permissions = [...card.permissions, ask];
     setState(card, 'waiting');
-    tell(card, { permission: ask });
+    tell(card, shown(card));
     const key = `coder:${ask.id}`;
     const question = `Allow the coder to ${verb(ask)}?`;
+    const answering = approvals.ask(key);
     await attention.raise({ id: key, kind: 'approval', title: question, at: now(), cardId: card.id, who: `The ${card.name} coder`, coder: ask, event: { id: key, name: 'coder_permission', args: { [ask.tool === 'bash' ? 'command' : 'file']: ask.what }, waiting: true, question } }).catch(() => {});
-    const answer = await approvals.ask(key);
-    if (card.permission?.id !== ask.id) return;
+    const answer = await answering;
+    if (!card.permissions.some((one) => one.id === ask.id)) return;
     const reply = !answer.ok ? 'reject' : answer.args?.reply === 'always' ? 'always' : 'once';
     const message = typeof answer.args?.message === 'string' ? answer.args.message.trim().slice(0, 500) : '';
     settled(card, ask, reply === 'reject' ? `said no · ${ask.tool} ${ask.what}${message ? ` — ${message}` : ''}` : reply === 'always' ? `allowed for good · ${ask.always.join(', ') || ask.what}` : `allowed · ${ask.tool} ${ask.what}`);
     await engine.call('POST', `/permission/${ask.id}/reply`, { directory: card.dir, body: { reply, ...(message && reply === 'reject' ? { message } : {}) } })
       .catch((error: Error) => line(card, { kind: 'error', text: `the answer did not reach the coder: ${error.message}` }));
   }
+  // One question answered, by its own id. The card goes back to working only once none is left, and the watchdog
+  // counts from here: time spent waiting for the founder is never the coder going quiet.
   function settled(card: Held, ask: CoderAsk, said: string) {
-    card.permission = undefined;
+    card.permissions = card.permissions.filter((one) => one.id !== ask.id);
     card.heard = now();
     line(card, { kind: 'note', text: said });
-    tell(card, { permission: null });
-    if (card.state === 'waiting') setState(card, 'working');
+    tell(card, shown(card));
+    if (card.state === 'waiting' && !card.permissions.length) setState(card, 'working');
     void attention.clear(`coder:${ask.id}`).catch(() => {});
+  }
+  // Every question still waiting, answered no in one go (Stop, the server gone): each settled by its own id and let
+  // out of the book, so nothing is left for anybody to answer.
+  function refuseAll(card: Held, said: (ask: CoderAsk) => string) {
+    for (const ask of [...card.permissions]) { settled(card, ask, said(ask)); approvals.answer(`coder:${ask.id}`, { ok: false }); }
   }
 
   function hear(event: RawEvent) {
     if (event.type === GONE) {
       for (const card of cards.values()) {
         if (!busy(card)) continue;
-        if (card.permission) { const ask = card.permission; settled(card, ask, `the question about ${ask.tool} ${ask.what} went with it`); approvals.answer(`coder:${ask.id}`, { ok: false }); }
+        refuseAll(card, (ask) => `the question about ${ask.tool} ${ask.what} went with it`);
         card.error = 'stopped';
         line(card, { kind: 'error', text: 'the coder\'s server stopped; the next task starts it again' });
         setState(card, 'stopped');
@@ -242,17 +264,20 @@ export function createCoder(deps: Deps) {
     const heard = translate(event, card.dir);
     if (!heard) return;
     if (heard.progress) card.heard = now();
+    if (heard.changed) card.changed = true;
     // Busy only counts while the card is waiting on it: opencode says busy once more after an error or a stop, and
     // that must not bring back a spinner for work that is over.
     if (heard.busy) { card.seenBusy = true; card.heard = now(); }
     if (heard.line?.kind === 'reply') card.reply = heard.line.text;
     if (heard.line) line(card, heard.line);
     if (heard.permission) void asked(card, heard.permission);
-    // Answered somewhere else (another window, opencode's own screen): the question goes, and nothing is sent twice.
-    if (heard.replied && card.permission?.id === heard.replied) {
-      const ask = card.permission;
-      settled(card, ask, `answered elsewhere · ${ask.tool} ${ask.what}`);
-      approvals.answer(`coder:${ask.id}`, { ok: false });
+    // Answered without a word from here: opencode refuses every other question in a session when one is refused, and
+    // lets through the ones an "always" now covers; or somebody answered on opencode's own screen. The question goes,
+    // by its id, and nothing is sent twice.
+    const replied = heard.replied ? card.permissions.find((one) => one.id === heard.replied) : undefined;
+    if (replied) {
+      settled(card, replied, heard.reply === 'reject' ? `said no · ${replied.tool} ${replied.what}` : `allowed · ${replied.tool} ${replied.what}`);
+      approvals.answer(`coder:${replied.id}`, { ok: false });
     }
     // An error ends the work: opencode would otherwise go on retrying a request that cannot succeed (too large for a
     // free tier, a key refused) while the card and the person wait for nothing.
@@ -270,7 +295,7 @@ export function createCoder(deps: Deps) {
 
   async function stop(cardId: string, why = 'by you') {
     const card = held(cardId);
-    if (card.permission) { const ask = card.permission; settled(card, ask, `said no · ${ask.tool} ${ask.what} — stopped`); approvals.answer(`coder:${ask.id}`, { ok: false }); }
+    refuseAll(card, (ask) => `said no · ${ask.tool} ${ask.what} — stopped`);
     // Said and settled before the abort goes out: opencode answers an abort with "idle", and that must not read as done.
     card.error = 'stopped';
     line(card, { kind: 'note', text: `stopped · ${why}` });
@@ -284,7 +309,7 @@ export function createCoder(deps: Deps) {
     patches: (cardId: string) => diff(held(cardId)),
     snapshot(cardId: string) {
       const card = cards.get(cardId);
-      return { lines: card?.lines.slice(-SHOWN) ?? [], state: card?.state ?? 'idle' as CoderState, permission: card?.permission, session: card?.session, model: card?.model };
+      return { lines: card?.lines.slice(-SHOWN) ?? [], state: card?.state ?? 'idle' as CoderState, permission: card?.permissions[0], waiting: Math.max(0, (card?.permissions.length ?? 0) - 1), session: card?.session, model: card?.model };
     },
     cards: () => [...cards.values()].map((card) => ({ id: card.id, dir: card.dir })),
 
@@ -306,7 +331,7 @@ export function createCoder(deps: Deps) {
     // The founder's answer from the card itself: the same book the needs list answers in.
     async answer(cardId: string, permissionId: string, reply: 'once' | 'always' | 'reject', message?: string) {
       const card = held(cardId);
-      if (card.permission?.id !== permissionId) throw new Error('that question is not waiting any more');
+      if (!card.permissions.some((one) => one.id === permissionId)) throw new Error('that question is not waiting any more');
       approvals.answer(`coder:${permissionId}`, { ok: reply !== 'reject', args: { reply, ...(message ? { message } : {}) } });
       await new Promise((settle) => setImmediate(settle));
     },

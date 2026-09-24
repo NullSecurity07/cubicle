@@ -13,8 +13,10 @@ const LOCAL = 'http://127.0.0.1:11434/v1';
 
 // Read, search and look: yes. Change a file or run a command: ask. Leave the folder, reach the web, start a helper
 // agent (those trip the free models' gate) or stop to ask a question nobody is there to answer: no.
+// Skills: no. Every skill opencode can see goes into the prompt by name and description, and the one it always has
+// (how to configure opencode itself) is of no use in the founder's project; denied, the list and the tool both go.
 const PERMISSION = {
-  read: 'allow', glob: 'allow', grep: 'allow', lsp: 'allow', skill: 'allow',
+  read: 'allow', glob: 'allow', grep: 'allow', lsp: 'allow', skill: 'deny',
   edit: 'ask', bash: 'ask', doom_loop: 'ask',
   webfetch: 'deny', websearch: 'deny', external_directory: 'deny', task: 'deny', question: 'deny',
 };

@@ -16,7 +16,8 @@ export type CoderAsk = { id: string; tool: string; what: string; always: string[
 
 // What the card's channel carries: the whole log on opening (`lines`), one more step (`line`), and whatever changed of
 // the rest. A field that is absent did not change; `permission: null` means the question went.
-export type CoderEvent = { lines?: CoderLine[]; line?: CoderLine; state?: CoderState; permission?: CoderAsk | null; session?: string; model?: string };
+// `permission` is the question being shown; `waiting` counts the ones asked at the same time that wait behind it.
+export type CoderEvent = { lines?: CoderLine[]; line?: CoderLine; state?: CoderState; permission?: CoderAsk | null; waiting?: number; session?: string; model?: string };
 export const coderChannel = (cardId: string) => `coder:${cardId}`;
 
 // The model picker's groups, in the order the founder reads them. `id` is `provider/model`.
