@@ -13,10 +13,11 @@ const pool = (): ModelClient[] => [
 describe('a provider with more than one key', () => {
   it('makes a client of each key, in number order, with the first one keeping the plain name', () => {
     const clients = realClients({ GROQ_API_KEY: 'a', GROQ_API_KEY_3: 'c', GROQ_API_KEY_2: 'b', GEMINI_API_KEY: 'g' } as NodeJS.ProcessEnv);
-    expect(names(clients)).toEqual(['groq', 'groq#2', 'groq#3', 'gemini']);
+    // The small side model rides on the same keys, one client per key, right behind the big one.
+    expect(names(clients)).toEqual(['groq', 'groq#2', 'groq#3', 'groq-small', 'groq-small#2', 'groq-small#3', 'gemini']);
     expect(clients.every((one) => one.model && one.maxPromptChars > 0)).toBe(true);
     // A spare key on its own is still that provider, and an empty one is no key at all.
-    expect(names(realClients({ GROQ_API_KEY_2: 'b', MISTRAL_API_KEY: '' } as NodeJS.ProcessEnv))).toEqual(['groq#2']);
+    expect(names(realClients({ GROQ_API_KEY_2: 'b', MISTRAL_API_KEY: '' } as NodeJS.ProcessEnv))).toEqual(['groq#2', 'groq-small#2']);
     expect(providerOf('groq#2')).toBe('groq');
   });
 

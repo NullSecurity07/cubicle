@@ -1,10 +1,18 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { ModelInfo, Usage } from '../shared/model.ts';
+import { createBreaker } from './breaker.ts';
+import { fromCache, onCache } from './cache.ts';
 import { providerOf, type ModelClient, type Quota } from './providers.ts';
 
 type Count = { requests: number; input: number; output: number };
-type State = { day: string; providers: Record<string, Count> };
+// What a call was for. A turn is a person answering; the rest are the calls around it.
+export type CallKind = 'turn' | 'side' | 'eval' | 'retain' | 'reflect' | 'compaction';
+// Per tool: how many results went into a prompt, and how many characters they came to before and after shrinking.
+export type ToolCount = { results: number; before: number; after: number };
+export type CacheCount = { hits: number; misses: number; tokensSaved: number };
+// `kinds`, `tools` and `cache` came later: a day written before them still reads, as a day without them.
+type State = { day: string; providers: Record<string, Count>; kinds?: Record<string, Count>; tools?: Record<string, ToolCount>; cache?: Record<string, CacheCount> };
 type Seen = { at: number; tokens: number };
 
 export type UsageBook = ReturnType<typeof createUsage>;
@@ -21,6 +29,8 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
   const quotas: Record<string, { at: number; quota: Quota }> = {};
   const cooling: Record<string, number> = {};
   let saving: Promise<unknown> = Promise.resolve();
+  const breaker = createBreaker(now);
+  const folder = path ? dirname(path) : null;
 
   const roll = () => { if (state.day !== today(now())) state = { day: today(now()), providers: {} }; };
   const count = (name: string) => (state.providers[name] ??= { requests: 0, input: 0, output: 0 });
@@ -44,7 +54,22 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     return Math.min(share(used.requests, client.limits.rpd), share(used.input + used.output, client.limits.tpd), fromHeader);
   }
 
+  // The cache's hits and misses for this workspace, counted into the day like everything else.
+  if (folder) {
+    onCache((event) => {
+      if (event.folder !== folder) return;
+      roll();
+      const one = ((state.cache ??= {})[event.kind] ??= { hits: 0, misses: 0, tokensSaved: 0 });
+      if (event.hit) { one.hits += 1; one.tokensSaved += event.tokens ?? 0; } else one.misses += 1;
+      save();
+    });
+  }
+
   return {
+    // The workspace this book belongs to: the side-call cache lives under it.
+    folder,
+    // The book's clock, so what is kept beside it ages the same way.
+    clock: now,
     async load() {
       if (!path) return;
       try {
@@ -53,8 +78,15 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
       } catch { /* first run, or a damaged file: start the day at zero */ }
     },
     settled: () => saving,
-    record(name: string, usage?: Usage, quota?: Quota) {
+    record(name: string, usage?: Usage, quota?: Quota, kind: CallKind = 'turn') {
+      // Answered from the cache: nothing was asked of the provider, and the cache counted it already.
+      if (usage && fromCache.has(usage)) return;
       roll();
+      breaker.ok(name);
+      const of = ((state.kinds ??= {})[kind] ??= { requests: 0, input: 0, output: 0 });
+      of.requests += 1;
+      of.input += usage?.input ?? 0;
+      of.output += usage?.output ?? 0;
       const used = count(name);
       used.requests += 1;
       used.input += usage?.input ?? 0;
@@ -65,10 +97,34 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     },
     // A provider said "not now": leave it alone for as long as it asked, or a minute.
     cool(name: string, milliseconds = WINDOW) { cooling[name] = now() + milliseconds; },
+    // A request that failed: a 429 rests the key (as long as it asked, or three seconds doubling), five 5xx or
+    // timeouts in a row open its breaker. See breaker.ts.
+    failed: (name: string, error: unknown) => breaker.failed(name, error),
+    // Right before a request goes out: false while the key's breaker is open, or half open with its one try out.
+    admit: (name: string) => breaker.admit(name),
+    breaker: (name: string) => breaker.state(name),
+    // How much one key has carried, the last minute first: what spreads a provider's keys evenly.
+    carried(name: string) {
+      roll();
+      const seen = window(name);
+      const used = state.providers[name];
+      return { minute: seen.reduce((sum, one) => sum + one.tokens, 0), requests: seen.length, day: (used?.input ?? 0) + (used?.output ?? 0) };
+    },
+    // One tool result on its way into a prompt, before and after it was shrunk.
+    shrunk(tool: string, before: number, after: number) {
+      roll();
+      const one = ((state.tools ??= {})[tool] ??= { results: 0, before: 0, after: 0 });
+      one.results += 1;
+      one.before += before;
+      one.after += after;
+      save();
+    },
+    // Today's counts by what the call was for, by tool and by cache, for the insights to put together.
+    today() { roll(); return { kinds: { ...state.kinds }, tools: { ...state.tools }, cache: { ...state.cache } }; },
     left,
     // True when one more request of this size would likely hit the per-minute wall.
     hot(client: ModelClient, promptChars: number) {
-      if ((cooling[client.name] ?? 0) > now()) return true;
+      if ((cooling[client.name] ?? 0) > now() || breaker.resting(client.name)) return true;
       const seen = window(client.name);
       const tokens = Math.ceil(promptChars / 4);
       if (client.limits.rpm && seen.length >= client.limits.rpm) return true;
@@ -78,10 +134,11 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     },
     // Several keys for one provider are one provider to the founder: the rings show what they have done together and
     // what is left of the two days' worth between them. It is also the name a person is pinned to.
-    info(clients: ModelClient[]): ModelInfo[] {
+    // The side model is no one's to pin, so the picker never lists it; the insights ask for it with `withSide`.
+    info(clients: ModelClient[], withSide = false): ModelInfo[] {
       roll();
       const rows = new Map<string, { info: ModelInfo; keys: number }>();
-      for (const client of clients) {
+      for (const client of clients.filter((one) => withSide || !one.side)) {
         const name = providerOf(client.name);
         const used = count(client.name);
         const row = rows.get(name) ?? { info: { name, model: client.model, ready: true, left: 0, requests: 0, tokens: 0 }, keys: 0 };

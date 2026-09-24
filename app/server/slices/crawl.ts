@@ -6,6 +6,7 @@ import { dnsResolve, publicUrl, unwrapRedirect, webUrl, type Resolve } from '../
 import type { Deps, Slice } from '../install.ts';
 import { decode, htmlToText } from '../readers.ts';
 import type { Tool, ToolContext } from '../tools/registry.ts';
+import { webCache } from '../cache.ts';
 import { UNTRUSTED } from '../tools/web.ts';
 import { attr, createPace, isoDay, when } from './readers.ts';
 
@@ -149,6 +150,8 @@ export type CrawlOptions = {
   // Where the whole crawl is written, as a path inside the shared files folder.
   save?: (name: string, text: string) => Promise<unknown>;
   gap?: number; pageMs?: number; totalMs?: number;
+  // Keep each crawl fifteen minutes under the workspace's cache folder. On in the app, off in fake mode and in tests.
+  cache?: boolean;
 };
 export type CrawlAsk = { url: string; max?: number; depth?: number; match?: string; query?: string };
 export type Crawled = { host: string; pages: Page[]; seconds: number; robots: 'read' | 'none' | 'failed'; closed: number; skipped: number; failed: string[]; refused: string | null; truncated: boolean; file: string | null };
@@ -440,6 +443,7 @@ export const watchAttention = (watches: Watches, deps: Pick<Deps, 'store'>, now:
 export function crawlTools(options: CrawlOptions, watches: Watches): Tool[] {
   const str = (args: Record<string, unknown>, key: string) => (typeof args[key] === 'string' ? (args[key] as string).trim() : '');
   const now = options.now ?? Date.now;
+  const cache = webCache(options.cache ? options.workspace : null, now);
   return [
     {
       name: 'crawl_site',
@@ -460,7 +464,9 @@ export function crawlTools(options: CrawlOptions, watches: Watches): Tool[] {
       },
       async run(args, context: ToolContext) {
         if (!str(args, 'url')) return { text: 'Give the site\'s address in "url".' };
-        return { text: await runCrawl({ url: str(args, 'url'), max: Number(args.max) || undefined, depth: args.depth === undefined ? undefined : Number(args.depth), match: str(args, 'match'), query: context.query }, options, context.signal) };
+        const ask: CrawlAsk = { url: str(args, 'url'), max: Number(args.max) || undefined, depth: args.depth === undefined ? undefined : Number(args.depth), match: str(args, 'match'), query: context.query };
+        // The same site, the same way, for the same question, within fifteen minutes: crawled once. The saved file is still there.
+        return { text: await cache.one(['crawl', ask.url, ask.max ?? null, ask.depth ?? null, ask.match ?? '', ask.query ?? ''], () => runCrawl(ask, options, context.signal)) };
       },
     },
     {
@@ -542,6 +548,7 @@ export default {
     const watches = createWatches(join(deps.workspace, 'watch'));
     const options: CrawlOptions = {
       workspace: deps.workspace,
+      cache: !deps.fake,
       ...(deps.fake ? { http: fakeSite, resolveHost: async () => [] } : {}),
       save: (name, text) => deps.store.writeFile(name, text),
     };

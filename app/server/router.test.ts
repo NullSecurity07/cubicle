@@ -89,4 +89,25 @@ describe('route', () => {
     now += 120_000;
     expect(usage.left(client('groq'))).toBe(1);
   });
+
+  it('spreads one provider\'s keys by what each has carried, the last minute first, and moves nothing between providers', () => {
+    let now = Date.parse('2026-09-24T10:00:00Z');
+    const usage = createUsage(null, () => now);
+    const clients = [client('groq'), client('groq#2'), client('gemini'), client('groq#3')];
+    const order = () => names(route(clients, usage, { promptChars: 10, tools: true }));
+    expect(order()).toEqual(['groq', 'groq#2', 'gemini', 'groq#3']);
+    usage.record('groq', { input: 300, output: 10 });
+    expect(order()).toEqual(['groq#2', 'groq#3', 'gemini', 'groq']);
+    usage.record('groq#2', { input: 100, output: 10 });
+    usage.record('groq#3', { input: 100, output: 10 });
+    expect(order()).toEqual(['groq#2', 'groq#3', 'gemini', 'groq']);
+    // A minute on, the window is empty for all three and the day decides: the lightest day goes first.
+    now += 61_000;
+    expect(order()).toEqual(['groq#2', 'groq#3', 'gemini', 'groq']);
+    usage.record('groq#2', { input: 400, output: 10 });
+    now += 61_000;
+    expect(order()).toEqual(['groq#3', 'groq', 'gemini', 'groq#2']);
+    // Pinned, the same: every key of the pinned provider, lightest first.
+    expect(names(route(clients, usage, { pinned: 'groq', promptChars: 10, tools: true }))).toEqual(['groq#3', 'groq', 'groq#2', 'gemini']);
+  });
 });

@@ -21,7 +21,8 @@ export function keysOf(name: string, env: NodeJS.ProcessEnv): number {
   return found;
 }
 export function keyPools(env: NodeJS.ProcessEnv): { provider: string; keys: number }[] {
-  return (models as { name: string; keyEnv: string }[]).map((entry) => ({ provider: entry.name, keys: keysOf(entry.keyEnv, env) }));
+  // The side model is another model behind a provider's own keys, not more keys: it is not counted twice.
+  return (models as { name: string; keyEnv: string; side?: boolean }[]).filter((entry) => !entry.side).map((entry) => ({ provider: entry.name, keys: keysOf(entry.keyEnv, env) }));
 }
 
 // A program this machine can run, looked for the way a shell looks for it.
