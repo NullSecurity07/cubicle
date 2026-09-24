@@ -95,6 +95,18 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   the bed is **written here instead** — chords, bass and light percussion synthesised a sample at a time, seven
   moods, at broadcast bed level so the narration ducking has room. It never fails for want of a network. Whooshes,
   risers and impacts are synthesised the same way, and owe nobody anything.
+- **Two voices, one of them borrowed** (2026-09-24): the Voice studio has a second engine, **OmniVoice**, off
+  until you switch it on in the card ("Engine") or set `STAGE_OMNIVOICE=1`. It designs a voice from a few words
+  ("older man, low pitch, british accent"), clones one from a 5 to 20 second recording dropped on the card, and
+  speaks over 600 languages. Its code is Apache-2.0, but its **weights are CC-BY-NC 4.0: what it makes may not be
+  sold**, and a film or an ad for your company counts as selling. So every file it makes carries a
+  `<file>.credits.txt` saying so and a "non-commercial" mark on the card, a film is read by Kokoro unless you pick
+  OmniVoice as its narrator by hand (and then its credits say so too), and a person can use it only where you
+  switched it on. Only clone a voice you have permission to use. The first switch-on sets it up in
+  `app/.cache/omnivoice/` with `uv` (Python 3.12, about 4 GB of packages and 3.3 GB of weights, once); it runs on
+  the graphics card when about 2.4 GB is free and on the processor otherwise (about eight seconds of work a second
+  of speech here, with Ollama holding the card), and lets go of the card after five idle minutes. See
+  `app/server/media/omnivoice/CREDITS.md`.
 - **Operator views** (2026-09-19): Focus mode (`F` or the header button; a card fills the window); Needs you (dock
   bell, `N`); Messages (`M`); Decisions (`D`; one markdown file per decision in `workspace/decisions/`); Recall (a
   `recall` tool for people, a search for the founder, by meaning, on a local model; a person finds only what their

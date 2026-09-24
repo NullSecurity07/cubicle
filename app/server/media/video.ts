@@ -39,7 +39,8 @@ import {
   type Pace, type Pack, type Shot,
 } from './templates/index.ts';
 import { timeWords, type Part, type Word } from './timings.ts';
-import { castLine, castVoice, isVoice, VOICES, wavSeconds } from './voice.ts';
+import { castLine, castVoice, engineOf, isVoice, VOICES, wavSeconds } from './voice.ts';
+import { creditsOf, designOf, NONCOMMERCIAL, OMNI_ENGINE } from './omnivoice.ts';
 
 // The spec vocabulary lives in `spec.ts` now, so the director and the critic can share it without importing the
 // whole renderer. Everything that used to be here is still here, by the same names.
@@ -100,6 +101,8 @@ export type VideoAsk = {
   prompt: string; format?: string; look?: string; narrate?: boolean; spec?: Spec; cardId?: string;
   purpose?: string; length?: number | string; pace?: string; music?: string; sfx?: boolean; captions?: boolean;
   ai?: boolean | string; address?: string; voice?: string; person?: boolean;
+  // The voice engine, set by the founder by hand or not at all, and for OmniVoice the few words its voice is designed from.
+  engine?: string; design?: string;
   // How long the founder is willing to wait: 'draft' is the film to look at before the film, 'full' and nothing are the film.
   speed?: string;
   // Who asked for the film. A person's own wires are the founder pointing at things just as much as the studio's
@@ -492,21 +495,32 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         const table = await deps.voices?.cast?.().catch(() => undefined) ?? VOICES;
         const wanted = narratorWanted(asked.prompt, understanding);
         const narrator = isVoice(asked.voice) ? (table.find((one) => one.id === asked.voice) ?? castVoice(wanted, table)) : castVoice(wanted, table);
-        if (asked.narrate !== false) report(castLine(narrator));
+        // Kokoro reads every film. OmniVoice only when the founder set the film's engine by hand: its weights forbid
+        // selling what it makes, and a film is usually selling something, so it is never picked here on its own.
+        const borrowed = asked.engine === OMNI_ENGINE ? engineOf(deps.voices, OMNI_ENGINE) : undefined;
+        const borrowAsk = { prompt: '', engine: OMNI_ENGINE, design: asked.design };
+        const borrowHint = borrowed ? borrowed.ready(borrowAsk) : asked.engine === OMNI_ENGINE ? 'it is not on this machine' : null;
+        if (asked.engine === OMNI_ENGINE && asked.narrate !== false && borrowHint) report(`OmniVoice cannot read this film (${borrowHint}), so Kokoro does`);
+        const omni = borrowed && !borrowHint ? designOf(asked.design) : null;
+        if (asked.narrate !== false) report(omni ? `narrator: OmniVoice, ${omni.instruct} · ${NONCOMMERCIAL}` : castLine(narrator));
+        const narratorGender = omni ? (omni.kept.includes('male') ? 'm' : omni.kept.includes('female') ? 'f' : narrator.gender) : narrator.gender;
         // Whoever is on screen has to sound like themselves. The only description of a drawn or dropped picture
         // anybody has is the words it was drawn from, so that is what is read — and where it says a man and the
         // narrator is a woman, nobody goes on camera at all rather than the two being put together.
         const shownAs = narratorWanted([face && material.assets.find((one) => one.name === face)?.prompt,
           spec.scenes.map((one) => one.portrait_prompt).filter(Boolean).join(' ')].filter(Boolean).join(' ')).gender;
         spec = { ...spec, scenes: onCamera(spec.scenes, understanding, bible, report,
-          { ready: lipsync, narratorGender: narrator.gender, personGender: shownAs }, face) };
+          { ready: lipsync, narratorGender, personGender: shownAs }, face) };
 
         // Every drawn picture is filed under what was asked for, so the same film rendered twice draws nothing the
         // second time and a founder's daily quota lasts the week.
         const drawing = deps.images && !deps.images.ready()
           ? cachedImages(deps.images, deps.cacheDir ? join(deps.cacheDir, 'pictures') : join(deps.dir, '.cache', 'pictures'))
           : null;
-        const saying = deps.voices && !deps.voices.ready() && asked.narrate !== false ? deps.voices : null;
+        const reader = omni ? borrowed : deps.voices;
+        const saying = reader && !reader.ready(omni ? borrowAsk : undefined) && asked.narrate !== false ? reader : null;
+        // What the narration's own licence says, when it says anything. It travels with the film.
+        let voiceTerms = '';
         if (!drawing) report('no picture maker is set up, so the scenes are set on drawn backgrounds instead of photographs');
         const { width, height } = FORMATS[shape];
         // `null` here means ffmpeg answered; anything else is the line the founder is told instead.
@@ -629,7 +643,8 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           if (!saying || !script) return;
           report('reading the whole film in one go…');
           try {
-            const piece = await saying.make({ prompt: script, voice: narrator.id }, { report: () => {}, signal });
+            const piece = await saying.make({ prompt: script, voice: narrator.id, ...(omni ? { engine: OMNI_ENGINE, design: asked.design } : {}) }, { report: () => {}, signal });
+            if (piece.noncommercial) voiceTerms = piece.credits ?? creditsOf(`designed as ${omni?.instruct ?? 'a voice'}`);
             await writeFile(join(at, 'assets', 'say.wav'), piece.bytes);
             let file = 'say.wav';
             let spoke = wavSeconds(piece.bytes);
@@ -1084,6 +1099,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
             .then(() => { music = { file: 'bed.wav', seconds: total }; }, (error: Error) => report(`the music could not be mixed: ${error.message}`));
         }
         if (credit && music) report(`Music: ${credit.title} by ${credit.by} · ${credit.licence}`);
+        if (voiceTerms) report(`Voice: OmniVoice · CC-BY-NC 4.0 · this film is ${NONCOMMERCIAL.replace(' (its', ' (the voice\'s')}`);
 
         // The words a film turns on, which are what the caption track lights up.
         const keywords = [...new Set(edit.shots.map((one) => one.keyword).filter(Boolean) as string[])];
@@ -1135,7 +1151,13 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         await run(bin, ['snapshot', '.', '--at', (cut[0].seconds * 0.6).toFixed(2), '--no-end', '--describe=false', '-o', 'poster'], at, () => {}, signal);
         const shot = (await readdir(join(at, 'poster')).catch(() => [])).find((name) => name.endsWith('.png'));
         if (shot) poster = { ext: 'png', bytes: await readFile(join(at, 'poster', shot)) };
-        return { ext: 'mp4', bytes, poster, credit };
+        // A film read in a non-commercial voice says so beside itself, with the music's credit, so the terms go
+        // wherever the file goes.
+        const terms = voiceTerms ? [
+          'The narration in this film was made with OmniVoice. The film is not for commercial use.',
+          '', voiceTerms.trim(), ...(credit && music ? ['', `Music: ${credit.title} by ${credit.by} · ${credit.licence} · ${credit.source}`] : []), '',
+        ].join('\n') : '';
+        return { ext: 'mp4', bytes, poster, credit, ...(terms ? { noncommercial: true, credits: terms } : {}) };
       } finally {
         // The project a film was rendered from is thrown away, because it is a copy of everything the founder
         // wired plus a few megabytes of pictures. When something is wrong with a finished film the only way to

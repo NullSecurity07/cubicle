@@ -32,11 +32,16 @@ export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean; 
   | { kind: 'source'; url: string; about: string; title?: string }
   // Studios: the founder, or a wired person, says what they want and the server makes it. Only what was asked for lives
   // on the card; what came out lives in a sidecar the server owns.
-  | { kind: 'imagegen'; prompt?: string; shape?: Shape } | { kind: 'voicegen'; text?: string; voice?: string }
+  | { kind: 'imagegen'; prompt?: string; shape?: Shape }
+  // `engine` is the founder's own switch: left unset it is Kokoro. OmniVoice says each line in a voice `design`ed from
+  // a few words, or in the voice of the recording named in `clone`, in `language` when one is set.
+  | { kind: 'voicegen'; text?: string; voice?: string; engine?: VoiceEngine; design?: string; clone?: string; language?: string }
   // `silent` rather than a narrate flag: `fromFlow` drops a false, so a switch the founder turned off has to be the true one.
   // The switches that can be on, off *or* whatever the purpose says are words rather than flags, for the same reason.
   | { kind: 'videogen'; brief?: string; format?: Shape; look?: VideoLook; silent?: boolean;
     purpose?: string; length?: number; pace?: 'calm' | 'punchy'; music?: string; voice?: string;
+    // A film is read by Kokoro unless the founder sets this. OmniVoice's weights are non-commercial, and the film says so.
+    engine?: VoiceEngine; design?: string;
     captions?: Switch; sfx?: Switch; ai?: Switch; address?: string; person?: Switch;
     // Left unset it is the full film. 'draft' is the quick one to look at first: fewer, smaller pictures and nothing moving.
     speed?: 'draft' });
@@ -46,13 +51,22 @@ export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean; 
 // filter over it.
 export type VideoLook = 'clean' | 'creator' | 'editorial' | 'neon' | 'documentary' | 'sketch' | 'brand';
 export type Switch = 'on' | 'off';
+export const VOICE_ENGINES = ['kokoro', 'omnivoice'] as const;
+export type VoiceEngine = (typeof VOICE_ENGINES)[number];
+// The words that go wherever OmniVoice does: beside its entry in the picker, on its files, and in the log. They live
+// here because the card and the server both say them.
+export const NONCOMMERCIAL = 'not for commercial use (its weights are CC-BY-NC)';
+export const OMNI_PICKER_LINE = `clones and designs voices, 600 languages, ${NONCOMMERCIAL}`;
+export const PERMISSION_LINE = 'Only clone a voice you have permission to use.';
 export const SHAPES = ['square', 'wide', 'tall'] as const;
 export type Shape = (typeof SHAPES)[number];
 export const MEDIA_KINDS = ['imagegen', 'voicegen', 'videogen'] as const;
 export type MediaKind = (typeof MEDIA_KINDS)[number];
 // One thing a studio made. `prompt` is what was asked for: a picture prompt, the words to say, a video brief.
 // `music` credits the bed a film was made with, because a track's terms travel with the file it is in.
-export type MediaResult = { path: string; prompt: string; at: number; poster?: string; music?: MediaCredit; by?: string };
+// `noncommercial` is set when the file's own licence forbids selling it, and `credits` is where the words of that
+// licence were written beside it.
+export type MediaResult = { path: string; prompt: string; at: number; poster?: string; music?: MediaCredit; by?: string; noncommercial?: true; credits?: string };
 export type MediaCredit = { title: string; by: string; licence: string; source: string };
 // Something the founder dropped on a studio card for it to build with: their own footage, a photograph, a music track.
 // `name` is what a storyboard calls it in `asset`; `path` is where it really is in the shared files.

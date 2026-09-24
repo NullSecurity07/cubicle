@@ -429,6 +429,9 @@ div.msg--user { position: relative; white-space: pre-wrap; }
 /* Which machine drew it. A founder who waited a minute is owed the reason, and one who waited four seconds is owed
    the knowledge that somebody else's quota paid for it. */
 .studio__by { font-size: 11px; color: var(--muted); margin-right: auto; }
+/* A file whose licence forbids selling it says so wherever it is listed, small and never hidden. */
+.studio__mark { display: inline-block; margin-right: 6px; padding: 0 5px; border: 1px solid rgba(255, 184, 77, 0.55); border-radius: 4px; color: #ffb84d; font-size: 10px; line-height: 15px; letter-spacing: 0.02em; vertical-align: 1px; }
+.studio__design { width: 100%; box-sizing: border-box; margin: 6px 0 4px; border: 1px solid var(--card-border); border-radius: 8px; padding: 5px 8px; outline: 0; background: rgba(0, 0, 0, 0.25); color: var(--text); font: inherit; font-size: 12px; }
 .studio__done a, .studio__done button { padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; font-size: 11.5px; text-decoration: none; cursor: pointer; }
 .studio__done a:hover, .studio__done button:hover { text-decoration: underline; }
 .studio__ask { flex: none; display: flex; flex-direction: column; gap: 7px; padding: 9px 12px 11px; }

@@ -1,6 +1,6 @@
 import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useEffect, useRef, useState } from 'react';
-import { SHAPES, type MediaAsset, type Shape, type VideoLook } from '../../shared/model';
+import { NONCOMMERCIAL, OMNI_PICKER_LINE, PERMISSION_LINE, SHAPES, type MediaAsset, type MediaResult, type Shape, type VideoLook, type VoiceEngine } from '../../shared/model';
 import { afforded, makingWords, shotsIn } from '../../shared/film-time';
 import { useAddCard } from '../addCard';
 import { addAsset, fileUrl, getVoices, removeAsset, stopMedia } from '../api';
@@ -86,17 +86,40 @@ export function useVoices() {
   return voices;
 }
 
+// The small mark a recording made with non-commercial weights carries wherever it is listed.
+function NotForSale({ result }: { result?: MediaResult }) {
+  if (!result?.noncommercial) return null;
+  return <span className="studio__mark" title={`Made with OmniVoice: ${NONCOMMERCIAL}`}>non-commercial</span>;
+}
+// What a first switch-on says, to set OmniVoice up with the founder watching and prove it speaks.
+const OMNI_NARRATOR = 'omnivoice';
+const FIRST_WORDS = 'This is OmniVoice, set up and speaking on this computer.';
+
 // A voice studio. The founder writes the words, or a wired person says them with generate_voice; either way the
-// recording appears here and the file goes to the shared files.
+// recording appears here and the file goes to the shared files. Kokoro is the engine unless the founder switches to
+// OmniVoice, which designs a voice from a few words or clones one dropped on the card, and whose weights are
+// non-commercial: the card says so beside the switch, on every file it makes and in the log.
 export function VoiceGenNode({ id, data, selected }: NodeProps<VoiceGenNodeType>) {
   const { updateNodeData } = useReactFlow();
-  const { media, hint, making, problem, make } = useMedia(id);
+  const { media, hint, making, problem, make, reload } = useMedia(id);
   const elapsed = useElapsed(making);
   const voices = useVoices();
   const [shown, setShown] = useState(0);
   const words = data.text ?? '';
   const said = media.results[shown] ?? media.results[0];
-  const say = () => { if (words.trim() && !making) { setShown(0); void make({ prompt: words.trim(), voice: data.voice ?? '' }); } };
+  const omni = data.engine === 'omnivoice';
+  const recordings = (media.assets ?? []).filter((one) => one.kind === 'audio');
+  const clone = omni && recordings.some((one) => one.name === data.clone) ? data.clone : undefined;
+  const asked = (prompt: string) => (omni
+    ? { prompt, engine: 'omnivoice', design: data.design ?? '', language: data.language ?? '', ...(clone ? { clone } : {}) }
+    : { prompt, voice: data.voice ?? '' });
+  const say = () => { if (words.trim() && !making) { setShown(0); void make(asked(words.trim())); } };
+  // The first time it is switched on, OmniVoice is set up in front of the founder and says one line to prove it.
+  const switchTo = (engine: VoiceEngine) => {
+    updateNodeData(id, { engine: engine === 'kokoro' ? undefined : engine });
+    const setUp = media.results.some((one) => one.by?.startsWith('OmniVoice'));
+    if (engine === 'omnivoice' && !setUp && !making) { setShown(0); void make({ prompt: FIRST_WORDS, engine: 'omnivoice', design: data.design ?? '' }); }
+  };
 
   return (
     <Frame selected={!!selected} minWidth={260} minHeight={260}>
@@ -119,11 +142,20 @@ export function VoiceGenNode({ id, data, selected }: NodeProps<VoiceGenNodeType>
         {media.results.length > 1 && (
           <div className="studio__takes nowheel" aria-label="Said earlier">
             {media.results.map((one, index) => (
-              <button key={one.path} type="button" className={index === shown ? 'is-shown' : undefined} title={one.prompt} onClick={() => setShown(index)}>{one.prompt}</button>
+              <button key={one.path} type="button" className={index === shown ? 'is-shown' : undefined} title={one.prompt} onClick={() => setShown(index)}>
+                {one.noncommercial && <NotForSale result={one} />}{one.prompt}
+              </button>
             ))}
           </div>
         )}
-        {said && <div className="studio__done"><a href={fileUrl(said.path)} download>Download</a></div>}
+        {said && (
+          <div className="studio__done">
+            {said.by && <span className="studio__by">{said.by === 'Kokoro' ? 'Said on this computer' : `Said by ${said.by}`}</span>}
+            <NotForSale result={said} />
+            {said.credits && <a href={fileUrl(said.credits)} target="_blank" rel="noreferrer">Licence</a>}
+            <a href={fileUrl(said.path)} download>Download</a>
+          </div>
+        )}
         <form className="studio__ask" onSubmit={(event) => { event.preventDefault(); say(); }}>
           <textarea
             aria-label="What to say" placeholder="Thanks for stopping by. Here is what we built this week…" rows={2} value={words}
@@ -131,13 +163,53 @@ export function VoiceGenNode({ id, data, selected }: NodeProps<VoiceGenNodeType>
             onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); say(); } }}
           />
           <div className="studio__end">
-            <select aria-label="Voice" value={data.voice ?? voices[0]?.id ?? ''} onChange={(event) => updateNodeData(id, { voice: event.target.value })}>
-              {voices.map((voice) => <option key={voice.id} value={voice.id}>{voice.name}</option>)}
-            </select>
+            {omni
+              ? (
+                <select aria-label="Voice" value={clone ?? ''} onChange={(event) => updateNodeData(id, { clone: event.target.value || undefined })}>
+                  <option value="">Designed voice</option>
+                  {recordings.map((one) => <option key={one.name} value={one.name}>Clone {one.name}</option>)}
+                </select>
+              )
+              : (
+                <select aria-label="Voice" value={data.voice ?? voices[0]?.id ?? ''} onChange={(event) => updateNodeData(id, { voice: event.target.value })}>
+                  {voices.map((voice) => <option key={voice.id} value={voice.id}>{voice.name}</option>)}
+                </select>
+              )}
             {making
               ? <button type="button" onClick={() => void stopMedia(id)}>Stop</button>
-              : <button type="submit" className="primary" disabled={!words.trim() || !!hint} title={hint ?? ''}>Make</button>}
+              : <button type="submit" className="primary" disabled={!words.trim() || (!omni && !!hint)} title={omni ? '' : hint ?? ''}>Make</button>}
           </div>
+          <details className="studio__more" open={omni || undefined}>
+            <summary>Engine: {omni ? `OmniVoice · non-commercial` : 'Kokoro'}</summary>
+            <div className="studio__grid">
+              <label className="studio__wide">
+                Engine
+                <select aria-label="Engine" value={data.engine ?? 'kokoro'} onChange={(event) => switchTo(event.target.value as VoiceEngine)}>
+                  <option value="kokoro">Kokoro</option>
+                  <option value="omnivoice">OmniVoice</option>
+                </select>
+              </label>
+            </div>
+            <p className="studio__aside">OmniVoice {OMNI_PICKER_LINE}. Kokoro is free to use for anything.</p>
+            {omni && (
+              <>
+                <div className="studio__grid">
+                  <label className="studio__wide">
+                    Designed voice
+                    <input aria-label="Design" value={data.design ?? ''} placeholder="older man, low pitch, british accent" disabled={!!clone}
+                      onChange={(event) => updateNodeData(id, { design: event.target.value || undefined })} />
+                  </label>
+                  <label>
+                    Language
+                    <input aria-label="Language" value={data.language ?? ''} placeholder="Auto, or es, Hindi…" onChange={(event) => updateNodeData(id, { language: event.target.value || undefined })} />
+                  </label>
+                </div>
+                <p className="studio__aside">It knows gender, age, pitch, a whisper and ten English accents. [laughter] and [sigh] in the words are heard, not read.</p>
+                <p className="studio__aside">To clone a voice, drop a 5 to 20 second recording here. {PERMISSION_LINE}</p>
+                <AssetTray id={id} assets={recordings} onChange={reload} accept="audio/*" />
+              </>
+            )}
+          </details>
         </form>
         {!making && (problem || media.problem) && <p className="msg--problem studio__problem">That did not work: {problem || media.problem}</p>}
       </div>
@@ -176,7 +248,7 @@ const seconds = (value?: number) => (value ? `${Math.round(value)}s` : '');
 
 // What the founder dropped on the card, and what the card is drawing on besides. A film is built around these, so the
 // card says out loud what it will use before the founder presses Make.
-function AssetTray({ id, assets, onChange }: { id: string; assets: MediaAsset[]; onChange: () => void }) {
+function AssetTray({ id, assets, onChange, accept = MEDIA_FILE }: { id: string; assets: MediaAsset[]; onChange: () => void; accept?: string }) {
   const [busy, setBusy] = useState('');
   const pick = useRef<HTMLInputElement>(null);
   const take = async (files: FileList | null) => {
@@ -189,7 +261,7 @@ function AssetTray({ id, assets, onChange }: { id: string; assets: MediaAsset[];
   };
   return (
     <div className="tray">
-      <input ref={pick} type="file" accept={MEDIA_FILE} multiple hidden onChange={(event) => { void take(event.target.files); event.target.value = ''; }} />
+      <input ref={pick} type="file" accept={accept} multiple hidden onChange={(event) => { void take(event.target.files); event.target.value = ''; }} />
       {assets.map((asset) => (
         <div key={asset.name} className="tray__one" title={`${asset.name} · ${asset.kind}${asset.seconds ? ` · ${seconds(asset.seconds)}` : ''}`}>
           {asset.thumb ? <img src={fileUrl(asset.thumb)} alt="" draggable={false} /> : <span className="tray__kind">{asset.kind === 'audio' ? '♪' : '▦'}</span>}
@@ -227,6 +299,7 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
       purpose: data.purpose ?? 'auto', length: data.length, pace: data.pace ?? 'auto', music: data.music ?? 'auto',
       captions: data.captions === 'on' ? true : data.captions === 'off' ? false : undefined,
       sfx: data.sfx !== 'off', ai: data.ai ?? 'auto', address: data.address, voice: data.voice, speed: data.speed ?? 'full',
+      ...(data.engine === 'omnivoice' ? { engine: 'omnivoice', design: data.design ?? '' } : {}),
     });
   };
 
@@ -291,6 +364,7 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
         {film && !making && <div className="studio__done"><a href={fileUrl(film.path)} download>Download</a></div>}
         {!!using.length && <p className="studio__using">Using: {using.join(', ')}</p>}
         {film?.music && !making && <p className="studio__note">Music: {film.music.title} by {film.music.by} · {film.music.licence}</p>}
+        {film?.noncommercial && !making && <p className="studio__note"><NotForSale result={film} /> Narrated with OmniVoice: {NONCOMMERCIAL}.{film.credits && <> <a href={fileUrl(film.credits)} target="_blank" rel="noreferrer">Credits</a></>}</p>}
         {!making && !!brief.trim() && <p className="studio__note">{data.speed === 'draft' ? 'A draft takes' : 'Making it takes'} {howLong(data.length, data.ai ?? 'auto', data.speed === 'draft', drawnHere, !data.silent)}. Everything left on Auto, the director reads out of the brief.</p>}
         <form className="studio__ask" onSubmit={(event) => { event.preventDefault(); shoot(); }}>
           <textarea
@@ -376,11 +450,23 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
                 on screen is the fastest way to lose a viewer, so the studio would rather show nobody. */}
             <label className="studio__ai" title="One narrator reads the whole film. Left on Auto, the studio casts the best voice that fits the brief.">
               Narrator
-              <select value={data.voice ?? ''} onChange={(event) => updateNodeData(id, { voice: event.target.value || undefined })}>
+              <select value={data.engine === 'omnivoice' ? OMNI_NARRATOR : data.voice ?? ''} onChange={(event) => {
+                const picked = event.target.value;
+                updateNodeData(id, picked === OMNI_NARRATOR ? { engine: 'omnivoice', voice: undefined } : { engine: undefined, voice: picked || undefined });
+              }}>
                 <option value="">Auto</option>
                 {voices.map((voice) => <option key={voice.id} value={voice.id}>{voice.name}</option>)}
+                <option value={OMNI_NARRATOR}>OmniVoice · non-commercial</option>
               </select>
             </label>
+            {/* The one way a film is read in OmniVoice: the founder picks it here, by hand, and is told what it means. */}
+            {data.engine === 'omnivoice' && (
+              <>
+                <input className="studio__design" aria-label="The narrator's voice" value={data.design ?? ''} placeholder="older man, low pitch, british accent"
+                  onChange={(event) => updateNodeData(id, { design: event.target.value || undefined })} />
+                <p className="studio__aside">OmniVoice {OMNI_PICKER_LINE}. The film says so in its credits.</p>
+              </>
+            )}
             <AssetTray id={id} assets={assets} onChange={reload} />
           </details>
         </form>

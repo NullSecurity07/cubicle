@@ -1,6 +1,6 @@
 import { MarkerType, type Edge, type Node } from '@xyflow/react';
 import type { AppPreset } from '../shared/apps';
-import type { Box, Card, Doc, Room, Shape, Stage, Switch, VideoLook } from '../shared/model';
+import type { Box, Card, Doc, Room, Shape, Stage, Switch, VideoLook, VoiceEngine } from '../shared/model';
 
 export type RoomData = Omit<Room, keyof Box | 'id'>;
 export type DocData = Omit<Doc, keyof Box | 'id'>;
@@ -16,8 +16,8 @@ export type SourceNodeType = Node<{ url: string; about: string; title?: string }
 // A note out of the founder's library. The card carries which note it is; the words stay in the library.
 export type LibraryNodeType = Node<{ noteId: string }, 'library'>;
 export type ImageGenNodeType = Node<{ prompt?: string; shape?: Shape }, 'imagegen'>;
-export type VoiceGenNodeType = Node<{ text?: string; voice?: string }, 'voicegen'>;
-export type VideoGenNodeType = Node<{ brief?: string; format?: Shape; look?: VideoLook; silent?: boolean; purpose?: string; length?: number; pace?: 'calm' | 'punchy'; music?: string; voice?: string; captions?: Switch; sfx?: Switch; ai?: Switch; address?: string; person?: Switch; speed?: 'draft' }, 'videogen'>;
+export type VoiceGenNodeType = Node<{ text?: string; voice?: string; engine?: VoiceEngine; design?: string; clone?: string; language?: string }, 'voicegen'>;
+export type VideoGenNodeType = Node<{ brief?: string; format?: Shape; look?: VideoLook; silent?: boolean; purpose?: string; length?: number; pace?: 'calm' | 'punchy'; music?: string; voice?: string; captions?: Switch; sfx?: Switch; ai?: Switch; address?: string; person?: Switch; speed?: 'draft'; engine?: VoiceEngine; design?: string }, 'videogen'>;
 export type CardNodeType = BrowserNodeType | ProjectNodeType | BoardNodeType | NoteNodeType | ImageNodeType | LinkNodeType | SourceNodeType | LibraryNodeType | ImageGenNodeType | VoiceGenNodeType | VideoGenNodeType;
 export type StageNode = RoomNodeType | DocNodeType | CardNodeType;
 

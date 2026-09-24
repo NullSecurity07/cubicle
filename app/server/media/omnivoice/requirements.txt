@@ -1,0 +1,6 @@
+# OmniVoice's own Python environment, set up by app/server/media/omnivoice.ts into app/.cache/omnivoice with
+# `uv sync --python 3.12`. These are the same pins as PINS there. torch and torchaudio come from the CUDA 12.8 index:
+#   --extra-index-url https://download.pytorch.org/whl/cu128
+omnivoice==0.2.1
+torch==2.8.0
+torchaudio==2.8.0

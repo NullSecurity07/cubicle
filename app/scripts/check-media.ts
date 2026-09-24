@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path';
 try { process.loadEnvFile(resolve(import.meta.dirname, '../../.env')); } catch { /* no keys: every backend says what it needs */ }
 const { imageMakers } = await import('../server/media/image.ts');
 const { DEFAULT_VOICE, voiceMakers, wavSeconds } = await import('../server/media/voice.ts');
+const { omniVoices, omniSetUp, omniSwitchedOn, PACKAGES_GB, WEIGHTS_GB } = await import('../server/media/omnivoice.ts');
 const { hyperframesVideos } = await import('../server/media/video.ts');
 const { createClips } = await import('../server/media/spaces.ts');
 const { localClips, CLIP_SECONDS, MINUTES_EACH } = await import('../server/media/local-clips.ts');
@@ -31,7 +32,7 @@ async function check(maker: Maker, ask: Ask, tell: (piece: Piece) => string) {
 const film = { title: 'A check', scenes: [{ layout: 'title' as const, heading: 'A check' }, { layout: 'outro' as const, text: 'It renders.' }] };
 try {
   for (const maker of imageMakers()) await check(maker, { prompt: 'a paper plane over a desk, soft morning light', shape: 'square' }, (piece) => `a ${piece.ext} · ${size(piece)}`);
-  for (const maker of voiceMakers(resolve(import.meta.dirname, '../.cache/voice'))) await check(maker, { prompt: 'The studios are working.', voice: DEFAULT_VOICE }, (piece) => `${wavSeconds(piece.bytes).toFixed(1)} seconds spoken · ${size(piece)}`);
+  for (const maker of voiceMakers(resolve(import.meta.dirname, '../.cache/voice')).filter((one) => !one.optIn)) await check(maker, { prompt: 'The studios are working.', voice: DEFAULT_VOICE }, (piece) => `${wavSeconds(piece.bytes).toFixed(1)} seconds spoken · ${size(piece)}`);
   await check(hyperframesVideos({ dir, think: async () => { throw new Error('the storyboard is written here, not asked for'); } }),
     { prompt: film.title, spec: film, format: 'wide', look: 'clean', narrate: false }, (piece) => `an mp4 · ${size(piece)}${piece.poster ? ' · with a poster frame' : ''}`);
 
@@ -51,6 +52,22 @@ try {
       // The one line that matters: a live search that quietly fell back has not proven anything about the network.
       if (what.includes('found') && !found) console.log('  (nothing was found online, so this was written here too)');
     } catch (error) { console.log(what, 'ERROR', String((error as Error).message).slice(0, 200)); }
+  }
+
+  // The borrowed voice. It is set up by switching it on in a card, never by a check, and it says one word only when
+  // the founder passes --local, because loading it takes most of a minute and its weights are not for sale.
+  const omniDir = resolve(import.meta.dirname, '../.cache/omnivoice');
+  if (!omniSetUp(omniDir)) {
+    console.log(`OmniVoice NOT SET UP: switching it on in a Voice studio card sets it up (about ${PACKAGES_GB} GB of packages and ${WEIGHTS_GB} GB of weights, once)${omniSwitchedOn() ? '' : '; it is off until then'}`);
+  } else if (!process.argv.includes('--local')) {
+    console.log(`OmniVoice READY${omniSwitchedOn() ? '' : ' (switched off in .env; a card can turn it on)'} (not run: pass --local to say one word; non-commercial weights)`);
+  } else {
+    const omni = omniVoices(omniDir, { ...process.env, STAGE_OMNIVOICE: '1' });
+    const started = Date.now();
+    try {
+      const piece = await omni.make({ prompt: 'Ready.' }, { report: (line: string) => console.log('  ·', line) });
+      console.log(`OmniVoice OK ${wavSeconds(piece.bytes).toFixed(1)} seconds spoken · ${piece.by} · ${((Date.now() - started) / 1000).toFixed(0)}s`);
+    } catch (error) { console.log('OmniVoice ERROR', String((error as Error).message).slice(0, 200)); } finally { omni.stop(); }
   }
 
   // Pictures made here on this machine: the one backend that never runs out, and the one that takes a minute. Like

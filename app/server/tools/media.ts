@@ -4,6 +4,7 @@ import type { MediaJobs } from '../media/jobs.ts';
 import { MOVE_NAMES, SIZES } from '../media/moves.ts';
 import { AI_LAYOUTS, FRAMES, LAYOUTS, parseSpec, PURPOSES, type Layout } from '../media/video.ts';
 import { DEFAULT_VOICE, isVoice, VOICES } from '../media/voice.ts';
+import { NONCOMMERCIAL, NONVERBAL, OMNI_ENGINE, omniSwitchedOn } from '../media/omnivoice.ts';
 import { LOOKS, PACES } from '../media/templates/index.ts';
 import { wired } from '../prompt.ts';
 import { text, type Tool, type ToolContext } from './registry.ts';
@@ -33,7 +34,7 @@ export const spendingScenes = (scenes: unknown, localReady = false): Layout[] =>
 // machine's account, so nothing waits for the founder's yes; the per-turn caps are what keep a person from making all day.
 // `localClipsReady` says whether the moving pictures would be made here; when they would, nothing goes out and
 // nothing is spent, so the founder is not asked.
-export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = () => false): Tool[] {
+export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = () => false, env: NodeJS.ProcessEnv = process.env): Tool[] {
   // The last thing the founder said to this person, which is where "use that image" lives.
   const lastAsk = async (context: ToolContext): Promise<string> => {
     const said = await context.store.readChat(context.roomId).catch(() => []);
@@ -83,12 +84,17 @@ export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = ()
     perTurn: 2,
     description: 'Say something out loud in the voice studio connected to your room, and get back a sound file. '
       + 'Write the words exactly as they should be spoken, with the punctuation that gives them their rhythm. '
-      + 'The recording appears on the card and in your reply, and the file stays in the shared files.',
+      + 'The recording appears on the card and in your reply, and the file stays in the shared files. '
+      + `Engine omnivoice designs a voice from a few words, clones one from a recording on the card, and speaks other languages; it is ${NONCOMMERCIAL}, and only works if the founder switched it on.`,
     parameters: {
       type: 'object',
       properties: {
-        text: { type: 'string', description: 'The words to say, exactly as they should be spoken' },
-        voice: { type: 'string', enum: VOICES.map((voice) => voice.id), description: `Which voice says them; ${DEFAULT_VOICE} when left out` },
+        text: { type: 'string', description: `The words to say, exactly as they should be spoken. With omnivoice, ${NONVERBAL.slice(0, 2).join(' and ')} make the sound` },
+        voice: { type: 'string', enum: VOICES.map((voice) => voice.id), description: `A kokoro voice; ${DEFAULT_VOICE} when left out` },
+        engine: { type: 'string', enum: ['kokoro', OMNI_ENGINE], description: "kokoro unless the card is set to omnivoice" },
+        design: { type: 'string', description: 'omnivoice: the voice in a few words, like "older man, low pitch, british accent"' },
+        clone: { type: 'string', description: 'omnivoice: the name of a recording on the card whose voice to use' },
+        language: { type: 'string', description: 'omnivoice: the language, as a code like "es" or a name' },
       },
       required: ['text'],
     },
@@ -97,8 +103,20 @@ export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = ()
       const card = studio(context, 'voicegen');
       if (!card) throw new Error('no voice studio is connected to your room. Ask the founder to add one from the dock and draw a wire to it.');
       const voice = isVoice(args.voice) ? args.voice : DEFAULT_VOICE;
-      const made = await media.make(card, { prompt: text(args, 'text', 5000), voice }, { signal: context.signal });
-      return { text: `Said it.\n\n[${made.prompt.replace(/[[\]]/g, '').slice(0, 80)}](/api/files/${made.path})`, effect: { kind: 'media-made', id: card.id } };
+      const set = card.kind === 'voicegen' ? card : undefined;
+      const said = (key: string, cap: number) => (typeof args[key] === 'string' && args[key].trim() ? args[key].trim().slice(0, cap) : undefined);
+      // A design, a clone or a language is only OmniVoice's to do, so asking for one is asking for it.
+      const wantsOmni = args.engine === OMNI_ENGINE || (args.engine !== 'kokoro' && (set?.engine === OMNI_ENGINE || !!said('design', 1) || !!said('clone', 1) || !!said('language', 1)));
+      // Its weights are non-commercial, so switching it on is the founder's call and never a person's.
+      if (wantsOmni && !omniSwitchedOn(env) && set?.engine !== OMNI_ENGINE) {
+        throw new Error(`OmniVoice is switched off on this card. The founder turns it on in the Voice studio card; it is ${NONCOMMERCIAL}, so that is their call. Kokoro can say it now.`);
+      }
+      const ask = wantsOmni
+        ? { prompt: text(args, 'text', 5000), voice, engine: OMNI_ENGINE, design: said('design', 200) ?? set?.design, clone: said('clone', 120) ?? set?.clone, language: said('language', 40) ?? set?.language }
+        : { prompt: text(args, 'text', 5000), voice };
+      const made = await media.make(card, ask, { signal: context.signal });
+      const terms = made.noncommercial ? ` Made with OmniVoice: ${NONCOMMERCIAL}; the licence is written beside the file.` : '';
+      return { text: `Said it.${terms}\n\n[${made.prompt.replace(/[[\]]/g, '').slice(0, 80)}](/api/files/${made.path})`, effect: { kind: 'media-made', id: card.id } };
     },
   }, {
     name: 'generate_video',
@@ -211,6 +229,8 @@ export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = ()
         sfx: spec?.sfx ?? (typeof args.sfx === 'boolean' ? args.sfx : undefined), narrate: args.narrate !== false,
         // The switch on the card is the founder's, not the person's: a film only spends the quota when it is on.
         ai: settings?.ai ?? 'auto', address: settings?.address, voice: settings?.voice, speed: settings?.speed,
+        // The narrator's engine is the founder's alone to set: a person never reads a film in a non-commercial voice.
+        engine: settings?.engine, design: settings?.design,
         // Who asked, so the film can reach the things wired to them, and whatever pictures they are holding.
         roomId: context.roomId, ...(images.length ? { images: [...new Set(images)] } : {}),
       }, { signal: context.signal });

@@ -1,4 +1,6 @@
+import { dirname, join } from 'node:path';
 import type { Maker, Piece } from './jobs.ts';
+import { OMNI_ENGINE, omniVoices } from './omnivoice.ts';
 
 const RATE = 24_000;
 const GEMINI = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -167,6 +169,7 @@ export function kokoroVoices(cacheDir: string): Maker {
 
   return {
     name: 'Kokoro',
+    engine: 'kokoro',
     ready: () => null,
     // Who this model can actually be, read off the weights. Asked for before the narration is recorded, which is
     // the same moment the model is loaded anyway, so it costs a film nothing.
@@ -240,7 +243,16 @@ export function geminiVoice(env: NodeJS.ProcessEnv = process.env, http: typeof f
   };
 }
 
-export const voiceMakers = (cacheDir: string, env: NodeJS.ProcessEnv = process.env, http: typeof fetch = fetch): Maker[] => [kokoroVoices(cacheDir), geminiVoice(env, http)];
+// Kokoro first, always: it is the default and the film's narrator. OmniVoice sits beside it in its own cache, tried
+// only when a card or a person names it; a film holds Kokoro alone and reaches OmniVoice through `others`, so it can
+// only ever read in it when the founder set the film's engine by hand.
+export function voiceMakers(cacheDir: string, env: NodeJS.ProcessEnv = process.env, http: typeof fetch = fetch): Maker[] {
+  const omni = omniVoices(join(dirname(cacheDir), OMNI_ENGINE), env);
+  return [{ ...kokoroVoices(cacheDir), others: [omni] }, omni, geminiVoice(env, http)];
+}
+// The engine a caller holding one voice backend asked for by name, or nothing when there is no such engine.
+export const engineOf = (voices: Maker | undefined, engine: unknown): Maker | undefined =>
+  !voices || typeof engine !== 'string' ? undefined : voices.engine === engine ? voices : voices.others?.find((one) => one.engine === engine);
 
 // A second of quiet: enough to show a player and a download, and it costs nothing in the checks.
 export const fakeVoices: Maker = {

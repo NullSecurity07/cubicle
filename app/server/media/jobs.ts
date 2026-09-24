@@ -11,12 +11,21 @@ export type Ask = { prompt: string } & Record<string, unknown>;
 // for a recording the pieces it was said in — which is the only honest way to know when each word is spoken.
 // `by` is which backend really made it, for the card to say so: a founder who waited a minute for a picture is
 // owed the knowledge that it was drawn here rather than fetched.
-export type Piece = { ext: string; bytes: Buffer; poster?: { ext: string; bytes: Buffer }; parts?: { text: string; seconds: number }[]; credit?: MediaCredit; by?: string };
+// `noncommercial` marks a file whose own licence forbids selling it, and `credits` is the text that travels beside it
+// as `<file>.credits.txt`, so the terms are never only on the card.
+export type Piece = {
+  ext: string; bytes: Buffer; poster?: { ext: string; bytes: Buffer }; parts?: { text: string; seconds: number }[]; credit?: MediaCredit; by?: string;
+  noncommercial?: boolean; credits?: string;
+};
 // One backend that makes one kind of media. `ready` says in the founder's words why it cannot work yet, or nothing.
 // `cast` is the voice makers' own answer to "who can say this?": the table the loaded weights ship with, so a film
 // picking a narrator reads gender, accent and grade off the model rather than off a list somebody typed.
+// `engine` names a backend the founder can ask for by name; an `optIn` one is only ever tried when it is asked for,
+// so a card that says nothing gets the default. `ready` hears the ask when there is one, because asking for an
+// engine by name is how a card switches it on. `others` are the engines a caller holding only this backend may name.
 export type Maker = {
-  name: string; ready(): string | null;
+  name: string; ready(ask?: Ask): string | null;
+  engine?: string; optIn?: boolean; others?: Maker[];
   make(ask: Ask, help: { report: (line: string) => void; signal?: AbortSignal }): Promise<Piece>;
   cast?(): Promise<Voice[]>;
   // Several backends as one may say which of them the next ask would really go to, so a film can tell the founder
@@ -76,6 +85,15 @@ export function createMedia(deps: { dir: string; store: Store; makers: Makers; n
     return `${stem}-${Date.now().toString(36)}`;
   };
 
+  const referenceOf = async (name: string, media: Media): Promise<{ ref: string; refText?: string }> => {
+    const asset = (media.assets ?? []).find((one) => one.name === name || one.path === name);
+    const result = media.results.find((one) => one.path === name || one.path === asset?.path);
+    const path = asset?.path ?? result?.path;
+    if (!path) throw new Error(`there is no recording called ${name} on this card to clone; drop the file on the card first`);
+    if (asset && asset.kind !== 'audio') throw new Error(`${name} is not a recording, so there is no voice in it to clone`);
+    return { ref: deps.store.pathOf(path), ...(result ? { refText: result.prompt } : {}) };
+  };
+
   return {
     read,
     settled: () => queue,
@@ -95,7 +113,7 @@ export function createMedia(deps: { dir: string; store: Store; makers: Makers; n
     assetsOf: async (cardId: string): Promise<MediaAsset[]> => (await read(cardId)).assets ?? [],
     // Why nothing can make this kind yet, in words the founder can act on; nothing when a backend is ready.
     ready(kind: MediaKind): string | null {
-      const hints = (deps.makers[kind] ?? []).map((maker) => maker.ready());
+      const hints = (deps.makers[kind] ?? []).filter((maker) => !maker.optIn).map((maker) => maker.ready());
       if (!hints.length) return 'Nothing is set up to make this yet.';
       return hints.some((hint) => hint === null) ? null : hints.find(Boolean) ?? null;
     },
@@ -103,7 +121,11 @@ export function createMedia(deps: { dir: string; store: Store; makers: Makers; n
     watch(tell: (event: MediaEvent) => void) { watchers.add(tell); return () => { watchers.delete(tell); }; },
     // One job per card. Backends are tried in order, the way models are, and the card keeps every line either way.
     async make(card: Card, ask: Ask, help: { report?: (line: string) => void; signal?: AbortSignal } = {}): Promise<MediaResult> {
-      const makers = deps.makers[card.kind as MediaKind] ?? [];
+      const all = deps.makers[card.kind as MediaKind] ?? [];
+      // An engine asked for by name is the only one tried: a founder who chose a voice for its licence or its
+      // clone must not be handed another one quietly. Otherwise the opt-in engines sit out.
+      const named = typeof ask.engine === 'string' && all.some((maker) => maker.engine === ask.engine) ? ask.engine : null;
+      const makers = named ? all.filter((maker) => maker.engine === named) : all.filter((maker) => !maker.optIn);
       if (!makers.length) throw new Error('nothing is set up to make this yet');
       if (running.has(card.id)) throw new Error('this card is already making something');
       const stop = new AbortController();
@@ -118,9 +140,12 @@ export function createMedia(deps: { dir: string; store: Store; makers: Makers; n
         help.report?.(text);
       };
       try {
+        // A voice to clone is named by the card: a file dropped on it, or one of its own recordings, whose words are
+        // then known. The backend is handed where it really is on disk.
+        if (typeof ask.clone === 'string' && ask.clone.trim()) ask = { ...ask, ...(await referenceOf(ask.clone.trim(), before)) };
         const failures: string[] = [];
         for (const maker of makers) {
-          const hint = maker.ready();
+          const hint = maker.ready(ask);
           if (hint) { failures.push(`${maker.name}: ${hint}`); continue; }
           try {
             // Which card asked is part of the asking: a video studio reads what is wired to it and what is dropped on it.
@@ -130,6 +155,8 @@ export function createMedia(deps: { dir: string; store: Store; makers: Makers; n
             if (piece.by) made.by = piece.by;
             if (piece.poster) made.poster = await deps.store.saveFileBytes(nameOf(ask, at + 1, piece.poster.ext), piece.poster.bytes);
             if (piece.credit) made.music = piece.credit;
+            if (piece.noncommercial) made.noncommercial = true;
+            if (piece.credits) made.credits = await deps.store.saveFileBytes(`${made.path}.credits.txt`, Buffer.from(piece.credits));
             // What the founder dropped on the card while it was working is still theirs: read the card again, not `before`.
             const latest = await read(card.id);
             save(card.id, { ...latest, state: 'idle', problem: undefined, log: [...log, `done · ${maker.name}`], results: [made, ...before.results].slice(0, KEEP) });

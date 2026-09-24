@@ -1126,3 +1126,25 @@ test('missions: the first-run list ticks itself from what the workspace holds, a
   await page.waitForTimeout(1200);
   await expect(card).toBeHidden();
 });
+
+test('a voice studio switched to OmniVoice says plainly that what it makes is not for sale, and asks for permission to clone', async ({ page }) => {
+  await tidy(page);
+  await addCard(page, 'Add voice studio');
+  const card = page.locator('.react-flow__node-voicegen');
+  await expect(card).toContainText('Write what should be said');
+  await expect(card.locator('.studio__more summary')).toHaveText('Engine: Kokoro');
+  await card.locator('.studio__more summary').click();
+  await expect(card).toContainText('OmniVoice clones and designs voices, 600 languages, not for commercial use (its weights are CC-BY-NC).');
+  // The first switch-on sets it up in front of the founder, by saying one line.
+  await card.getByLabel('Engine').selectOption('omnivoice');
+  await expect(card.locator('.studio__more summary')).toHaveText('Engine: OmniVoice · non-commercial');
+  await expect(card.locator('.studio__sound audio')).toBeVisible();
+  await expect(card.getByLabel('Voice')).toHaveValue('');
+  await expect(card).toContainText('Only clone a voice you have permission to use.');
+  await card.getByLabel('Design').fill('older man, low pitch, british accent');
+  if (process.env.SHOT) await card.screenshot({ path: process.env.SHOT });
+  // The choice is the card's own and survives a reload.
+  await page.waitForTimeout(800);
+  await page.reload();
+  await expect(page.locator('.react-flow__node-voicegen .studio__more summary')).toHaveText('Engine: OmniVoice · non-commercial');
+});
