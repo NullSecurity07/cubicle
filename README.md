@@ -178,6 +178,72 @@ candidates come from; the free tier has 40 credits), `OPENOUTFIND_OPERATOR_EMAIL
 (who is running it), and `OPENOUTFIND_ACCEPT_LEGAL_NOTICE` (your own acceptance of its legal notice, which the app
 never gives for you). It runs through `uvx`, so `uv` must be installed.
 
+### Connect Twenty
+
+The Leads card needs nothing else. If you want a full CRM beside it, run your own **Twenty** and the card mirrors
+itself there: every lead becomes a Person at a Company, each note becomes a Twenty note, and the stage becomes a
+**Cubicle stage** field the app adds once. Change a stage, a title, an email or a LinkedIn link in Twenty and the
+card follows within two minutes. Give somebody a Cubicle stage in Twenty and they join your first Leads card. A
+person deleted in Twenty stays on the card and is put back there; you delete here. When both sides changed, the
+later change wins, and the console says which. The app never starts Twenty for you.
+
+Twenty needs Docker and about **2 GB of memory** (four containers; 1.6 GB on the live check). Put this in a folder
+of its own as `docker-compose.yml`, pinned to the version the app was tested with:
+
+```yaml
+name: twenty
+x-env: &env
+  PG_DATABASE_URL: postgres://postgres:${PG_DATABASE_PASSWORD}@db:5432/default
+  SERVER_URL: http://localhost:3000
+  REDIS_URL: redis://redis:6379
+  STORAGE_TYPE: local
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+services:
+  server:
+    image: twentycrm/twenty:v2.42.4
+    volumes: [server-local-data:/app/packages/twenty-server/.local-storage]
+    ports: ["127.0.0.1:3000:3000"]
+    environment: { <<: *env, NODE_PORT: 3000 }
+    depends_on: { db: { condition: service_healthy }, redis: { condition: service_healthy } }
+    healthcheck: { test: curl --fail http://localhost:3000/healthz, interval: 5s, timeout: 5s, retries: 20 }
+    restart: always
+  worker:
+    image: twentycrm/twenty:v2.42.4
+    volumes: [server-local-data:/app/packages/twenty-server/.local-storage]
+    command: ["yarn", "worker:prod"]
+    environment: { <<: *env, DISABLE_DB_MIGRATIONS: "true", DISABLE_CRON_JOBS_REGISTRATION: "true" }
+    depends_on: { db: { condition: service_healthy }, server: { condition: service_healthy } }
+    restart: always
+  db:
+    image: postgres:16
+    volumes: [db-data:/var/lib/postgresql/data]
+    environment: { POSTGRES_DB: default, POSTGRES_USER: postgres, POSTGRES_PASSWORD: "${PG_DATABASE_PASSWORD}" }
+    healthcheck: { test: pg_isready -U postgres -h localhost -d postgres, interval: 5s, timeout: 5s, retries: 10 }
+    restart: always
+  redis:
+    image: redis
+    command: ["--maxmemory-policy", "noeviction"]
+    healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 5s, timeout: 5s, retries: 10 }
+    restart: always
+volumes: { db-data: {}, server-local-data: {} }
+```
+
+Beside it, a `.env` with the two secrets it needs, each made once and kept: `PG_DATABASE_PASSWORD=` followed by
+the output of `openssl rand -hex 16`, and `ENCRYPTION_KEY=` followed by the output of `openssl rand -base64 32`.
+Then `docker compose up -d`. The first start downloads about 2 GB and takes two or three minutes. Open
+http://localhost:3000, sign up with an email and a password, and name your workspace. Make a key in **Settings →
+MCP & APIs → API → Create API key**, with the Admin role, since the app adds one field. Copy it at once: Twenty
+shows it only then. Put these two lines in the app's `.env`:
+
+```
+TWENTY_URL=http://localhost:3000
+TWENTY_API_KEY=the key you copied
+```
+
+Start the app again. The Leads cards go over within half a minute. `pnpm doctor` says whether Twenty answers, and a
+Leads card says so in one quiet line while it does not. Twenty's own compose file is in its repository under
+`packages/twenty-docker/`.
+
 Desktop window: `cd app && pnpm shell:build` once, then `pnpm shell`. `pnpm shell:check` is the in-window self-test.
 
 ## Checks and security

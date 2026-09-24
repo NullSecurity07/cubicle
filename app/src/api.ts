@@ -4,7 +4,7 @@ import type { Framework, Placed } from '../shared/frameworks';
 import type { ForgeJob, ForgeMode, Proposal } from '../shared/forge';
 import type { Note } from '../shared/library';
 import type { CoderAsk, CoderLine, CoderModels, CoderPatch, CoderState, GraphView } from '../shared/coder';
-import { leadsChannel, type Lead, type LeadsEvent, type LeadStage } from '../shared/leads';
+import { leadsChannel, TWENTY_CHANNEL, type Lead, type LeadsEvent, type LeadStage, type TwentyStatus } from '../shared/leads';
 import { MEMORY_CHANNEL } from '../shared/model';
 import { feed, snapshot } from './feed';
 
@@ -77,6 +77,13 @@ export const watchLeads = (cardId: string, onEvent: (event: LeadsEvent) => void)
   const newer = (event: LeadsEvent) => { if (event.rev < seen) return; seen = event.rev; onEvent(event); };
   const stop = feed<LeadsEvent>(leadsChannel(cardId), newer);
   void getLeads(cardId).then(newer, () => {});
+  return stop;
+};
+
+// The founder's own Twenty, when they connected one: asked once, then heard on the feed whenever it changes.
+export const watchTwenty = (onStatus: (status: TwentyStatus) => void) => {
+  const stop = feed<TwentyStatus>(TWENTY_CHANNEL, onStatus);
+  void request<TwentyStatus>('/api/twenty/status').then(onStatus, () => {});
   return stop;
 };
 

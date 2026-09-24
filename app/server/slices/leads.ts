@@ -5,7 +5,7 @@ import { shortDay } from '../clock.ts';
 import { hub } from '../events.ts';
 import type { Slice } from '../install.ts';
 import { createOutreach, fakeRunner, outreachEnv, uvxRunner } from '../leads/openoutreach.ts';
-import { createLeads, isStage, type Leads } from '../leads/store.ts';
+import { isStage, leadsFor, type Leads } from '../leads/store.ts';
 import { wired } from '../prompt.ts';
 import type { Handler } from '../seams.ts';
 import { text, type Tool, type ToolContext } from '../tools/registry.ts';
@@ -116,7 +116,7 @@ export default {
   name: 'leads',
   install(deps) {
     const say = (cardId: string, event: LeadsEvent) => hub.say(leadsChannel(cardId), event);
-    const leads = createLeads(deps.workspace, say);
+    const leads = leadsFor(deps.workspace, say);
     const outreach = createOutreach({ run: deps.fake ? fakeRunner : uvxRunner(), env: () => outreachEnv(process.env, deps.root ?? resolve('.')) });
     // Once at start, so the first person to ask is not the one kept waiting. The made-up one is always ready.
     if (deps.fake) outreach.ready = () => null;

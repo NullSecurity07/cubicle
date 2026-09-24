@@ -1,8 +1,17 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { LEAD_STAGES, leadName, sameLead, type Lead, type LeadsEvent, type LeadStage } from '../../shared/leads.ts';
+import { LEAD_STAGES, leadName, noteKey, sameLead, type Lead, type LeadsEvent, type LeadStage } from '../../shared/leads.ts';
 
 export type Leads = ReturnType<typeof createLeads>;
+
+// One store per workspace, whoever asks for it: the Leads card and the Twenty mirror must see the same list, or one
+// would write over the other's changes from a stale copy.
+const shared = new Map<string, Leads>();
+export function leadsFor(dir: string, tell?: (cardId: string, event: LeadsEvent) => void): Leads {
+  let leads = shared.get(dir);
+  if (!leads) { leads = createLeads(dir, tell); shared.set(dir, leads); }
+  return leads;
+}
 export type LeadInput = {
   name: string; company: string; title?: string; linkedin?: string; email?: string; site?: string; size?: string;
   source: Lead['source']; note?: { by: string; text: string };
@@ -99,6 +108,32 @@ export function createLeads(dir: string, tell: (cardId: string, event: LeadsEven
       const words = typeof text === 'string' ? text.trim().slice(0, 2000) : '';
       if (!words) throw new Error('a note needs words');
       return change(cardId, leadId, (lead) => { lead.notes.push({ at: now(), by, text: words }); });
+    },
+    // Where the lead lives in Twenty. Bookkeeping, not a change: the lead's own time stays as it was.
+    async link(cardId: string, leadId: string, twenty: NonNullable<Lead['twenty']>): Promise<void> {
+      const lead = (await load(cardId)).find((one) => one.id === leadId);
+      if (!lead) return;
+      lead.twenty = twenty;
+      save(cardId);
+    },
+    // What the founder changed in Twenty, brought back. The lead counts as mirrored the moment it lands, so it is not
+    // sent straight back.
+    async pulled(cardId: string, leadId: string, patch: { stage?: LeadStage; title?: string; email?: string; linkedin?: string }, remoteAt: string, note?: string): Promise<Lead> {
+      const lead = (await load(cardId)).find((one) => one.id === leadId);
+      if (!lead) throw new Error('that lead is not on the card');
+      const at = now();
+      if (patch.stage && isStage(patch.stage)) lead.stage = patch.stage;
+      for (const key of ['title', 'email', 'linkedin'] as const) if (patch[key] !== undefined) {
+        const value = optional(patch[key], key === 'linkedin' ? 300 : 200);
+        if (value) lead.person[key] = value; else delete lead.person[key];
+      }
+      const noteIds = { ...lead.twenty?.noteIds };
+      // A note written by the mirror came from Twenty, so it is never sent there.
+      if (note) { lead.notes.push({ at, by: 'Twenty', text: note }); noteIds[noteKey(lead.notes.at(-1)!, lead.notes.length - 1)] = 'from-twenty'; }
+      lead.updatedAt = at;
+      if (lead.twenty) lead.twenty = { ...lead.twenty, noteIds, syncedAt: at, remoteAt };
+      save(cardId);
+      return lead;
     },
     async remove(cardId: string, leadId: string) {
       const leads = await load(cardId);

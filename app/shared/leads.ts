@@ -11,8 +11,18 @@ export type Lead = {
   person: { name: string; title?: string; linkedin?: string; email?: string };
   company: { name: string; site?: string; size?: string };
   stage: LeadStage; fit?: { score: number; why: string; at: number }; notes: LeadNote[];
-  source: 'founder' | 'person' | 'openoutreach'; addedAt: number; updatedAt: number;
+  source: 'founder' | 'person' | 'openoutreach' | 'twenty'; addedAt: number; updatedAt: number;
+  // Where this lead lives in the founder's Twenty, when they connected one. Only the mirror reads it; the card never
+  // shows it. `noteIds` maps a note's key here (see `noteKey`) to that note in Twenty, so each note goes over once.
+  // `remoteAt` is the person's updatedAt as Twenty last said it, so the mirror knows its own writes when it reads back.
+  twenty?: { personId: string; companyId?: string; noteIds: Record<string, string>; syncedAt: number; remoteAt?: string };
 };
+// A note's key for the mirror: notes are only ever added, so where it sits and when it was written never change.
+export const noteKey = (note: LeadNote, index: number) => `${index}:${note.at}`;
+
+// What the card says under its name when the founder connected Twenty. `problem` is set only while it is failing.
+export type TwentyStatus = { connected: boolean; url: string; lastSync: number | null; pushed: number; pulled: number; problem?: string; since?: number };
+export const TWENTY_CHANNEL = 'twenty';
 // What a leads card hears on the one live feed: the whole list after every change. `rev` only ever grows, so a card
 // that reads its list while news is on the way keeps whichever is newer rather than whichever came last.
 export type LeadsEvent = { leads: Lead[]; rev: number };

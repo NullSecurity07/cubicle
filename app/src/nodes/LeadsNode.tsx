@@ -1,7 +1,7 @@
 import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useEffect, useState } from 'react';
-import { draftAsk, LEAD_STAGES, leadsCsv, STAGE_NAMES, type Lead, type LeadStage } from '../../shared/leads';
-import { addLead, moveLead, noteLead, removeLead, watchLeads } from '../api';
+import { draftAsk, LEAD_STAGES, leadsCsv, STAGE_NAMES, type Lead, type LeadStage, type TwentyStatus } from '../../shared/leads';
+import { addLead, moveLead, noteLead, removeLead, watchLeads, watchTwenty } from '../api';
 import { emit } from '../bus';
 import { overlay } from '../overlay/store';
 import type { LeadsNodeType, StageNode } from '../stage';
@@ -10,7 +10,7 @@ import { CardActions, Frame } from './Frame';
 import './leads.css';
 
 const day = (at: number) => new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-const SOURCE: Record<Lead['source'], string> = { founder: 'added by you', person: 'added by a person', openoutreach: 'found by OpenOutreach' };
+const SOURCE: Record<Lead['source'], string> = { founder: 'added by you', person: 'added by a person', openoutreach: 'found by OpenOutreach', twenty: 'added in Twenty' };
 
 // The founder's leads: who they might sell to and where each one stands. A column with nobody in it shrinks to its
 // count, so the stages that hold people get the room. People wired to the card add, score and note; the founder
@@ -23,6 +23,7 @@ export function LeadsNode({ id, selected }: NodeProps<LeadsNodeType>) {
   const [problem, setProblem] = useState('');
   const [copied, setCopied] = useState(false);
   const [drafter, setDrafter] = useState('');
+  const [twenty, setTwenty] = useState<TwentyStatus | null>(null);
   const { getNodes, getEdges } = useReactFlow<StageNode>();
   const flushStage = useFlushStage();
 
@@ -33,6 +34,9 @@ export function LeadsNode({ id, selected }: NodeProps<LeadsNodeType>) {
     void flushStage().then(() => { if (!gone) stop = watchLeads(id, (event) => setLeads(event.leads)); });
     return () => { gone = true; stop(); };
   }, [id, flushStage]);
+
+  // Only a founder who connected Twenty hears about it, and only while it is failing.
+  useEffect(() => watchTwenty(setTwenty), []);
 
   // People wired to this card, whichever way the wire was drawn: who can draft a message.
   const people = () => {
@@ -103,6 +107,9 @@ export function LeadsNode({ id, selected }: NodeProps<LeadsNodeType>) {
           {empty && <p className="leads__empty">No leads yet. Add one above, or wire a person to this card and ask them to find some.</p>}
         </div>
       </div>
+      {twenty?.connected && twenty.problem && (
+        <p className="leads__twenty nodrag" title={twenty.url}>Twenty: {twenty.problem} since {new Date(twenty.since ?? Date.now()).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</p>
+      )}
       {problem && !open && <p className="board__problem nodrag">{problem}</p>}
       {open && (
         <aside className="leadview nodrag nowheel" role="dialog" aria-label={open.person.name}>
