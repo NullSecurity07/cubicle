@@ -59,6 +59,7 @@ const MORE: [kind: CardKind, label: string, hint: string][] = [
   ['browser', 'Browser', 'A live browser a wired person drives'],
   ['project', 'Coder', 'OpenCode in a folder, driven by you or a wired person'],
   ['board', 'Task board', 'People propose, you run'],
+  ['leads', 'Leads', 'People to sell to, and where each one stands'],
 ];
 
 // Sites the founder is already signed in to: a browser card that opens as them. "Any app" asks for a name and an address.

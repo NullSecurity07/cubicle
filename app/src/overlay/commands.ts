@@ -3,7 +3,7 @@ import { sliceCommands } from '../slices';
 // What the command bar can do, as plain data: the bar shows suggestions, the window carries the chosen action out.
 // `run` is the one a UI slice brings: the bar closes and calls it, without knowing what it does.
 export type Action =
-  | { do: 'add'; kind: 'room' | 'doc' | 'note' | 'link' | 'image' | 'imagegen' | 'voicegen' | 'videogen' | 'browser' | 'project' | 'board'; data?: Record<string, string> }
+  | { do: 'add'; kind: 'room' | 'doc' | 'note' | 'link' | 'image' | 'imagegen' | 'voicegen' | 'videogen' | 'browser' | 'project' | 'board' | 'leads'; data?: Record<string, string> }
   | { do: 'focus' | 'jump'; id: string } | { do: 'panel'; name: 'needs' | 'messages' | 'decisions' | 'playbook' | 'library' }
   // One note out of the founder's library, opened to be read.
   | { do: 'note'; id: string }
@@ -23,6 +23,7 @@ const CARD_WORDS: [RegExp, Extract<Action, { do: 'add' }>['kind'], string][] = [
   [/^(voice studio|generate (a )?voices?|voice ?gen|say (something )?out loud|text to speech|voice ?over)$/, 'voicegen', 'Add a voice studio'],
   [/^(video studio|generate (a )?videos?|video ?gen|film|movie|clip)$/, 'videogen', 'Add a video studio'],
   [/^browser$/, 'browser', 'Add a browser'], [/^(coder|opencode|project( folder)?|code|repo)$/, 'project', 'Add a coder'], [/^((task )?board|tasks|kanban)$/, 'board', 'Add a task board'],
+  [/^(leads?|crm|prospects?|pipeline)$/, 'leads', 'Add a leads card'],
 ];
 const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 const STARTERS: Suggestion[] = [

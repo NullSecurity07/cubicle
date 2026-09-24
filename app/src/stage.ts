@@ -10,6 +10,7 @@ export type DocNodeType = Node<DocData, 'doc'>;
 export type BrowserNodeType = Node<{ headed?: boolean; app?: AppPreset }, 'browser'>;
 export type ProjectNodeType = Node<{ path: string; model?: string; session?: string; graph?: GraphMark }, 'project'>;
 export type BoardNodeType = Node<Record<string, never>, 'board'>;
+export type LeadsNodeType = Node<Record<string, never>, 'leads'>;
 export type NoteNodeType = Node<{ text: string; color?: string }, 'note'>;
 export type ImageNodeType = Node<{ path: string }, 'image'>;
 export type LinkNodeType = Node<{ url: string; title?: string }, 'link'>;
@@ -19,7 +20,7 @@ export type LibraryNodeType = Node<{ noteId: string }, 'library'>;
 export type ImageGenNodeType = Node<{ prompt?: string; shape?: Shape }, 'imagegen'>;
 export type VoiceGenNodeType = Node<{ text?: string; voice?: string; engine?: VoiceEngine; design?: string; clone?: string; language?: string }, 'voicegen'>;
 export type VideoGenNodeType = Node<{ brief?: string; format?: Shape; look?: VideoLook; silent?: boolean; purpose?: string; length?: number; pace?: 'calm' | 'punchy'; music?: string; voice?: string; captions?: Switch; sfx?: Switch; ai?: Switch; address?: string; person?: Switch; speed?: 'draft'; engine?: VoiceEngine; design?: string }, 'videogen'>;
-export type CardNodeType = BrowserNodeType | ProjectNodeType | BoardNodeType | NoteNodeType | ImageNodeType | LinkNodeType | SourceNodeType | LibraryNodeType | ImageGenNodeType | VoiceGenNodeType | VideoGenNodeType;
+export type CardNodeType = BrowserNodeType | ProjectNodeType | BoardNodeType | LeadsNodeType | NoteNodeType | ImageNodeType | LinkNodeType | SourceNodeType | LibraryNodeType | ImageGenNodeType | VoiceGenNodeType | VideoGenNodeType;
 export type StageNode = RoomNodeType | DocNodeType | CardNodeType;
 
 export const HANDLE_IDS = ['l', 'r', 't', 'b'] as const;

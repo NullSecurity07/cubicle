@@ -16,6 +16,8 @@ const VERBS: Record<string, [doing: string, done: string]> = {
   generate_image: ['Drawing', 'Drew'], generate_voice: ['Saying', 'Said'], generate_video: ['Filming', 'Filmed'],
   delegate_task: ['Handing to', 'Handed to'], search_source: ['Searching', 'Searched'], propose_source: ['Proposing', 'Proposed'],
   map_folder: ['Mapping the folder', 'Mapped the folder'], ask_graph: ['Asking the map:', 'Asked the map:'], affected_by: ['Tracing what depends on', 'Traced what depends on'],
+  add_lead: ['Adding lead', 'Added lead'], score_lead: ['Scoring', 'Scored'], note_lead: ['Noting on', 'Noted on'], move_lead: ['Moving', 'Moved'],
+  list_leads: ['Reading', 'Read'], find_leads: ['Finding', 'Found'],
   read_youtube: ['Reading the video', 'Read the video'], read_feed: ['Reading the feed of', 'Read the feed of'], read_reddit: ['Reading Reddit:', 'Read Reddit:'],
 };
 const compact = (count: number) => (count < 1000 ? String(count) : `${(count / 1000).toFixed(1)}k`);
@@ -34,6 +36,11 @@ function Chip({ tool }: { tool: ToolEvent }) {
     : Array.isArray(many) ? (many.length === 1 ? String(many[0]) : `${many.length} ${tool.args.queries ? 'queries' : 'pages'} at once`)
     : tool.name === 'browse' ? [tool.args.action, tool.args.url ?? tool.args.ref].filter(Boolean).join(' ')
     : tool.name === 'remember' ? String(tool.args.fact ?? '').slice(0, 60) : tool.name === 'list_tasks' ? 'the board'
+    : tool.name === 'add_lead' ? `${String(tool.args.person ?? '')} at ${String(tool.args.company ?? '')}`.slice(0, 60)
+    : tool.name === 'score_lead' ? `${String(tool.args.lead ?? '').slice(0, 50)}: ${String(tool.args.score ?? '')}/10`
+    : tool.name === 'move_lead' ? `${String(tool.args.lead ?? '').slice(0, 45)} to ${String(tool.args.stage ?? '')}`
+    : tool.name === 'note_lead' ? String(tool.args.lead ?? '').slice(0, 60) : tool.name === 'list_leads' ? 'the leads'
+    : tool.name === 'find_leads' ? `${String(tool.args.count ?? '')} leads with OpenOutreach${tool.args.emails === true ? ', with emails' : ''}`
     : tool.name === 'ask_person' ? String(tool.args.name ?? '') : tool.name === 'recall' ? String(tool.args.query ?? '').slice(0, 60)
     : tool.name === 'code_task' ? String(tool.args.brief ?? '').replace(/\s+/g, ' ').slice(0, 60)
     : tool.name === 'ask_graph' ? String(tool.args.question ?? '').replace(/\s+/g, ' ').slice(0, 60)

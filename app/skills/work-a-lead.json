@@ -1,0 +1,17 @@
+{
+  "name": "Work a lead from new to first message",
+  "when": "A Leads card is wired to you and a lead in New or Fit needs taking forward.",
+  "procedure": [
+    "Score the lead with score_lead, following the icp-fit skill.",
+    "Write one note with note_lead: the best piece of evidence, with its link.",
+    "Draft the first message with the evidence-outreach skill, and give it to the founder in the chat.",
+    "The founder sends it. Only they move the lead to Contacted.",
+    "Five days after it was sent with no reply, draft one short follow-up. Then stop."
+  ],
+  "pitfalls": [
+    "Never mark a lead contacted yourself, and never send for the founder.",
+    "Do not paste OpenOutreach's reason into a message: it is written about the lead, not to them.",
+    "One follow-up only. No reply after that is an answer."
+  ],
+  "verify": "The lead has a score with a reason, one note with a link, and a draft in the chat that names the evidence."
+}

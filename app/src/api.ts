@@ -4,6 +4,7 @@ import type { Framework, Placed } from '../shared/frameworks';
 import type { ForgeJob, ForgeMode, Proposal } from '../shared/forge';
 import type { Note } from '../shared/library';
 import type { CoderAsk, CoderLine, CoderModels, CoderPatch, CoderState, GraphView } from '../shared/coder';
+import { leadsChannel, type Lead, type LeadsEvent, type LeadStage } from '../shared/leads';
 import { feed, snapshot } from './feed';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -58,6 +59,22 @@ export const watchBoard = (boardId: string, onEvent: (event: BoardEvent) => void
   const channel = `board:${boardId}`;
   if (snapshot(channel) === undefined) void getBoard(boardId).then((tasks) => onEvent({ tasks }), () => {});
   return feed<BoardEvent>(channel, onEvent);
+};
+
+// A Leads card: its list, and the founder's own changes to it. What people change arrives on the feed.
+export const getLeads = (cardId: string) => request<LeadsEvent>(`/api/leads/${cardId}`);
+export const addLead = (cardId: string, lead: { name: string; company: string; line?: string }) => request<Lead>(`/api/leads/${cardId}`, send('POST', lead));
+export const moveLead = (cardId: string, leadId: string, stage: LeadStage) => request<Lead>(`/api/leads/${cardId}/${leadId}`, send('PATCH', { stage }));
+export const noteLead = (cardId: string, leadId: string, text: string) => request<Lead>(`/api/leads/${cardId}/${leadId}/notes`, send('POST', { text }));
+export const removeLead = (cardId: string, leadId: string) => request(`/api/leads/${cardId}/${leadId}`, send('DELETE'));
+// It reads its list once as well, whatever the feed opened with: a person may have added a lead between the window's
+// connection opening and this card starting to listen, and news the card was not there for is not kept for it.
+export const watchLeads = (cardId: string, onEvent: (event: LeadsEvent) => void) => {
+  let seen = -1;
+  const newer = (event: LeadsEvent) => { if (event.rev < seen) return; seen = event.rev; onEvent(event); };
+  const stop = feed<LeadsEvent>(leadsChannel(cardId), newer);
+  void getLeads(cardId).then(newer, () => {});
+  return stop;
 };
 
 // A studio card: what it has made, and asking it for more. `hint` says why it cannot work yet, when it cannot.

@@ -14,6 +14,7 @@ const NEW = {
   browser: { size: [560, 353], data: {} },
   project: { size: [420, 440], data: { path: '' } },
   board: { size: [980, 440], data: {} },
+  leads: { size: [900, 420], data: {} },
   note: { size: [220, 180], data: { text: '' } },
   image: { size: [300, 260], data: { path: '' } },
   link: { size: [320, 150], data: { url: '' } },

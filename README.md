@@ -107,6 +107,14 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   the graphics card when about 2.4 GB is free and on the processor otherwise (about eight seconds of work a second
   of speech here, with Ollama holding the card), and lets go of the card after five idle minutes. See
   `app/server/media/omnivoice/CREDITS.md`.
+- **Leads** (2026-09-24): a light CRM on the stage, in the shape Twenty uses and without Twenty. One card holds the
+  people you might sell to, a column a stage from New to Customer, each with their company, a fit score and notes;
+  add one by hand, move it, and take the list away with Copy as CSV. A person wired to the card adds, scores (with
+  the `icp-fit` skill), notes and moves leads, and **Draft first message** asks them for one built on evidence.
+  `find_leads` asks you first and then runs **OpenOutreach** on this machine (`uvx openoutreach find`), which only
+  finds: plain finding spends nothing, and verified email lookups are the one thing that costs credits (one each, 40
+  free). The app never runs OpenOutreach's sending verbs. **Sending stays with you**, in the mail card, and a lead
+  is marked contacted only by you, or by an email you said yes to.
 - **Operator views** (2026-09-19): Focus mode (`F` or the header button; a card fills the window); Needs you (dock
   bell, `N`); Messages (`M`); Decisions (`D`; one markdown file per decision in `workspace/decisions/`); Recall (a
   `recall` tool for people, a search for the founder, by meaning, on a local model; a person finds only what their
@@ -153,6 +161,15 @@ renders and the card says the timings were worked out from the sentences instead
 Chrome and ffmpeg, which the browser card and the app already rely on; they render locally, a minute or so for
 a short one. The voice runtime adds about 500 MB to `node_modules`, and each film is a few MB in
 `workspace/files/media/`.
+
+**Finding leads** is optional and needs OpenOutreach's own settings in the same `.env`; a person who asks for leads
+is told which of these are still missing, and the app hands only these to OpenOutreach, read fresh on every run:
+`OPENOUTFIND_PRODUCT_DOCS` (a file describing what you sell), `OPENOUTFIND_CAMPAIGN_TARGET` (a file describing who
+buys it), `OPENOUTFIND_AI_MODEL` (the model that judges each candidate, e.g. a Groq or Gemini model id),
+`OPENOUTFIND_LLM_API_KEY` (that model's key), `OPENOUTFIND_BETTERCONTACT_API_KEY` (BetterContact, where the
+candidates come from; the free tier has 40 credits), `OPENOUTFIND_OPERATOR_EMAIL` and `OPENOUTFIND_OPERATOR_COUNTRY`
+(who is running it), and `OPENOUTFIND_ACCEPT_LEGAL_NOTICE` (your own acceptance of its legal notice, which the app
+never gives for you). It runs through `uvx`, so `uv` must be installed.
 
 Desktop window: `cd app && pnpm shell:build` once, then `pnpm shell`. `pnpm shell:check` is the in-window self-test.
 

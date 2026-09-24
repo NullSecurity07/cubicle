@@ -30,6 +30,8 @@ export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean; 
   // A website the founder trusts, with a line on what it holds. Every person knows the list and searches inside one
   // with search_source when the line fits the question.
   | { kind: 'source'; url: string; about: string; title?: string }
+  // The founder's leads, a light CRM. The leads themselves live in `<workspace>/leads/<id>.json`, owned by the server.
+  | { kind: 'leads' }
   // Studios: the founder, or a wired person, says what they want and the server makes it. Only what was asked for lives
   // on the card; what came out lives in a sidecar the server owns.
   | { kind: 'imagegen'; prompt?: string; shape?: Shape }
