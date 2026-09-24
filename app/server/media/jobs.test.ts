@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Card, Media, MediaEvent } from '../../shared/model.ts';
 import { createStore } from '../store.ts';
-import { createMedia, type Maker } from './jobs.ts';
+import { createMedia, LOG_MOST, LOG_WAIT, type Maker } from './jobs.ts';
 
 const card: Card = { id: 'studio-1', kind: 'imagegen', x: 0, y: 0, w: 1, h: 1 };
 const folder = () => mkdtemp(join(tmpdir(), 'media-'));
@@ -97,5 +97,59 @@ describe('media jobs', () => {
     setTimeout(() => media.stop(card.id), 10);
     await expect(job).rejects.toThrow('stopped');
     expect(await media.read(card.id)).toMatchObject({ state: 'failed', problem: 'stopped' });
+  });
+});
+
+describe('a chatty job', () => {
+  it('keeps the last few hundred lines, and writes the card to disk in batches rather than once a line', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((done) => { release = done; });
+    const chatty = maker('chatty', {
+      async make(_ask, { report }) {
+        for (let at = 0; at < 1000; at += 1) report(`rendering · frame ${at}`);
+        await held;
+        return { ext: 'png', bytes: Buffer.from('x') };
+      },
+    });
+    const { dir, media } = await studio([chatty]);
+    const making = media.make(card, { prompt: 'A long render' });
+    await new Promise((done) => setTimeout(done, 20));
+    // In memory at once, for anybody who reads the card…
+    const now = await media.read(card.id);
+    expect(now.state).toBe('making');
+    expect(now.log).toHaveLength(LOG_MOST);
+    expect(now.log.at(-1)).toBe('rendering · frame 999');
+    // …and on disk within half a second, not a thousand times over.
+    const file = join(dir, 'media', 'studio-1.json');
+    await expect(readFile(file, 'utf8')).rejects.toThrow();
+    await new Promise((done) => setTimeout(done, LOG_WAIT + 100));
+    await media.settled();
+    expect(JSON.parse(await readFile(file, 'utf8')).log.at(-1)).toBe('rendering · frame 999');
+    release();
+    await making;
+    const done = await media.read(card.id);
+    expect(done.log).toHaveLength(LOG_MOST);
+    expect(done.log.at(-1)).toBe('done · chatty');
+  });
+
+  it('keeps a file dropped on the card while the job is running', async () => {
+    let release!: () => void;
+    const held = new Promise<void>((done) => { release = done; });
+    const slow = maker('slow', { async make(_ask, { report }) { await held; report('still drawing'); return { ext: 'png', bytes: Buffer.from('x') }; } });
+    const { media } = await studio([slow]);
+    const making = media.make(card, { prompt: 'A desk' });
+    await media.addAsset(card.id, { kind: 'image', path: 'media/mine.png', file: 'mine.png', bytes: 1 });
+    release();
+    await making;
+    expect((await media.read(card.id)).assets?.map((one) => one.name)).toEqual(['mine']);
+  });
+
+  it('never starts a job whose caller had already stopped it', async () => {
+    let ran = false;
+    const { media } = await studio([maker('eager', { async make(_ask, { signal }) { ran = !signal?.aborted; return { ext: 'png', bytes: Buffer.from('x') }; } })]);
+    const stop = new AbortController();
+    stop.abort();
+    await media.make(card, { prompt: 'A desk' }, { signal: stop.signal }).catch(() => {});
+    expect(ran).toBe(false);
   });
 });
