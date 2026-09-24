@@ -6,6 +6,7 @@ import { useAddCard } from '../addCard';
 import { changeTask, dismissAttention, dropSource, removeTask } from '../api';
 import { emit } from '../bus';
 import { Approval, asked } from '../nodes/Approval';
+import { CoderAsk } from '../nodes/CoderAsk';
 import { useAttention } from './attention';
 import { PanelShell } from './PanelShell';
 import { overlay, showDecision } from './store';
@@ -60,7 +61,7 @@ export function NeedsPanel() {
       {problem && <p className="msg--problem">{problem}</p>}
       <ul className="needs">
         {list.map((entry) => {
-          const home = entry.kind === 'approval' ? entry.roomId : entry.cardId ?? entry.roomId;
+          const home = entry.kind === 'approval' ? entry.roomId ?? entry.cardId : entry.cardId ?? entry.roomId;
           // A step that came with no question of its own was written down under the tool's plain name; here it is
           // given back the words the founder actually read on the card in the room.
           const said = entry.tool && entry.title === entry.tool.replace(/_/g, ' ') ? asked(entry.tool) : entry.title;
@@ -75,6 +76,7 @@ export function NeedsPanel() {
                     <p className="needs__title">{entry.who ?? 'Someone'} asked: "{said}"</p>
                     <p className="needs__detail">That was {since(entry.at)}. The app restarted before you answered, so that step never ran.{entry.about ? ` The step was: ${entry.about}.` : ''}</p>
                   </>
+                : entry.coder && entry.cardId ? <CoderAsk cardId={entry.cardId} ask={entry.coder} />
                 : entry.event ? <>{entry.detail && <p className="needs__detail">Task: {entry.detail}</p>}<Approval tool={entry.event} /></>
                 : <><p className="needs__title">{entry.title}</p>{entry.detail && <p className="needs__detail">{entry.detail}</p>}</>}
               <div className="needs__end">

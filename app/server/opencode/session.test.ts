@@ -55,7 +55,7 @@ describe('a coder card', () => {
     await until(() => coder.snapshot(card.id).state === 'waiting');
     const asked = coder.snapshot(card.id).permission!;
     expect(asked).toMatchObject({ tool: 'bash', what: 'pnpm test', always: ['pnpm *'] });
-    expect(raised[0]).toMatchObject({ id: `coder:${asked.id}`, kind: 'approval', title: 'Allow the coder to run pnpm test?', cardId: 'coder-1', who: 'shop' });
+    expect(raised[0]).toMatchObject({ id: `coder:${asked.id}`, kind: 'approval', title: 'Allow the coder to run pnpm test?', cardId: 'coder-1', who: 'The shop coder' });
     expect(raised[0].event).toMatchObject({ id: `coder:${asked.id}`, name: 'coder_permission', args: { command: 'pnpm test' } });
     approvals.answer(`coder:${asked.id}`, { ok: true, args: { reply: 'always' } });
     expect(await coder.wait(card.id)).toBe('done');

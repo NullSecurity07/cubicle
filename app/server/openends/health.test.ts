@@ -41,6 +41,16 @@ describe('keys', () => {
 });
 
 describe('the rest of the checks', () => {
+  it('say whether the coder is here, and whether its server is up and how big it is', async () => {
+    expect(row(await setup(), 'Changing code')).toMatchObject({ ok: false, detail: expect.stringContaining('opencode was not found') });
+    const idle = row(await setup({ coder: () => ({ bin: '/home/me/.opencode/bin/opencode', running: false }) }), 'Changing code');
+    expect(idle).toMatchObject({ ok: true, detail: 'opencode is here, and its server starts with the first coding task' });
+    const up = row(await setup({ coder: () => ({ bin: '/x/opencode', running: true, pid: 12, rss: 320 * 1024 ** 2 }) }), 'Changing code');
+    expect(up.detail).toBe('opencode is here, and its server is running (320 MB)');
+    const gone = row(await setup({ coder: () => ({ bin: '/x/opencode', running: false, problem: 'stopped; the next coding task starts it again' }) }), 'Changing code');
+    expect(gone.detail).toBe('opencode is here, and its server stopped; the next coding task starts it again');
+  });
+
   it('say whether the workspace can be written to', async () => {
     const mine = row(await setup(), 'Your workspace');
     expect(mine.ok).toBe(true);

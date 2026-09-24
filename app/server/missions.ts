@@ -2,7 +2,7 @@ import { seedDocs, seedStage, type ChatMessage, type Decision, type Mission, typ
 
 export type Facts = { stage: Stage; chats: Record<string, ChatMessage[]>; docs: Record<string, string>; decisions: Decision[]; tasks: Task[] };
 // Steps that reach outside and therefore waited for the founder's yes.
-const APPROVED = new Set(['send_email', 'run_code', 'delegate_coding', 'browse']);
+const APPROVED = new Set(['send_email', 'run_code', 'code_task', 'code_reply', 'browse']);
 const wordsIn = (text: string) => new Set(text.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []);
 
 // The first-run list. Every tick is read off the workspace: what the founder did shows, whatever was or was not clicked.

@@ -6,7 +6,6 @@ const { docTools } = await import('../server/tools/docs.ts');
 const { fileTools } = await import('../server/tools/files.ts');
 const { webTools } = await import('../server/tools/web.ts');
 const { outwardTools } = await import('../server/tools/outward.ts');
-const { projectTools } = await import('../server/tools/project.ts');
 const { teamTools } = await import('../server/tools/team.ts');
 const { taskTools } = await import('../server/tools/tasks.ts');
 const { memoryTools } = await import('../server/tools/remember.ts');
@@ -38,7 +37,7 @@ const extras = await installSlices(await loadSlices(resolve(import.meta.dirname,
   approvals: createApprovals(), attention: createAttention(scratch), boards: createBoards(scratch), skills: createSkills(scratch), founder: createFounder(scratch),
   busy: new Set(), notify: () => {}, promptFor: async () => [], json: () => {}, body: async () => ({}), own: { ports: [], token: '' }, runs: lateRuns().runs, toolsFor: () => [],
 } as any, said);
-const tools = [...docTools, ...fileTools, ...webTools({} as any), ...outwardTools({ ready: () => true, ways: () => ({}) } as any, '/tmp'), ...projectTools((async () => ({})) as any, []), ...teamTools((async () => '') as any), ...taskTools({} as any), ...memoryTools({} as any), ...decisionTools({} as any), ...recallTools({} as any), ...mediaTools({ ready: () => null } as any), ...skillTools({} as any), ...founderTools({} as any), ...extras.tools];
+const tools = [...docTools, ...fileTools, ...webTools({} as any), ...outwardTools({ ready: () => true, ways: () => ({}) } as any, '/tmp'), ...teamTools((async () => '') as any), ...taskTools({} as any), ...memoryTools({} as any), ...decisionTools({} as any), ...recallTools({} as any), ...mediaTools({ ready: () => null } as any), ...skillTools({} as any), ...founderTools({} as any), ...extras.tools];
 const refused: string[] = [];
 for (const client of realClients()) {
   try { const turn = await client.step([{ role: 'user', content: 'List the shared files with your tool.' }], { tools, onToken: () => {} }); console.log(client.name, 'OK with', tools.length, 'tools ->', turn.calls.map((c: any) => c.name).join(',') || 'text'); }

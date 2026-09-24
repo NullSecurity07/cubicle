@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { seedStage, type Card, type Stage } from '../../shared/model.ts';
 import { createBoards } from '../boards.ts';
 import { createBrowser, fakeRunner } from '../browser.ts';
-import { fakeCoder } from '../coder.ts';
+import { createApprovals } from '../approvals.ts';
 import { createDecisions } from '../decisions.ts';
 import { createFounder } from '../founder.ts';
 import { createMedia } from '../media/jobs.ts';
@@ -22,7 +22,9 @@ import { fileTools } from '../tools/files.ts';
 import { founderTools } from '../tools/founder.ts';
 import { mediaTools } from '../tools/media.ts';
 import { outwardTools } from '../tools/outward.ts';
-import { projectTools } from '../tools/project.ts';
+import { fakeEngine } from '../opencode/fake.ts';
+import { createCoder } from '../opencode/session.ts';
+import { coderTools } from '../slices/opencode.ts';
 import { recallTools } from '../tools/recall.ts';
 import type { Tool } from '../tools/registry.ts';
 import { memoryTools } from '../tools/remember.ts';
@@ -41,7 +43,7 @@ async function everything(mail = false): Promise<Tool[]> {
   return [
     ...docTools, ...fileTools, ...webTools(createBrowser(fakeRunner)),
     ...outwardTools(createMail(mail ? { AGENTMAIL_API_KEY: 'fake' } : {}, fakeMailHttp), store.filesDir),
-    ...projectTools(fakeCoder, [dir]), ...teamTools(async () => 'said'), ...taskTools(createBoards(dir)),
+    ...coderTools(createCoder({ engine: fakeEngine(), approvals: createApprovals(), attention: { raise: async () => {}, clear: async () => {} }, say: () => {}, remember: async () => {}, env: {} }), [dir]), ...teamTools(async () => 'said'), ...taskTools(createBoards(dir)),
     ...decisionTools(createDecisions(dir)), ...memoryTools(createMemory(store, async () => '')),
     ...recallTools(createRecall({ dir, embed: wordEmbedder, gather: async () => [] })),
     ...mediaTools(media), ...skillTools(createSkills(dir)), ...founderTools(createFounder(dir)),
@@ -86,7 +88,7 @@ describe('what a person is offered', () => {
     const all = await everything();
     const has = (stage: Stage, roomId: string, name: string) => offered(all, stage, roomId).some((tool) => tool.name === name);
     const withCard = (kind: Card['kind']): Stage => ({ ...bare, cards: [card('one', kind)], wires: [wire('w', 'marketing', 'one')] });
-    for (const [kind, name] of [['project', 'delegate_coding'], ['browser', 'browse'], ['board', 'list_tasks'], ['imagegen', 'generate_image'], ['voicegen', 'generate_voice'], ['videogen', 'generate_video']] as const) {
+    for (const [kind, name] of [['project', 'code_task'], ['project', 'code_status'], ['browser', 'browse'], ['board', 'list_tasks'], ['imagegen', 'generate_image'], ['voicegen', 'generate_voice'], ['videogen', 'generate_video']] as const) {
       expect(has(withCard(kind), 'marketing', name)).toBe(true);
       expect(has(bare, 'marketing', name)).toBe(false);
       // A card on the stage that nobody drew a wire to is nobody's.

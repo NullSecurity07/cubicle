@@ -71,8 +71,20 @@ describe('the safety extra', () => {
     wait([{ id: 'approval:call-1', kind: 'run-approval', title: 'Send this email?', at: Date.now() - WAITED_TOO_LONG - 1000, who: 'Maya', roomId: 'marketing', cardId: 'board', taskId: 'task-1', event }]);
     const answer = approvals.ask('call-1');
     await part.tick!();
-    expect(await answer).toEqual({ ok: false });
+    expect(await answer).toEqual({ ok: false, args: { message: 'no answer in time' } });
     expect(raised).toHaveLength(1);
     expect(raised[0]).toMatchObject({ kind: 'run-failed', title: 'Send this email?', detail: UNANSWERED, taskId: 'task-1' });
+  });
+
+  it('says no to a coder\'s question nobody answered, and leaves a fresh one waiting', async () => {
+    const { approvals, part, wait } = await setup();
+    const asked = (id: string, at: number): Attention => ({ id: `coder:${id}`, kind: 'approval', title: 'Allow the coder to run pnpm test?', at, cardId: 'coder-1', event: { id: `coder:${id}`, name: 'coder_permission', args: { command: 'pnpm test' }, waiting: true } });
+    wait([asked('per_old', Date.now() - WAITED_TOO_LONG - 1000), asked('per_new', Date.now())]);
+    const old = approvals.ask('coder:per_old');
+    let fresh = false;
+    void approvals.ask('coder:per_new').then(() => { fresh = true; });
+    await part.tick!();
+    expect(await old).toEqual({ ok: false, args: { message: 'no answer in time' } });
+    expect(fresh).toBe(false);
   });
 });

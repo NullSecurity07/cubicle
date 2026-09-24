@@ -11,7 +11,7 @@ export function UndoStep({ tool }: { tool: ToolEvent }) {
   const [busy, setBusy] = useState(false);
   const [said, setSaid] = useState('');
   const [problem, setProblem] = useState('');
-  if (tool.name !== 'delegate_coding' || !tool.result?.includes(UNDO_LINE)) return null;
+  if ((tool.name !== 'code_task' && tool.name !== 'code_reply') || !tool.result?.includes(UNDO_LINE)) return null;
 
   async function undo() {
     setBusy(true);

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { Slice } from '../install.ts';
 import { backupDir, listBackups, makeBackup } from '../openends/backup.ts';
 import { checkAll } from '../openends/health.ts';
+import { coderHealth } from '../opencode/server.ts';
 import { createInsights } from '../openends/insights.ts';
 import { connectAll, createSafeBook, FILE, loadEntries, outsideTools, outsideView, type Connected } from '../openends/mcp.ts';
 import { fileName, OUTSIDE, parseSkillFile, renderSkillFile } from '../openends/skillfile.ts';
@@ -37,6 +38,7 @@ export default {
       workspace: deps.workspace, root: deps.root, backupDir: dir,
       backups: () => listBackups(dir),
       outside: () => connections.map((one) => ({ name: one.entry.name, ok: one.ok, detail: one.detail })),
+      coder: () => coderHealth.now(),
     });
 
     return {

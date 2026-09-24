@@ -23,7 +23,10 @@ const reachOf = (stage: Stage, roomId: string): Reach => {
 // recall, the decisions, use_skill, note_founder, running code, creating a document — and whatever a later feature
 // adds, because a rule written here can only ever take away a tool it knows by name.
 const NEEDS: Record<string, (reach: Reach, tool: Tool) => boolean> = {
-  delegate_coding: (reach) => reach.kinds.has('project'),
+  code_task: (reach) => reach.kinds.has('project'),
+  code_reply: (reach) => reach.kinds.has('project'),
+  code_stop: (reach) => reach.kinds.has('project'),
+  code_status: (reach) => reach.kinds.has('project'),
   browse: (reach) => reach.kinds.has('browser'),
   generate_image: (reach) => reach.kinds.has('imagegen'),
   generate_voice: (reach) => reach.kinds.has('voicegen'),

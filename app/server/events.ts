@@ -20,7 +20,9 @@ const boardsOn = (stage: Stage) => new Set((stage.cards ?? []).filter((card) => 
 // A slice has no feed of its own to hand over here, and the window has only this one connection: news from an extra
 // goes out through this. It is filled in by `createEvents` below, and until a window is listening it says nothing.
 // The same trick the library uses to ask the frameworks whether a note is held: one small handle both sides share.
-export const hub: { say: (channel: string, data: unknown) => void } = { say: () => {} };
+// `opening` is what an extra says to a window the moment it joins, the way a board card's tasks are: a card whose
+// window opened late is whole without waiting for the next thing to happen.
+export const hub: { say: (channel: string, data: unknown) => void; opening: (() => Promise<{ channel: string; data: unknown }[]>)[] } = { say: () => {}, opening: [] };
 
 export function createEvents(deps: Deps) {
   const windows = new Set<(envelope: Envelope) => void>();
@@ -55,6 +57,7 @@ export function createEvents(deps: Deps) {
       say(hear, { channel: 'attention', data: await deps.attention.list(), snapshot: true });
       say(hear, { channel: 'skills', data: { skills: await deps.skills.list() } satisfies SkillEvent, snapshot: true });
       for (const boardId of onStage) say(hear, { channel: `board:${boardId}`, data: { tasks: await deps.boards.list(boardId) } satisfies BoardEvent, snapshot: true });
+      for (const open of hub.opening) for (const one of await open().catch(() => [])) say(hear, { ...one, snapshot: true });
       windows.add(hear);
       return () => {
         windows.delete(hear);

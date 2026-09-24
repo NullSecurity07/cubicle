@@ -22,7 +22,7 @@ const CARD_WORDS: [RegExp, Extract<Action, { do: 'add' }>['kind'], string][] = [
   [/^((image|picture) studio|generate (an? )?(image|picture)s?|image ?gen)$/, 'imagegen', 'Add an image studio'],
   [/^(voice studio|generate (a )?voices?|voice ?gen|say (something )?out loud|text to speech|voice ?over)$/, 'voicegen', 'Add a voice studio'],
   [/^(video studio|generate (a )?videos?|video ?gen|film|movie|clip)$/, 'videogen', 'Add a video studio'],
-  [/^browser$/, 'browser', 'Add a browser'], [/^(project( folder)?|code|repo)$/, 'project', 'Add a project folder'], [/^((task )?board|tasks|kanban)$/, 'board', 'Add a task board'],
+  [/^browser$/, 'browser', 'Add a browser'], [/^(coder|opencode|project( folder)?|code|repo)$/, 'project', 'Add a coder'], [/^((task )?board|tasks|kanban)$/, 'board', 'Add a task board'],
 ];
 const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 const STARTERS: Suggestion[] = [

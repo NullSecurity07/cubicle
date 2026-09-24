@@ -204,7 +204,7 @@ export function createCoder(deps: Deps) {
     tell(card, { permission: ask });
     const key = `coder:${ask.id}`;
     const question = `Allow the coder to ${verb(ask)}?`;
-    await attention.raise({ id: key, kind: 'approval', title: question, at: now(), cardId: card.id, who: card.name, event: { id: key, name: 'coder_permission', args: { [ask.tool === 'bash' ? 'command' : 'file']: ask.what }, waiting: true, question } }).catch(() => {});
+    await attention.raise({ id: key, kind: 'approval', title: question, at: now(), cardId: card.id, who: `The ${card.name} coder`, coder: ask, event: { id: key, name: 'coder_permission', args: { [ask.tool === 'bash' ? 'command' : 'file']: ask.what }, waiting: true, question } }).catch(() => {});
     const answer = await approvals.ask(key);
     if (card.permission?.id !== ask.id) return;
     const reply = !answer.ok ? 'reject' : answer.args?.reply === 'always' ? 'always' : 'once';
@@ -270,7 +270,8 @@ export function createCoder(deps: Deps) {
   }
 
   return {
-    open, prompt, wait, models, hear, stop, diff,
+    open, prompt, wait, models, hear, stop,
+    patches: (cardId: string) => diff(held(cardId)),
     snapshot(cardId: string) {
       const card = cards.get(cardId);
       return { lines: card?.lines.slice(-SHOWN) ?? [], state: card?.state ?? 'idle' as CoderState, permission: card?.permission, session: card?.session, model: card?.model };

@@ -3,6 +3,7 @@ import { delimiter, join } from 'node:path';
 import type { Check } from '../../shared/openends.ts';
 import models from '../models.json' with { type: 'json' };
 import type { ModelClient } from '../providers.ts';
+import type { EngineHealth } from '../opencode/server.ts';
 
 // Is everything this app leans on really here? One question a line, answered yes or no, and when the answer is no,
 // what the founder would do about it — in the words they would use, not ours.
@@ -37,6 +38,8 @@ export type HealthDeps = {
   workspace: string; root: string; env?: NodeJS.ProcessEnv; now?: () => number;
   backups: () => Promise<{ at: number }[]>; backupDir: string;
   outside: () => { name: string; ok: boolean; detail: string }[];
+  // The coder card's opencode: where its program is, and whether its server is up. Absent when nothing owns it.
+  coder?: () => (EngineHealth & { bin: string | null }) | null;
 };
 
 export async function checkAll(deps: HealthDeps): Promise<Check[]> {
@@ -75,11 +78,14 @@ export async function checkAll(deps: HealthDeps): Promise<Check[]> {
     fix: 'Install Chrome or Chromium from your package manager. Reading a page and searching the web work without it.',
   });
 
-  const coder = await onPath('opencode', env);
+  const server = deps.coder?.() ?? null;
+  const coder = !!server?.bin || await onPath('opencode', env);
+  const megabytes = server?.rss ? ` (${Math.round(server.rss / 1024 ** 2)} MB)` : '';
+  const running = !server ? '' : server.running ? `, and its server is running${megabytes}` : server.problem ? `, and its server ${server.problem}` : ', and its server starts with the first coding task';
   checks.push({
     name: 'Changing code', ok: coder,
-    detail: coder ? 'opencode is here' : 'opencode was not found, so nobody can change a project folder',
-    fix: 'Install it with: npm i -g opencode-ai. Everything else works without it.',
+    detail: coder ? `opencode is here${running}` : 'opencode was not found, so nobody can change a project folder',
+    fix: 'Install it with: curl -fsSL https://opencode.ai/install | bash. Everything else works without it.',
   });
 
   const voice = await hasFiles(join(root, 'app', '.cache', 'voice'));

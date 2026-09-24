@@ -1,8 +1,9 @@
 import { spawn as spawnChild } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { childEnv } from '../safety/env.ts';
 import type { CoderHome } from './config.ts';
 import { readStream, type RawEvent } from './events.ts';
@@ -49,6 +50,16 @@ export function findBin(env: NodeJS.ProcessEnv = process.env): string | null {
   return [...known, ...onPath].find((path) => existsSync(path)) ?? null;
 }
 
+// A server left behind by a launch that was killed outright (nothing can catch that) is found by the number it wrote
+// down, and let go of before a new one starts. Only a process that really is an `opencode serve` is touched.
+export async function reap(pidFile: string, read = (path: string) => readFile(path, 'utf8'), kill: (pid: number) => unknown = (pid) => process.kill(pid, 'SIGKILL')) {
+  const pid = Number(await read(pidFile).catch(() => ''));
+  if (!pid) return false;
+  const command = await read(`/proc/${pid}/cmdline`).catch(() => '');
+  if (!command.includes('opencode') || !command.includes('serve')) return false;
+  try { kill(pid); return true; } catch { return false; }
+}
+
 type Child = { pid?: number; exitCode: number | null; stderr: NodeJS.ReadableStream | null; kill(signal?: NodeJS.Signals): boolean; once(event: 'exit', listener: () => void): unknown; on(event: 'exit', listener: () => void): unknown };
 type Options = {
   bin: string | null; env: NodeJS.ProcessEnv; home: () => Promise<CoderHome>;
@@ -89,9 +100,12 @@ export function createOpencodeServer(options: Options): Engine {
   async function start() {
     if (!options.bin) throw new Error('opencode is not installed. The founder installs it with: curl -fsSL https://opencode.ai/install | bash');
     const home = await options.home();
+    const pidFile = join(dirname(home.configPath), 'server.pid');
+    await reap(pidFile);
     const password = randomBytes(24).toString('base64url');
     const mine = spawn(options.bin, ['serve', '--port', '0', '--hostname', '127.0.0.1'], { env: serverEnv(options.env, home, password), stdio: ['ignore', 'ignore', 'pipe'] });
     child = mine;
+    if (mine.pid) await writeFile(pidFile, String(mine.pid)).catch(() => {});
     auth = `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}`;
     let said = '';
     port = await new Promise<number>((done, fail) => {
@@ -105,14 +119,25 @@ export function createOpencodeServer(options: Options): Engine {
     }).catch((error: Error) => { if (mine.exitCode === null) mine.kill('SIGKILL'); child = null; throw error; });
     base = `http://127.0.0.1:${port}`;
     problem = undefined;
-    // Whatever becomes of this app, the server does not outlive it.
+    // Whatever becomes of this app, the server does not outlive it: not on a normal exit, and not when the app is told
+    // to stop (the dev server's watcher restarts it with a SIGTERM on every save). The signal is passed on afterwards,
+    // so the app still ends exactly as it would have.
     const orphan = () => { if (mine.exitCode === null) mine.kill('SIGKILL'); };
+    const signalled = (signal: NodeJS.Signals) => {
+      orphan();
+      unhook();
+      if (!process.listenerCount(signal)) process.kill(process.pid, signal);
+    };
+    const signals = (['SIGTERM', 'SIGINT', 'SIGHUP'] as const).map((signal) => [signal, () => signalled(signal)] as const);
+    const unhook = () => { process.removeListener('exit', orphan); for (const [signal, handler] of signals) process.removeListener(signal, handler); };
     process.once('exit', orphan);
+    for (const [signal, handler] of signals) process.once(signal, handler);
     mine.on('exit', () => {
-      process.removeListener('exit', orphan);
+      unhook();
+      void rm(pidFile, { force: true });
       if (child !== mine) return;
       child = null; port = undefined; stream?.abort();
-      problem = 'it stopped; the next coding task starts it again';
+      problem = 'stopped; the next coding task starts it again';
       tell({ type: GONE, properties: {} });
     });
     if (options.listen !== false) void subscribe(mine);

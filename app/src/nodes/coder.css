@@ -1,0 +1,89 @@
+/* The coder card: the project card's folder field and log, grown into a conversation with a running OpenCode. */
+
+/* State, at a glance: grey when idle, the accent breathing while it works, the "needs you" colour when it asks, red
+   when the last piece of work ended early. The colour eases from one to the next rather than jumping. */
+.coder__dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #5d6472; transition: background-color 0.35s ease, box-shadow 0.35s ease; }
+.coder__dot--working { background: var(--accent); box-shadow: 0 0 0 3px rgba(78, 140, 255, 0.16); animation: pulse 1.4s ease-in-out infinite; }
+.coder__dot--waiting { background: var(--needs); box-shadow: 0 0 0 3px rgba(230, 169, 60, 0.18); animation: pulse 1.1s ease-in-out infinite; }
+.coder__dot--stopped { background: #e5645a; }
+
+/* The model pill and its menu. */
+.coder-model { position: relative; flex: none; min-width: 0; }
+.coder-model__pill { display: flex; align-items: center; gap: 4px; max-width: 150px; height: 22px; padding: 0 7px 0 9px; border: 1px solid var(--card-border); border-radius: 999px; background: rgba(255, 255, 255, 0.04); color: var(--muted); font: inherit; font-size: 11px; font-weight: 550; cursor: pointer; transition: color 0.15s, border-color 0.15s, background 0.15s; }
+.coder-model__pill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.coder-model__pill svg { flex: none; width: 9px; height: 9px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.coder-model__pill:hover, .coder-model__pill[aria-expanded='true'] { color: var(--text); border-color: rgba(255, 255, 255, 0.2); background: rgba(255, 255, 255, 0.08); }
+.coder-model__menu {
+  position: absolute; z-index: 20; top: calc(100% + 8px); right: -40px; width: 260px; max-height: 340px; overflow-y: auto; padding: 6px;
+  display: flex; flex-direction: column; gap: 2px; border-radius: 14px; border: 1px solid var(--card-border); background: rgba(16, 17, 20, 0.96);
+  -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+  scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; animation: coder-rise 0.16s ease-out; cursor: auto;
+}
+.coder-model__menu h6 { margin: 6px 6px 2px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--muted); }
+.coder-model__menu button { width: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 6px 9px 6px 26px; border: 0; border-radius: 9px; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; position: relative; }
+.coder-model__menu button:hover, .coder-model__menu button:focus-visible { background: rgba(255, 255, 255, 0.08); outline: 0; }
+.coder-model__menu button[aria-checked='true']::before { content: ''; position: absolute; left: 10px; top: 50%; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%; background: var(--accent); }
+.coder-model__menu b { font-size: 12.5px; font-weight: 550; }
+.coder-model__menu small { font-size: 11px; color: var(--muted); }
+.coder-model__note { margin: 2px 9px 6px; font-size: 11.5px; line-height: 1.45; color: var(--muted); }
+
+/* The log: every step on its own line, in the order it happened. New lines rise in gently. */
+.coder__log { gap: 4px; padding-top: 6px; }
+.coder__line { margin: 0; animation: coder-rise 0.22s ease-out; }
+.coder__line--tool { color: var(--muted); }
+.coder__tool { color: #c9cfdb; }
+.coder__file { color: var(--accent-soft); }
+.coder__line--ask { align-self: flex-end; max-width: 88%; margin: 6px 0 2px; padding: 6px 10px; border-radius: 12px 12px 3px 12px; background: rgba(255, 255, 255, 0.09); color: var(--text); font-family: 'Inter Variable', Inter, system-ui, sans-serif; font-size: 12.5px; line-height: 1.45; white-space: pre-wrap; }
+.coder__who { display: block; margin-bottom: 1px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em; color: var(--muted); }
+.coder__line--reply { margin: 3px 0; color: var(--text); font-family: 'Inter Variable', Inter, system-ui, sans-serif; font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; }
+.coder__line--note { color: #7f8696; font-style: italic; }
+.coder__line--error { color: #f0968e; }
+.coder__line--diff {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: 4px; margin: 3px 0; padding: 3px 6px 3px 9px; border: 1px solid var(--card-border); border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04); color: var(--muted); font: inherit; cursor: pointer; transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.coder__line--diff:hover { background: rgba(255, 255, 255, 0.08); border-color: rgba(255, 255, 255, 0.2); color: var(--text); }
+.coder__line--diff svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.coder__added { color: #6fcf97; }
+.coder__removed { color: #f0968e; }
+
+/* Three quiet dots at the foot of the log while the coder works. */
+.coder__working { display: flex; gap: 4px; padding: 6px 0 2px; }
+.coder__working i { width: 5px; height: 5px; border-radius: 50%; background: var(--muted); opacity: 0.35; animation: coder-think 1.2s ease-in-out infinite; }
+.coder__working i:nth-child(2) { animation-delay: 0.15s; }
+.coder__working i:nth-child(3) { animation-delay: 0.3s; }
+
+/* The question, inside the log: the approval card every other step uses, with the command in the code face. */
+.coder-ask { margin: 6px 0 2px; font-family: 'Inter Variable', Inter, system-ui, sans-serif; border-color: rgba(230, 169, 60, 0.5); background: rgba(230, 169, 60, 0.08); animation: coder-rise 0.22s ease-out; }
+.coder-ask__what { display: block; padding: 7px 9px; border-radius: 8px; background: rgba(0, 0, 0, 0.3); color: var(--text); font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace; font-size: 11.5px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.coder-ask input { border: 1px solid var(--card-border); border-radius: 8px; padding: 6px 8px; outline: 0; background: rgba(0, 0, 0, 0.25); color: var(--text); font: inherit; font-size: 12px; }
+.coder-ask input:focus { border-color: rgba(78, 140, 255, 0.7); }
+.coder-ask__pattern { margin-left: 6px; padding: 1px 6px; border-radius: 5px; background: rgba(0, 0, 0, 0.3); font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace; font-size: 10.5px; font-weight: 400; color: var(--muted); }
+
+/* Undo last and New session: quiet words above the ask box, there when needed and out of the way otherwise. */
+.coder__tools { flex: none; display: flex; justify-content: flex-end; gap: 2px; padding: 2px 8px; }
+.coder__tools button { border: 0; border-radius: 7px; padding: 3px 8px; background: transparent; color: var(--muted); font: inherit; font-size: 11px; font-weight: 550; cursor: pointer; transition: color 0.15s, background 0.15s, opacity 0.2s; }
+.coder__tools button:hover:not(:disabled) { color: var(--text); background: rgba(255, 255, 255, 0.08); }
+.coder__tools button:disabled { opacity: 0.35; cursor: default; }
+.coder__problem { flex: none; margin: 4px 12px 0; }
+
+/* The card opened large on what changed: each file, then its patch, added lines green and removed ones red. */
+.coder__changes { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 10px; cursor: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; animation: coder-rise 0.2s ease-out; }
+.coder__back { align-self: flex-start; display: inline-flex; align-items: center; gap: 3px; border: 0; border-radius: 7px; padding: 3px 8px 3px 4px; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px; cursor: pointer; }
+.coder__back:hover { color: var(--text); background: rgba(255, 255, 255, 0.08); }
+.coder__back svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.coder__patch { border: 1px solid var(--card-border); border-radius: 10px; overflow: hidden; }
+.coder__patch h4 { margin: 0; display: flex; gap: 8px; padding: 7px 10px; border-bottom: 1px solid var(--card-border); background: rgba(255, 255, 255, 0.04); font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace; font-size: 11.5px; font-weight: 500; }
+.coder__patch h4 span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.coder__patch pre { margin: 0; padding: 8px 0; overflow-x: auto; font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace; font-size: 11.5px; line-height: 1.5; color: var(--muted); user-select: text; }
+.coder__patch pre span { display: block; padding: 0 10px; white-space: pre; }
+.coder__patch .is-added { color: #b9ebc9; background: rgba(111, 207, 151, 0.1); }
+.coder__patch .is-removed { color: #f5bdb8; background: rgba(229, 100, 90, 0.1); }
+.coder__patch .is-hunk { color: var(--accent-soft); }
+
+@keyframes coder-rise { from { opacity: 0; transform: translateY(4px); } }
+@keyframes coder-think { 50% { opacity: 0.9; transform: translateY(-1px); } }
+@media (prefers-reduced-motion: reduce) {
+  .coder__line, .coder-ask, .coder-model__menu, .coder__changes { animation: none; }
+  .coder__dot--working, .coder__dot--waiting, .coder__working i { animation: none; }
+}

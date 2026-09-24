@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
-import { createOpencodeServer, needsRestart, portOf, rssOf, serverEnv } from './server.ts';
+import { createOpencodeServer, needsRestart, portOf, reap, rssOf, serverEnv } from './server.ts';
 
 const home = { configPath: '/w/opencode/opencode.json', configHome: '/w/opencode/settings', dataHome: '/w/opencode/data', keys: ['GROQ_API_KEY'] };
 
@@ -29,6 +29,17 @@ describe('the one opencode server', () => {
     expect(needsRestart(big, false)).toBe(true);
     expect(needsRestart(big, true)).toBe(false);
     expect(needsRestart(512 * 1024 ** 2, false)).toBe(false);
+  });
+
+  it('lets go of a server an earlier launch left behind, and of nothing else', async () => {
+    const killed: number[] = [];
+    const files: Record<string, string> = { '/w/server.pid': '777', '/proc/777/cmdline': '/home/me/.opencode/bin/opencode\0serve\0--port\0' + '0', '/proc/888/cmdline': 'vim\0notes' };
+    const read = async (path: string) => { if (!(path in files)) throw new Error('none'); return files[path]; };
+    expect(await reap('/w/server.pid', read, (pid) => { killed.push(pid); })).toBe(true);
+    files['/w/server.pid'] = '888';
+    expect(await reap('/w/server.pid', read, (pid) => { killed.push(pid); })).toBe(false);
+    expect(await reap('/w/missing.pid', read, (pid) => { killed.push(pid); })).toBe(false);
+    expect(killed).toEqual([777]);
   });
 
   it('is started once however many ask, talks with its password, and is killed on the way out', async () => {

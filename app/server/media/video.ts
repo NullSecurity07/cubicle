@@ -4,7 +4,7 @@ import { copyFile, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promi
 import { extname, join, resolve } from 'node:path';
 import type { Card, MediaAsset, Shape, Stage } from '../../shared/model.ts';
 import { CHROMES } from '../browser.ts';
-import { projectDir } from '../coder.ts';
+import { projectDir } from '../folder.ts';
 import { musicBed, MOODS, SFX_DIR, sfxFile, type Mood } from './audio.ts';
 import { fakeMusic, type Credit, type Music, type Mood as MusicMood } from './music.ts';
 import { noClips, type Clips } from './clips.ts';

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { childEnv, coderKeys } from './env.ts';
+import { childEnv } from './env.ts';
 
 const env = {
   PATH: '/usr/bin', HOME: '/home/founder', XDG_RUNTIME_DIR: '/run/user/1000', LANG: 'en_GB.UTF-8',
@@ -13,10 +13,8 @@ describe('what a child process is started with', () => {
     expect(child).toEqual({ PATH: '/usr/bin', HOME: '/home/founder', XDG_RUNTIME_DIR: '/run/user/1000', LANG: 'en_GB.UTF-8', OPENCODE_BIN: '/usr/bin/opencode' });
   });
 
-  it('keeps the one key the coding agent demonstrably needs, and no other', () => {
-    expect(coderKeys('anthropic/claude-sonnet-4')).toEqual(['ANTHROPIC_API_KEY']);
-    expect(coderKeys('opencode/grok-code-free')).toEqual(['OPENCODE_API_KEY']);
-    const child = childEnv(env, coderKeys('anthropic/claude-sonnet-4'));
+  it('keeps a key only when the call names it, and no other', () => {
+    const child = childEnv(env, ['ANTHROPIC_API_KEY']);
     expect(child.ANTHROPIC_API_KEY).toBe('coder-value');
     expect(child.HOME).toBe('/home/founder');
     for (const left of ['GROQ_API_KEY', 'GEMINI_API_KEY', 'STAGE_API_TOKEN', 'AGENTMAIL_API_KEY', 'SMTP_PASSWORD']) expect(child[left]).toBeUndefined();

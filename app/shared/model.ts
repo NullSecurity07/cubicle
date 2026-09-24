@@ -1,4 +1,5 @@
 import type { AppPreset } from './apps.ts';
+import type { CoderAsk } from './coder.ts';
 import type { Gender } from './voices.ts';
 
 // The plain model both sides agree on. The client maps it to React Flow; the server stores it.
@@ -15,10 +16,11 @@ export type Room = Box & {
 };
 // `pinned` makes a doc company-wide: every person reads it, wired or not. Writing it still needs a wire.
 export type Doc = Box & { id: string; title: string; pinned?: boolean };
-// Resource cards that are not docs. `browser` is a live browser a wired person can drive; `project` is a code folder a wired person may hand to a coding agent; `board` holds tasks that wired people may propose and the founder runs.
+// Resource cards that are not docs. `browser` is a live browser a wired person can drive; `project` is the coder card, a running OpenCode in one code folder that the founder or a wired person drives; `board` holds tasks that wired people may propose and the founder runs.
+// A coder card keeps the `model` the founder picked (`provider/model`, absent for the default) and the `session` it is in, so the same conversation carries on after a restart.
 // `headed` shows the card's Chrome as a real window, for the founder to sign in or pass a human check by hand.
 // `app` makes the card a named app the founder is signed in to, such as LinkedIn; a plain browser card has none.
-export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean; app?: AppPreset } | { kind: 'project'; path: string } | { kind: 'board' }
+export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean; app?: AppPreset } | { kind: 'project'; path: string; model?: string; session?: string } | { kind: 'board' }
   // Small things that are context when wired to a person: a note's words, a picture (for models that can see), a web page's text.
   // A picture card starts empty — the founder drops a file on it, or wires it to the studio whose work it shows.
   | { kind: 'note'; text: string; color?: string } | { kind: 'image'; path?: string } | { kind: 'link'; url: string; title?: string }
@@ -99,6 +101,8 @@ export type Attention = {
   roomId?: string; cardId?: string; taskId?: string; decisionId?: string; event?: ToolEvent; lapsed?: boolean;
   // A proposed source: which proposal, the site and the line on what it holds, for the founder to add as it is.
   sourceId?: string; url?: string; about?: string;
+  // A coder's question: what it wants to do, for the founder to allow once, for good, or not at all.
+  coder?: CoderAsk;
 };
 
 // One conversation as the messages view lists it: a person's room, or the consults between two people.
@@ -151,7 +155,7 @@ export type Wire = { id: string; from: string; fromHandle: string; to: string; t
 export type Stage = { rooms: Room[]; docs: Doc[]; wires: Wire[]; cards?: Card[] };
 export type Usage = { input: number; output: number };
 // What a tool run changed on the stage, for the client to mirror.
-export type ToolEffect = { kind: 'doc-changed'; id: string } | { kind: 'doc-created'; id: string; title: string } | { kind: 'browser-moved'; id: string } | { kind: 'project-progress'; id: string; line: string } | { kind: 'chat-changed'; id: string } | { kind: 'memory-changed'; id: string }
+export type ToolEffect = { kind: 'doc-changed'; id: string } | { kind: 'doc-created'; id: string; title: string } | { kind: 'browser-moved'; id: string } | { kind: 'chat-changed'; id: string } | { kind: 'memory-changed'; id: string }
   | { kind: 'media-progress'; id: string; line: string } | { kind: 'media-made'; id: string };
 // One tool call inside a reply. `ok` is absent while the tool is still running; `waiting` means it needs the founder's yes first.
 export type ToolEvent = { id: string; name: string; args: Record<string, unknown>; waiting?: boolean; question?: string; ok?: boolean; result?: string; effect?: ToolEffect };

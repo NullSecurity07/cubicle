@@ -1,12 +1,12 @@
 import { resolve } from 'node:path';
 import { NO_UNDO_LINE, UNDO_LINE } from '../../shared/safety.ts';
-import { projectDir } from '../coder.ts';
+import { projectDir } from '../folder.ts';
 import { wired } from '../prompt.ts';
 import { checkCall } from '../safety/blocks.ts';
 import { createCheckpoints } from '../safety/checkpoints.ts';
 import { redact, secretValues } from '../safety/keys.ts';
 import { createRules } from '../safety/rules.ts';
-import { overdue, UNANSWERED } from '../safety/waiting.ts';
+import { NO_ANSWER, overdue, UNANSWERED } from '../safety/waiting.ts';
 import type { Slice } from '../install.ts';
 
 // The safety net around everything the people do on the founder's own machine: what nothing gets past, a copy of a
@@ -14,6 +14,8 @@ import type { Slice } from '../install.ts';
 // anything read back, and a question nobody answers turned into a no.
 // It installs first (`order`) so its refusals are decided before any other extra has an opinion about a call.
 const CALLS_HELD = 60;
+// Starting the coder and following it up both let it into the folder, so both are saved before and can be undone.
+const CODER = new Set(['code_task', 'code_reply']);
 
 export default {
   name: 'safety',
@@ -26,7 +28,7 @@ export default {
     // than from whatever a page claims it was.
     const held = new Map<string, { roomId: string; name: string; args: Record<string, unknown> }>();
 
-    // The project folder wired to this person, the same one `delegate_coding` will work in. No card, no folder, or a
+    // The project folder wired to this person, the same one the coder will work in. No card, no folder, or a
     // folder that is not there: no snapshot, and the receipt says the step cannot be undone.
     async function folderFor(roomId: string): Promise<string | null> {
       try {
@@ -45,7 +47,7 @@ export default {
       if (payload.refusal) return next(payload);
       const stopped = checkCall(call.name, call.args, secrets);
       if (stopped) return next({ ...payload, refusal: stopped });
-      if (call.name === 'delegate_coding') {
+      if (CODER.has(call.name)) {
         const dir = await folderFor(payload.roomId);
         if (dir) await checkpoints.take(call.id, payload.roomId, dir).catch(() => null);
       }
@@ -59,7 +61,7 @@ export default {
       const { event } = payload;
       held.delete(event.id);
       let result = event.result ? redact(event.result, secrets) : event.result;
-      if (event.name === 'delegate_coding') {
+      if (CODER.has(event.name)) {
         const saved = await checkpoints.seal(event.id).catch(() => false);
         result = `${result ?? ''}\n\n${saved ? UNDO_LINE : NO_UNDO_LINE}`.trim();
       }
@@ -103,7 +105,7 @@ export default {
       async tick() {
         const now = Date.now();
         for (const entry of overdue(await deps.attention.list(), now)) {
-          if (!deps.approvals.answer(entry.event!.id, { ok: false })) continue;
+          if (!deps.approvals.answer(entry.event!.id, { ok: false, args: { message: NO_ANSWER } })) continue;
           await deps.attention.raise({
             id: `unanswered:${entry.event!.id}`, kind: 'run-failed', title: entry.title, detail: UNANSWERED,
             at: now, who: entry.who, roomId: entry.roomId, cardId: entry.cardId, taskId: entry.taskId,

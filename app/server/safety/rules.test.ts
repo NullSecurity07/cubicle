@@ -39,7 +39,7 @@ describe('always allow', () => {
   });
 
   it('is never offered for the three that are always their own decision, or where nothing says how far the call goes', () => {
-    for (const tool of ['run_code', 'delegate_coding', 'delegate_task']) expect(reachOf(tool, { code: 'print(1)' })).toBeNull();
+    for (const tool of ['run_code', 'code_task', 'code_reply', 'delegate_task']) expect(reachOf(tool, { code: 'print(1)' })).toBeNull();
     expect(reachOf('browse', { action: 'click', ref: 'e12' })).toBeNull();
     expect(reachOf('send_email', { subject: 'no address' })).toBeNull();
     expect(reachOf('send_email', { to: 'alex@example.com, sam@example.com' })).toMatchObject({ label: 'emails to those 2 addresses' });

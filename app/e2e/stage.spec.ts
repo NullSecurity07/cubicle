@@ -369,25 +369,73 @@ test('code runs only after the founder reads it, in the sandbox', async ({ page 
   await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('Tool said: 42');
 });
 
-test('a project card: a wired person hands coding work to an agent after the founder says start', async ({ page }) => {
+test('a coder card: a wired person hands it work, the founder approves each step on the card, and drives it directly too', async ({ page }) => {
   await tidy(page);
-  await addCard(page, 'Add project folder');
+  await addCard(page, 'Add coder');
   const card = page.locator('.react-flow__node-project');
   await expect(card).toContainText('Set the folder');
+  await expect(card.getByRole('status', { name: 'Coder: Idle' })).toBeVisible();
   const id = (await card.getAttribute('data-id'))!;
   await card.getByLabel('Project folder').fill('/usr/share');
   await expect(card.locator('.card__name')).toHaveText('share');
   await page.waitForTimeout(600);
   await wire(page, 'build', id);
 
-  await send(page, 'build', '/tool delegate_coding {"task":"Add a health check endpoint"}');
+  // The person asks; the founder reads the brief (editable) and says start.
+  await send(page, 'build', '/tool code_task {"brief":"Add a health check endpoint and run the tests"}');
   const ask = node(page, 'build').getByRole('group', { name: 'Start this coding task?' });
   await expect(ask).toContainText('Start this coding task in /usr/share?');
+  await expect(ask.getByLabel('Brief')).toHaveValue('Add a health check endpoint and run the tests');
   await ask.getByRole('button', { name: 'Start' }).click();
-  await expect(node(page, 'build').locator('.chip--ok summary').last()).toHaveText('Coded: Add a health check endpoint');
-  await expect(card.locator('.project__log')).toContainText('edit src/example.ts');
-  await expect(card.locator('.project__log')).toContainText('done · 1 file changed');
-  await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('Changed: src/example.ts');
+
+  // Every step lands on the card, and the coder stops to ask before it runs a command.
+  const log = card.locator('.coder__log');
+  await expect(log.locator('.coder__line--ask')).toContainText('Dev');
+  await expect(log.locator('.coder__line--tool').first()).toHaveText('edit src/example.ts');
+  const question = card.getByRole('group', { name: 'Run this command?' });
+  await expect(question).toContainText('pnpm test');
+  await expect(card.getByRole('status', { name: 'Coder: Waiting for you' })).toBeVisible();
+  // The same question waits in Needs you.
+  await page.getByRole('button', { name: /Needs you/ }).click();
+  const needs = page.locator('.needs li').filter({ hasText: 'The share coder needs your OK' });
+  await expect(needs.getByRole('group', { name: 'Run this command?' })).toContainText('pnpm test');
+  await page.keyboard.press('Escape');
+  await question.getByRole('button', { name: 'Allow' }).click();
+  await expect(question).toHaveCount(0);
+  await expect(log).toContainText('allowed · bash pnpm test');
+  await expect(log.locator('.coder__line--tool').last()).toHaveText('bash pnpm test');
+  await expect(log.locator('.coder__line--diff')).toHaveText('+12 −3 in 1 file');
+  await expect(log.locator('.coder__line--reply').last()).toContainText('Did: Add a health check endpoint and run the tests');
+  await expect(card.getByRole('status', { name: 'Coder: Idle' })).toBeVisible();
+  await expect.poll(async () => (await (await page.request.get('/api/attention')).json()).filter((one: { id: string }) => one.id.startsWith('coder:')).length).toBe(0);
+
+  // The person's reply carries what the coder said and what changed.
+  await expect(node(page, 'build').locator('.chip--ok summary').last()).toHaveText('Coded: Add a health check endpoint and run the tests');
+  await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('Changed: +12 −3 in 1 file (src/example.ts)');
+
+  // The founder drives the card directly: working while it works, then a reply of its own.
+  await card.getByLabel('Tell the coder').fill('Tidy the readme');
+  await card.getByLabel('Tell the coder').press('Enter');
+  await expect(card.getByRole('status', { name: 'Coder: Working' })).toBeVisible();
+  await expect(log.locator('.coder__line--ask').last()).toContainText('You');
+  await expect(log.locator('.coder__line--reply').last()).toHaveText('Did: Tidy the readme');
+  await expect(card.getByRole('status', { name: 'Coder: Idle' })).toBeVisible();
+
+  // The diff opens the card large on the changes themselves.
+  await log.locator('.coder__line--diff').last().click();
+  const large = page.locator('.card--focused');
+  await expect(large.locator('.coder__patch')).toContainText('src/example.ts');
+  await expect(large.locator('.coder__patch .is-added')).toContainText('export const ok = true;');
+  await large.getByRole('button', { name: 'Back to the log' }).click();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.card--focused')).toHaveCount(0);
+
+  // Undo last puts the folder back to before the last ask, and says so.
+  await card.getByRole('button', { name: 'Undo last' }).click();
+  await expect(log.locator('.coder__line--note').last()).toHaveText('undone · "Tidy the readme"');
+
+  // The session is kept on the card, so the conversation carries on after a restart.
+  await expect.poll(async () => (await (await page.request.get('/api/stage')).json()).cards.find((one: { id: string }) => one.id === id)?.session).toMatch(/^ses_/);
 });
 
 test('a pinned doc is read by everyone; unpinning takes it away again', async ({ page }) => {

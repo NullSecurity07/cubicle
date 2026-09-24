@@ -7,10 +7,11 @@ export type Where = { tool: string; key: string };
 export type Rule = { id: string; says: string; hits(value: string, where: Where, own: string[]): boolean };
 
 // Tools whose arguments leave this machine one way or another. A key may not travel in one of these.
-const OUTWARD = new Set(['send_email', 'web_search', 'web_fetch', 'browse', 'delegate_coding']);
+const OUTWARD = new Set(['send_email', 'web_search', 'web_fetch', 'browse', 'code_task', 'code_reply']);
 // Where a path or a command can really be acted on. A question typed at a search engine is words, not a file.
-const FILE_TOOLS = new Set(['run_code', 'delegate_coding', 'write_file', 'read_file']);
-const FILE_KEYS = new Set(['code', 'task', 'path', 'file', 'command', 'url']);
+const FILE_TOOLS = new Set(['run_code', 'code_task', 'code_reply', 'write_file', 'read_file']);
+const CODER = new Set(['code_task', 'code_reply']);
+const FILE_KEYS = new Set(['code', 'task', 'brief', 'path', 'file', 'command', 'url']);
 const touchesFiles = (where: Where) => FILE_TOOLS.has(where.tool) || FILE_KEYS.has(where.key);
 
 // `rm -rf /`, `~`, `$HOME`, or a top-level folder of the system. `rm -rf ./build` is somebody's build folder and passes.
@@ -128,7 +129,7 @@ export const RULES: Rule[] = [
     // away themselves, in their own words, so here they are only held to the ways round that check: an address
     // written as a number, a mapped one, or a name a cloud keeps its secrets behind.
     hits: (value, where) => hosts(value).some((host) => {
-      if (where.tool === 'delegate_coding') return METADATA.has(host.toLowerCase());
+      if (CODER.has(where.tool)) return METADATA.has(host.toLowerCase());
       if (!privateHost(host)) return false;
       return !WEB_TOOLS.has(where.tool) || !refusedAlready(host);
     }),

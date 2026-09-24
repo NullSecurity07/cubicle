@@ -57,7 +57,7 @@ const MORE: [kind: CardKind, label: string, hint: string][] = [
   ['voicegen', 'Voice studio', 'Words said out loud, on this machine'],
   ['videogen', 'Video studio', 'A short narrated film from a brief'],
   ['browser', 'Browser', 'A live browser a wired person drives'],
-  ['project', 'Project folder', 'Code a wired person can have changed'],
+  ['project', 'Coder', 'OpenCode in a folder, driven by you or a wired person'],
   ['board', 'Task board', 'People propose, you run'],
 ];
 

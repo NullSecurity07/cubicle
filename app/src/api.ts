@@ -3,6 +3,7 @@ import type { EvalsView } from '../shared/evals';
 import type { Framework, Placed } from '../shared/frameworks';
 import type { ForgeJob, ForgeMode, Proposal } from '../shared/forge';
 import type { Note } from '../shared/library';
+import type { CoderAsk, CoderLine, CoderModels, CoderPatch, CoderState } from '../shared/coder';
 import { feed, snapshot } from './feed';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -138,3 +139,14 @@ export const putFounder = (text: string) => request('/api/founder', put({ text }
 export const watchSkills = (onEvent: (event: SkillEvent) => void) => feed<SkillEvent>('skills', onEvent);
 // "Learn this" on a task the founder can see is finished. Nothing worth keeping answers with `learned: null`.
 export const learnFromTask = (boardId: string, taskId: string) => request<{ learned: { name: string; action: 'create' | 'patch' } | null }>(`/api/boards/${boardId}/tasks/${taskId}/learn`, send('POST'));
+
+// The coder card. Asking answers at once and the card's channel carries the rest, the way a studio's does. The card's
+// folder and model go with each ask, because the stage is saved a moment after they change.
+export const getCoder = (id: string) => request<{ lines: CoderLine[]; state: CoderState; permission?: CoderAsk; session?: string }>(`/api/coder/${id}`);
+export const getCoderModels = () => request<CoderModels>('/api/coder/models');
+export const askCoder = (id: string, text: string, card: { path: string; model?: string }) => request(`/api/coder/${id}/ask`, send('POST', { text, path: card.path, model: card.model ?? '' }));
+export const stopCoder = (id: string) => request(`/api/coder/${id}/stop`, send('POST'));
+export const undoCoder = (id: string) => request(`/api/coder/${id}/undo`, send('POST'));
+export const newCoderSession = (id: string) => request(`/api/coder/${id}/new`, send('POST'));
+export const answerCoder = (id: string, permissionId: string, reply: 'once' | 'always' | 'reject', message?: string) => request(`/api/coder/${id}/permission/${permissionId}`, send('POST', { reply, message }));
+export const getCoderPatches = (id: string) => request<{ files: CoderPatch[] }>(`/api/coder/${id}/diff`).then((answer) => answer.files);

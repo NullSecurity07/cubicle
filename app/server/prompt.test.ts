@@ -86,7 +86,7 @@ describe('prompt', () => {
     expect(partly).not.toContain('a browser card)');
     expect(partly).toContain('film (a video studio)');
     // Everything wired: nothing to say, and nothing said.
-    const wholly = buildMessages(stage, 'marketing', docs, [], ['browse', 'write_doc', 'delegate_coding', 'list_tasks', 'generate_image', 'generate_voice', 'generate_video', 'ask_person', 'send_email'])[0].content;
+    const wholly = buildMessages(stage, 'marketing', docs, [], ['browse', 'write_doc', 'code_task', 'list_tasks', 'generate_image', 'generate_voice', 'generate_video', 'ask_person', 'send_email'])[0].content;
     expect(wholly).not.toContain('Not connected to your room');
     // Nobody offered any tools at all (a colleague answering a consult) is told nothing either.
     expect(buildMessages(stage, 'build', docs, [])[0].content).not.toContain('Not connected to your room');
@@ -106,14 +106,15 @@ describe('prompt', () => {
     expect(order.every((part) => system.includes(part))).toBe(true);
   });
 
-  it('tells a person which cards are wired to it, and that project code changes only through the coding agent', () => {
+  it('tells a person which cards are wired to it, and that project code changes only through the coder', () => {
     const withCards: Stage = { ...stage, cards: [{ id: 'proj', kind: 'project', path: '/code/app', x: 0, y: 0, w: 1, h: 1 }, { id: 'web', kind: 'browser', x: 0, y: 0, w: 1, h: 1 }],
       wires: [...stage.wires, { id: 'a', from: 'build', fromHandle: 'r', to: 'proj', toHandle: 'l' }, { id: 'b', from: 'web', fromHandle: 'r', to: 'build', toHandle: 'l' }] };
-    const system = buildMessages(withCards, 'build', docs, [], ['delegate_coding'])[0].content;
-    expect(system).toContain('A project folder (/code/app)');
+    const system = buildMessages(withCards, 'build', docs, [], ['code_task'])[0].content;
+    expect(system).toContain('A coder working in a project folder (/code/app)');
+    expect(system).toContain('code_reply to follow up in the same session');
     expect(system).toContain('never write project code into them');
     expect(system).toContain('A browser card');
-    expect(buildMessages(withCards, 'marketing', docs, [], ['delegate_coding'])[0].content).not.toContain('Also connected');
+    expect(buildMessages(withCards, 'marketing', docs, [], ['code_task'])[0].content).not.toContain('Also connected');
   });
 
   it('tells a person what an app card is and how the site is laid out; a plain browser card reads as before', () => {

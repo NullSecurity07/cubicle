@@ -4,7 +4,7 @@ import { join as joinPath } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Attention, BoardEvent, MediaEvent, RoomEvent, Skill, SkillEvent, Stage, Task } from '../shared/model.ts';
 import { createAttention } from './attention.ts';
-import { createEvents, type Envelope } from './events.ts';
+import { createEvents, hub as extras, type Envelope } from './events.ts';
 import { tidyLapsed } from './lapsed.ts';
 
 // One of the things a window used to open a connection of its own for, driven by hand.
@@ -58,6 +58,17 @@ describe('one live connection carrying every feed', () => {
       { channel: 'board:one', data: { tasks: [task('Book the venue')] }, snapshot: true },
       { channel: 'board:two', data: { tasks: [] }, snapshot: true },
     ]);
+  });
+
+  it('sends what an extra has to say on opening too, and one that fails says nothing', async () => {
+    const { events } = hub(stageOf());
+    const opening = async () => [{ channel: 'coder:c1', data: { state: 'working' } }];
+    const broken = async (): Promise<{ channel: string; data: unknown }[]> => { throw new Error('no'); };
+    extras.opening.push(opening, broken);
+    try {
+      const { heard } = await join(events);
+      expect(heard).toContainEqual({ channel: 'coder:c1', data: { state: 'working' }, snapshot: true });
+    } finally { extras.opening.splice(0); }
   });
 
   it('puts everything that happens afterwards in an envelope that says which feed it came from', async () => {

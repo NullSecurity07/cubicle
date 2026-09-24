@@ -7,7 +7,7 @@ export type AllowRule = { id: string; roomId: string; who: string; tool: string;
 
 // Running code, handing work to a coding agent and handing work to a colleague are never remembered: each one is its
 // own decision, however often it is asked for.
-export const NEVER_ALWAYS = ['run_code', 'delegate_coding', 'delegate_task'];
+export const NEVER_ALWAYS = ['run_code', 'code_task', 'code_reply', 'delegate_task'];
 
 const origin = (raw: string) => { try { return new URL(raw).host.toLowerCase(); } catch { return ''; } };
 const addresses = (raw: string) => raw.split(/[,;\s]+/).map((one) => one.trim().toLowerCase()).filter(Boolean);

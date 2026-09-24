@@ -39,7 +39,7 @@ const EXCERPT = 280;
 const CONNECT: [tool: string, cannot: string][] = [
   ['browse', 'use a live browser (a browser card)'],
   ['write_doc', 'write documents (a wire to one)'],
-  ['delegate_coding', 'change code (a project folder)'],
+  ['code_task', 'change code (a coder card)'],
   ['list_tasks', 'use the board (a board card)'],
   ['generate_image', 'draw (an image studio)'],
   ['generate_voice', 'record (a voice studio)'],
@@ -120,7 +120,7 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
   const notes = mineCards.flatMap((card) => (card.kind === 'note' && card.text.trim() ? [`- ${card.text.trim().replace(/\n+/g, '\n  ')}`] : []));
   const links = mineCards.flatMap((card) => (card.kind === 'link' && card.url ? [`## Page: ${pages[card.id]?.title || card.url}\n${card.url}\n${pages[card.id]?.text ?? '(the page could not be read yet)'}`] : []));
   const reach = mineCards.filter((card) => card.kind === 'project' || card.kind === 'board' || card.kind === 'browser' || card.kind === 'imagegen' || card.kind === 'voicegen' || card.kind === 'videogen').map((card) => (card.kind === 'project'
-    ? `- A project folder${card.path ? ` (${card.path})` : ''}. Any change to that code goes through delegate_coding, which works inside the folder. Documents and shared files are not the project: never write project code into them, and never say the project changed unless delegate_coding reported it.`
+    ? `- A coder working in a project folder${card.path ? ` (${card.path})` : ''}. Any change to that code goes through it: code_task for a new piece of work (a complete brief), code_reply to follow up in the same session, code_status to see where it is, code_stop to halt it. Documents and shared files are not the project: never write project code into them, and never say the project changed unless the coder reported it.`
     : card.kind === 'board' ? '- The task board. Read it with list_tasks. When you notice follow-up work, suggest it with propose_task; the founder decides what gets done.'
     : card.kind === 'imagegen' ? '- An image studio. Draw with generate_image when the founder asks for a picture, a mockup or an illustration, describing the whole scene in the prompt. It cannot spell: words asked for in the prompt come out as gibberish, so the prompt says only what is seen, and any words that belong on the picture go in "headline" and "lines" to be set over it in real type. What you make appears on the card for the founder to see, and the reply tells you the path it was saved at.'
     : card.kind === 'voicegen' ? '- A voice studio. Say something out loud with generate_voice when the founder asks for a recording, a voiceover or a read-aloud, writing the words exactly as they should be spoken. What you make appears on the card for the founder to hear.'

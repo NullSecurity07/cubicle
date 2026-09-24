@@ -8,7 +8,7 @@ import { Words } from './Rich';
 const VERBS: Record<string, [doing: string, done: string]> = {
   read_doc: ['Reading', 'Read'], write_doc: ['Rewriting', 'Rewrote'], append_doc: ['Adding to', 'Added to'], create_doc: ['Creating', 'Created'],
   remember: ['Remembering', 'Remembered'], propose_task: ['Proposing', 'Proposed'], list_tasks: ['Reading', 'Read'],
-  ask_person: ['Asking', 'Asked'], delegate_coding: ['Coding:', 'Coded:'],
+  ask_person: ['Asking', 'Asked'], code_task: ['Coding:', 'Coded:'], code_reply: ['Telling the coder:', 'Told the coder:'], code_stop: ['Stopping the coder', 'Stopped the coder'], code_status: ['Checking the coder', 'Checked the coder'],
   send_email: ['Sending email to', 'Emailed'], read_inbox: ['Checking', 'Checked'], run_code: ['Running', 'Ran'],
   web_search: ['Searching', 'Searched'], web_fetch: ['Reading', 'Read'], browse: ['Browsing', 'Browsed'],
   recall: ['Looking up', 'Looked up'], propose_decision: ['Proposing', 'Proposed'], read_decision: ['Reading', 'Read'],
@@ -33,7 +33,8 @@ function Chip({ tool }: { tool: ToolEvent }) {
     : tool.name === 'browse' ? [tool.args.action, tool.args.url ?? tool.args.ref].filter(Boolean).join(' ')
     : tool.name === 'remember' ? String(tool.args.fact ?? '').slice(0, 60) : tool.name === 'list_tasks' ? 'the board'
     : tool.name === 'ask_person' ? String(tool.args.name ?? '') : tool.name === 'recall' ? String(tool.args.query ?? '').slice(0, 60)
-    : tool.name === 'delegate_coding' ? String(tool.args.task ?? '').replace(/\s+/g, ' ').slice(0, 60)
+    : tool.name === 'code_task' ? String(tool.args.brief ?? '').replace(/\s+/g, ' ').slice(0, 60)
+    : tool.name === 'code_reply' ? String(tool.args.text ?? '').replace(/\s+/g, ' ').slice(0, 60)
     : tool.name === 'generate_image' ? String(tool.args.prompt ?? '').replace(/\s+/g, ' ').slice(0, 60)
     : tool.name === 'generate_voice' ? `"${String(tool.args.text ?? '').replace(/\s+/g, ' ').slice(0, 55)}"`
     : tool.name === 'generate_video' ? String(tool.args.title ?? '').replace(/\s+/g, ' ').slice(0, 60)
