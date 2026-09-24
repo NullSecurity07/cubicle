@@ -2,9 +2,10 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { wordsIn, type Note, type NoteSource } from '../../shared/library.ts';
-import { chunksOf, type Piece } from '../recall.ts';
+import { chunksOf, createRecall, type Embedder, type Piece } from '../recall.ts';
 
 export type Library = ReturnType<typeof createLibrary>;
+export type LibraryRecall = ReturnType<typeof createRecall>;
 
 // A note is something the founder learned and wrote down, not a database. Past this it is a file to open, not
 // background for a turn, and the whole of it would sit in memory to be chunked and embedded on every start.
@@ -84,6 +85,14 @@ export function createLibrary(workspace: string, now: () => number = Date.now) {
     await writeFile(`${indexPath}.tmp`, JSON.stringify({ notes }, null, 2));
     await rename(`${indexPath}.tmp`, indexPath);
   }
+  // The index is read, changed and written back one change at a time: two notes added in the same moment (the founder
+  // uploading while the built-in frameworks copy theirs in) would otherwise each write a list without the other.
+  let queue: Promise<unknown> = Promise.resolve();
+  const change = (edit: (notes: Note[]) => Note[]): Promise<void> => {
+    const job = queue.then(async () => keep(edit(await list())));
+    queue = job.catch(() => {});
+    return job;
+  };
 
   return {
     folder,
@@ -105,7 +114,7 @@ export function createLibrary(workspace: string, now: () => number = Date.now) {
       };
       await mkdir(folder, { recursive: true });
       await writeFile(path(note.id), text);
-      await keep([note, ...(await list()).filter((held) => held.id !== note.id)]);
+      await change((notes) => [note, ...notes.filter((held) => held.id !== note.id)]);
       return note;
     },
     // A note a framework was built from stays: taking it away would leave that framework's people reading nothing.
@@ -113,7 +122,7 @@ export function createLibrary(workspace: string, now: () => number = Date.now) {
       const holder = inUse.by(id);
       if (holder) throw new Error(`The framework "${holder}" was built from this note. Delete that framework first, or keep the note.`);
       await rm(path(id), { force: true });
-      await keep((await list()).filter((held) => held.id !== id));
+      await change((notes) => notes.filter((held) => held.id !== id));
     },
     // Everything in the library, passage by passage, for this slice's own recall.
     async pieces(): Promise<Piece[]> {
@@ -125,4 +134,25 @@ export function createLibrary(workspace: string, now: () => number = Date.now) {
       return found;
     },
   };
+}
+
+// One library and one recall over it per workspace, whoever asks: the library slice, the evals, the forge and the
+// frameworks all read the same notes, and three recalls each held their own vectors, embedded a new note three times
+// and raced each other writing the same index file. The embedder is the first caller's; every caller chooses it the
+// same way. Warmed once, a little after the app has settled, so the first question of the day does not pay for the
+// whole library.
+const WARM_AFTER = 6000;
+const shared = new Map<string, { library: Library; recall: LibraryRecall }>();
+export function libraryFor(workspace: string, embed: Embedder): { library: Library; recall: LibraryRecall } {
+  let held = shared.get(workspace);
+  if (!held) {
+    const library = createLibrary(workspace);
+    // Its own index, beside the notes rather than in with the workspace's: a note is not a doc on the stage, and the
+    // vectors can be deleted with the folder.
+    const recall = createRecall({ dir: join(library.folder, '.recall'), embed, gather: library.pieces });
+    setTimeout(() => { void recall.warm().catch(() => {}); }, WARM_AFTER).unref();
+    held = { library, recall };
+    shared.set(workspace, held);
+  }
+  return held;
 }

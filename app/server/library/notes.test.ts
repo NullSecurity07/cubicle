@@ -25,6 +25,20 @@ describe('the library index', () => {
     expect(await library.read('pricing')).toBe('Charge for the value.');
   });
 
+  // Two notes added in the same moment: each reads the index and writes it back, and without a queue the second write
+  // was made from a list that never had the first note in it.
+  it('keeps both of two notes added at once, and a delete made beside them', async () => {
+    const { library } = await setup();
+    await library.add({ title: 'Old', text: 'going' });
+    await Promise.all([
+      library.add({ title: 'Pricing', text: 'Charge for the value.' }),
+      library.add({ title: 'Hiring', text: 'Hire slowly.' }),
+      library.remove('old'),
+      library.add({ title: 'Selling', text: 'Ask for the money.' }),
+    ]);
+    expect((await library.list()).map((one) => one.id).sort()).toEqual(['hiring', 'pricing', 'selling']);
+  });
+
   it('replaces a note added again under the same title, and says so in the hash', async () => {
     const { library } = await setup();
     const first = await library.add({ title: 'Pricing', text: 'Charge for the value.' });

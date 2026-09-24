@@ -1,4 +1,3 @@
-import { join, resolve } from 'node:path';
 import type { EvalsJob, EvalsView, Run, RunCase } from '../../shared/evals.ts';
 import { EVALS_CHANNEL } from '../../shared/evals.ts';
 import type { Case, Framework } from '../../shared/frameworks.ts';
@@ -12,11 +11,10 @@ import { briefHash } from '../forge/build.ts';
 import { createFrameworks } from '../frameworks/store.ts';
 import { hub } from '../events.ts';
 import type { Deps, Slice } from '../install.ts';
-import { createLibrary } from '../library/notes.ts';
 import type { ModelMessage } from '../prompt.ts';
 import { complete, promptSize } from '../providers.ts';
-import { createRecall, localEmbedder, wordEmbedder } from '../recall.ts';
 import { route } from '../router.ts';
+import { sharedLibrary } from '../slice-kit.ts';
 
 // Evals: running a framework's people against the founder's own test cases again, and deciding whether what came out
 // is allowed to become what the framework says about itself. A framework is only a building block worth placing if
@@ -32,7 +30,6 @@ const RUNS = /^\/api\/frameworks\/([a-z0-9][a-z0-9-]{0,79})\/runs$/;
 const PROMOTE = /^\/api\/frameworks\/([a-z0-9][a-z0-9-]{0,79})\/runs\/(\d{10,16})\/promote$/;
 const MOST_LINES = 400;
 const MOST_OUTPUT = 6000;
-const WARM_AFTER = 9000;
 
 type Job = EvalsJob & { stop: AbortController; models: Set<string> };
 const view = (job: Job): EvalsJob => ({
@@ -42,17 +39,11 @@ const view = (job: Job): EvalsJob => ({
 export default {
   name: 'evals',
   install(deps: Deps) {
-    const library = createLibrary(deps.workspace);
     const frameworks = createFrameworks(deps.workspace);
     const runs = createRunStore(frameworks.folder);
-    // The library's own recall, over the same passages and the same saved vectors the library slice and the forge
-    // use: a note is chunked and embedded once for this workspace however many things are asking about it.
-    const recall = createRecall({
-      dir: join(library.folder, '.recall'),
-      embed: deps.fake ? wordEmbedder : localEmbedder(resolve(deps.root, 'app/.cache/recall')),
-      gather: library.pieces,
-    });
-    setTimeout(() => { void recall.warm().catch(() => {}); }, WARM_AFTER).unref();
+    // The library's one recall, the same passages and the same saved vectors the library slice uses: a note is chunked
+    // and embedded once for this workspace however many things are asking about it.
+    const { library, recall } = sharedLibrary(deps);
 
     let job: Job | null = null;
     const unclaim = claiming(deps.workspace, () => (job?.state === 'testing' ? `The evals are already running on ${job.id}.` : null));

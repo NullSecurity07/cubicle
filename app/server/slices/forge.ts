@@ -1,4 +1,3 @@
-import { join, resolve } from 'node:path';
 import type { Run } from '../../shared/evals.ts';
 import type { ForgeJob, ForgeMode, Person, Proposal } from '../../shared/forge.ts';
 import { FORGE_CHANNEL } from '../../shared/forge.ts';
@@ -16,11 +15,11 @@ import { createFrameworks } from '../frameworks/store.ts';
 import { hub } from '../events.ts';
 import type { Deps, Slice } from '../install.ts';
 import { completeJson } from '../json.ts';
-import { createLibrary, noteOf } from '../library/notes.ts';
+import { noteOf } from '../library/notes.ts';
 import type { ModelMessage } from '../prompt.ts';
 import { complete, promptSize, type ModelClient } from '../providers.ts';
-import { createRecall, localEmbedder, wordEmbedder } from '../recall.ts';
 import { route } from '../router.ts';
+import { sharedLibrary } from '../slice-kit.ts';
 
 // The forge: the founder chooses the notes they learned from, says in a line what they want a team for, and a model
 // proposes one. They read it, change what they like, and press Build — and then every person is written twice, put
@@ -32,7 +31,6 @@ const ONE = /^\/api\/forge\/([a-z0-9][a-z0-9-]{0,63})$/;
 const STOP = /^\/api\/forge\/([a-z0-9][a-z0-9-]{0,63})\/stop$/;
 const RUNNING: ForgeJob['state'][] = ['reading', 'proposing', 'building', 'testing'];
 const MOST_LINES = 400;
-const WARM_AFTER = 7000;
 
 // Everything one forge job is, including the parts the window is never shown: the notes it read, what it may stop,
 // and which models have answered so far.
@@ -53,17 +51,11 @@ const newJobId = () => `forge-${Date.now().toString(36)}-${Math.random().toStrin
 export default {
   name: 'forge',
   install(deps: Deps) {
-    const library = createLibrary(deps.workspace);
     const frameworks = createFrameworks(deps.workspace);
     const runs = createRunStore(frameworks.folder);
-    // The library's own recall, over the same passages and the same saved vectors the library slice uses: a note is
-    // chunked and embedded once for this workspace however many things are asking about it.
-    const recall = createRecall({
-      dir: join(library.folder, '.recall'),
-      embed: deps.fake ? wordEmbedder : localEmbedder(resolve(deps.root, 'app/.cache/recall')),
-      gather: library.pieces,
-    });
-    setTimeout(() => { void recall.warm().catch(() => {}); }, WARM_AFTER).unref();
+    // The library's one recall, the same passages and the same saved vectors the library slice uses: a note is chunked
+    // and embedded once for this workspace however many things are asking about it.
+    const { library, recall } = sharedLibrary(deps);
 
     let job: Job | null = null;
     // What the rest of the app is told when it wants to start something long: the forge is busy, in the forge's own
