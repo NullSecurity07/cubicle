@@ -9,10 +9,12 @@ async function remember(id: string, args: Record<string, string>) {
   await request('/api/safety/rules', send('POST', { id, args }), 'that could not be remembered');
 }
 
-const TITLES: Record<string, [title: string, yes: string]> = { send_email: ['Send this email?', 'Send'], run_code: ['Run this code?', 'Run'], browse: ['Allow this step?', 'Allow'], code_task: ['Start this coding task?', 'Start'], code_reply: ['Send this to the coder?', 'Send'], browse_help: ['Do this step by hand?', 'Done'], map_folder: ['Map this folder?', 'Map'] };
+const TITLES: Record<string, [title: string, yes: string]> = { send_email: ['Send this email?', 'Send'], run_code: ['Run this code?', 'Run'], browse: ['Allow this step?', 'Allow'], code_task: ['Start this coding task?', 'Start'], code_reply: ['Send this to the coder?', 'Send'], browse_help: ['Do this step by hand?', 'Done'], map_folder: ['Map this folder?', 'Map'], ask_founder: ['A question for you', 'Answer'] };
 const FIXED = new Set(['from', 'language', 'action', 'ref', 'url', 'key', 'direction', 'card']);
 const LONG = new Set(['body', 'code', 'text', 'task', 'brief']);
 const LABELS: Record<string, string> = { to: 'To', subject: 'Subject', body: 'Message', from: 'From', reply_to: 'In reply to', language: 'Language', code: 'Code', brief: 'Brief', card: 'Card', answer: 'Why not (if you won\'t)' };
+// A question put to the founder carries their answer in the same field a refused step carries its reason.
+export const fieldLabel = (tool: string, key: string) => (tool === 'ask_founder' && key === 'answer' ? 'Your answer' : LABELS[key] ?? key);
 // What the founder was asked, when the step itself came with no question of its own. The needs panel says it back
 // in the same words, so an approval the app closed on reads there exactly as it read in the room.
 export const asked = (name: string) => TITLES[name]?.[0] ?? `Allow ${name}?`;
@@ -43,7 +45,7 @@ export function Approval({ tool }: { tool: ToolEvent }) {
     <div className="approval nodrag nowheel" role="group" aria-label={fallback}>
       <div className="approval__title">{title}</div>
       {Object.entries(args).sort(([a], [b]) => Number(LONG.has(a)) - Number(LONG.has(b))).map(([key, value]) => (
-        <label key={key}>{LABELS[key] ?? key}
+        <label key={key}>{fieldLabel(tool.name, key)}
           {LONG.has(key)
             ? <textarea className={key === 'code' ? 'approval__code' : undefined} rows={key === 'code' ? 8 : 5} spellCheck={key !== 'code'} value={value} onChange={(event) => setArgs({ ...args, [key]: event.target.value })} />
             : FIXED.has(key) ? <input value={value === 'me' ? 'their own mailbox' : value === 'founder' ? 'your address' : value} readOnly />
