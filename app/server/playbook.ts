@@ -54,14 +54,27 @@ export async function nearestSkills(recall: Recall, query: string, top: number):
 // The last block of a person's system message: the handful of skills that have something to do with what was just
 // asked, and the one that plainly is, written out. Nothing above the floor means no block at all, because a playbook
 // shown when it does not apply teaches people to ignore it.
-export function createPlaybook(deps: { skills: Skills; recall: Recall }) {
+// A skill whose steps call for a tool this person was not offered this turn is a procedure they cannot follow:
+// putting it in front of them only teaches them to pretend. `tools` is every tool name the app has, so a word in a
+// step is only taken for a tool when it really is one; the turn says what it offered as `offered` on its payload.
+// A turn that says nothing about what it offered is shown every skill, as before.
+export type Offered = { offered?: string[] };
+const followable = (skill: Skill, all: Set<string>, offered?: string[]) => {
+  if (!offered) return true;
+  const mine = new Set(offered);
+  return !skill.procedure.some((step) => (step.match(/\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g) ?? []).some((word) => all.has(word) && !mine.has(word)));
+};
+
+export function createPlaybook(deps: { skills: Skills; recall: Recall; tools?: () => string[] }) {
   return {
     before: (async (payload, next) => {
+      const offered = (payload as Offered).offered;
+      const all = new Set(deps.tools?.() ?? []);
       const [system, ...rest] = payload.messages;
       if (system?.role !== 'system') return next(payload);
       const hits = (await nearestSkills(deps.recall, payload.query, SHOWN * 2)).filter((hit) => hit.score >= SKILL_FLOOR);
       if (!hits.length) return next(payload);
-      const known = new Map((await deps.skills.list()).filter((skill) => skill.state === 'active').map((skill) => [skill.id, skill]));
+      const known = new Map((await deps.skills.list()).filter((skill) => skill.state === 'active' && followable(skill, all, offered)).map((skill) => [skill.id, skill]));
       const fitting = hits.flatMap((hit) => { const skill = known.get(hit.id); return skill ? [{ skill, score: hit.score }] : []; }).slice(0, SHOWN);
       if (!fitting.length) return next(payload);
       const inlined = fitting[0].score >= SKILL_INLINE ? fitting[0].skill : null;

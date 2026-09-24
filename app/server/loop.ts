@@ -3,7 +3,8 @@ import type { ModelMessage } from './prompt.ts';
 import { complete, type Failure, type ModelClient } from './providers.ts';
 import type { Answer } from './approvals.ts';
 import { resultCap } from './context/shrink.ts';
-import type { Seams, Source } from './seams.ts';
+import type { Offered } from './playbook.ts';
+import type { Payloads, Seams, Source } from './seams.ts';
 import { runTool, type Tool, type ToolContext } from './tools/registry.ts';
 import type { UsageBook } from './usage.ts';
 
@@ -64,7 +65,9 @@ export async function runTurn(input: {
     usage.failed(client.name, error);
   };
 
-  if (seams) messages = (await seams.run('turn:before', { roomId, source, query, messages })).messages;
+  // What this turn offers rides along for the playbook, which leaves out procedures that need anything else.
+  const before: Payloads['turn:before'] & Offered = { roomId, source, query, messages, offered: tools.map((tool) => tool.name) };
+  if (seams) messages = (await seams.run('turn:before', before)).messages;
 
   for (let step = 1; step <= MAX_STEPS && !signal?.aborted; step += 1) {
     if (seams) messages = (await seams.run('step:before', { roomId, step, messages })).messages;

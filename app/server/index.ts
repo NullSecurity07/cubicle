@@ -279,7 +279,7 @@ const guards = createGuards();
 seams.on('turn:before', guards.reset);
 seams.on('tool:before', guards.before);
 seams.on('tool:after', guards.after);
-seams.on('turn:before', createPlaybook({ skills, recall }).before);
+seams.on('turn:before', createPlaybook({ skills, recall, tools: () => tools.map((tool) => tool.name) }).before);
 const tools = [...docTools, ...fileTools, ...webTools(browser, (id, card) => ({ profile: store.browserProfile(id), headed: isHeaded(card), ...(!fake && card?.kind === 'browser' && card.app ? { pace: [1500, 3000] as [number, number] } : {}) })), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir), ...teamTools(consult), ...taskTools(boards), ...decisionTools(decisions), ...sourceTools(browser, sources), ...memoryTools(memory), ...recallTools(recall), ...mediaTools(media, () => !local.ready()), ...skillTools(skills), ...founderTools(founder)];
 // Anything dropped into `server/slices` is installed here, so a new feature is new files rather than one more edit to
 // this one. They are handed a `runs` that is not built yet: the runner is made from the final tool list, and that
