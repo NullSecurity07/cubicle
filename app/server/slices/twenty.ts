@@ -1,10 +1,9 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { join } from 'node:path';
 import { leadsChannel, TWENTY_CHANNEL, type LeadsEvent, type TwentyStatus } from '../../shared/leads.ts';
-import type { Stage } from '../../shared/model.ts';
 import { hub } from '../events.ts';
 import type { Slice } from '../install.ts';
-import { leadsFor } from '../leads/store.ts';
+import { leadsCardIds, leadsFor } from '../leads/store.ts';
 import { createMirror, createTwentyClient, twentyConfig, type Mirror } from '../leads/twenty.ts';
 
 // Connect Twenty: when the founder runs their own Twenty and puts TWENTY_URL and TWENTY_API_KEY in the .env, every
@@ -12,7 +11,7 @@ import { createMirror, createTwentyClient, twentyConfig, type Mirror } from '../
 // It never runs Twenty itself. In fake mode it stays off unless STAGE_TWENTY_IN_FAKE=1, so a test run never writes
 // made-up leads into the founder's real Twenty.
 
-const cardsOf = (stage: Stage) => (stage.cards ?? []).filter((card) => card.kind === 'leads').map((card) => card.id);
+const cardsOf = leadsCardIds;
 const OFF: TwentyStatus = { connected: false, url: '', lastSync: null, pushed: 0, pulled: 0 };
 
 export default {

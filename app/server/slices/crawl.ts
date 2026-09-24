@@ -8,6 +8,7 @@ import { attr, clip, createPace, decode, failure, getPublic as getPublicWeb, htm
 import type { Tool, ToolContext } from '../tools/registry.ts';
 import { webCache } from '../cache.ts';
 import { UNTRUSTED } from '../tools/web.ts';
+import { newId } from '../slice-kit.ts';
 
 // A competitor's whole site read in one go, and a page kept an eye on. Both are plain reads of public pages from this
 // machine, the way a person with a browser would make them: robots.txt is obeyed, one site is asked gently, and a
@@ -454,7 +455,7 @@ export function crawlTools(options: CrawlOptions, watches: Watches): Tool[] {
         let page: Awaited<ReturnType<typeof readWatched>>;
         try { page = await readWatched(url, options, context.signal); } catch (error) { return { text: `The page could not be read, so it is not watched: ${failure(error)}.` }; }
         const at = now();
-        const watch: Watch = { id: `w${at.toString(36)}${Math.random().toString(36).slice(2, 6)}`, url, what: str(args, 'what').slice(0, 200), roomId: context.roomId, title: page.title, hash: hashOf(page.text), text: page.text.slice(0, WATCH_TEXT), addedAt: at, checkedAt: at, readAt: at };
+        const watch: Watch = { id: newId('w', 4, '', at), url, what: str(args, 'what').slice(0, 200), roomId: context.roomId, title: page.title, hash: hashOf(page.text), text: page.text.slice(0, WATCH_TEXT), addedAt: at, checkedAt: at, readAt: at };
         const added = await watches.change(context.roomId, (list) => {
           if (list.some((one) => sameUrl(one.url, url))) return false;
           list.push(watch);

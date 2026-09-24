@@ -1,6 +1,11 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { LEAD_STAGES, leadName, noteKey, sameLead, type Lead, type LeadsEvent, type LeadStage } from '../../shared/leads.ts';
+import type { Stage } from '../../shared/model.ts';
+import { newId } from '../slice-kit.ts';
+
+// The ids of the Leads cards on the stage: the leads slice, the Twenty mirror and the dashboard all read them this way.
+export const leadsCardIds = (stage: Stage) => (stage.cards ?? []).filter((card) => card.kind === 'leads').map((card) => card.id);
 
 export type Leads = ReturnType<typeof createLeads>;
 
@@ -18,7 +23,7 @@ export type LeadInput = {
 };
 
 const safe = (id: string) => { if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(id)) throw new Error(`bad id: ${id}`); return id; };
-const newId = () => `lead-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+const newLeadId = () => newId('lead-', 4, '');
 const line = (value: unknown, max: number) => (typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').slice(0, max) : '');
 const optional = (value: unknown, max: number) => line(value, max) || undefined;
 export const isStage = (value: unknown): value is LeadStage => (LEAD_STAGES as readonly unknown[]).includes(value);
@@ -82,7 +87,7 @@ export function createLeads(dir: string, tell: (cardId: string, event: LeadsEven
       if (there) return { lead: there, added: false };
       const at = now();
       const lead: Lead = {
-        id: newId(),
+        id: newLeadId(),
         person: { name, ...strip({ title: optional(input.title, 160), linkedin: optional(input.linkedin, 300), email: optional(input.email, 200) }) },
         company: { name: company, ...strip({ site: optional(input.site, 300), size: optional(input.size, 60) }) },
         stage: 'new', notes: input.note && line(input.note.text, 2000) ? [{ at, by: input.note.by, text: line(input.note.text, 2000) }] : [],

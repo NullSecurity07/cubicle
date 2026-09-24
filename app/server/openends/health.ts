@@ -57,6 +57,10 @@ export async function ytdlpVersion(env: NodeJS.ProcessEnv = process.env): Promis
   });
 }
 
+// The outside programs' rows, as the openends slice that talks to them last saw them. The dashboard reads its health
+// through this, so it shows the same rows as the health panel without connecting to anything itself.
+export const outsideHealth: { now: () => { name: string; ok: boolean; detail: string }[] } = { now: () => [] };
+
 export async function checkAll(deps: HealthDeps): Promise<Check[]> {
   const { workspace, root, env = process.env, now = Date.now } = deps;
   const checks: Check[] = [];

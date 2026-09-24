@@ -9,8 +9,9 @@ import { createRunStore } from '../evals/store.ts';
 import { hub } from '../events.ts';
 import { createFrameworks } from '../frameworks/store.ts';
 import type { Deps, Slice } from '../install.ts';
-import { backupDir, listBackups } from '../openends/backup.ts';
-import { checkAll } from '../openends/health.ts';
+import { leadsCardIds } from '../leads/store.ts';
+import { backupDirOf, listBackups } from '../openends/backup.ts';
+import { checkAll, outsideHealth } from '../openends/health.ts';
 import { coderHealth } from '../opencode/server.ts';
 import { providerOf } from '../providers.ts';
 import type { TraceLine } from '../trace.ts';
@@ -101,10 +102,10 @@ export async function readDay(deps: Pick<Deps, 'workspace' | 'attention' | 'boar
   // Only the leads cards that are on the stage: a card taken away took its list to the trash.
   const leadsByStage = Object.fromEntries(LEAD_STAGES.map((one) => [one, 0])) as Record<LeadStage, number>;
   let leadsChangedToday = 0;
-  const leadsCards = cards.filter((one) => one.kind === 'leads');
+  const leadsCards = leadsCardIds(stage);
   const today = localDay(now);
-  for (const card of leadsCards) {
-    for (const lead of await read<Lead[]>(join(deps.workspace, 'leads', `${card.id}.json`), [])) {
+  for (const id of leadsCards) {
+    for (const lead of await read<Lead[]>(join(deps.workspace, 'leads', `${id}.json`), [])) {
       if (lead.stage in leadsByStage) leadsByStage[lead.stage] += 1;
       if (localDay(lead.updatedAt) === today) leadsChangedToday += 1;
     }
@@ -125,7 +126,7 @@ export async function readDay(deps: Pick<Deps, 'workspace' | 'attention' | 'boar
 
   return {
     needsYou, tasksDue, tasksRunning, watchesChanged, leadsByStage, leadsChangedToday,
-    ...(leadsCards[0] ? { leadsCardId: leadsCards[0].id } : {}),
+    ...(leadsCards[0] ? { leadsCardId: leadsCards[0] } : {}),
     decisionsPending, unreadMessages: replies.length, replies,
   };
 }
@@ -257,10 +258,10 @@ export default {
     // last answer is served and a new one is asked for in the background once it is a minute old.
     let health: { at: number; checks: DashCheck[] } = { at: 0, checks: [] };
     let checking: Promise<void> | null = null;
-    const dir = deps.fake && !process.env.STAGE_BACKUP_DIR ? join(deps.workspace, 'backups') : backupDir(process.env);
+    const dir = backupDirOf(deps);
     function checkHealth() {
       if (checking || Date.now() - health.at < HEALTH_FOR) return;
-      checking = checkAll({ workspace: deps.workspace, root: deps.root, backupDir: dir, backups: () => listBackups(dir), outside: () => [], coder: () => coderHealth.now() })
+      checking = checkAll({ workspace: deps.workspace, root: deps.root, backupDir: dir, backups: () => listBackups(dir), outside: () => outsideHealth.now(), coder: () => coderHealth.now() })
         .then((checks) => {
           const fresh = checks.map(({ name, ok, detail }) => ({ name, ok, detail }));
           const moved = JSON.stringify(fresh) !== JSON.stringify(health.checks);

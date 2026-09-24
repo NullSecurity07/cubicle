@@ -1,5 +1,5 @@
 import type { Run } from '../../shared/evals.ts';
-import type { ForgeJob, ForgeMode, Person, Proposal } from '../../shared/forge.ts';
+import type { ForgeJob, Person, Proposal } from '../../shared/forge.ts';
 import { FORGE_CHANNEL } from '../../shared/forge.ts';
 import type { Case } from '../../shared/frameworks.ts';
 import { frameworkId } from '../../shared/frameworks.ts';
@@ -19,7 +19,7 @@ import { noteOf } from '../library/notes.ts';
 import type { ModelMessage } from '../prompt.ts';
 import { promptSize, type ModelClient } from '../providers.ts';
 import { route } from '../router.ts';
-import { sharedLibrary } from '../slice-kit.ts';
+import { newId, sharedLibrary } from '../slice-kit.ts';
 
 // The forge: the founder chooses the notes they learned from, says in a line what they want a team for, and a model
 // proposes one. They read it, change what they like, and press Build — and then every person is written twice, put
@@ -46,7 +46,7 @@ const view = (job: Job): ForgeJob => ({
   ...(job.critiques ? { critiques: job.critiques } : {}), ...(job.error ? { error: job.error } : {}),
 });
 
-const newJobId = () => `forge-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+const newJobId = () => newId('forge-');
 
 export default {
   name: 'forge',

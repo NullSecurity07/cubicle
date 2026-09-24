@@ -14,6 +14,7 @@ export { age, attr, createPace, isoDay, parseFeed, REDDIT_AGENT, REDDIT_GAP, res
 import type { Tool, ToolContext } from '../tools/registry.ts';
 import { webCache } from '../cache.ts';
 import { UNTRUSTED } from '../tools/web.ts';
+import { newId } from '../slice-kit.ts';
 
 // Three ways to hear customers and a market that a web page does not give: what was said in a video, what a blog or
 // a news site has put out lately, and how people on Reddit talk about a problem in their own words. All three only
@@ -171,7 +172,7 @@ async function readYoutube(raw: string, options: ReaderOptions, signal?: AbortSi
   const { exec = execProgram, now = Date.now } = options;
   let url: string;
   try { url = youtubeUrl(raw); } catch (error) { return (error as Error).message; }
-  const dir = join(options.workspace, '.readers', `yt-${now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
+  const dir = join(options.workspace, '.readers', newId('yt-', 6, '-', now()));
   const stopped = (ran: Ran) => (ran.aborted ? 'Stopped by the founder.' : ran.timedOut ? 'Reading the video took more than 90 seconds, so it was stopped. Try again later.' : null);
   try {
     await mkdir(dir, { recursive: true });

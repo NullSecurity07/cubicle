@@ -1,5 +1,4 @@
 import type OpenAI from 'openai';
-import type { Case } from '../../shared/frameworks.ts';
 import { todayBlock } from '../prompt.ts';
 import { providerOf, retryAfter, type ModelClient } from '../providers.ts';
 import { FLOOR } from '../router.ts';

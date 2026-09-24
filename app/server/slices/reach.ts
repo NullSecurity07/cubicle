@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import type { Attention, Stage } from '../../shared/model.ts';
-import { LISTEN_RATE, UPDATES, type ReachState, type ReachUpdates } from '../../shared/reach.ts';
+import { LISTEN_RATE, type ReachState, type ReachUpdates } from '../../shared/reach.ts';
 import { guessGender, recast, voiceFor } from '../../shared/voices.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
 import { DEFAULT_VOICE, fakeVoices, isVoice, kokoroVoices, VOICES } from '../media/voice.ts';
@@ -19,7 +19,7 @@ import { createApi, createPoller } from '../reach/telegram.ts';
 import { createTopics } from '../reach/topics.ts';
 import { createUpdates } from '../reach/updates.ts';
 import { ffmpeg, fakeFfmpeg, oggOf, samplesOf, sayable } from '../reach/voicenotes.ts';
-import { patchStageVia } from '../slice-kit.ts';
+import { newId, patchStageVia } from '../slice-kit.ts';
 import { text, type Tool } from '../tools/registry.ts';
 
 const SPOKEN = 12;
@@ -303,7 +303,7 @@ export default {
           if (!name) { deps.json(res, 400, { error: 'give this one a name: it becomes the title of the task it starts' }); return true; }
           if (!stage.cards?.some((card) => card.id === boardId && card.kind === 'board')) { deps.json(res, 404, { error: 'that is not a board on the stage' }); return true; }
           const assignee = typeof asked.assignee === 'string' && stage.rooms.some((room) => room.id === asked.assignee) ? asked.assignee : undefined;
-          const id = `h-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+          const id = newId('h-');
           const secret = newSecret();
           await reach.save((one) => { one.hooks = [...one.hooks, { id, name, boardId, assignee, secret, at: Date.now() }]; });
           // The only time the secret is ever answered: the screen shows it once and says so.

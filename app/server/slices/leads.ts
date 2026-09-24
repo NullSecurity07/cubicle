@@ -1,11 +1,10 @@
 import { resolve } from 'node:path';
 import { LEAD_STAGES, leadName, leadsChannel, STAGE_NAMES, type Lead, type LeadsEvent } from '../../shared/leads.ts';
-import type { Stage } from '../../shared/model.ts';
 import { shortDay } from '../clock.ts';
 import { hub } from '../events.ts';
 import type { Slice } from '../install.ts';
 import { createOutreach, fakeRunner, outreachEnv, uvxRunner } from '../leads/openoutreach.ts';
-import { isStage, leadsFor, type Leads } from '../leads/store.ts';
+import { isStage, leadsCardIds, leadsFor, type Leads } from '../leads/store.ts';
 import { wired } from '../prompt.ts';
 import { withSystem, type Handler } from '../seams.ts';
 import { text, type Tool, type ToolContext } from '../tools/registry.ts';
@@ -20,7 +19,7 @@ export const FIND_MAX = 25;
 const HINT = '- A Leads card: the founder\'s list of people to sell to. Read it with list_leads, add with add_lead, score with score_lead (the icp-fit skill), '
   + 'write down evidence with note_lead, move with move_lead. Only the founder marks a lead contacted. find_leads finds new ones with OpenOutreach.';
 
-const cardsOf = (stage: Stage) => (stage.cards ?? []).filter((card) => card.kind === 'leads').map((card) => card.id);
+const cardsOf = leadsCardIds;
 const cardOf = (context: ToolContext) => wired(context.stage, context.roomId, cardsOf(context.stage))[0];
 const need = (context: ToolContext) => { const id = cardOf(context); if (!id) throw new Error(NO_CARD); return id; };
 const nameOf = (context: ToolContext) => context.stage.rooms.find((room) => room.id === context.roomId)?.name ?? 'a person';
