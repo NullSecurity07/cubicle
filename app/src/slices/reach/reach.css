@@ -1,7 +1,5 @@
-/* This slice's own look, built out of the tokens the app already has: no colour, font or icon of its own. The layer
-   sits just above the shade the overlay draws, so these views feel like the ones that were here before them. */
-.reach-layer { position: fixed; inset: 0; z-index: 41; pointer-events: none; }
-.reach-layer > .panel { pointer-events: auto; }
+/* This slice's own look, built out of the tokens the app already has: no colour, font or icon of its own. Its view
+   is mounted by the window inside its own layer, so it needs no frame of its own. */
 
 .reach { display: flex; flex-direction: column; gap: 22px; }
 .reach__part { display: flex; flex-direction: column; gap: 10px; }

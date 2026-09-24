@@ -13,11 +13,14 @@ import type { RoomData } from '../stage';
 // ask box, beside the paper clip, where it may put words into the draft the founder is about to send. Both are for
 // what belongs in the conversation itself rather than in a view of its own. Each draws nothing when it has nothing
 // to offer, so a slice that is switched off costs the founder no pixel at all.
+// `panels` are views by layer name, opened with `overlay.open({ kind: 'panel', name })`: the window mounts the one on
+// top inside its own layer, exactly as it does its own views, so Escape, Tab, the click outside and a crash all
+// behave the same in them. A panel is mounted only while it is open.
 // `person` is drawn beside a focused person, for what a slice knows about them that the stage itself does not (how
 // they sound). `voice` is a button that says one line out loud in one voice, for the form where that is chosen:
 // speaking belongs to whichever slice can speak, not to the form.
 export type UiSlice = {
-  name: string; commands?: Command[]; overlay?: React.ComponentType; receipt?: React.ComponentType<{ tool: ToolEvent }>;
+  name: string; commands?: Command[]; overlay?: React.ComponentType; panels?: Record<string, React.ComponentType>; receipt?: React.ComponentType<{ tool: ToolEvent }>;
   reply?: React.ComponentType<{ message: ChatMessage; roomId: string }>;
   compose?: React.ComponentType<{ roomId: string; insert(text: string): void; busy: boolean }>;
   person?: React.ComponentType<{ roomId: string; room: RoomData }>;

@@ -1,25 +1,15 @@
 import type { UiSlice } from '..';
-import { overlay, useLayers } from '../../overlay/store';
+import { overlay } from '../../overlay/store';
 import { HealthPanel } from './HealthPanel';
 import { InsightsPanel } from './InsightsPanel';
 import './openends.css';
 
-// The two views this slice brings. They sit above the shade the window already puts up, so Escape, the click outside
-// and the way the rest of the app opens a view all keep working, and nothing in `Overlay.tsx` had to change.
-const VIEWS: Record<string, () => React.JSX.Element> = { health: HealthPanel, insights: InsightsPanel };
 const show = (name: string) => () => overlay.open({ kind: 'panel', name });
-
-function OpenEnds() {
-  const layers = useLayers();
-  const top = layers.at(-1);
-  const View = top?.kind === 'panel' ? VIEWS[top.name] : undefined;
-  if (!View) return null;
-  return <div className="openends"><View /></div>;
-}
 
 export default {
   name: 'openends',
-  overlay: OpenEnds,
+  // The two views this slice brings, mounted by the window like its own.
+  panels: { health: HealthPanel, insights: InsightsPanel },
   commands: [
     { section: 'Do', label: 'Health', hint: 'Is everything working?', action: { do: 'run', run: show('health') } },
     { section: 'Do', label: 'Insights', hint: 'What the work came to', action: { do: 'run', run: show('insights') } },

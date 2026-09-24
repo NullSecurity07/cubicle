@@ -121,6 +121,17 @@ test('health says in plain words what is fine and what needs you, and a backup c
   await page.keyboard.press('Escape');
 });
 
+test('Tab keeps to the Health view and never lands on a card behind it', async ({ page }) => {
+  await bar(page, 'health');
+  await shown(page, 'Health');
+  for (let presses = 0; presses < 14; presses += 1) {
+    await page.keyboard.press(presses % 5 === 4 ? 'Shift+Tab' : 'Tab');
+    expect(await page.evaluate(() => !!document.activeElement?.closest('[role="dialog"][aria-label="Health"]'))).toBe(true);
+  }
+  await page.keyboard.press('Escape');
+  await expect(panel(page, 'Health')).toHaveCount(0);
+});
+
 test('outside tools say what they are and that the list is read when the app starts', async ({ page }) => {
   await bar(page, 'health');
   const outside = panel(page, 'Health').locator('.health__part').filter({ hasText: 'Outside tools' });

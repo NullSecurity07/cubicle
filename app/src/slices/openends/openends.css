@@ -1,11 +1,6 @@
 /* This slice's own look. It borrows the panel, the little acts and the dots from what is already here, and adds
    nothing of its own: no colour, no font, no icon set. Everything below is only arrangement. */
 
-/* The views sit above the shade the window puts up. The shade keeps its click, so clicking beside a panel still
-   closes it — only the panel itself takes the pointer. */
-.openends { position: fixed; inset: 0; z-index: 41; pointer-events: none; }
-.openends > .panel { pointer-events: auto; }
-
 .health, .insights { display: flex; flex-direction: column; gap: 22px; }
 .health__part, .insights__part { display: flex; flex-direction: column; }
 .health h3, .insights h3 { display: flex; align-items: baseline; gap: 8px; margin: 0 0 7px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }

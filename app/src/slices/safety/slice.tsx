@@ -9,6 +9,6 @@ import './safety.css';
 export default {
   name: 'safety',
   commands: [{ section: 'Do', label: 'Always allowed', hint: 'What you said yes to for good', action: { do: 'run', run: () => overlay.open({ kind: 'panel', name: 'safety' }) } }],
-  overlay: AllowedPanel,
+  panels: { safety: AllowedPanel },
   receipt: UndoStep,
 } satisfies UiSlice;
