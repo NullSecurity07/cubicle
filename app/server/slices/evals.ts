@@ -5,8 +5,8 @@ import type { Case, Framework } from '../../shared/frameworks.ts';
 import { answerCase, createPassages } from '../evals/answer.ts';
 import { busyWith, claiming } from '../evals/lock.ts';
 import { lineOf, meanOfCases, regressionsOf, scorecardOf, settle } from '../evals/promote.ts';
-import { caseScore, fakeJudge, scoreCase, type Judge } from '../evals/score.ts';
-import { autoevalsJudge, judgeClientOf, readyEnough } from '../evals/scorers.ts';
+import { fakeJudge, scoreCase, scoreWord, type Judge } from '../evals/score.ts';
+import { autoevalsJudge, judgeClientsOf, readyEnough } from '../evals/scorers.ts';
 import { createRunStore } from '../evals/store.ts';
 import { briefHash } from '../forge/build.ts';
 import { createFrameworks } from '../frameworks/store.ts';
@@ -77,13 +77,18 @@ export default {
     };
 
     // The same three judges the forge uses, chosen the same way: nothing at all in fake mode, the `autoevals` scorers
-    // through the key this app already holds otherwise.
+    // through the keys this app already holds otherwise — every provider that can judge, best first, so a rate limit
+    // on one moves the scoring to the next rather than leaving the case unread. A 429 lets that provider cool, as it
+    // would after a person's turn.
     const judgeFor = (held: Job): Judge => {
       if (deps.fake) return fakeJudge;
-      const client = judgeClientOf(deps.clients, readyEnough(deps.usage));
-      if (!client) return ({ messages }) => ask(held, messages);
-      held.models.add(client.name);
-      return autoevalsJudge({ client, onCall: () => { held.calls += 1; } });
+      const clients = judgeClientsOf(deps.clients, readyEnough(deps.usage));
+      if (!clients.length) return ({ messages }) => ask(held, messages);
+      held.models.add(clients[0].name);
+      return autoevalsJudge({
+        clients, onCall: () => { held.calls += 1; },
+        onLimited: (name, milliseconds) => { deps.usage.cool(name, milliseconds); },
+      });
     };
 
     // Every case the framework has, put to the person whose case it is, with the brief that framework holds right
@@ -104,17 +109,26 @@ export default {
         say(held, `${room.name}, ${room.role}: ${mine.length === 1 ? 'one case' : `${mine.length} cases`}.`);
         for (const kase of mine) {
           if (held.stop.signal.aborted) throw new Error('The evals were stopped.');
+          const base = { id: kase.id, key: room.key, briefHash: briefHash(room.brief) };
+          // An answer every provider refused is one failed case, written down with why, and the run goes on: one
+          // person's bad minute is not a reason to lose the other twelve answers.
           const reply = await answerCase({
             team: framework, noteIds, key: room.key, brief: room.brief, input: kase.input,
             passages: await passagesFor(kase),
             store: deps.store, clients: deps.clients, usage: deps.usage, signal: held.stop.signal,
-          });
+          }).catch((error: Error) => ({ failed: (error.message || 'no answer').replace(/\s+/g, ' ').slice(0, 300) }));
           held.calls += 1;
+          if ('failed' in reply) {
+            if (held.stop.signal.aborted) throw new Error('The evals were stopped.');
+            done.push({ ...base, output: '', scores: {}, critique: '', failed: reply.failed });
+            say(held, `${room.name} · ${kase.id} · failed — ${reply.failed}`);
+            continue;
+          }
           if (reply.provider) held.models.add(reply.provider);
           const output = reply.text.slice(0, MOST_OUTPUT);
           const judged = await scoreCase({ kase, output, brief: room.brief, chunks: (await passagesFor(kase)).map((one) => one.text) }, judge);
-          done.push({ id: kase.id, key: room.key, briefHash: briefHash(room.brief), output, scores: judged.scores, critique: judged.critique });
-          say(held, `${room.name} · ${kase.id} · ${caseScore(judged).toFixed(2)}${judged.critique ? ` — ${judged.critique}` : ''}`);
+          done.push({ ...base, output, scores: judged.scores, critique: judged.critique, ...(judged.judged === false ? { judged: false as const } : {}) });
+          say(held, `${room.name} · ${kase.id} · ${scoreWord(judged)}${judged.critique ? ` — ${judged.critique}` : ''}`);
         }
       }
       return done;
@@ -133,16 +147,19 @@ export default {
       const at = Date.now();
       const models = [...held.models].sort();
       const previous = await runs.lastPromoted(framework.id);
-      const { run, promote, regressed } = settle(
+      const { run, promote, regressed, unscored } = settle(
         { at, version: framework.version ?? 1, models, cases, mean: meanOfCases(cases), calls: held.calls },
         previous, framework.scorecard?.mean,
       );
       await runs.write(framework.id, run);
       if (promote) await promoteInto(framework, run);
       held.state = 'done';
+      const why = unscored.length
+        ? `${unscored.length === 1 ? 'one case was' : `${unscored.length} cases were`} not scored`
+        : regressed.length ? `${regressed.length === 1 ? 'one case went' : `${regressed.length} cases went`} backwards` : 'that is below what it scores now';
       say(held, promote
         ? `${framework.name} scored ${run.mean.toFixed(2)} on ${cases.length} ${cases.length === 1 ? 'case' : 'cases'}, in ${held.calls} calls. It is the framework's score now.`
-        : `${framework.name} scored ${run.mean.toFixed(2)}, and ${regressed.length ? `${regressed.length === 1 ? 'one case went' : `${regressed.length} cases went`} backwards` : 'that is below what it scores now'}. The run is kept, and nothing changed.`);
+        : `${framework.name} scored ${run.mean.toFixed(2)}, and ${why}. The run is kept, and nothing changed.`);
     }
 
     const failed = (held: Job, error: Error) => {

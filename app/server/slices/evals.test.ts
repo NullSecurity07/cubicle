@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { EvalsView, Run } from '../../shared/evals.ts';
 import type { Framework } from '../../shared/frameworks.ts';
+import { NO_TOOLS } from '../evals/answer.ts';
 import { createRunStore } from '../evals/store.ts';
 import { createFrameworks } from '../frameworks/store.ts';
 import type { Deps } from '../install.ts';
@@ -174,6 +175,41 @@ describe('running a framework\'s cases again', () => {
     });
     const listed = (await call('/api/frameworks/small-team/runs')).last.body as EvalsView;
     expect(listed.runs[0].regressed?.map((one) => one.id)).toEqual([promoted.cases[0].id]);
+  }, 60_000);
+});
+
+describe('a run where something fell over', () => {
+  it('writes a case whose answer never came as failed, goes on with the rest, and does not promote the run', async () => {
+    const { deps, call, settled, frameworks, runs } = await setup();
+    const systems: string[] = [];
+    // Every provider refuses Ada's turn, the way Groq and Gemini both did on the day this was found; Bruno is fine.
+    const refusing = {
+      ...fakeClient, name: 'flaky',
+      async step(messages: Parameters<typeof fakeClient.step>[0], options: Parameters<typeof fakeClient.step>[1]) {
+        systems.push(messages[0]?.content ?? '');
+        if (messages[0]?.content.startsWith('You are Ada,')) throw new Error('groq: Tool choice is none, but model called a tool; gemini: Request timed out.');
+        return fakeClient.step(messages, options);
+      },
+    };
+    (deps as { clients: unknown[] }).clients = [refusing];
+    await frameworks.save(team());
+    await call('/api/frameworks/small-team/evals', 'POST');
+    const held = await settled('small-team');
+
+    expect(held.job?.state).toBe('done');
+    expect(held.job?.lines.some((line) => /Ada · first-case · failed — .*Tool choice is none/.test(line))).toBe(true);
+    const [line] = held.runs;
+    expect(line.rejected).toBe(true);
+    expect(line.unscored).toEqual([{ id: 'first-case', key: 'finder', why: 'failed' }]);
+    // The mean is Bruno's alone: the failed case is neither a nought nor a one.
+    const [run] = await runs.list('small-team');
+    expect(run.cases[0]).toMatchObject({ id: 'first-case', output: '', scores: {}, failed: expect.stringContaining('Request timed out') });
+    expect(run.cases[1].failed).toBeUndefined();
+    expect(Object.keys(run.cases[1].scores).length).toBeGreaterThan(0);
+    expect((await frameworks.read('small-team'))!.scorecard).toBeUndefined();
+    // Each person is told, once, that no tool is open to them here, whatever their brief names.
+    expect(systems.length).toBeGreaterThan(0);
+    for (const system of systems) expect(system).toContain(NO_TOOLS);
   }, 60_000);
 });
 

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Case } from '../../shared/frameworks.ts';
 import { todayBlock } from '../prompt.ts';
-import { caseScore, fakeJudge, judgeMessages, MOST_OUTPUT_CHARS, scoreCase, type Judge } from './score.ts';
+import { caseScore, fakeJudge, judgeMessages, MOST_OUTPUT_CHARS, RUBRIC_READING, scoreCase, scoreWord, type Judge } from './score.ts';
 
 // The guard the whole fake path rests on. `autoevals` brings a scoring library and its own copy of the OpenAI client
 // with it, and neither has any business being loaded by a test run or a browser journey that will never call a
@@ -27,8 +27,9 @@ describe('scoring one answer', () => {
   });
 
   it('fails the format check on an empty answer and on one that ran away with itself', async () => {
-    expect((await scoreCase(asked({ output: '   ' }), said({ faithful: 1 }))).scores.format).toBe(0);
-    expect((await scoreCase(asked({ output: 'x'.repeat(MOST_OUTPUT_CHARS) }), said({ faithful: 1 }))).scores.format).toBe(0);
+    const all = said({ faithful: 1, rubric: 1, expected: 1 });
+    expect((await scoreCase(asked({ output: '   ' }), all)).scores.format).toBe(0);
+    expect((await scoreCase(asked({ output: 'x'.repeat(MOST_OUTPUT_CHARS) }), all)).scores.format).toBe(0);
   });
 
   it('holds every score between nought and one', async () => {
@@ -37,10 +38,49 @@ describe('scoring one answer', () => {
     expect(judged.critique).toBe('');
   });
 
-  it('keeps the case when the judge will not answer in the shape asked for', async () => {
+  it('scores nothing, never the lone format check, when the judge will not answer in the shape asked for', async () => {
     const judged = await scoreCase(asked(), async () => 'I would rather talk about the idea itself.');
-    expect(judged.scores).toEqual({ format: 1 });
-    expect(judged.critique).toContain('did not answer in the shape');
+    expect(judged).toMatchObject({ scores: {}, judged: false });
+    expect(judged.critique).toMatch(/^Not judged/);
+    expect(scoreWord(judged)).toBe('not judged');
+  });
+
+  it('scores nothing when the judge itself fell over, a rate limit or a 400', async () => {
+    for (const message of ['429 Rate limit reached', '400 Tool choice is required, but model did not call a tool', 'Failed to parse tool call arguments']) {
+      const judged = await scoreCase(asked(), async () => { throw new Error(message); });
+      expect(judged.judged).toBe(false);
+      expect(judged.scores).toEqual({});
+      expect(judged.critique).toContain(message);
+    }
+  });
+
+  it('scores nothing when the judge left out what the case asks for', async () => {
+    // A judge that gave faithfulness alone has not read the answer against the case's own criteria.
+    const judged = await scoreCase(asked(), said({ faithful: 1, critique: '' }));
+    expect(judged).toMatchObject({ scores: {}, judged: false });
+    expect(judged.critique).toContain('rubric or expected');
+  });
+
+  it('leaves faithfulness out, not nought, when no passage of the notes was found', async () => {
+    const judged = await scoreCase(asked({ chunks: [] }), said({ faithful: 0, rubric: 0.9, expected: 0.8, critique: '' }));
+    expect(judged.scores).toEqual({ format: 1, rubric: 0.9, expected: 0.8 });
+    expect(judged.judged).toBeUndefined();
+  });
+
+  it('leaves faithfulness out when the judge says the passages found do not cover the question', async () => {
+    const judged = await scoreCase(asked(), said({ faithful: null, rubric: 1, expected: 1, critique: '' }));
+    expect(judged.scores).toEqual({ format: 1, rubric: 1, expected: 1 });
+    // A case with nothing but the passages to be judged on has nothing left, and says so.
+    const bareOne = await scoreCase(asked({ kase: bare }), said({ faithful: null, critique: '' }));
+    expect(bareOne.judged).toBe(false);
+    expect(bareOne.critique).toContain('say nothing about this question');
+  });
+
+  it('asks no judge at all when there is nothing to judge the answer against', async () => {
+    let asks = 0;
+    const judged = await scoreCase(asked({ kase: bare, chunks: [] }), async () => { asks += 1; return '{}'; });
+    expect(asks).toBe(0);
+    expect(judged.judged).toBe(false);
   });
 });
 
@@ -71,6 +111,14 @@ describe('what the judge is told', () => {
     expect(user.content).toContain('a passage of the notes');
     expect(user.content).toContain('The criteria, in the notes\' own words');
     expect(user.content).toContain('The answer the notes state');
+  });
+
+  it('shows the criteria before the answer, and says how "asks for X first" is met', () => {
+    const [system, user] = judgeMessages({ ...asked(), now: Date.now() });
+    expect(user.content.indexOf('The criteria')).toBeLessThan(user.content.indexOf('The answer given'));
+    expect(system.content).toContain(RUBRIC_READING);
+    expect(RUBRIC_READING).toMatch(/asks for something first/);
+    expect(RUBRIC_READING).toMatch(/asking for the missing facts instead of writing is the right answer/);
   });
 
   it('says nothing about criteria the case does not have', () => {

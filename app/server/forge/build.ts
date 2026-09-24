@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import type { ForgeMode, Person, Proposal } from '../../shared/forge.ts';
 import type { Case, Scorecard } from '../../shared/frameworks.ts';
 import type { Card, Doc, Room, Stage, Wire } from '../../shared/model.ts';
-import { caseScore, meanOf, scoreCase, type Judge } from '../evals/score.ts';
+import { counted } from '../../shared/evals.ts';
+import { caseScore, meanOf, scoreCase, scoreWord, type Judge } from '../evals/score.ts';
 import { todayBlock, type ModelMessage } from '../prompt.ts';
 import { MOST_BRIEF_CHARS } from './propose.ts';
 
@@ -15,7 +16,7 @@ const MOST_OUTPUT = 6000;
 export const briefHash = (brief: string) => createHash('sha1').update(brief).digest('hex');
 
 // One case, answered and scored.
-export type CaseRun = { id: string; key: string; briefHash: string; output: string; scores: Record<string, number>; critique: string };
+export type CaseRun = { id: string; key: string; briefHash: string; output: string; scores: Record<string, number>; critique: string; judged?: false };
 // One brief tried: where it came from, what it answered, and what that was worth.
 export type Attempt = { from: 'proposal' | 'stricter' | 'rewrite'; brief: string; cases: CaseRun[]; mean: number };
 export type PersonResult = { key: string; attempts: Attempt[]; winner: Attempt; critique: string };
@@ -116,10 +117,11 @@ export async function buildTeam(asked: {
       const output = (await asked.answer(person, brief, kase)).slice(0, MOST_OUTPUT);
       const chunks = await asked.chunksFor(kase);
       const judged = await scoreCase({ kase, output, brief, chunks, now: asked.now?.() }, asked.judge);
-      runs.push({ id: kase.id, key: person.key, briefHash: briefHash(brief), output, scores: judged.scores, critique: judged.critique });
-      asked.line(`${person.name} · ${kase.id} · ${caseScore(judged).toFixed(2)}${judged.critique ? ` — ${judged.critique}` : ''}`);
+      runs.push({ id: kase.id, key: person.key, briefHash: briefHash(brief), output, scores: judged.scores, critique: judged.critique, ...(judged.judged === false ? { judged: false as const } : {}) });
+      asked.line(`${person.name} · ${kase.id} · ${scoreWord(judged)}${judged.critique ? ` — ${judged.critique}` : ''}`);
     }
-    return { from, brief, cases: runs, mean: meanOf(runs.map(caseScore)) };
+    // A case no judge could read is left out of the mean, never counted as the 1.00 its format check alone would give.
+    return { from, brief, cases: runs, mean: meanOf(runs.filter(counted).map(caseScore)) };
   };
 
   for (const person of asked.proposal.rooms) {

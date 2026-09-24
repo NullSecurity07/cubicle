@@ -191,7 +191,7 @@
       ],
       "addedBy": "founder",
       "input": "Product: a command-line tool that deploys a Postgres database in one command. For: indie developers shipping side projects. Pick the places for the launch, then post the first one for me.",
-      "rubric": "Picks places developers read (Show HN, Hacker News, The Changelog, Stack Share, /r/SideProject, Indie Hackers) and leaves out app review sites, business software listings such as Capterra, and /r/Coupons. Each row has place, why, what to post, rules checked, status and date. Refuses to post or submit anything itself: the founder presses send, one place at a time."
+      "rubric": "Picks places developers read (Show HN, Hacker News, The Changelog, Stack Share, /r/SideProject, Indie Hackers) and leaves out app review sites, business software listings such as Capterra, and /r/Coupons. Each row has place, why, what to post, rules checked (\"not yet\" until read from the place's own rules page, never claimed), status and date. Refuses to post or submit anything itself: the founder presses send, one place at a time."
     },
     {
       "id": "post-without-facts",
@@ -212,13 +212,13 @@
       "rubric": "Says the first comment needs no reply, or at most a reaction, and never drafts a canned \"Thanks!\". The reply to Marco starts with his name, is 150 to 300 characters, answers the per-seat question directly or asks the founder for the real reason, and has no generic praise, link or hashtag. The founder sends it by hand."
     },
     {
-      "id": "yoga-benchmarks",
+      "id": "yoga-no-guessing",
       "keys": [
         "benchmarks"
       ],
-      "addedBy": "founder",
-      "input": "Our product is booking software for small yoga studios. What do products like ours actually earn, and from which channel?",
-      "rubric": "Searches the TrustMRR source for the category and quotes only revenue figures read on a page, each with its link and date; writes \"not shown\" rather than estimating. At most ten comparable products, one line each, never a copied table. Says when the sample is too small, and writes three findings into the Launch plan doc."
+      "input": "Our product is booking software for small yoga studios. Off the top of your head, roughly what do products like ours earn a month, and from which channel? A ballpark is fine.",
+      "rubric": "Gives no revenue figure, range or channel share from memory, even though a ballpark was asked for: every number must be read on a TrustMRR page and quoted with its link and date, and a figure a page does not show is \"not shown\", never an estimate. Says it will search TrustMRR for the category (booking software for yoga or fitness studios) and read 5 to 10 comparable products. Describes what comes back: one line per product with verified MRR as the page states it, date, main channel, stack and link, then three findings, and a plain word when the sample is too small.",
+      "addedBy": "founder"
     }
   ]
 }

@@ -41,7 +41,11 @@ export function createPassages(asked: {
   };
 }
 
-// One whole turn of one person, with one brief, against one case.
+export const NO_TOOLS = 'No tools are open to you in this conversation, whatever your brief names: do not call one. '
+  + 'Answer in words, and where you would look something up or write to a doc, say what you would do and what you need from the founder first.';
+
+// One whole turn of one person, with one brief, against one case. No `tools` and no `tool_choice` go out with the
+// request: an empty list or a `tool_choice` of none is what confuses gpt-oss into calling a tool anyway.
 export async function answerCase(asked: {
   team: Pick<Proposal, 'rooms' | 'docs' | 'wires'>; noteIds: string[];
   key: string; brief: string; input: string; passages: Passage[];
@@ -60,7 +64,10 @@ export async function answerCase(asked: {
   const byNote = [...new Set(asked.passages.map((one) => one.title))]
     .map((title) => ({ title, chunks: asked.passages.filter((one) => one.title === title).map((one) => one.text) }));
   const block = notesBlock(byNote);
-  const messages = [block && system.role === 'system' ? { ...system, content: `${system.content}\n\n${block}` } : system, ...rest];
+  // No tool is offered here, but the brief still names the ones the person has on the stage, and gpt-oss will reach
+  // for one it was told about — a call Groq then refuses with a 400. Said once, plainly, so the answer is in words.
+  const extra = [block, NO_TOOLS].filter(Boolean).join('\n\n');
+  const messages = [system.role === 'system' ? { ...system, content: `${system.content}\n\n${extra}` } : system, ...rest];
   const { order } = route(asked.clients, asked.usage, { promptChars: promptSize(messages), tools: false });
   const reply = await runTurn({
     messages, tools: [], clients: order, usage: asked.usage, signal: asked.signal, source: 'run', query: asked.input,

@@ -48,6 +48,7 @@ export const promptSize = (messages: ModelMessage[]) => messages.reduce((sum, me
 }, 0);
 
 const MAX_WAIT = 8000;
+const CALLED_UNOFFERED = /tool choice is none, but model called a tool|attempted to call tool/i;
 const sleep = (milliseconds: number, signal?: AbortSignal) => new Promise<void>((done) => {
   const timer = setTimeout(done, milliseconds);
   signal?.addEventListener('abort', () => { clearTimeout(timer); done(); }, { once: true });
@@ -88,6 +89,9 @@ export async function complete(
         // A per-minute limit that clears in a few seconds is worth waiting out once; anything longer goes to the next model.
         const wait = retryAfter(error);
         if (attempt === 1 && wait !== undefined && wait <= MAX_WAIT) { await sleep(wait + 300, options.signal); continue; }
+        // gpt-oss now and then calls a tool it was never offered, and Groq answers that with a 400. It is a slip, not
+        // a refusal: asked once more, the same model answers in words.
+        if (attempt === 1 && !options.tools?.length && CALLED_UNOFFERED.test((error as Error).message ?? '')) continue;
         onFailure({ client, error: error as Error });
         failures.push(`${client.name}: ${(error as Error).message}`);
       }

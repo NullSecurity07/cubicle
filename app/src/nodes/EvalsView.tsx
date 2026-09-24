@@ -100,7 +100,16 @@ export function Runs({ framework, watch, onChanged }: { framework: Framework; wa
                       <li key={one.id}><span>{nameOf(one.key)} · {one.id}</span><b>{one.was.toFixed(2)} → {one.now.toFixed(2)}</b></li>
                     ))}
                   </ul>
-                ) : <p>It scored below the {run.previous?.toFixed(2) ?? 'previous'} this framework already holds.</p>}
+                ) : run.unscored?.length ? <p>Not every case was scored, so it was not promoted on its own.</p>
+                  : <p>It scored below the {run.previous?.toFixed(2) ?? 'previous'} this framework already holds.</p>}
+                {/* A case with no score is named quietly, with why in one word: never a number it did not earn. */}
+                {run.unscored?.length ? (
+                  <ul>
+                    {run.unscored.map((one) => (
+                      <li key={one.id} className="is-quiet"><span>{nameOf(one.key)} · {one.id}</span><b>{one.why}</b></li>
+                    ))}
+                  </ul>
+                ) : null}
                 <button type="button" disabled={busy === run.at} onClick={() => void take(run.at)}>Promote anyway</button>
               </div>
             )}

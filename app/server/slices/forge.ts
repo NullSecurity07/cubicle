@@ -7,7 +7,7 @@ import { frameworkId } from '../../shared/frameworks.ts';
 import { answerCase, createPassages } from '../evals/answer.ts';
 import { busyWith, claiming } from '../evals/lock.ts';
 import { fakeJudge, type Judge } from '../evals/score.ts';
-import { autoevalsJudge, judgeClientOf, readyEnough } from '../evals/scorers.ts';
+import { autoevalsJudge, judgeClientsOf, readyEnough } from '../evals/scorers.ts';
 import { createRunStore } from '../evals/store.ts';
 import { buildTeam, runOf, scorecardOf, withWinners, type PersonResult } from '../forge/build.ts';
 import { readNotes, shapesOf, type NoteRead } from '../forge/notes.ts';
@@ -101,10 +101,10 @@ export default {
     // one prompt of our own that `score.ts` still knows how to write.
     const judgeFor = (held: Job): Judge => {
       if (deps.fake) return fakeJudge;
-      const client = judgeClientOf(deps.clients, readyEnough(deps.usage));
-      if (!client) return ({ messages }) => ask(held, messages);
-      held.models.add(client.name);
-      return autoevalsJudge({ client, onCall: () => { held.calls += 1; } });
+      const clients = judgeClientsOf(deps.clients, readyEnough(deps.usage));
+      if (!clients.length) return ({ messages }) => ask(held, messages);
+      held.models.add(clients[0].name);
+      return autoevalsJudge({ clients, onCall: () => { held.calls += 1; }, onLimited: (name, milliseconds) => { deps.usage.cool(name, milliseconds); } });
     };
 
     // The passages of the founder's notes that answer one case, asked for once and kept: the same three go to the

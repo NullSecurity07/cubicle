@@ -1,5 +1,5 @@
-import type { Regression, Run, RunCase, RunLine } from '../../shared/evals.ts';
-import { SLACK } from '../../shared/evals.ts';
+import type { Regression, Run, RunCase, RunLine, Unscored } from '../../shared/evals.ts';
+import { counted, SLACK } from '../../shared/evals.ts';
 import type { Scorecard } from '../../shared/frameworks.ts';
 import { caseScore, meanOf } from './score.ts';
 
@@ -12,10 +12,11 @@ import { caseScore, meanOf } from './score.ts';
 // with the width of that rounding left over.
 const HAIR = 1e-9;
 
-// One person's share of a run: the mean of the cases that named them.
+// One person's share of a run: the mean of the cases that named them. A case no judge could read, or whose answer
+// never came, is not a nought and not a one: it is left out, and a person with nothing scored has no share at all.
 export function byPersonOf(cases: RunCase[]): Record<string, number> {
   const by = new Map<string, number[]>();
-  for (const one of cases) by.set(one.key, [...(by.get(one.key) ?? []), caseScore(one)]);
+  for (const one of cases.filter(counted)) by.set(one.key, [...(by.get(one.key) ?? []), caseScore(one)]);
   return Object.fromEntries([...by].map(([key, scores]) => [key, meanOf(scores)]));
 }
 
@@ -25,15 +26,15 @@ export const meanOfCases = (cases: RunCase[]) => meanOf(Object.values(byPersonOf
 
 // The run as the framework will wear it, when it is promoted.
 export const scorecardOf = (run: Run): Scorecard => ({
-  mean: run.mean, byPerson: byPersonOf(run.cases), cases: run.cases.length, at: run.at, models: run.models,
+  mean: run.mean, byPerson: byPersonOf(run.cases), cases: run.cases.filter(counted).length, at: run.at, models: run.models,
 });
 
 // Which cases are worse than they were, by case id. A case that is new has nothing to be worse than, and a run with
 // nothing before it is the first word on the subject rather than a step backwards.
 export function regressionsOf(run: Run, previous: Run | null, slack = SLACK): Regression[] {
   if (!previous) return [];
-  const was = new Map(previous.cases.map((one) => [one.id, caseScore(one)]));
-  return run.cases.flatMap((one) => {
+  const was = new Map(previous.cases.filter(counted).map((one) => [one.id, caseScore(one)]));
+  return run.cases.filter(counted).flatMap((one) => {
     const before = was.get(one.id);
     if (before === undefined) return [];
     const now = caseScore(one);
@@ -45,20 +46,27 @@ export function regressionsOf(run: Run, previous: Run | null, slack = SLACK): Re
 // that is on the framework now, and when no single case fell further than a judge's own wobble. Either half alone
 // lets the team rot — a rising mean can hide one person who has stopped doing their job, and a tie with nothing
 // fallen is a run that changed nothing and has no reason to be refused.
-export function decide(run: Run, previous: Run | null, previousMean: number | undefined): { promote: boolean; regressed: Regression[] } {
+// And one more: a run with a case nobody scored is never promoted on its own. Its mean is over fewer cases than the
+// framework has, and a judge that fell over is not evidence the team got better.
+export const unscoredOf = (run: Pick<Run, 'cases'>): Unscored[] => run.cases.filter((one) => !counted(one))
+  .map((one) => ({ id: one.id, key: one.key, why: one.failed ? 'failed' as const : 'not judged' as const }));
+
+export function decide(run: Run, previous: Run | null, previousMean: number | undefined): { promote: boolean; regressed: Regression[]; unscored: Unscored[] } {
   const regressed = regressionsOf(run, previous);
-  if (previousMean === undefined) return { promote: !regressed.length, regressed };
-  return { promote: run.mean >= previousMean - HAIR && !regressed.length, regressed };
+  const unscored = unscoredOf(run);
+  const clean = !regressed.length && !unscored.length;
+  if (previousMean === undefined) return { promote: clean, regressed, unscored };
+  return { promote: run.mean >= previousMean - HAIR && clean, regressed, unscored };
 }
 
 // The run as it goes on disk, with the verdict written into it. A rejected run is kept whole — the founder may still
 // read what was said and promote it by hand — and it carries the mean it lost to, so a rejection can be understood
 // long after the run it lost to has scrolled away.
-export function settle(run: Run, previous: Run | null, previousMean: number | undefined): { run: Run; promote: boolean; regressed: Regression[] } {
-  const { promote, regressed } = decide(run, previous, previousMean);
+export function settle(run: Run, previous: Run | null, previousMean: number | undefined): { run: Run; promote: boolean; regressed: Regression[]; unscored: Unscored[] } {
+  const { promote, regressed, unscored } = decide(run, previous, previousMean);
   return {
     run: { ...run, ...(promote ? {} : { rejected: true as const }), ...(previousMean === undefined ? {} : { previous: previousMean }) },
-    promote, regressed,
+    promote, regressed, unscored,
   };
 }
 
@@ -70,5 +78,6 @@ export function lineOf(run: Run, regressed: Regression[]): RunLine {
     ...(run.rejected ? { rejected: true as const } : {}), ...(run.forced ? { forced: true as const } : {}),
     ...(run.previous === undefined ? {} : { previous: run.previous }),
     ...(regressed.length ? { regressed } : {}),
+    ...(unscoredOf(run).length ? { unscored: unscoredOf(run) } : {}),
   };
 }

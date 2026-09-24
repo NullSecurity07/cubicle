@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { wireTools, collectCalls, complete, portable, readQuota, type ModelClient, type ToolCall } from './providers.ts';
+import { wireTools, collectCalls, complete, portable, readQuota, realClients, type ModelClient, type ToolCall } from './providers.ts';
 
 const client = (name: string, tokens: string[] | Error, maxPromptChars = Infinity): ModelClient => ({
   name, model: `${name}-1`, maxPromptChars, tools: true, limits: {},
@@ -53,6 +53,39 @@ describe('complete, with tools', () => {
     const result = await complete(messages, { onToken: () => {}, tools: [{ name: 'x', description: '', parameters: {} }] }, [mute, caller]);
     expect(result.client.name).toBe('caller');
     expect(result.calls).toHaveLength(1);
+  });
+
+  it('sends no tools and no tool choice at all when none are offered, and the tools when they are', async () => {
+    const [groq] = realClients({ GROQ_API_KEY: 'k' } as NodeJS.ProcessEnv);
+    const sent: Record<string, unknown>[] = [];
+    async function* chunks() { yield { choices: [{ delta: { content: 'fine' } }] }; }
+    (groq.openai!.chat.completions as unknown as { create: unknown }).create = (body: Record<string, unknown>) => {
+      sent.push(body);
+      return { withResponse: async () => ({ data: chunks(), response: { headers: new Headers() } }) };
+    };
+    await groq.step(messages, { onToken: () => {}, tools: [] });
+    await groq.step(messages, { onToken: () => {} });
+    for (const body of sent) { expect('tools' in body).toBe(false); expect('tool_choice' in body).toBe(false); }
+    await groq.step(messages, { onToken: () => {}, tools: [{ name: 'x', description: '', parameters: {} }] });
+    expect(sent[2].tools).toHaveLength(1);
+    expect('tool_choice' in sent[2]).toBe(false);
+  });
+
+  it('asks the same model once more when it called a tool nobody offered it', async () => {
+    let tries = 0;
+    const slip: ModelClient = {
+      ...client('groq', []),
+      async step(_messages, { onToken }) {
+        tries += 1;
+        if (tries === 1) throw new Error('400 Tool choice is none, but model called a tool');
+        onToken('In words.');
+        return { text: '', calls: [] };
+      },
+    };
+    const result = await complete(messages, { onToken: () => {}, tools: [] }, [slip, client('gemini', ['other'])]);
+    expect(result.client.name).toBe('groq');
+    expect(result.text).toBe('In words.');
+    expect(tries).toBe(2);
   });
 
   it('reads rate-limit headers when a provider sends them', () => {
