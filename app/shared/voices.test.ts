@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { VOICES } from '../server/media/voice.ts';
-import { guessGender, poolsOf, type Speaker, voiceFor } from './voices.ts';
+import { castable, guessGender, poolsOf, recast, type Speaker, voiceFor } from './voices.ts';
 
 // People as the stage really holds them: an id that never changes and a name the founder typed.
 const person = (id: string, name: string, more: Partial<Speaker> = {}): Speaker => ({ id, name, ...more });
@@ -82,14 +82,51 @@ describe('who speaks in which voice', () => {
     expect(given).toBe(voiceFor(maya, [maya, dev], VOICES));
   });
 
-  it('spills into the other pool before anybody shares, and never leaves somebody silent', () => {
-    const women = poolsOf(VOICES).woman;
-    const crowd = Array.from({ length: VOICES.length + 2 }, (_, at) => person(`w${at}`, 'Priya'));
-    const given = settle(crowd).map((one) => one.voice!);
-    // A room full of women runs the women's pool dry and goes on into the men's rather than doubling up.
-    expect(new Set(given.slice(0, women.length + 4)).size).toBe(women.length + 4);
-    // Only past the end of the whole list does anybody share, and even they have a voice rather than silence.
-    expect(new Set(given).size).toBe(VOICES.length);
-    for (const voice of given) expect(VOICES.some((one) => one.id === voice)).toBe(true);
+  it('gives the best voices first, and never casts a woman below B- or a man outside the best three', () => {
+    const gradeOf = (id: string) => VOICES.find((one) => one.id === id)!.grade;
+    // The first woman on a stage is Heart, the one A in the model.
+    expect(voiceFor(maya, [maya], VOICES)).toBe('af_heart');
+    const crowd = settle(Array.from({ length: 12 }, (_, at) => person(`p${at}`, at % 2 ? 'Rahul' : 'Priya')));
+    for (const one of crowd.filter((_, at) => at % 2 === 0)) expect(['A', 'A-', 'B-']).toContain(gradeOf(one.voice!));
+    for (const one of crowd.filter((_, at) => at % 2 === 1)) expect(['am_fenrir', 'am_michael', 'am_puck']).toContain(one.voice);
+    // Nobody shares until every good voice of their pool has been given once.
+    expect(new Set(crowd.slice(0, 7).map((one) => one.voice)).size).toBe(7);
+    // Somebody whose gender is not said draws from both good pools.
+    for (const one of settle([sam, person('q', 'Quill'), person('z', 'Zed')])) expect(castable(one.voice, 'neither', VOICES)).toBe(true);
+  });
+
+  it('casts the same person the same voice every time', () => {
+    const stage = [maya, dev, sam, person('r2', 'Priya'), person('r3', 'Rahul')];
+    const once = settle(stage).map((one) => one.voice);
+    expect(settle(stage).map((one) => one.voice)).toEqual(once);
+    // Among voices as good as each other, the id decides, not the order of the list the voices came in.
+    expect(voiceFor(dev, [dev], [...VOICES].reverse())).toBe(voiceFor(dev, [dev], VOICES));
+  });
+
+  it('still casts from a list that carries no grades', () => {
+    const bare = VOICES.map(({ id, name }) => ({ id, name }));
+    expect(poolsOf(bare).woman).toContain(voiceFor(maya, [maya], bare));
+  });
+});
+
+describe('casting again under the stricter rule', () => {
+  it('recasts a voice the app cast below the floor, and leaves the founder\'s own pick alone', () => {
+    const rooms = [
+      { ...maya, gender: 'woman' as const, voice: 'af_kore' },
+      { ...dev, voice: 'am_eric', voiceBy: 'cast' as const },
+      { ...sam, voice: 'bm_lewis', voiceBy: 'founder' as const },
+      { ...person('r2', 'Priya'), voice: 'bf_emma' },
+      person('r3', 'Rohan'),
+    ];
+    const { rooms: after, changed } = recast(rooms, VOICES);
+    expect(changed.map((one) => one.name)).toEqual(['Maya', 'Dev']);
+    expect(after[0]).toMatchObject({ voice: 'af_heart', voiceBy: 'cast' });
+    expect(['am_fenrir', 'am_michael', 'am_puck']).toContain(after[1].voice);
+    // The founder picked Lewis by hand; a good cast voice stays; somebody never cast is left to be cast when asked.
+    expect(after[2]).toEqual(rooms[2]);
+    expect(after[3]).toEqual(rooms[3]);
+    expect(after[4]).toEqual(rooms[4]);
+    // A second start changes nothing.
+    expect(recast(after, VOICES).changed).toEqual([]);
   });
 });

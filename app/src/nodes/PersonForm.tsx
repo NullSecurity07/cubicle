@@ -1,13 +1,13 @@
 import { useNodes } from '@xyflow/react';
 import { useEffect, useState } from 'react';
 import type { ModelInfo } from '../../shared/model';
-import { GENDERS, type Gender, guessGender, poolsOf, voiceFor } from '../../shared/voices';
+import { GENDERS, type Gender, guessGender, poolsOf, voiceFor, type VoiceBy } from '../../shared/voices';
 import { getModels } from '../api';
 import { SLICES } from '../slices';
 import type { StageNode } from '../stage';
 import { useVoices } from './MediaCards';
 
-export type Person = { name: string; role: string; brief: string; model?: string; gender?: Gender; voice?: string };
+export type Person = { name: string; role: string; brief: string; model?: string; gender?: Gender; voice?: string; voiceBy?: VoiceBy };
 
 // Who this person is, which model thinks for them, and how they sound. Auto picks a free model that still has room
 // today; the gender is guessed from the name the moment it is typed, and the voice follows from it.
@@ -33,7 +33,9 @@ export function PersonForm({ id, person, onSave, onCancel }: { id: string; perso
   function save() {
     if (!ready) return;
     // Written down as they are saved, so nothing about how this person sounds can shift under them later.
-    onSave({ name: form.name.trim(), role: form.role.trim(), brief: form.brief.trim(), model: form.model === 'auto' ? undefined : form.model, gender, voice });
+    // A voice picked here, or one picked before and still on them, is the founder's and the app never recasts it.
+    const voiceBy: VoiceBy = picked || (person.voiceBy === 'founder' && form.voice === person.voice) ? 'founder' : 'cast';
+    onSave({ name: form.name.trim(), role: form.role.trim(), brief: form.brief.trim(), model: form.model === 'auto' ? undefined : form.model, gender, voice, voiceBy });
   }
 
   return (

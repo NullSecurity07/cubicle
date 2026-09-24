@@ -92,7 +92,7 @@ export const getMedia = (id: string) => request<Media & { hint: string | null; d
 // The server answers the moment the job starts; what it made arrives on the feed, however long it takes.
 export const makeMedia = (id: string, ask: { prompt: string } & Record<string, unknown>) => request<{ started: true }>(`/api/media/${id}/make`, send('POST', ask));
 export const stopMedia = (id: string) => request(`/api/media/${id}/stop`, send('POST'));
-export const getVoices = () => request<{ voices: { id: string; name: string }[] }>('/api/media/voices');
+export const getVoices = () => request<{ voices: { id: string; name: string; grade?: string }[] }>('/api/media/voices');
 // The founder's own footage, dropped on a studio card. The file goes straight to disk, so it may be far bigger than
 // anything else this app takes; what comes back is the card's own name for it.
 export const addAsset = (id: string, file: File) => request<MediaAsset>(`/api/media/${id}/assets?name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file });

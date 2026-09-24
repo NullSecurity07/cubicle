@@ -141,9 +141,9 @@ describe('a person asking the founder', () => {
 
 // A reply said out loud in the window. The route answers with the sound itself rather than json, so what this check
 // watches is which voice the maker was asked for.
-function saying(body: Record<string, unknown>) {
+function saying(body: Record<string, unknown>, rooms: Room[] = [room('marketing', 'Maya'), room('build', 'Dev')]) {
   const dir = mkdtempSync(join(tmpdir(), 'reach-say-'));
-  let held: Stage = { rooms: [room('marketing', 'Maya'), room('build', 'Dev')], docs: [], wires: [], cards: [] };
+  let held: Stage = { rooms, docs: [], wires: [], cards: [] };
   const deps = {
     workspace: dir, root: dir, fake: true, seams: createSeams(), approvals: createApprovals(), attention: createAttention(dir),
     store: { loadStage: async () => held, saveStage: async (next: Stage) => { held = next; } },
@@ -165,7 +165,8 @@ describe('saying a reply out loud', () => {
       const mine = voiceFor(maya.stage().rooms[0], maya.stage().rooms, VOICES);
       expect(asked.mock.calls.at(-1)![0].voice).toBe(mine);
       // Written down where it cannot move again, with the guess that chose it.
-      expect(maya.stage().rooms[0]).toMatchObject({ gender: 'woman', voice: mine });
+      expect(maya.stage().rooms[0]).toMatchObject({ gender: 'woman', voice: mine, voiceBy: 'cast' });
+      expect(mine).toBe('af_heart');
       await first.close?.();
 
       const dev = saying({ text: 'Here is what I found.', roomId: 'build' });
@@ -187,6 +188,30 @@ describe('saying a reply out loud', () => {
       expect(asked.mock.calls.at(-1)![0].voice).toBe('bm_fable');
       // Hearing a voice gives nobody that voice.
       expect(heard.stage().rooms[0].voice).toBeUndefined();
+      await part.close?.();
+    } finally { asked.mockRestore(); }
+  });
+
+  it('recasts a voice the app once cast badly as it starts, says so, and never touches the founder\'s pick', async () => {
+    const said = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const rooms = [{ ...room('marketing', 'Maya'), gender: 'woman' as const, voice: 'af_kore' }, { ...room('build', 'Dev'), voice: 'am_eric', voiceBy: 'founder' as const }];
+      const start = saying({ text: 'Hello.', roomId: 'marketing' }, rooms);
+      const part = await reach.install(start.deps);
+      expect(start.stage().rooms[0]).toMatchObject({ voice: 'af_heart', voiceBy: 'cast' });
+      expect(start.stage().rooms[1]).toEqual(rooms[1]);
+      expect(said.mock.calls.filter(([line]) => String(line).includes('Maya af_kore to af_heart'))).toHaveLength(1);
+      await part.close?.();
+    } finally { said.mockRestore(); }
+  });
+
+  it('speaks in Heart when no person is behind the words', async () => {
+    const asked = vi.spyOn(fakeVoices, 'make');
+    try {
+      const nobody = saying({ text: 'Your digest.', roomId: '' });
+      const part = await reach.install(nobody.deps);
+      await part.route!(nobody.req, nobody.res, '/api/reach/speak');
+      expect(asked.mock.calls.at(-1)![0].voice).toBe('af_heart');
       await part.close?.();
     } finally { asked.mockRestore(); }
   });

@@ -1,18 +1,20 @@
 import type { AppPreset } from './apps.ts';
 import type { CoderAsk, GraphMark } from './coder.ts';
-import type { Gender } from './voices.ts';
+import type { Gender, VoiceBy } from './voices.ts';
 
 // The plain model both sides agree on. The client maps it to React Flow; the server stores it.
 export type Box = { x: number; y: number; w: number; h: number };
 // `model` is a name from server/models.json; absent or 'auto' lets the server choose.
 // `gender` and `voice` are how this person sounds. Both are absent on a stage saved before people had voices of
 // their own, and `shared/voices.ts` then works them out from the name and the id until one is written down here.
+// `voiceBy` says who put that voice there: 'founder' is never changed by the app, and a voice cast by the app (or one
+// with no word on it) is cast again when the casting rule gets stricter.
 // `framework` is there when this person landed as part of a saved team: which framework they came from and which of
 // its people they are. It is what lets their side panel say what they were written from and what they scored on the
 // founder's own test cases, and it is the only thing on the stage that points back at a framework.
 export type Room = Box & {
   id: string; name: string; role: string; accent: string; brief: string;
-  model?: string; gender?: Gender; voice?: string; framework?: { id: string; key: string };
+  model?: string; gender?: Gender; voice?: string; voiceBy?: VoiceBy; framework?: { id: string; key: string };
 };
 // `pinned` makes a doc company-wide: every person reads it, wired or not. Writing it still needs a wire.
 export type Doc = Box & { id: string; title: string; pinned?: boolean };
