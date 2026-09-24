@@ -172,14 +172,18 @@ export default {
     // Every run this framework has had, with the cases that went backwards worked out fresh. They are worked out
     // rather than stored because "backwards" is always relative to whatever was promoted before that run, and that
     // is a question about the list, not about one file.
+    // The job is looked at before the files are read, never after: a run writes its file and only then says it is
+    // done, so a "done" seen first always has its run on disk by the time the list is read. The other way round, a
+    // run that finished while the folder was being read came back "done" with its own run missing from the list.
     async function history(id: string): Promise<EvalsView> {
+      const running = job && job.id === id ? view(job) : null;
       const held = await runs.list(id);
       const lines = held.map((run, at) => {
         // The run that was on the framework when this one was made: the newest promoted one older than it.
         const before = held.slice(at + 1).find((one) => !one.rejected) ?? null;
         return lineOf(run, regressionsOf(run, before));
       });
-      return { runs: lines, ...(job && job.id === id ? { job: view(job) } : {}) };
+      return { runs: lines, ...(running ? { job: running } : {}) };
     }
 
     return {
