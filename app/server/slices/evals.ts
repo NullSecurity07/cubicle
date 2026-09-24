@@ -4,15 +4,15 @@ import type { Case, Framework } from '../../shared/frameworks.ts';
 import { answerCase, createPassages } from '../evals/answer.ts';
 import { busyWith, claiming } from '../evals/lock.ts';
 import { lineOf, meanOfCases, regressionsOf, scorecardOf, settle } from '../evals/promote.ts';
-import { fakeJudge, scoreCase, scoreWord, type Judge } from '../evals/score.ts';
-import { autoevalsJudge, judgeClientsOf, readyEnough } from '../evals/scorers.ts';
+import { askWords, failWith, jobLines, judgeFor as judgeOf } from '../evals/job.ts';
+import { scoreCase, scoreWord, type Judge } from '../evals/score.ts';
 import { createRunStore } from '../evals/store.ts';
 import { briefHash } from '../forge/build.ts';
 import { createFrameworks } from '../frameworks/store.ts';
 import { hub } from '../events.ts';
 import type { Deps, Slice } from '../install.ts';
 import type { ModelMessage } from '../prompt.ts';
-import { complete, promptSize } from '../providers.ts';
+import { promptSize } from '../providers.ts';
 import { route } from '../router.ts';
 import { sharedLibrary } from '../slice-kit.ts';
 
@@ -50,37 +50,18 @@ export default {
 
     // A line the founder reads while they wait: kept on the job for whoever asks afterwards, and said at once on the
     // window's one live feed for whoever is watching now. The forge says its lines the same way.
-    const say = (held: Job, line: string) => {
-      held.lines = [...held.lines, line].slice(-MOST_LINES);
-      hub.say(EVALS_CHANNEL, { kind: 'evals', id: held.id, line, state: held.state });
-    };
+    const say = jobLines<Job>((held, line) => hub.say(EVALS_CHANNEL, { kind: 'evals', id: held.id, line, state: held.state }), MOST_LINES);
 
     // One model call that comes back as words, counted. Only the stand-in judge below needs it — the scorers have
     // their own way through — and it exists so a workspace whose only provider does not speak the OpenAI API can
     // still score its frameworks.
-    const ask = async (held: Job, messages: ModelMessage[]): Promise<string> => {
-      const { order } = route(deps.clients, deps.usage, { promptChars: promptSize(messages), tools: false });
-      const reply = await complete(messages, { onToken: () => {}, signal: held.stop.signal }, order);
-      held.calls += 1;
-      held.models.add(reply.client.name);
-      deps.usage.record(reply.client.name, reply.usage, reply.quota, 'eval');
-      return reply.text;
-    };
+    const ask = (held: Job, messages: ModelMessage[]) => askWords(deps, held, messages, route(deps.clients, deps.usage, { promptChars: promptSize(messages), tools: false }).order);
 
     // The same three judges the forge uses, chosen the same way: nothing at all in fake mode, the `autoevals` scorers
     // through the keys this app already holds otherwise — every provider that can judge, best first, so a rate limit
     // on one moves the scoring to the next rather than leaving the case unread. A 429 lets that provider cool, as it
     // would after a person's turn.
-    const judgeFor = (held: Job): Judge => {
-      if (deps.fake) return fakeJudge;
-      const clients = judgeClientsOf(deps.clients, readyEnough(deps.usage));
-      if (!clients.length) return ({ messages }) => ask(held, messages);
-      held.models.add(clients[0].name);
-      return autoevalsJudge({
-        clients, onCall: () => { held.calls += 1; },
-        onLimited: (name, milliseconds) => { deps.usage.cool(name, milliseconds); },
-      });
-    };
+    const judgeFor = (held: Job): Judge => judgeOf(deps, held, (messages) => ask(held, messages));
 
     // Every case the framework has, put to the person whose case it is, with the brief that framework holds right
     // now. Serial, because they all go through the same free quota and the founder is watching the lines.
@@ -153,12 +134,7 @@ export default {
         : `${framework.name} scored ${run.mean.toFixed(2)}, and ${why}. The run is kept, and nothing changed.`);
     }
 
-    const failed = (held: Job, error: Error) => {
-      if (job !== held) return;
-      held.state = 'failed';
-      held.error = error.message;
-      say(held, error.message);
-    };
+    const failed = failWith<Job>(() => job, say);
 
     // Every run this framework has had, with the cases that went backwards worked out fresh. They are worked out
     // rather than stored because "backwards" is always relative to whatever was promoted before that run, and that
