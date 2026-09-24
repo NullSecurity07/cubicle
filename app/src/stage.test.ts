@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { seedStage, type Stage } from '../shared/model';
 import { edgeTypes } from './edges';
 import { nodeTypes } from './nodes';
-import { HANDLE_IDS, fromFlow, toFlow } from './stage';
+import { HANDLE_IDS } from './nodes/Handles';
+import { allowedWire, fromFlow, toFlow } from './stage';
 
 describe('seed stage', () => {
   it('has two rooms, a brand doc, a pinned company brief and no founder card', () => {
@@ -54,3 +55,20 @@ describe('flow mapping', () => {
   });
 });
 
+
+describe('which wires may be drawn', () => {
+  const edges = [{ source: 'marketing', target: 'brand-doc' }];
+  it('joins two different cards', () => {
+    expect(allowedWire({ source: 'marketing', target: 'build' }, edges)).toBe(true);
+  });
+  it('never joins a card to itself, whichever sides were used', () => {
+    expect(allowedWire({ source: 'build', target: 'build' }, edges)).toBe(false);
+  });
+  it('joins the same two cards only once, whichever way round and through whichever sides', () => {
+    expect(allowedWire({ source: 'marketing', target: 'brand-doc' }, edges)).toBe(false);
+    expect(allowedWire({ source: 'brand-doc', target: 'marketing' }, edges)).toBe(false);
+  });
+  it('refuses a half-drawn wire', () => {
+    expect(allowedWire({ source: 'marketing', target: null }, edges)).toBe(false);
+  });
+});

@@ -25,6 +25,8 @@ const NEW = {
   videogen: { size: [380, 420], data: { brief: '' } },
 } as const;
 export type CardKind = keyof typeof NEW;
+// How big each kind lands, for a card put down somewhere other than here (a doc a person made lands beside them).
+export const NEW_SIZE = Object.fromEntries(Object.entries(NEW).map(([kind, { size }]) => [kind, size])) as { [K in CardKind]: (typeof NEW)[K]['size'] };
 
 // Adds a card at the centre of the view, in the nearest free space, selected, and glides there. `data` fills in what
 // is already known (a role from the command bar, a doc title). `at` is a place on the canvas to put it instead of

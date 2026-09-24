@@ -4,9 +4,8 @@ import type { GraphMark } from '../shared/coder';
 import type { Box, Card, Doc, Room, Shape, Stage, Switch, VideoLook, VoiceEngine } from '../shared/model';
 
 export type RoomData = Omit<Room, keyof Box | 'id'>;
-export type DocData = Omit<Doc, keyof Box | 'id'>;
 export type RoomNodeType = Node<RoomData, 'room'>;
-export type DocNodeType = Node<DocData, 'doc'>;
+export type DocNodeType = Node<Omit<Doc, keyof Box | 'id'>, 'doc'>;
 export type BrowserNodeType = Node<{ headed?: boolean; app?: AppPreset }, 'browser'>;
 export type ProjectNodeType = Node<{ path: string; model?: string; session?: string; graph?: GraphMark }, 'project'>;
 export type BoardNodeType = Node<Record<string, never>, 'board'>;
@@ -23,7 +22,6 @@ export type VideoGenNodeType = Node<{ brief?: string; format?: Shape; look?: Vid
 export type CardNodeType = BrowserNodeType | ProjectNodeType | BoardNodeType | LeadsNodeType | NoteNodeType | ImageNodeType | LinkNodeType | SourceNodeType | LibraryNodeType | ImageGenNodeType | VoiceGenNodeType | VideoGenNodeType;
 export type StageNode = RoomNodeType | DocNodeType | CardNodeType;
 
-export const HANDLE_IDS = ['l', 'r', 't', 'b'] as const;
 export const ACCENT = '#4e8cff';
 
 // Spread into every edge, loaded or drawn, so all wires look the same.
@@ -60,4 +58,13 @@ export function fromFlow(nodes: StageNode[], edges: Edge[]): Stage {
     cards: nodes.filter((node): node is CardNodeType => node.type !== 'room' && node.type !== 'doc').map((node) => ({ id: node.id, kind: node.type, ...clean(node.data), ...box(node) }) as Card),
     wires: edges.map((edge) => ({ id: edge.id, from: edge.source, fromHandle: edge.sourceHandle ?? 'r', to: edge.target, toHandle: edge.targetHandle ?? 'l' })),
   };
+}
+
+// A wire joins two different cards, once. The canvas runs in loose mode, where any handle meets any other, so without
+// this a card could be wired to itself, or the same two cards joined again through another pair of sides; neither
+// means anything to the people or the studios reading the wires. Old stages that hold such a wire still load as saved.
+export function allowedWire(connection: { source: string | null; target: string | null }, edges: { source: string; target: string }[]) {
+  const { source, target } = connection;
+  if (!source || !target || source === target) return false;
+  return !edges.some((edge) => (edge.source === source && edge.target === target) || (edge.source === target && edge.target === source));
 }
