@@ -170,6 +170,11 @@ export function studioBehind(stage: { wires?: Wire[]; cards?: Card[] }, cardId: 
 export type Wire = { id: string; from: string; fromHandle: string; to: string; toHandle: string };
 export type Stage = { rooms: Room[]; docs: Doc[]; wires: Wire[]; cards?: Card[] };
 export type Usage = { input: number; output: number };
+// A note a person kept after a conversation without being asked to carries this mark, so the founder can tell those
+// lines from the ones they asked for and throw a wrong one out. `MEMORY_CHANNEL` says a room's memory changed when no
+// tool call was there to carry the news.
+export const KEPT_MARK = '(kept on its own)';
+export const MEMORY_CHANNEL = 'memory';
 // What a tool run changed on the stage, for the client to mirror.
 export type ToolEffect = { kind: 'doc-changed'; id: string } | { kind: 'doc-created'; id: string; title: string } | { kind: 'browser-moved'; id: string } | { kind: 'chat-changed'; id: string } | { kind: 'memory-changed'; id: string }
   | { kind: 'media-progress'; id: string; line: string } | { kind: 'media-made'; id: string };

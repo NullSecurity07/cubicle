@@ -549,6 +549,33 @@ test('a person keeps notes the founder can read and rewrite, and sees them in la
   expect((await (await page.request.get('/api/rooms/build/memory')).json()).notes).toBe('- The founder wants releases every two weeks.');
 });
 
+test('a line a person kept on its own is tagged in the memory panel and goes in one click', async ({ page }) => {
+  // The fake model asks no model after a turn, so the line is written the way retain writes it, through remember.
+  // Earlier tests leave chips and notes in this room, so only these two lines are looked for.
+  const room = node(page, 'build');
+  await expect(room.locator('.status--idle')).toBeVisible();
+  await send(page, 'build', '/tool remember {"fact":"(kept on its own) The pilots pay 19 a month."}');
+  await expect(room.locator('.chip--ok', { hasText: 'The pilots pay 19 a month.' })).toHaveCount(1);
+  await send(page, 'build', '/tool remember {"fact":"The founder wants monthly reviews."}');
+  await expect(room.locator('.chip--ok', { hasText: 'The founder wants monthly reviews.' })).toHaveCount(1);
+  await expect(room.locator('.status--idle')).toBeVisible();
+  await room.hover();
+  await room.getByRole('button', { name: 'Memory' }).click();
+  const panel = room.getByRole('dialog', { name: 'What Dev remembers' });
+  const kept = panel.getByLabel('Kept on its own');
+  const line = `${shortDay(Date.now())} · The pilots pay 19 a month.`;
+  await expect(kept).toContainText('Lines marked this way were kept by Dev without being asked; delete any that are wrong.');
+  await expect(kept.locator('li')).toHaveCount(1);
+  await expect(kept.locator('.memory__tag')).toHaveText('kept on its own');
+  await expect(kept.locator('.memory__line')).toHaveText(line);
+  await page.screenshot({ path: 'test-results/memory-kept.png' });
+  await kept.locator('li').hover();
+  await kept.getByRole('button', { name: `Delete: ${line}` }).click();
+  await expect(kept).toHaveCount(0);
+  await expect.poll(async () => (await (await page.request.get('/api/rooms/build/memory')).json()).notes as string).not.toContain('pilots pay 19');
+  expect((await (await page.request.get('/api/rooms/build/memory')).json()).notes).toMatch(/· The founder wants monthly reviews\.$/);
+});
+
 test('a reply can be regenerated, a question edited and re-asked, a message deleted; nothing is lost', async ({ page }) => {
   const room = node(page, 'build');
   await ask(page, 'build', 'first question');

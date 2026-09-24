@@ -11,7 +11,7 @@ const VERBS: Record<string, [doing: string, done: string]> = {
   ask_person: ['Asking', 'Asked'], code_task: ['Coding:', 'Coded:'], code_reply: ['Telling the coder:', 'Told the coder:'], code_stop: ['Stopping the coder', 'Stopped the coder'], code_status: ['Checking the coder', 'Checked the coder'],
   send_email: ['Sending email to', 'Emailed'], read_inbox: ['Checking', 'Checked'], run_code: ['Running', 'Ran'],
   web_search: ['Searching', 'Searched'], web_fetch: ['Reading', 'Read'], browse: ['Browsing', 'Browsed'],
-  recall: ['Looking up', 'Looked up'], propose_decision: ['Proposing', 'Proposed'], read_decision: ['Reading', 'Read'],
+  recall: ['Looking up', 'Looked up'], reflect: ['Looking back at', 'Looked back at'], propose_decision: ['Proposing', 'Proposed'], read_decision: ['Reading', 'Read'],
   list_files: ['Looking at', 'Looked at'], read_file: ['Reading', 'Read'], write_file: ['Saving', 'Saved'],
   generate_image: ['Drawing', 'Drew'], generate_voice: ['Saying', 'Said'], generate_video: ['Filming', 'Filmed'],
   delegate_task: ['Handing to', 'Handed to'], search_source: ['Searching', 'Searched'], propose_source: ['Proposing', 'Proposed'],
@@ -41,7 +41,7 @@ function Chip({ tool }: { tool: ToolEvent }) {
     : tool.name === 'move_lead' ? `${String(tool.args.lead ?? '').slice(0, 45)} to ${String(tool.args.stage ?? '')}`
     : tool.name === 'note_lead' ? String(tool.args.lead ?? '').slice(0, 60) : tool.name === 'list_leads' ? 'the leads'
     : tool.name === 'find_leads' ? `${String(tool.args.count ?? '')} leads with OpenOutreach${tool.args.emails === true ? ', with emails' : ''}`
-    : tool.name === 'ask_person' ? String(tool.args.name ?? '') : tool.name === 'recall' ? String(tool.args.query ?? '').slice(0, 60)
+    : tool.name === 'ask_person' ? String(tool.args.name ?? '') : tool.name === 'recall' ? String(tool.args.query ?? '').slice(0, 60) : tool.name === 'reflect' ? String(tool.args.about ?? '').slice(0, 60)
     : tool.name === 'code_task' ? String(tool.args.brief ?? '').replace(/\s+/g, ' ').slice(0, 60)
     : tool.name === 'ask_graph' ? String(tool.args.question ?? '').replace(/\s+/g, ' ').slice(0, 60)
     : tool.name === 'affected_by' ? String(tool.args.name ?? '').slice(0, 60)

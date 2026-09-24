@@ -5,6 +5,7 @@ import type { ForgeJob, ForgeMode, Proposal } from '../shared/forge';
 import type { Note } from '../shared/library';
 import type { CoderAsk, CoderLine, CoderModels, CoderPatch, CoderState, GraphView } from '../shared/coder';
 import { leadsChannel, type Lead, type LeadsEvent, type LeadStage } from '../shared/leads';
+import { MEMORY_CHANNEL } from '../shared/model';
 import { feed, snapshot } from './feed';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -28,6 +29,8 @@ export const signInBrowser = (id: string) => request<{ started: boolean }>(`/api
 export const signInDoneBrowser = (id: string) => request<{ ok: boolean }>(`/api/browsers/${id}/sign-in/done`, { method: 'POST' });
 export const getMemory = (roomId: string) => request<{ notes: string; summary: string }>(`/api/rooms/${roomId}/memory`);
 export const putMemory = (roomId: string, memory: { notes: string; summary: string }) => request(`/api/rooms/${roomId}/memory`, put(memory));
+// A person kept a note on its own after a conversation: no tool call carried the news, so the feed does.
+export const watchMemory = (roomId: string, changed: () => void) => feed<{ id: string }>(MEMORY_CHANNEL, (event) => { if (event.id === roomId) changed(); });
 export const getChat = (roomId: string) => request<ChatMessage[]>(`/api/rooms/${roomId}/chat`);
 
 // Posts one message and feeds every server-sent event to onEvent until the stream ends. Aborting the signal stops the reply.

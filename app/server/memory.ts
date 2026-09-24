@@ -10,7 +10,7 @@ export type Summarise = (messages: ModelMessage[]) => Promise<string>;
 
 export const HISTORY_CHARS = 6000;
 const FOLD_AT = 6;
-const NOTES_CHARS = 4000;
+export const NOTES_CHARS = 4000;
 const SUMMARY_CHARS = 1500;
 const size = (message: ChatMessage) => message.text.length + (message.tools ?? []).reduce((sum, tool) => sum + JSON.stringify(tool.args).length + Math.min(tool.result?.length ?? 0, 300), 0) + 20;
 

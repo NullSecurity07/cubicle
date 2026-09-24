@@ -2,7 +2,7 @@ import { useEdges, useNodes } from '@xyflow/react';
 import { useEffect, useState } from 'react';
 import { builtFrom, casesFor } from '../../shared/evals';
 import type { ChatMessage, Room } from '../../shared/model';
-import { getChat, getMemory } from '../api';
+import { getChat, getMemory, watchMemory } from '../api';
 import { listen } from '../bus';
 import { useFrameworks } from '../frameworks';
 import { useNotes } from '../library';
@@ -69,6 +69,7 @@ export function RoomSide({ id, name, status, onEditMemory }: { id: string; name:
     getMemory(id).then(setMemory).catch(() => {});
   }, [id, status]);
   useEffect(() => listen('effect', (effect) => { if (effect.kind === 'memory-changed' && effect.id === id) getMemory(id).then(setMemory).catch(() => {}); }), [id]);
+  useEffect(() => watchMemory(id, () => { getMemory(id).then(setMemory).catch(() => {}); }), [id]);
 
   const me = nodes.find((node) => node.id === id);
   const wired = edges.filter((edge) => edge.source === id || edge.target === id)

@@ -317,7 +317,17 @@ div.msg--assistant:has(.approval) { align-self: stretch; max-width: none; }
 .memory { position: absolute; inset: 52px 0 0; z-index: 1; background: rgba(14, 15, 19, 0.97); border-radius: 0 0 inherit inherit; }
 .memory__lead { margin: 0; font-size: 12px; line-height: 1.5; color: var(--muted); }
 .memory textarea { flex: 1; min-height: 60px; font-size: 12.5px; line-height: 1.5; }
-.memory label { flex: 1; min-height: 0; }
+.memory label { flex: 1; min-height: 82px; }
+/* Lines a person kept on its own: a quiet tag and a one-click way out. */
+.memory__kept { flex: none; align-self: stretch; display: flex; flex-direction: column; gap: 6px; max-height: 30%; min-height: 0; overflow-y: auto; scrollbar-width: thin; }
+.memory__kept ul { align-self: stretch; margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.memory__kept li { display: flex; align-items: baseline; gap: 8px; padding: 3px 4px 3px 0; border-radius: 6px; font-size: 12.5px; line-height: 1.45; }
+.memory__kept li:hover { background: rgba(255, 255, 255, 0.04); }
+.memory__tag { flex: none; padding: 1px 6px; border-radius: 999px; font-size: 10.5px; color: var(--muted); background: rgba(255, 255, 255, 0.06); }
+.memory__line { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.memory__drop { flex: none; border: 0; padding: 0 6px; font: inherit; font-size: 15px; line-height: 1; color: var(--muted); background: transparent; cursor: pointer; opacity: 0; transition: opacity 0.15s; }
+.memory__kept li:hover .memory__drop, .memory__drop:focus-visible { opacity: 1; }
+.memory__drop:hover { color: #f0968e; }
 
 /* Chat polish: message actions, attachments, media, diagrams, live previews. */
 div.msg--user { position: relative; white-space: pre-wrap; }
