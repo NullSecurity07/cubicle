@@ -57,7 +57,11 @@ const broke: string[] = [];
 test.beforeEach(async ({ page }) => {
   broke.length = 0;
   page.on('pageerror', (error) => broke.push(error.message));
+  // The canvas is drawn from the stage the page asks for once it starts. Under a loaded machine that answer alone
+  // took longer than a look's five seconds, so it is waited for first, and only then is Maya looked for.
+  const loaded = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/stage' && response.request().method() === 'GET');
   await page.goto('/');
+  expect((await loaded).ok()).toBe(true);
   await expect(page.locator('.react-flow__node[data-id="marketing"]')).toBeVisible();
 });
 test.afterEach(() => { expect(broke).toEqual([]); });

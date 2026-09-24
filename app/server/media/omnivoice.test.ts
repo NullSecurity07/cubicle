@@ -27,6 +27,16 @@ describe('designing a voice from the founder\'s words', () => {
     expect(designOf('young woman with an English accent').instruct).toBe('female, young adult, british accent');
   });
 
+  it('reads an age as a whole phrase and never reports a word of it', () => {
+    // On the live check this said 'OmniVoice cannot do "adult"'.
+    expect(designOf('male, young adult')).toEqual({ instruct: 'male, young adult', kept: ['male', 'young adult'], dropped: [] });
+    expect(designOf('an older adult woman').instruct).toBe('female, elderly');
+    expect(designOf('an older adult woman').dropped).toEqual([]);
+    expect(designOf('Middle-aged adult man').dropped).toEqual([]);
+    expect(designOf('a little girl, cheerful')).toEqual({ instruct: 'female, child', kept: ['female', 'child'], dropped: ['cheerful'] });
+    expect(designOf('a young child').instruct).toBe('child');
+  });
+
   it('falls back to one steady house voice rather than a random one', () => {
     expect(designOf('').instruct).toBe(DEFAULT_DESIGN);
     expect(designOf('a robot').instruct).toBe(DEFAULT_DESIGN);

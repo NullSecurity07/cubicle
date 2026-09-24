@@ -98,6 +98,19 @@ describe('retain', () => {
     expect(none.changed).toEqual([]);
   });
 
+  it('sees a remember from the same turn that lands while the model is still reading', async () => {
+    const store = createStore(await mkdtemp(join(tmpdir(), 'retain-')));
+    const memory = createMemory(store, async () => '', () => NOON);
+    const retain = createRetain({
+      memory, store, changed: () => {}, log: () => {}, now: () => NOON,
+      extract: async () => {
+        await memory.remember('marketing', 'Our first-year pilots pay 190 and get onboarding calls every week');
+        return '- 24 September 2026 - Our first-year pilots pay 190 and get onboarding calls weekly\n- 1 October 2026\n- Maya: Got it…\n- The pilots start in October';
+      },
+    });
+    expect(await retain.retain(turn())).toEqual(['The pilots start in October']);
+  });
+
   it('does nothing without a model on this machine, and says so once', async () => {
     const { retain, logged, memory } = await setup(undefined, false);
     await retain.retain(turn());
@@ -109,16 +122,39 @@ describe('retain', () => {
 
 describe('the parts of retain', () => {
   it('reads the model\'s lines, dropping bullets, NONE, preambles, labels and anything too long', () => {
-    expect(parseFacts('Here are the facts:\n1. Price is 19\n* Launch on 1 Oct\n- NONE\n' + `- ${'y'.repeat(201)}\n- Maya\n- The pilots pay monthly\n- Priya is the first pilot`)).toEqual(['Price is 19', 'Launch on 1 Oct', 'The pilots pay monthly']);
+    expect(parseFacts('Here are the facts:\n1. Price is 19 for now\n* Launch on 1 Oct\n- NONE\n' + `- ${'y'.repeat(201)}\n- Maya\n- The pilots pay monthly\n- Priya is the first pilot`)).toEqual(['Price is 19 for now', 'The pilots pay monthly', 'Priya is the first pilot']);
     expect(parseFacts('NONE')).toEqual([]);
     // What the local model really wrote on the live check for an exchange with nothing lasting in it.
     expect(parseFacts('NONE  \n24 September 2026  \nMaya')).toEqual([]);
+  });
+
+  // What qwen2.5:7b really wrote on the live check of 24 September 2026.
+  it('drops a bare date, a label with only a date, and a speaker echoing the exchange', () => {
+    expect(parseFacts('- 1 October 2026')).toEqual([]);
+    expect(parseFacts('- Effective date: 1 Oct 2026')).toEqual([]);
+    expect(parseFacts('- Maya: Got it…', ['Maya', 'Founder'])).toEqual([]);
+    expect(parseFacts('- Launch: 2026-10-01')).toEqual([]);
+  });
+
+  it('takes the date or the speaker off the front of a line and keeps the fact', () => {
+    expect(parseFacts('- 24 September 2026 - Our first-year price is 190 for the two pilots')).toEqual(['Our first-year price is 190 for the two pilots']);
+    expect(parseFacts('- 2026-09-24: The pilots pay by card')).toEqual(['The pilots pay by card']);
+    expect(parseFacts('- Maya: the deck goes to both pilots on Friday', ['Maya', 'Founder'])).toEqual(['the deck goes to both pilots on Friday']);
+    // A date inside the line is part of the fact.
+    expect(parseFacts('- The launch is on 1 October 2026')).toEqual(['The launch is on 1 October 2026']);
   });
 
   it('matches a known fact on its words, not its punctuation or its date', () => {
     const notes = '- 3 Sept 2026 · (kept on its own) price: 19 a month\n- the founder likes tables';
     expect(isKnown('The price is 19 a month', notes)).toBe(true);
     expect(isKnown('The price is 25 a month', notes)).toBe(false);
+    expect(isKnown('From 1 October 2026 the price is 19 a month', notes)).toBe(true);
+  });
+
+  it('calls a line known when seven in ten of its words are in a line the person remembered', () => {
+    const notes = '- 24 Sept 2026 · Our first-year pilots pay 190 and get onboarding calls every week';
+    expect(isKnown('24 September 2026 - Our first-year pilots pay 190 and get onboarding calls weekly', notes)).toBe(true);
+    expect(isKnown('Our first-year pilots pay 190 and get a shared Slack channel', notes)).toBe(false);
   });
 
   it('only calls a line copied when six or more real words run on in a document', () => {

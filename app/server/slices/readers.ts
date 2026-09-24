@@ -534,7 +534,7 @@ export function readerTools(options: ReaderOptions): Tool[] {
       description: 'Read a YouTube video without watching it: its title, channel, upload date, length, views and the full transcript with a timestamp every minute. '
         + 'Give one video address in "url". Use it for talks, interviews, product demos and reviews. Quote the timestamp when you cite something said.',
       parameters: { type: 'object', properties: { url: { type: 'string', description: 'One YouTube video address' } }, required: ['url'] },
-      ready: () => (hasYtdlp() ? null : 'Videos cannot be read on this machine yet: yt-dlp is not installed. Tell the founder; pnpm doctor says how to add it.'),
+      ready: () => (hasYtdlp() ? null : 'Videos cannot be read on this machine yet: yt-dlp is not installed. Tell the founder; pnpm health says how to add it.'),
       async run(args, context: ToolContext) {
         if (!words(args, 'url').trim()) return { text: 'Give the video\'s address in "url".' };
         return { text: await readYoutube(words(args, 'url'), options, context.signal) };

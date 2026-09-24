@@ -242,7 +242,7 @@ TWENTY_URL=http://localhost:3000
 TWENTY_API_KEY=the key you copied
 ```
 
-Start the app again. The Leads cards go over within half a minute. `pnpm doctor` says whether Twenty answers, and a
+Start the app again. The Leads cards go over within half a minute. `pnpm health` says whether Twenty answers, and a
 Leads card says so in one quiet line while it does not. Twenty's own compose file is in its repository under
 `packages/twenty-docker/`.
 
