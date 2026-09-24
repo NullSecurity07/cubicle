@@ -1,12 +1,16 @@
 import { CODE_TOOLS_HINT, createCodeTools } from '../delegation/codetools.ts';
 import { delegationTools } from '../delegation/delegate.ts';
 import type { Slice } from '../install.ts';
+import { offerWhenWired } from '../slice-kit.ts';
 import { colleagueIds } from '../prompt.ts';
 import { offerToolsToCode } from '../sandbox.ts';
 import { withSystem, type Handler } from '../seams.ts';
 
 // Real delegation: a person hands a whole piece of work to a wired colleague and gets back what they did, and code in
 // the sandbox reaches the person's own tools without the sandbox gaining a single new way out.
+// The one tool that needs somebody to hand work to.
+export const DELEGATION_TOOLS = ['delegate_task'] as const;
+
 export default {
   name: 'delegation',
   install(deps) {
@@ -26,7 +30,7 @@ export default {
         promptFor: deps.promptFor, toolsFor: deps.toolsFor,
       }),
       // Nobody to hand work to, nothing to describe: the same rule `ask_person` lives by.
-      offer: (tools, stage, roomId) => (colleagueIds(stage, roomId).length ? tools : tools.filter((tool) => tool.name !== 'delegate_task')),
+      offer: offerWhenWired((stage, roomId) => colleagueIds(stage, roomId).length > 0, DELEGATION_TOOLS),
       async close() { off(); offerToolsToCode(null); },
     };
   },

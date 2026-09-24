@@ -8,6 +8,11 @@ import { wired } from '../prompt.ts';
 export type Project = Extract<Card, { kind: 'project' }>;
 export type CardRef = { id: string; dir: string; name: string; session?: string; model?: string };
 
+// The coder's tools by name, kept beside the card they need. `context/offer.ts` should read CODER_TOOLS rather than
+// spell them out, and the safety net reads CODER_WORK: the two that change files and so get a checkpoint first.
+export const CODER_TOOLS = ['code_task', 'code_reply', 'code_stop', 'code_status'] as const;
+export const CODER_WORK = ['code_task', 'code_reply'] as const;
+
 export const projects = (stage: Stage) => (stage.cards ?? []).filter((card): card is Project => card.kind === 'project');
 export const nameOf = (card: Project) => basename(card.path.trim().replace(/\/+$/, '')) || 'Project';
 // The card as the coder needs it: the folder checked, its name, and whatever session and model the stage holds.

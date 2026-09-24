@@ -19,6 +19,9 @@ export const NO_MAP = 'This folder has no map yet: run map_folder first.';
 // What the coder is told when its folder has a map. One sentence, only then.
 export const GRAPH_HINT = 'This folder has a knowledge graph: use the graphify tools (query_graph, get_neighbors, shortest_path...) before reading many files.';
 
+// The map's tools by name: offered only to a person with a coder card wired to them.
+export const GRAPH_TOOLS = ['map_folder', 'ask_graph', 'affected_by'] as const;
+
 // Where a folder's map is kept: in the app's own workspace, never in the founder's folder. Graphify writes wherever
 // GRAPHIFY_OUT says, so the project stays exactly as the founder left it.
 export function mapDir(workspace: string, folder: string): string {

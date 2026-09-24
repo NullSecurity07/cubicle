@@ -3,15 +3,14 @@ import { existsSync } from 'node:fs';
 import { copyFile, mkdir, readFile, stat } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { coderChannel, type CoderEvent, type GraphMark, type GraphView } from '../../shared/coder.ts';
-import type { Stage } from '../../shared/model.ts';
 import { timeOrDay } from '../clock.ts';
 import { hub } from '../events.ts';
 import { projectDir } from '../folder.ts';
 import type { Deps, Slice } from '../install.ts';
 import { nameOf, projects, refOf as refCard, wiredProject, type CardRef, type Project } from '../opencode/cards.ts';
-import { cardLog, findTool, graphJson, mapDir, NO_MAP, NOT_HERE, PIN } from '../opencode/graph-kit.ts';
+import { cardLog, findTool, GRAPH_TOOLS, graphJson, mapDir, NO_MAP, NOT_HERE, PIN } from '../opencode/graph-kit.ts';
 import { childEnv } from '../safety/env.ts';
-import { patchStageVia } from '../slice-kit.ts';
+import { offerWhenWired, patchStageVia } from '../slice-kit.ts';
 import type { Tool, ToolContext } from '../tools/registry.ts';
 
 // The map of a code folder, made by Graphify: every file, function and class, what calls and imports what, and the
@@ -19,7 +18,7 @@ import type { Tool, ToolContext } from '../tools/registry.ts';
 // not even to name the groups. A person wired to a coder card maps its folder once, then asks the map questions
 // instead of reading file after file; the coder itself reads the same map through Graphify's own tools.
 
-export { cardLog, findTool, GRAPH_HINT, graphJson, hasMcpPart, INSTALL, mapDir, mcpCommand, NO_MAP, NOT_HERE, PIN, type CardRef } from '../opencode/graph-kit.ts';
+export { cardLog, findTool, GRAPH_HINT, GRAPH_TOOLS, graphJson, hasMcpPart, INSTALL, mapDir, mcpCommand, NO_MAP, NOT_HERE, PIN, type CardRef } from '../opencode/graph-kit.ts';
 
 const MAP_LIMIT = 10 * 60_000;
 const ASK_LIMIT = 60_000;
@@ -297,10 +296,7 @@ export default {
     return {
       tools: maps.tools(),
       // Offered only to a person with a coder card wired to them: the map is of that card's folder.
-      offer(tools: Tool[], stage: Stage, roomId: string) {
-        if (wiredProject(stage, roomId)) return tools;
-        return tools.filter((tool) => !['map_folder', 'ask_graph', 'affected_by'].includes(tool.name));
-      },
+      offer: offerWhenWired('project', GRAPH_TOOLS),
       async route(req, res, path) {
         const asked = /^\/api\/coder\/([\w-]{1,80})\/(map|graph|graph\.html)$/.exec(path);
         if (!asked) return false;

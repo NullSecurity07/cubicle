@@ -3,6 +3,8 @@ import { coderChannel, type CoderEvent } from '../../shared/coder.ts';
 import { hub } from '../events.ts';
 import type { Deps, Slice } from '../install.ts';
 import { projects, refOf, wiredProject } from '../opencode/cards.ts';
+
+export { CODER_TOOLS } from '../opencode/cards.ts';
 import { graphMcp, writeCoderHome } from '../opencode/config.ts';
 import { fakeEngine } from '../opencode/fake.ts';
 import { cardLog, GRAPH_HINT, graphJson, mcpCommand } from '../opencode/graph-kit.ts';

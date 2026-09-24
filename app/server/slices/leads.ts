@@ -7,6 +7,7 @@ import { createOutreach, fakeRunner, outreachEnv, uvxRunner } from '../leads/ope
 import { isStage, leadsCardIds, leadsFor, type Leads } from '../leads/store.ts';
 import { wired } from '../prompt.ts';
 import { withSystem, type Handler } from '../seams.ts';
+import { offerWhenWired } from '../slice-kit.ts';
 import { text, type Tool, type ToolContext } from '../tools/registry.ts';
 
 // The Leads card: the founder's list of people to sell to, a light CRM on the stage. People wired to it add, score,
@@ -154,10 +155,7 @@ export default {
     return {
       tools: leadTools(leads, outreach),
       // Offered only to a person with a Leads card wired to them.
-      offer(tools, stage, roomId) {
-        if (wired(stage, roomId, cardsOf(stage)).length) return tools;
-        return tools.filter((tool) => !LEAD_TOOLS.includes(tool.name));
-      },
+      offer: offerWhenWired('leads', LEAD_TOOLS),
       async route(req, res, path) {
         const asked = /^\/api\/leads\/([a-z0-9][a-z0-9-]{0,63})(?:\/(lead-[a-z0-9]{1,40})(?:\/(notes))?)?$/.exec(path);
         if (!asked) return false;

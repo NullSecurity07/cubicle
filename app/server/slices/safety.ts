@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 import { NO_UNDO_LINE, UNDO_LINE } from '../../shared/safety.ts';
 import { projectDir } from '../folder.ts';
-import { wiredProject } from '../opencode/cards.ts';
+import { CODER_WORK, wiredProject } from '../opencode/cards.ts';
 import { checkCall } from '../safety/blocks.ts';
 import { createCheckpoints } from '../safety/checkpoints.ts';
 import { redact, secretValues } from '../safety/keys.ts';
@@ -15,7 +15,7 @@ import type { Slice } from '../install.ts';
 // It installs first (`order`) so its refusals are decided before any other extra has an opinion about a call.
 const CALLS_HELD = 60;
 // Starting the coder and following it up both let it into the folder, so both are saved before and can be undone.
-const CODER = new Set(['code_task', 'code_reply']);
+const CODER = new Set<string>(CODER_WORK);
 
 export default {
   name: 'safety',
