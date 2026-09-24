@@ -842,6 +842,44 @@ test('a video studio: the founder sets the film going and watches it being made,
   await expect(again.locator('.tray__one')).toHaveCount(0);
 });
 
+// The owner's ask: notes on a finished film re-cut only what they touch, and the new version sits under the film.
+test('notes on a finished film: the studio drops a shot, keeps the rest, and lists the version under the film', async ({ page }) => {
+  await tidy(page);
+  await addCard(page, 'Add video studio');
+  const card = page.locator('.react-flow__node-videogen');
+  const id = (await card.getAttribute('data-id'))!;
+  const read = async () => (await page.request.get(`/api/media/${id}`)).json();
+
+  await card.getByLabel('What the film is about').fill('a launch film for Relay');
+  await card.getByRole('button', { name: 'Make' }).click();
+  await expect(card.locator('.studio__result video')).toBeVisible();
+  const first = (await read()).results[0];
+  expect(first.film).toMatch(/\.film\.json$/);
+  const before = await (await page.request.get(`/api/files/${first.film}`)).json();
+
+  // The notes box sits under the film it is about.
+  await card.getByLabel('Notes on this film').fill('drop shot 2');
+  await card.getByRole('button', { name: 'Edit', exact: true }).click();
+  await expect.poll(async () => (await read()).results[0]?.path, { timeout: 20_000 }).toMatch(/-v2\.mp4$/);
+  const media = await read();
+  // The decisions: what the notes were read as, then what was kept, then the render.
+  const log: string = media.log.join('\n');
+  expect(log).toContain('the notes, read: shot 2 dropped');
+  expect(log).toContain(`kept ${before.spec.scenes.length - 1} of ${before.spec.scenes.length - 1} pictures`);
+  expect(log.indexOf('the notes, read')).toBeLessThan(log.indexOf('kept '));
+  expect(log.indexOf('kept ')).toBeLessThan(log.indexOf('rendering'));
+  const after = await (await page.request.get(`/api/files/${media.results[0].film}`)).json();
+  expect(after.spec.scenes).toHaveLength(before.spec.scenes.length - 1);
+  expect(media.results[0].edited).toMatchObject({ from: first.path, version: 2, notes: 'shot 2 dropped' });
+
+  // Both versions are listed under the film with the notes that made each, and either one can be watched again.
+  const versions = card.locator('.studio__versions button');
+  await expect(versions).toHaveCount(2);
+  await expect(versions.last()).toContainText('v2 shot 2 dropped');
+  await versions.first().click();
+  await expect(card.getByRole('link', { name: 'Download' })).toHaveAttribute('href', `/api/files/${first.path}`);
+});
+
 test('the api answers the app\'s own page and refuses everyone else', async ({ browser }) => {
   // No script token here: this is what the founder's window and any other web page really send.
   const context = await browser.newContext({ baseURL: `http://localhost:${WEB_PORT}`, extraHTTPHeaders: {} });

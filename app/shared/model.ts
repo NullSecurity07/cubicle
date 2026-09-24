@@ -68,7 +68,13 @@ export type MediaKind = (typeof MEDIA_KINDS)[number];
 // `music` credits the bed a film was made with, because a track's terms travel with the file it is in.
 // `noncommercial` is set when the file's own licence forbids selling it, and `credits` is where the words of that
 // licence were written beside it.
-export type MediaResult = { path: string; prompt: string; at: number; poster?: string; music?: MediaCredit; by?: string; noncommercial?: true; credits?: string; mlt?: string };
+export type MediaResult = {
+  path: string; prompt: string; at: number; poster?: string; music?: MediaCredit; by?: string; noncommercial?: true; credits?: string; mlt?: string;
+  // A finished film's record of what it was made of, which is what lets notes on it remake only what they touch.
+  film?: string;
+  // A film remade from notes: the one it was made from, the first of its line, which version it is and the notes.
+  edited?: { from: string; root: string; version: number; notes: string };
+};
 export type MediaCredit = { title: string; by: string; licence: string; source: string };
 // Something the founder dropped on a studio card for it to build with: their own footage, a photograph, a music track.
 // `name` is what a storyboard calls it in `asset`; `path` is where it really is in the shared files.

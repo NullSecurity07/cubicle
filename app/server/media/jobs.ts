@@ -1,9 +1,11 @@
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Card, Media, MediaAsset, MediaCredit, MediaEvent, MediaKind, MediaResult } from '../../shared/model.ts';
 import type { Store } from '../store.ts';
 import type { Voice } from './voice.ts';
 import { mltOf, type EditPlan } from './mlt.ts';
+import { isRecord, type FilmRecord } from './edits.ts';
 
 export type MediaJobs = ReturnType<typeof createMedia>;
 // What the founder or a person asked for. `prompt` is the words of it; the rest is whatever that kind of studio offers.
@@ -20,6 +22,10 @@ export type Piece = {
   // A finished film laid out as tracks, with the pictures and sound it needs. It is written beside the film as
   // `<film>.mlt`, with those files in `<film>.parts/`, so Shotcut or Kdenlive can open it.
   edit?: EditPlan;
+  // What the film was made of, written beside it as `<film>.film.json` so notes on it can remake only what they touch.
+  record?: FilmRecord;
+  // A name of the maker's own choosing, without its ending: a film remade from notes is `<film>-v2`, not a new name.
+  name?: string;
 };
 // One backend that makes one kind of media. `ready` says in the founder's words why it cannot work yet, or nothing.
 // `cast` is the voice makers' own answer to "who can say this?": the table the loaded weights ship with, so a film
@@ -52,6 +58,15 @@ export function createMedia(deps: { dir: string; store: Store; makers: Makers; n
   const now = deps.now ?? Date.now;
   const path = (cardId: string) => join(deps.dir, 'media', `${safe(cardId)}.json`);
   const cache = new Map<string, Media>();
+  // A version's name, moved on until it is free: two sets of notes on the same film make a v2 and a v3, never one.
+  const freeName = (stem: string, ext: string): string => {
+    let name = stem;
+    for (let next = 0; next < 99 && existsSync(deps.store.pathOf(`${name}.${ext}`)); next += 1) {
+      const found = /^(.*)-v(\d+)$/.exec(name);
+      name = found ? `${found[1]}-v${Number(found[2]) + 1}` : `${name}-v2`;
+    }
+    return `${name}.${ext}`;
+  };
   const running = new Map<string, AbortController>();
   const watchers = new Set<(event: MediaEvent) => void>();
   let queue: Promise<unknown> = Promise.resolve();
@@ -157,6 +172,16 @@ export function createMedia(deps: { dir: string; store: Store; makers: Makers; n
         // A voice to clone is named by the card: a file dropped on it, or one of its own recordings, whose words are
         // then known. The backend is handed where it really is on disk.
         if (typeof ask.clone === 'string' && ask.clone.trim()) ask = { ...ask, ...(await referenceOf(ask.clone.trim(), before)) };
+        // Notes on a film are read against what that film was made of, which is written beside it. A film made
+        // before films kept a record has nothing to remake from, and the founder is told so rather than handed a new film.
+        if (typeof ask.edit === 'string' && ask.edit.trim()) {
+          const film = ask.edit.trim().replace(/^\/?api\/files\//, '');
+          const bytes = await deps.store.readFileBytes(`${film.replace(/\.[^./]+$/, '')}.film.json`).catch(() => null);
+          let record: unknown = null;
+          try { record = bytes ? JSON.parse(bytes.toString('utf8')) : null; } catch { record = null; }
+          if (!isRecord(record)) throw new Error(`${film.split('/').pop()} has no record of what it was made of, so notes cannot remake it; a film made from now on has one`);
+          ask = { ...ask, edit: film, record };
+        }
         const failures: string[] = [];
         for (const maker of makers) {
           const hint = maker.ready(ask);
@@ -165,7 +190,7 @@ export function createMedia(deps: { dir: string; store: Store; makers: Makers; n
             // Which card asked is part of the asking: a video studio reads what is wired to it and what is dropped on it.
             const piece = await maker.make({ ...ask, cardId: card.id }, { report: line, signal: stop.signal });
             const at = now();
-            const made: MediaResult = { path: await deps.store.saveFileBytes(nameOf(ask, at, piece.ext), piece.bytes), prompt: ask.prompt, at };
+            const made: MediaResult = { path: await deps.store.saveFileBytes(piece.name ? freeName(piece.name, piece.ext) : nameOf(ask, at, piece.ext), piece.bytes), prompt: ask.prompt, at };
             if (piece.by) made.by = piece.by;
             if (piece.poster) made.poster = await deps.store.saveFileBytes(nameOf(ask, at + 1, piece.poster.ext), piece.poster.bytes);
             if (piece.credit) made.music = piece.credit;
@@ -174,6 +199,12 @@ export function createMedia(deps: { dir: string; store: Store; makers: Makers; n
             // A project that could not be written costs the founder nothing but the project: the film stands.
             const mlt = piece.edit ? await saveEdit(made.path, piece.edit).catch(() => null) : null;
             if (mlt) made.mlt = mlt;
+            // The record goes beside the film under the film's own name, so the next version finds it from the path.
+            if (piece.record) {
+              const record = piece.record;
+              made.film = await deps.store.saveFileBytes(`${made.path.replace(/\.[^./]+$/, '')}.film.json`, Buffer.from(JSON.stringify(record, null, 1))).catch(() => undefined);
+              if (record.from) made.edited = { from: record.from, root: record.root ?? record.from, version: record.version, notes: record.notes ?? ask.prompt };
+            }
             // What the founder dropped on the card while it was working is still theirs: read the card again, not `before`.
             const latest = await read(card.id);
             save(card.id, { ...latest, state: 'idle', problem: undefined, log: [...log, `done · ${maker.name}`], results: [made, ...before.results].slice(0, KEEP) });

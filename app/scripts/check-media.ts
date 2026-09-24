@@ -38,6 +38,41 @@ try {
     { prompt: film.title, spec: film, format: 'wide', look: 'clean', narrate: false }, (piece) => `an mp4 · ${size(piece)}${piece.poster ? ' · with a poster frame' : ''}`
       + `${piece.edit ? ` · with an .mlt of ${piece.edit.film.shots.length} shots and ${piece.edit.files.length} parts` : ''}`);
 
+  // Notes on a finished film. A three-scene film is made with this machine's own voice and a one-pixel picture
+  // maker (nothing is spent anywhere), its record and parts are written where a card would write them, and the
+  // notes are read and acted on: one shot dropped, one picture swapped, one line said again, the rest kept.
+  {
+    const { fakeImages } = await import('../server/media/image.ts');
+    const { mkdir, readFile, writeFile } = await import('node:fs/promises');
+    const files = join(dir, 'files');
+    const voice = voiceMakers(resolve(import.meta.dirname, '../.cache/voice')).filter((one) => !one.optIn).find((one) => !one.ready());
+    const maker = hyperframesVideos({
+      dir, images: fakeImages, voices: voice, think: async () => { throw new Error('the notes are plain, so nobody is asked'); },
+      readFile: (path: string) => readFile(join(files, path)).catch(() => null), fileOf: (path: string) => join(files, path),
+    });
+    const spec = { title: 'An edit', scenes: [
+      { layout: 'picture' as const, image_prompt: 'a paper plane on a desk', text: 'Notes', say: 'Notes on a finished film.' },
+      { layout: 'statement' as const, text: 'Only what changed', say: 'Only what the notes touch is made again.' },
+      { layout: 'outro' as const, text: 'It renders.', say: 'And then it renders.' },
+    ] };
+    const notes = 'drop shot 2, swap the picture in shot 1 for a folded paper boat, shot 3 should say "It renders again."';
+    const started = Date.now();
+    try {
+      const film = await maker.make({ prompt: spec.title, spec, format: 'wide', look: 'clean', narrate: !!voice, music: 'none' }, { report: () => {} });
+      if (!film.record || !film.edit) throw new Error('the film came back without a record of what it was made of');
+      await mkdir(join(files, 'media', 'check.parts'), { recursive: true });
+      await writeFile(join(files, 'media', 'check.mp4'), film.bytes);
+      for (const part of film.edit.files) await writeFile(join(files, 'media', 'check.parts', part.name), part.bytes);
+      const madeIn = ((Date.now() - started) / 1000).toFixed(1);
+      console.log('Edit film OK', `${film.record.scenes.length} scenes · ${film.edit.files.length} parts · ${film.record.narrator ? 'narrated' : 'silent (no voice here)'} · ${madeIn}s`);
+      const lines: string[] = [];
+      const again = Date.now();
+      const remade = await maker.make({ prompt: notes, edit: 'media/check.mp4', record: film.record }, { report: (line) => lines.push(line) });
+      console.log('Edit OK', `${remade.name?.split('/').pop()}.mp4 · ${size(remade)} · ${remade.record?.scenes.length} scenes · ${((Date.now() - again) / 1000).toFixed(1)}s`);
+      for (const line of lines.filter((one) => /^(the notes|kept|saved as|I could not|not done|shot \d)/.test(one))) console.log('  ·', line);
+    } catch (error) { console.log('Edit ERROR', String((error as Error).message).slice(0, 300)); }
+  }
+
   // The bed under a film, both ways it can arrive. First the real one: a live search of the public domain and a real
   // download into the cache beside the voice model, which is where a founder's own run would put it. Then the one
   // written here, with the search switched off, which is what happens on a plane and must never fail.

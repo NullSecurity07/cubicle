@@ -126,7 +126,7 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
     : card.kind === 'voicegen' ? '- A voice studio. Say something out loud with generate_voice when the founder asks for a recording, a voiceover or a read-aloud, writing the words exactly as they should be spoken. What you make appears on the card for the founder to hear.'
     // The two sentences about pictures are only true for somebody who has an image studio as well: a person is never
     // told about a tool they were not offered.
-    : card.kind === 'videogen' ? '- A video studio. Make a short narrated film with generate_video when the founder asks for one: you write the whole storyboard, a title and four to seven scenes, and the machine draws, narrates and renders it. It takes a few minutes, so plan the film before you call it once.'
+    : card.kind === 'videogen' ? '- A video studio. Make a short narrated film with generate_video when the founder asks for one: you write the whole storyboard, a title and four to seven scenes, and the machine draws, narrates and renders it. It takes a few minutes, so plan the film before you call it once. Notes on a finished film (drop a shot, trim one, a new picture or line, faster, another look) go to edit_video, which keeps everything the notes do not touch.'
       + (mineCards.some((one) => one.kind === 'imagegen')
         ? ' To put a picture in a film, draw it first with generate_image and pass the path it hands back in generate_video\'s "images"; a picture with somebody in it becomes the person on camera.'
           + ' Pictures already in an image studio wired to you are used without being asked for, so there is nothing to do when the founder has drawn one already.'

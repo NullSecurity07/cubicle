@@ -32,6 +32,8 @@ import {
 } from './visuals.ts';
 import { isDraft, makingWords, secondsEach } from '../../shared/film-time.ts';
 import { filmMemory, storyboardKey, subjectKey, type KeptSubject } from './remembered.ts';
+import { pictureHash, type FilmRecord, type RecordPicture } from './edits.ts';
+import { partName, recordOf } from './film-record.ts';
 import { sourcesOf } from './grounding.ts';
 import { readProject, VIEWPORTS } from './sources.ts';
 import {
@@ -112,6 +114,9 @@ export type VideoAsk = {
   roomId?: string;
   // Pictures the caller named outright — paths a person got back from drawing one, or the word "latest".
   images?: string[];
+  // Notes on a finished film: the film's path in the shared files, and the record kept beside it. The notes
+  // themselves are `prompt`.
+  edit?: string; record?: FilmRecord;
 };
 
 // The other half of the studio: what it can read, what it can photograph, what it can film with.
@@ -371,6 +376,11 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
     ready: () => (chromePath() ? null : SETUP_HINT),
     async make(ask, { report, signal }): Promise<Piece> {
       const asked = ask as VideoAsk;
+      // Notes on a film already made are a remake of that film, not a new one: only what they touch is made again.
+      if (typeof asked.edit === 'string' && asked.edit.trim()) {
+        const { remakeVideo } = await import('./remake.ts');
+        return remakeVideo(deps, { film: asked.edit.trim(), notes: asked.prompt, record: asked.record }, { report, signal }, { bin, vendor });
+      }
       const at = join(deps.dir, '.video', Date.now().toString(36));
       try {
         await mkdir(join(at, 'assets'), { recursive: true });
@@ -464,10 +474,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         const captions = understanding.captions;
         const sfx = asked.sfx !== false;
 
-        // The fonts this pack sets its words in, and rough.js when the pack draws by hand.
-        for (const file of [...new Set(PACK[pack].fonts.map((one) => one.file))]) await copyFile(join(vendor, file), join(at, 'vendor', file));
-        await copyFile(join(vendor, 'gsap.min.js'), join(at, 'vendor', 'gsap.min.js'));
-        if (pack === 'sketch') await copyFile(join(vendor, 'rough.js'), join(at, 'vendor', 'rough.js'));
+        await stageVendor(vendor, at, pack);
 
         const brand = pack === 'brand' ? material.brand : undefined;
         if (pack === 'brand' && !brand) report('no product colours were found, so the film is set in the clean look');
@@ -779,6 +786,8 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // What looking at the pictures found, said once a kind rather than once a picture.
         const looked = new Set<string>();
         let redrawn = 0;
+        // What made every picture in the film, so a note on it later knows which ones it can keep.
+        const madeFrom = new Map<string, RecordPicture>();
         deps.sight?.warm();
         let pending = 0;
         const fromMaker = (line: string) => {
@@ -846,6 +855,9 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
               // be held down for the words on it to be read is measured off the picture itself, where the words
               // really sit — so a white wall gets a wash and a dark doorway gets almost nothing. A graded pack
               // that has come back too dark to see a subject in is lifted rather than ungraded.
+            madeFrom.set(file, file.startsWith('stock-')
+              ? { kind: 'stock', hash: pictureHash(visual.subject, '', shape), subject: visual.subject }
+              : { kind: 'drawn', hash: pictureHash(visual.subject, bible, shape), subject: visual.subject });
             const path = join(at, 'assets', file);
             // A graded look over a picture that came back dark is how "dim and murky" happens. The shadows are
             // raised in the file itself, before anything measures it, so the scrim is solved against the picture
@@ -1123,37 +1135,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           title: spec.title, shape, look: pack === 'brand' && !brand ? 'clean' : pack, shots: cut, pace, captions, brand,
           bed: music, cues, beats, voice, words, keywords, quiet,
         };
-        await writeFile(join(at, 'index.html'), composition(film));
-        await writeFile(join(at, 'hyperframes.json'), projectFile);
-
-        // A finding here is worth saying out loud, but it is not worth withholding the film over: render either way.
-        report('checking the composition…');
-        const checked = await run(bin, ['check', '.'], at, () => {}, signal);
-        // Say what it disliked, not how many things it disliked: the lint's own line names the element and the reason.
-        if (checked.code !== 0) {
-          const found = checked.out.split('\n').map((line) => line.trim()).find((line) => line.startsWith('✗'))
-            ?? checked.out.match(/^.*(error|warning|finding).*$/im)?.[0]?.trim() ?? 'see the render';
-          report(`the check was not happy: ${found.replace(/^✗\s*/, '').slice(0, 200)}`);
-        }
-
-        report(`rendering ${Math.round(total)} seconds…`);
-        let last = 0;
-        const rendered = await run(bin, ['render', '.', '--no-browser-gpu', '--quiet', ...(draft ? ['--quality', 'draft'] : []), '-o', 'out.mp4'], at, (line) => {
-          // The renderer talks a lot; a line a second is enough for the founder to see it moving.
-          if (!line || Date.now() - last < 1000) return;
-          last = Date.now();
-          report(`rendering · ${line.slice(0, 120)}`);
-        }, signal);
-        if (signal?.aborted) throw new Error('stopped');
-        if (rendered.code !== 0) throw new Error(`the render stopped: ${(rendered.out.trim().split('\n').filter(Boolean).at(-1) ?? 'no reason given').slice(0, 200)}`);
-        const bytes = await readFile(join(at, 'out.mp4'));
-
-        // One frame out of the opening scene stands in for the film wherever it cannot be played.
-        report('taking the poster frame…');
-        let poster: Piece['poster'];
-        await run(bin, ['snapshot', '.', '--at', (cut[0].seconds * 0.6).toFixed(2), '--no-end', '--describe=false', '-o', 'poster'], at, () => {}, signal);
-        const shot = (await readdir(join(at, 'poster')).catch(() => [])).find((name) => name.endsWith('.png'));
-        if (shot) poster = { ext: 'png', bytes: await readFile(join(at, 'poster', shot)) };
+        const { bytes, poster } = await renderProject(bin, at, film, { draft, report, signal });
         // A film read in a non-commercial voice says so beside itself, with the music's credit, so the terms go
         // wherever the file goes.
         const terms = voiceTerms ? [
@@ -1163,7 +1145,39 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // A finished film goes out with the same film laid out as tracks, for a founder who wants to move one cut by
         // hand. A draft does not: it is a film to look at, not one to finish.
         const handEdit = draft ? undefined : await editPlan(film, at).catch(() => undefined);
-        return { ext: 'mp4', bytes, poster, credit, ...(terms ? { noncommercial: true, credits: terms } : {}), ...(handEdit ? { edit: handEdit } : {}) };
+        // …and with a record of what it was made of, so notes on it remake only what they touch. The pictures the
+        // founder handed over and the moving shots are theirs or were costly, and are never made again.
+        let record: FilmRecord | undefined;
+        if (handEdit) {
+          for (const [index, shot] of shots.entries()) {
+            if (shot.image && !madeFrom.has(shot.image)) madeFrom.set(shot.image, { kind: 'given', hash: `given:${shot.image}` });
+            if (shot.video) madeFrom.set(shot.video, { kind: 'video', hash: `video:${index}:${shot.video}` });
+          }
+          const bedSource = bedFile ? `bed-source${extname(bedFile).toLowerCase() || '.wav'}` : '';
+          record = recordOf({
+            title: spec.title, spec: { ...spec, scenes: shots.map((one) => one.scene) }, shape, look: film.look, pace, captions, sfx, music: mood, bible,
+            shots: edit.shots.map((one, order) => ({ ...cut[order], scene: one.scene, take: one.take, seconds: cut[order].seconds })),
+            narrator: voice && saying ? { voice: narrator.id, ...(omni ? { engine: OMNI_ENGINE, design: asked.design } : {}), file: voice.file, seconds: voice.seconds } : undefined,
+            words, pictures: Object.fromEntries(madeFrom),
+            bed: bedSource && music ? { source: bedSource, mood, own: !!bed, ...(credit ? { credit } : {}) } : undefined,
+            brand,
+          });
+          // What the record names and the hand-editable export does not carry: the planes a still was cut into, and
+          // the bed before it was ducked under this narration.
+          const carried = new Set(handEdit.files.map((one) => one.name));
+          const extra = [...cut.flatMap((one) => (one.plies ? [one.plies.back, one.plies.mid, one.plies.fore] : [])), ...(voice ? [voice.file] : [])];
+          for (const name of extra) {
+            const safe = partName(name);
+            if (!safe || carried.has(safe)) continue;
+            const read = await readFile(join(at, 'assets', name)).catch(() => null);
+            if (read) { handEdit.files.push({ name: safe, bytes: read }); carried.add(safe); }
+          }
+          if (bedSource) {
+            const read = await readFile(bedFile).catch(() => null);
+            if (read) handEdit.files.push({ name: bedSource, bytes: read }); else record.bed = undefined;
+          }
+        }
+        return { ext: 'mp4', bytes, poster, credit, ...(terms ? { noncommercial: true, credits: terms } : {}), ...(handEdit ? { edit: handEdit } : {}), ...(record ? { record } : {}) };
       } finally {
         // The project a film was rendered from is thrown away, because it is a copy of everything the founder
         // wired plus a few megabytes of pictures. When something is wrong with a finished film the only way to
@@ -1174,6 +1188,52 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
       }
     },
   };
+}
+
+// The fonts a look sets its words in, the animation library, and rough.js when the look draws by hand.
+export async function stageVendor(vendor: string, at: string, pack: Pack): Promise<void> {
+  for (const file of [...new Set(PACK[pack].fonts.map((one) => one.file))]) await copyFile(join(vendor, file), join(at, 'vendor', file));
+  await copyFile(join(vendor, 'gsap.min.js'), join(at, 'vendor', 'gsap.min.js'));
+  if (pack === 'sketch') await copyFile(join(vendor, 'rough.js'), join(at, 'vendor', 'rough.js'));
+}
+
+// The composition written, checked, rendered and photographed for its poster. The same for a film and for a film
+// remade from notes, because the page is the cheap part: it is the pictures and the voice that cost.
+export async function renderProject(bin: string, at: string, film: Film, help: { draft?: boolean; report: (line: string) => void; signal?: AbortSignal }): Promise<{ bytes: Buffer; poster?: Piece['poster'] }> {
+  const { report, signal, draft } = help;
+  await writeFile(join(at, 'index.html'), composition(film));
+  await writeFile(join(at, 'hyperframes.json'), projectFile);
+
+  // A finding here is worth saying out loud, but it is not worth withholding the film over: render either way.
+  report('checking the composition…');
+  const checked = await run(bin, ['check', '.'], at, () => {}, signal);
+  // Say what it disliked, not how many things it disliked: the lint's own line names the element and the reason.
+  if (checked.code !== 0) {
+    const found = checked.out.split('\n').map((line) => line.trim()).find((line) => line.startsWith('✗'))
+      ?? checked.out.match(/^.*(error|warning|finding).*$/im)?.[0]?.trim() ?? 'see the render';
+    report(`the check was not happy: ${found.replace(/^✗\s*/, '').slice(0, 200)}`);
+  }
+
+  const total = film.shots.reduce((sum, one) => sum + one.seconds, 0);
+  report(`rendering ${Math.round(total)} seconds…`);
+  let last = 0;
+  const rendered = await run(bin, ['render', '.', '--no-browser-gpu', '--quiet', ...(draft ? ['--quality', 'draft'] : []), '-o', 'out.mp4'], at, (line) => {
+    // The renderer talks a lot; a line a second is enough for the founder to see it moving.
+    if (!line || Date.now() - last < 1000) return;
+    last = Date.now();
+    report(`rendering · ${line.slice(0, 120)}`);
+  }, signal);
+  if (signal?.aborted) throw new Error('stopped');
+  if (rendered.code !== 0) throw new Error(`the render stopped: ${(rendered.out.trim().split('\n').filter(Boolean).at(-1) ?? 'no reason given').slice(0, 200)}`);
+  const bytes = await readFile(join(at, 'out.mp4'));
+
+  // One frame out of the opening scene stands in for the film wherever it cannot be played.
+  report('taking the poster frame…');
+  let poster: Piece['poster'];
+  await run(bin, ['snapshot', '.', '--at', ((film.shots[0]?.seconds ?? 1) * 0.6).toFixed(2), '--no-end', '--describe=false', '-o', 'poster'], at, () => {}, signal);
+  const shot = (await readdir(join(at, 'poster')).catch(() => [])).find((name) => name.endsWith('.png'));
+  if (shot) poster = { ext: 'png', bytes: await readFile(join(at, 'poster', shot)) };
+  return { bytes, poster };
 }
 
 // The film as an editor would lay it out, and the files it needs beside it: every picture and moving picture a shot
@@ -1245,7 +1305,23 @@ export const fakeVideos: Maker = {
   ready: () => null,
   async make(ask, { report }) {
     const asked = ask as VideoAsk;
-    const spec = asked.spec ?? { title: asked.prompt.slice(0, 60), scenes: [{ layout: 'title' as const, heading: asked.prompt.slice(0, 60) }] };
+    // Notes on a fake film are read and applied for real; only the second of colour stands in for the render.
+    if (typeof asked.edit === 'string' && asked.record) {
+      const { fakeRemake } = await import('./remake.ts');
+      const remade = await fakeRemake({ film: asked.edit, notes: asked.prompt, record: asked.record }, report);
+      const title = remade.record?.title ?? 'A film';
+      return {
+        ext: 'mp4', bytes: Buffer.from(CLIP, 'base64'), poster: { ext: 'png', bytes: Buffer.from(POSTER, 'base64') }, ...remade,
+        edit: { film: { title, width: 1280, height: 720, fps: FPS, shots: [{ seconds: 1, ground: PACK.clean.paint.ground, words: title }] }, files: [] },
+      };
+    }
+    const title = asked.prompt.slice(0, 60);
+    // Three scenes, so a note can drop one and leave a film.
+    const spec = asked.spec ?? { title, scenes: [
+      { layout: 'title' as const, heading: title, say: `This is ${title}.` },
+      { layout: 'statement' as const, text: 'What it does', say: 'Here is what it does for you.' },
+      { layout: 'outro' as const, text: 'Thanks for watching', say: 'Thanks for watching.' },
+    ] };
     report(`reading the brief: ${asked.prompt.slice(0, 60)}`);
     // What it was handed, said the way the real one says it, so a run without models still shows the founder that
     // the picture they drew reached the film.
@@ -1257,9 +1333,29 @@ export const fakeVideos: Maker = {
       film: { title: spec.title, width: 1280, height: 720, fps: FPS, shots: [{ seconds: 1, ground: PACK.clean.paint.ground, words: spec.title }] },
       files: [],
     };
-    return { ext: 'mp4', bytes: Buffer.from(CLIP, 'base64'), poster: { ext: 'png', bytes: Buffer.from(POSTER, 'base64') }, ...(edit ? { edit } : {}) };
+    return { ext: 'mp4', bytes: Buffer.from(CLIP, 'base64'), poster: { ext: 'png', bytes: Buffer.from(POSTER, 'base64') }, ...(edit ? { edit, record: fakeRecord(spec, asked.narrate !== false) } : {}) };
   },
 };
+
+// What a fake film remembers: two seconds a scene, a picture a scene, and the lines said one word a third of a
+// second, so notes on it are read and counted exactly as the real studio would read and count them.
+function fakeRecord(spec: Spec, narrate: boolean): FilmRecord {
+  const words: Word[] = [];
+  let clock = 0;
+  const shots = spec.scenes.map((scene, index) => {
+    const said = (scene.say ?? '').split(/\s+/).filter(Boolean);
+    const seconds = Math.max(2, said.length * 0.34 + 0.6);
+    if (narrate) said.forEach((word, at) => words.push({ word, at: Math.round((clock + 0.3 + at * 0.34) * 1000) / 1000, seconds: 0.3 }));
+    clock += seconds;
+    return { scene: index, take: 0, seconds, bg: `frame-${index}-0.png` };
+  });
+  const bible = bibleFor({ pack: 'clean' } as Understanding);
+  return recordOf({
+    title: spec.title, spec, shape: 'wide', look: 'clean', pace: 'calm', captions: false, sfx: true, music: 'none', bible, shots,
+    narrator: narrate && words.length ? { voice: 'af_heart', file: 'say.wav', seconds: clock } : undefined, words,
+    pictures: Object.fromEntries(shots.map((one) => [one.bg, { kind: 'drawn' as const, hash: pictureHash(spec.scenes[one.scene].say ?? '', bible, 'wide'), subject: spec.scenes[one.scene].say ?? '' }])),
+  });
+}
 
 // The bed the tests and the fake-model runs get: the real synthesiser, four seconds of it.
 export const fakeMusicBed: Music = fakeMusic;

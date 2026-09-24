@@ -436,6 +436,18 @@ div.msg--user { position: relative; white-space: pre-wrap; }
 .studio__strip button.is-shown { border-color: rgba(78, 140, 255, 0.8); }
 .studio__strip img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .studio__done { flex: none; display: flex; gap: 12px; margin: 8px 12px 0; }
+/* Notes on a finished film, and the versions they made. The notes box sits under the film it is about. */
+.studio__notes { flex: none; display: flex; align-items: flex-end; gap: 8px; margin: 8px 12px 0; }
+.studio__notes textarea { flex: 1; min-width: 0; border: 1px solid var(--card-border); border-radius: 9px; padding: 6px 9px; outline: 0; resize: none; field-sizing: content; max-height: 72px; background: rgba(0, 0, 0, 0.25); color: var(--text); font: inherit; font-size: 12px; line-height: 1.45; }
+.studio__notes textarea:focus { border-color: rgba(78, 140, 255, 0.7); }
+.studio__notes button { flex: none; border: 0; border-radius: 8px; padding: 6px 14px; font: inherit; font-size: 12px; font-weight: 550; color: var(--text); background: rgba(255, 255, 255, 0.1); cursor: pointer; }
+.studio__notes button:hover { background: rgba(255, 255, 255, 0.16); }
+.studio__notes button:disabled { opacity: 0.35; cursor: default; }
+.studio__versions { flex: none; display: flex; flex-direction: column; gap: 3px; margin: 8px 10px 0; max-height: 84px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
+.studio__versions button { flex: none; border: 0; border-left: 2px solid transparent; border-radius: 0 6px 6px 0; padding: 4px 8px; background: rgba(255, 255, 255, 0.04); color: var(--muted); font: inherit; font-size: 11.5px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.studio__versions button:hover { background: rgba(255, 255, 255, 0.08); }
+.studio__versions button.is-shown { border-left-color: var(--accent); color: var(--text); }
+.studio__versions b { font-weight: 600; margin-right: 4px; color: var(--text); }
 /* Which machine drew it. A founder who waited a minute is owed the reason, and one who waited four seconds is owed
    the knowledge that somebody else's quota paid for it. */
 .studio__by { font-size: 11px; color: var(--muted); margin-right: auto; }

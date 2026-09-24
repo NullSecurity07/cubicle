@@ -31,6 +31,7 @@ const NEEDS: Record<string, (reach: Reach, tool: Tool) => boolean> = {
   generate_image: (reach) => reach.kinds.has('imagegen'),
   generate_voice: (reach) => reach.kinds.has('voicegen'),
   generate_video: (reach) => reach.kinds.has('videogen'),
+  edit_video: (reach) => reach.kinds.has('videogen'),
   propose_task: (reach) => reach.kinds.has('board'),
   list_tasks: (reach) => reach.kinds.has('board'),
   ask_person: (reach) => reach.colleagues,
