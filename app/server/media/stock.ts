@@ -56,6 +56,13 @@ export type Stock = {
 // A photographer's name and the page their picture lives on, said the way a credit is said.
 export const creditOf = (one: Found): string => `${one.what || 'photograph'} by ${one.by} on Pexels — ${one.page}`;
 
+// The photographs a film shows, one line each, said once however many shots share one. It goes in the credits file
+// beside the film and beside every version remade from it.
+export const photoCredits = (credits: (string | undefined)[]): string => {
+  const each = [...new Set(credits.filter((one): one is string => !!one))];
+  return each.length ? [`Photographs (Pexels, free to use: ${LICENCE}):`, ...each.map((one) => `- ${one}`)].join('\n') : '';
+};
+
 // The words that mean there is somebody in the picture. Read off what the photographer wrote, because that is the
 // only description that exists without looking at the picture, and it is usually a fair one.
 const SOMEBODY = /\b(man|woman|men|women|person|people|boy|girl|child|children|guy|lady|couple|family|crowd|portrait|face|hands?|model|worker|student|teacher|doctor|nurse|chef|group|team|he|she|his|her)\b/i;

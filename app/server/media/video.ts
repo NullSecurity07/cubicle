@@ -10,8 +10,9 @@ import { fakeMusic, type Credit, type Music, type Mood as MusicMood } from './mu
 import { noClips, type Clips } from './clips.ts';
 import { headlineOf, mendShots, repair, trimTo, type Want } from './critic.ts';
 import { lensPhrase } from './moves.ts';
-import { liftFor, lighten, meanLight, scrimFor } from './contrast.ts';
-import { facesLens, fault, isLettered, type Sight } from './sight.ts';
+import { finishPicture, looking } from './finish.ts';
+import { hands } from './turns.ts';
+import type { Sight } from './sight.ts';
 import {
   bibleFor, direct, faceIn, layoutsFor, narratorWanted, onCamera, photograph, readBrief, tellOf, understandingOf,
   type Asked, type Material, type Understanding,
@@ -26,9 +27,9 @@ import {
   AI_LAYOUTS, content, isPurpose, MAX_AI, MAX_LOCAL_AI, PURPOSE, PURPOSES,
   crowdsCaptions, fallbackOf, saysWhatItShows, withinCaps, type Spec,
 } from './spec.ts';
-import { broll, type Stock } from './stock.ts';
+import { broll, creditOf, photoCredits, type Stock } from './stock.ts';
 import {
-  afforded, drawnAs, lineUnder, redrawnFor, shareOut, shotKey, slotsFor, type Slot, type Visual,
+  afforded, drawnAs, lineUnder, shareOut, shotKey, slotsFor, type Slot, type Visual,
 } from './visuals.ts';
 import { isDraft, makingWords, secondsEach } from '../../shared/film-time.ts';
 import { filmMemory, storyboardKey, subjectKey, type KeptSubject } from './remembered.ts';
@@ -212,23 +213,8 @@ export function estimate(ask: { scenes: number; seconds: number; pictures: numbe
   return makingWords(ask);
 }
 
-// A few slow things at a time, for work that turns up as it is found rather than as one list. The pictures of a
-// film start being drawn while its narration is still being listened back to, and a few more may be asked for
-// once the cut is measured; both lots go through the same pair of hands.
-export function hands(most: number): <T>(job: () => Promise<T>) => Promise<T> {
-  let busy = 0;
-  const waiting: (() => void)[] = [];
-  return async (job) => {
-    // A place is handed straight to whoever is waiting rather than given up and taken again, so nobody who
-    // arrives in between can slip into it.
-    if (busy >= most) await new Promise<void>((go) => waiting.push(go));
-    else busy += 1;
-    try { return await job(); } finally {
-      const next = waiting.shift();
-      if (next) next(); else busy -= 1;
-    }
-  };
-}
+// Three hands at a time for pictures: `turns.ts`, which the remake uses too.
+export { hands } from './turns.ts';
 
 // The renderer: our own scenes written as one HTML page, which headless Chrome steps through frame by frame and ffmpeg
 // turns into an MP4. Nothing leaves this machine except what the founder wired to the card, and the same storyboard
@@ -783,9 +769,8 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // the rest of the makers' chatter, so a film quietly took eight minutes after promising two. Said once,
         // with the new wait beside it.
         const switched = new Set<string>();
-        // What looking at the pictures found, said once a kind rather than once a picture.
-        const looked = new Set<string>();
-        let redrawn = 0;
+        // What looking at the pictures found, said once a kind rather than once a picture, and how many were drawn again.
+        const lookingAt = looking();
         // What made every picture in the film, so a note on it later knows which ones it can keep.
         const madeFrom = new Map<string, RecordPicture>();
         deps.sight?.warm();
@@ -809,6 +794,9 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           const scene = spec.scenes[visual.scene];
           const name = `${visual.scene}-${visual.take}`;
           let file = '';
+          // Who took a photograph, said the way a credit is said. The licence does not ask for it; knowing where a
+          // picture in a finished film came from is still worth a line beside the film.
+          let credit: string | undefined;
           try {
               // A real photograph of a real thing, from somebody who took one. People in stock are b-roll and
               // nothing else: never the film's own speaker, and never beside a claim about a named product.
@@ -821,8 +809,9 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
                   const piece = await deps.stock.get(found[0], stop);
                   file = `stock-${name}.${piece.ext}`;
                   await writeFile(join(at, 'assets', file), piece.bytes);
+                  credit = creditOf(found[0]);
                 }
-              } catch { file = ''; }
+              } catch { file = ''; credit = undefined; }
             }
             if (!file) {
               const piece = await drawing.make({ prompt: drawnAs(visual, bible), shape, ...(draft ? { size: 'draft' } : {}) }, { report: fromMaker, signal: stop });
@@ -830,49 +819,24 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
               file = `frame-${name}.${piece.ext}`;
               await writeFile(join(at, 'assets', file), piece.bytes);
             }
-              // The picture is looked at before it is used. Every rule this studio has about a picture — nobody
-              // staring down the lens, no writing — was only ever applied to the sentence the picture was asked
-              // for with, and a picture model does what it likes: a proof film came back with two strangers
-              // looking straight at the viewer and a sheet of handwriting. One that breaks a rule is drawn once
-              // more, as a place rather than a person and from further off, and the better of the two is kept.
-            const seen = await deps.sight?.look(join(at, 'assets', file)).catch(() => null);
-            // Twice a film at most: a redraw here is most of a minute, and a studio that doubts every picture it
-            // draws is a studio that takes twice as long to make the same film.
-            if (fault(seen) > 0 && !stop.aborted && redrawn < 2) {
-              redrawn += 1;
-              const why = facesLens(seen) ? 'somebody looking straight at the camera' : 'writing on it';
-              const again = redrawnFor(visual, { face: facesLens(seen) });
-              try {
+            // Looked at, drawn again once if it broke a rule, lifted, cut into planes and measured for its scrim:
+            // the same steps a remade film's pictures go through, in `finish.ts`.
+            const done = await finishPicture({
+              dir: join(at, 'assets'), file, visual, scene, pack, paint, sight: deps.sight, state: lookingAt, stop, report,
+              redraw: async (again) => {
                 const piece = await drawing.make({ prompt: drawnAs(again, bible), shape, ...(draft ? { size: 'draft' } : {}) }, { report: fromMaker, signal: stop });
                 const second = `frame-${name}-b.${piece.ext}`;
                 await writeFile(join(at, 'assets', second), piece.bytes);
-                const better = fault(await deps.sight?.look(join(at, 'assets', second)).catch(() => null)) < fault(seen);
-                if (better) file = second;
-                if (!looked.has(why)) { looked.add(why); report(`a picture came back with ${why}, so it was drawn again${isLettered(seen) && facesLens(seen) ? ' without either' : ''}`); }
-              } catch { /* the first picture stands: a film with a face in it beats a film with a hole in it */ }
-            }
-              // And now the one thing nobody was doing: looking at the picture that came back. How hard it has to
-              // be held down for the words on it to be read is measured off the picture itself, where the words
-              // really sit — so a white wall gets a wash and a dark doorway gets almost nothing. A graded pack
-              // that has come back too dark to see a subject in is lifted rather than ungraded.
-            madeFrom.set(file, file.startsWith('stock-')
-              ? { kind: 'stock', hash: pictureHash(visual.subject, '', shape), subject: visual.subject }
-              : { kind: 'drawn', hash: pictureHash(visual.subject, bible, shape), subject: visual.subject });
-            const path = join(at, 'assets', file);
-            // A graded look over a picture that came back dark is how "dim and murky" happens. The shadows are
-            // raised in the file itself, before anything measures it, so the scrim is solved against the picture
-            // a viewer will really see; the gain in the page is only for a machine that could not rewrite it.
-            const raised = PACK[pack].format?.grade ? await lighten(path).catch(() => null) : null;
-            // …and where the look moves through its stills, the still is cut into the planes it moves.
-            const plies = PACK[pack].parallax ? await deps.sight?.plies(path).catch(() => null) : null;
-            const big = scene.layout === 'hook' || scene.layout === 'stat' || scene.layout === 'title';
-            // The scrim is solved for the *weakest* colour on the frame rather than the strongest. A line of
-            // support copy is set in the quiet tone, and a wash that clears the headline leaves that line
-            // floating — which is what "grey list text" was.
-            const hold = await scrimFor(path, visual.room === 'top' ? 'top' : 'foot', paint.quiet, paint.ground,
-              { big, floor: PACK[pack].scrim * 0.35 }).catch(() => null);
-            const light = PACK[pack].format?.grade && !raised ? await meanLight(path).catch(() => null) : null;
-            return { file, hold: hold ?? undefined, lift: light === null ? undefined : liftFor(light), plies: plies ?? undefined };
+                return second;
+              },
+            });
+            // What made the picture that was kept: the redrawn subject when the second drawing won, so a remake in a
+            // new look draws from the words that did not summon the stranger.
+            const subject = done.visual.subject;
+            madeFrom.set(done.file, done.file.startsWith('stock-')
+              ? { kind: 'stock', hash: pictureHash(subject, '', shape), subject, ...(credit ? { credit } : {}) }
+              : { kind: 'drawn', hash: pictureHash(subject, bible, shape), subject });
+            return { file: done.file, hold: done.hold, lift: done.lift, plies: done.plies };
           } catch (error) {
             // A picture nobody is waiting for any more was stopped on purpose, and is not a thing that went wrong.
             if (!stop.aborted) gone(error as Error, visual.scene);
@@ -1138,10 +1102,14 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         const { bytes, poster } = await renderProject(bin, at, film, { draft, report, signal });
         // A film read in a non-commercial voice says so beside itself, with the music's credit, so the terms go
         // wherever the file goes.
-        const terms = voiceTerms ? [
+        const nc = voiceTerms ? [
           'The narration in this film was made with OmniVoice. The film is not for commercial use.',
           '', voiceTerms.trim(), ...(credit && music ? ['', `Music: ${credit.title} by ${credit.by} · ${credit.licence} · ${credit.source}`] : []), '',
         ].join('\n') : '';
+        // Who took the photographs on screen. Pexels does not ask for a credit, but a film that carries somebody's
+        // photograph should be able to say whose it is wherever the file goes.
+        const photos = photoCredits(cut.flatMap((one) => [one.image, one.bg]).map((file) => (file ? madeFrom.get(file)?.credit : undefined)));
+        const terms = nc || photos ? [nc.trimEnd(), photos].filter(Boolean).join('\n\n') + '\n' : '';
         // A finished film goes out with the same film laid out as tracks, for a founder who wants to move one cut by
         // hand. A draft does not: it is a film to look at, not one to finish.
         const handEdit = draft ? undefined : await editPlan(film, at).catch(() => undefined);
@@ -1177,7 +1145,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
             if (read) handEdit.files.push({ name: bedSource, bytes: read }); else record.bed = undefined;
           }
         }
-        return { ext: 'mp4', bytes, poster, credit, ...(terms ? { noncommercial: true, credits: terms } : {}), ...(handEdit ? { edit: handEdit } : {}), ...(record ? { record } : {}) };
+        return { ext: 'mp4', bytes, poster, credit, ...(nc ? { noncommercial: true } : {}), ...(terms ? { credits: terms } : {}), ...(handEdit ? { edit: handEdit } : {}), ...(record ? { record } : {}) };
       } finally {
         // The project a film was rendered from is thrown away, because it is a copy of everything the founder
         // wired plus a few megabytes of pictures. When something is wrong with a finished film the only way to

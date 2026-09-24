@@ -1,7 +1,6 @@
 import { mkdir, readFile, rm, writeFile, copyFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { musicBed, SFX_DIR, sfxFile } from './audio.ts';
-import { liftFor, meanLight, scrimFor } from './contrast.ts';
 import { bibleFor, type Understanding } from './director.ts';
 import {
   applyEdits, creditsLine, lengthOf, notesToEdits, opsWords, pictureHash, reuseLine, reuseOf, versionName,
@@ -10,15 +9,19 @@ import {
 import { editFilm, cuttingFor, type Take } from './editor.ts';
 import { ffReady } from './ff.ts';
 import { atRate, joinPcm, pcmSeconds, partName, readPcm, recordOf, silence, slicePcm, wavOfPcm, type Pcm } from './film-record.ts';
+import { finishPicture, looking } from './finish.ts';
 import { fitStill } from './footage.ts';
 import { cachedImages } from './image.ts';
 import type { Piece } from './jobs.ts';
 import type { Mood as MusicMood } from './music.ts';
 import { NONCOMMERCIAL, OMNI_ENGINE } from './omnivoice.ts';
 import { content, crowdsCaptions, fallbackOf, saysWhatItShows, type Scene } from './spec.ts';
-import { FORMATS, PACE, PACK, paintOf, type Film, type Pace, type Shot } from './templates/index.ts';
+import { FORMATS, PACE, paintOf, type Film, type Pace, type Shot } from './templates/index.ts';
 import { timeWords, type Word } from './timings.ts';
 import { drawnAs, kindFor, roomFor, visualFrom, type Visual } from './visuals.ts';
+import type { Plies } from './sight.ts';
+import { photoCredits } from './stock.ts';
+import { hands } from './turns.ts';
 import { engineOf } from './voice.ts';
 import { editPlan, renderProject, stageVendor, type VideoDeps } from './video.ts';
 
@@ -219,24 +222,36 @@ export async function remakeFilm(film: { path: string; record: FilmRecord }, ops
     const pictures: Record<string, RecordPicture> = {};
     const kept = new Set<string>();
     const drawn = new Set<string>();
-    const swapped = new Map<number, string | null>();
+    const swapped = new Map<number, Promise<string | null>>();
     const told = new Set<string>();
     const tell = (line: string) => { if (!told.has(line)) { told.add(line); report(line); } };
-    const newPicture = async (index: number, take: number, order: number, old?: RecordShot): Promise<{ file: string; scrim?: number; lift?: number } | null> => {
-      const one = edited.scenes[index];
-      const scene = scenes[index];
-      // A picture the founder named: their own file, fitted to the frame once for the whole scene.
-      if (one.picture?.asset) {
-        if (!swapped.has(index)) {
-          const source = deps.fileOf?.(one.picture.asset) ?? one.picture.asset;
+    // Every picture drawn again is looked at, redrawn once if it breaks a rule, lifted and cut into planes exactly
+    // as a new film's are (`finish.ts`), and the film shares one count of redraws the way a new film does.
+    const state = looking();
+    if (drawing) deps.sight?.warm();
+    type Made = { file: string; scrim?: number; lift?: number; plies?: Plies; picture: RecordPicture };
+    // A picture the founder named: their own file, fitted to the frame once for the whole scene. A path the shared
+    // files refuse — one that climbs out of them, say — is a picture that could not be read, not a failed film.
+    const swapFor = (index: number, asset: string): Promise<string | null> => {
+      if (!swapped.has(index)) {
+        swapped.set(index, (async () => {
+          const unread = () => { tell(`${asset.split('/').pop()} could not be read, so shot ${index + 1} keeps its picture`); return null; };
+          let source: string;
+          try { source = deps.fileOf?.(asset) ?? asset; } catch { return unread(); }
           const file = `swap-${index}.png`;
           const done = await fitStill(source, join(at, 'assets', file), width, height, signal).then(() => file, () => null);
-          if (!done) tell(`${one.picture.asset.split('/').pop()} could not be read, so shot ${index + 1} keeps its picture`);
-          swapped.set(index, done);
-          if (done) pictures[done] = { kind: 'given', hash: `given:${one.picture.asset}` };
-        }
-        const file = swapped.get(index);
-        return file ? { file } : null;
+          return done ?? unread();
+        })());
+      }
+      return swapped.get(index)!;
+    };
+    const newPicture = async (index: number, take: number, order: number, old?: RecordShot): Promise<Made | null> => {
+      const one = edited.scenes[index];
+      const scene = scenes[index];
+      if (one.picture?.asset) {
+        const asset = one.picture.asset;
+        const file = await swapFor(index, asset);
+        return file ? { file, picture: { kind: 'given', hash: `given:${asset}` } } : null;
       }
       if (!drawing) { tell(`no picture maker is set up, so shot ${index + 1} keeps its picture`); return null; }
       const was = old ? [old.image, old.bg].find((file) => file && record.pictures[file]) : undefined;
@@ -250,22 +265,32 @@ export async function remakeFilm(film: { path: string; record: FilmRecord }, ops
           : visualFrom(line, index + take, new Set(content(before ?? '')));
       const visual: Visual = { at: order, scene: index, take, line, subject, kind: kindFor(order, scene.layout), room: roomFor(scene, edited.captions) };
       try {
+        if (signal?.aborted) throw new Error('stopped');
         const piece = await drawing.make({ prompt: drawnAs(visual, bible), shape }, { report: () => {}, signal });
         const file = `frame-e${index}-${take}.${piece.ext}`;
-        const path = join(at, 'assets', file);
-        await writeFile(path, piece.bytes);
-        pictures[file] = { kind: 'drawn', hash: pictureHash(subject, bible, shape), subject };
-        const big = scene.layout === 'hook' || scene.layout === 'stat' || scene.layout === 'title';
-        const scrim = await scrimFor(path, visual.room === 'top' ? 'top' : 'foot', paint.quiet, paint.ground, { big, floor: PACK[pack].scrim * 0.35 }).catch(() => null);
-        const light = PACK[pack].format?.grade ? await meanLight(path).catch(() => null) : null;
-        return { file, scrim: scrim ?? undefined, lift: light === null ? undefined : liftFor(light) };
+        await writeFile(join(at, 'assets', file), piece.bytes);
+        const done = await finishPicture({
+          dir: join(at, 'assets'), file, visual, scene, pack, paint, sight: deps.sight, state, stop: signal, report,
+          redraw: async (again) => {
+            const second = await drawing.make({ prompt: drawnAs(again, bible), shape }, { report: () => {}, signal });
+            const name = `frame-e${index}-${take}-b.${second.ext}`;
+            await writeFile(join(at, 'assets', name), second.bytes);
+            return name;
+          },
+        });
+        const drew = done.visual.subject;
+        return { file: done.file, scrim: done.hold, lift: done.lift, plies: done.plies, picture: { kind: 'drawn', hash: pictureHash(drew, bible, shape), subject: drew } };
       } catch (error) {
         tell(`shot ${index + 1} keeps its picture: ${(error as Error).message}`);
         return null;
       }
     };
 
-    const cut: Shot[] = [];
+    // Every shot is laid out in order, and the pictures it needs drawing are started as it is reached, three at a
+    // time as a new film's are: a look changed on a twenty-shot film used to redraw them one after another. The
+    // lines were said above, one at a time, because every line is transcribed into the same folder.
+    const inHand = hands(3);
+    const laid: { shot: Shot; old?: RecordShot; index: number; take: number; drawing?: Promise<Made | null> }[] = [];
     for (const [order, one] of edit.shots.entries()) {
       const index = one.scene;
       const oldShots = record.scenes[edited.scenes[index].was].shots;
@@ -279,22 +304,27 @@ export async function remakeFilm(film: { path: string; record: FilmRecord }, ops
       if (old?.voice && reuse.lines[index] === 'keep' && await bring(old.voice.file)) shot.voice = old.voice;
       const oldPicture = old?.image ?? old?.bg;
       const own = oldPicture && record.pictures[oldPicture]?.kind === 'given' && !!old?.image && !FILLS.has(scenes[index].layout);
+      const wants = reuse.pictures[index] === 'draw' && !shot.video && !own;
+      laid.push({ shot, old, index, take: one.take, ...(wants ? { drawing: inHand(() => newPicture(index, one.take, order, old)) } : {}) });
+    }
+    const cut: Shot[] = [];
+    for (const { shot, old, index, take, drawing: coming } of laid) {
       let placed = false;
-      if (reuse.pictures[index] === 'draw' && !shot.video && !own) {
-        const made = await newPicture(index, one.take, order, old);
-        if (made) {
-          if (FILLS.has(scenes[index].layout) || (!old?.bg && !old?.image && scenes[index].layout === 'picture')) shot.image = made.file; else shot.bg = made.file;
-          shot.scrim = made.scrim; shot.lift = made.lift;
-          drawn.add(made.file);
-          placed = true;
-        }
+      const made = coming ? await coming : null;
+      if (made) {
+        if (FILLS.has(scenes[index].layout) || (!old?.bg && !old?.image && scenes[index].layout === 'picture')) shot.image = made.file; else shot.bg = made.file;
+        shot.scrim = made.scrim; shot.lift = made.lift;
+        if (made.plies) shot.plies = made.plies;
+        pictures[made.file] = made.picture;
+        drawn.add(made.file);
+        placed = true;
       }
       if (!placed && old) {
         if (old.image && await bring(old.image)) { shot.image = old.image; kept.add(old.image); }
         if (old.bg && await bring(old.bg)) { shot.bg = old.bg; kept.add(old.bg); }
         shot.scrim = old.scrim;
         shot.lift = old.lift;
-        shot.bgShared = old.bgShared || old.take !== one.take;
+        shot.bgShared = old.bgShared || old.take !== take;
         if (old.plies && (await Promise.all([bring(old.plies.back), bring(old.plies.mid), bring(old.plies.fore)])).every(Boolean)) shot.plies = old.plies;
       }
       if (shot.image && record.pictures[shot.image]) pictures[shot.image] = record.pictures[shot.image];
@@ -304,6 +334,8 @@ export async function remakeFilm(film: { path: string; record: FilmRecord }, ops
       if (scenes[index].layout === 'picture' && !shot.image && !shot.bg) shot.scene = fallbackOf(scenes[index]);
       cut.push(shot);
     }
+    const unseen = drawn.size ? deps.sight?.why() : null;
+    if (unseen) report(unseen);
     report(reuseLine({ ...reuse, keptPictures: kept.size, drawPictures: drawn.size, keptLines, sayLines: saidLines }));
     if (signal?.aborted) throw new Error('stopped');
 
@@ -369,8 +401,9 @@ export async function remakeFilm(film: { path: string; record: FilmRecord }, ops
       }
     }
     const omni = engine === OMNI_ENGINE;
+    const photos = photoCredits(cut.flatMap((one) => [one.image, one.bg]).map((file) => (file ? pictures[file]?.credit : undefined)));
     const terms = [credits, ...(omni ? ['', `The narration was made with OmniVoice. This film is ${NONCOMMERCIAL}.`] : []),
-      ...(credit && music ? ['', `Music: ${credit.title} by ${credit.by} · ${credit.licence} · ${credit.source}`] : []), ''].join('\n');
+      ...(credit && music ? ['', `Music: ${credit.title} by ${credit.by} · ${credit.licence} · ${credit.source}`] : []), ...(photos ? ['', photos] : []), ''].join('\n');
     report(`saved as ${version.stem.split('/').pop()}.mp4 — ${credits}`);
     return {
       ext: 'mp4', bytes, poster, name: version.stem, record: next, credits: terms,

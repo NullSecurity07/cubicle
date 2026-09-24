@@ -27,7 +27,8 @@ export type RecordShot = {
 };
 // A picture in the parts folder and what made it. `hash` is the inputs it was made from, so a note that leaves those
 // alone leaves the picture alone. `subject` is the prompt without the look's own style line in front of it.
-export type RecordPicture = { hash: string; kind: 'drawn' | 'stock' | 'given' | 'video'; subject?: string };
+// `credit` is who took a stock photograph and where it lives, carried into every version's credits.
+export type RecordPicture = { hash: string; kind: 'drawn' | 'stock' | 'given' | 'video'; subject?: string; credit?: string };
 // Where a scene's line sits in the film's one reading, and every word of it on that segment's own clock.
 export type RecordLine = { from: number; to: number; words: Word[]; hash: string };
 export type RecordScene = { shots: RecordShot[]; line?: RecordLine };
