@@ -3,7 +3,7 @@ import { sliceCommands } from '../slices';
 // What the command bar can do, as plain data: the bar shows suggestions, the window carries the chosen action out.
 // `run` is the one a UI slice brings: the bar closes and calls it, without knowing what it does.
 export type Action =
-  | { do: 'add'; kind: 'room' | 'doc' | 'note' | 'link' | 'image' | 'imagegen' | 'voicegen' | 'videogen' | 'browser' | 'project' | 'board' | 'leads'; data?: Record<string, string> }
+  | { do: 'add'; kind: 'room' | 'doc' | 'note' | 'link' | 'image' | 'imagegen' | 'voicegen' | 'videogen' | 'browser' | 'project' | 'board' | 'leads' | 'source'; data?: Record<string, string> }
   | { do: 'focus' | 'jump'; id: string } | { do: 'panel'; name: 'needs' | 'messages' | 'decisions' | 'playbook' | 'library' | 'dashboard' }
   // One note out of the founder's library, opened to be read.
   | { do: 'note'; id: string }
@@ -28,7 +28,10 @@ const CARD_WORDS: [RegExp, Extract<Action, { do: 'add' }>['kind'], string, strin
   [/^browser$/, 'browser', 'Add a browser', 'add a browser'], [/^(coder|opencode|project( folder)?|code|repo)$/, 'project', 'Add a coder', 'add a coder'],
   [/^((task )?board|tasks|kanban)$/, 'board', 'Add a task board', 'add a board'],
   [/^(leads?|crm|prospects?|pipeline)$/, 'leads', 'Add a leads card', 'add leads'],
+  [/^((trusted )?(source|web ?site|site)s?( website)?)$/, 'source', 'Add a source website', 'add a source'],
 ];
+// A note from the library is picked in Notes, the way the dock's own button does it: the card is only which note.
+const LIBRARY_NOTE = /^((a )?note from (the |my )?library|library( note)?)$/;
 const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 // The bar's own commands. `words` is what, typed in full, asks for one outright; `say` is how the cheatsheet shows it.
 type Starter = Suggestion & { words?: RegExp; say?: string[] };
@@ -70,6 +73,7 @@ export function commandWords(extra: Command[] = sliceCommands()): Word[] {
     { say: ['hire a designer', 'add a person'], does: 'Add a person; with a role, the role is filled in' },
     { say: ['add a doc called …'], does: 'Add a doc, named if you name it' },
     { say: CARD_WORDS.map(([, , , say]) => say), does: 'Add that card to the stage' },
+    { say: ['add a note from the library'], does: 'Open your notes, to pick one to put on the stage' },
     { say: ['open …', 'focus …'], does: 'Bring a card forward by its name or role' },
     ...STARTERS.filter((one) => one.say).map((one) => ({ say: one.say!, does: described(one) })),
     ...fromSlices(extra),
@@ -98,6 +102,7 @@ export function suggest(input: string, known: Known, extra: Command[] = sliceCom
     const card = CARD_WORDS.find(([pattern]) => pattern.test(what));
     const doc = /^(?:doc|document|page)(?:\s+(?:called\s+|named\s+)?(.+))?$/.exec(what);
     if (card) found.push({ section: 'Do', label: card[2], action: { do: 'add', kind: card[1] } });
+    else if (LIBRARY_NOTE.test(what)) found.push({ section: 'Do', label: 'Add a note from your library', hint: 'Pick one in Notes', action: { do: 'panel', name: 'library' } });
     else if (doc) found.push({ section: 'Do', label: doc[1] ? `Add a doc called "${sentence(typed.slice(typed.length - doc[1].length))}"` : 'Add a doc', action: { do: 'add', kind: 'doc', ...(doc[1] ? { data: { title: sentence(typed.slice(typed.length - doc[1].length)) } } : {}) } });
     else if (/^(person|someone|teammate|colleague)$/.test(what)) found.push({ section: 'Do', label: 'Add a person', action: { do: 'add', kind: 'room' } });
     else found.push({ section: 'Do', label: `Add a person: ${sentence(what)}`, hint: 'You name them and write their brief', action: { do: 'add', kind: 'room', data: { role: sentence(what) } } });
