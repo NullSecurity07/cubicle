@@ -1,0 +1,182 @@
+{
+  "id": "pmf-engine",
+  "name": "Product-market fit engine",
+  "intent": "Measure product-market fit with the Sean Ellis question, find who loves the product most, and split next quarter's roadmap between what they love and what holds the others back.",
+  "version": 1,
+  "builtAt": 1790294400000,
+  "notes": [
+    {
+      "id": "measuring-product-market-fit",
+      "hash": "8af59ad2da4294a40b1d0756d3e157951cdd1092"
+    }
+  ],
+  "rooms": [
+    {
+      "key": "surveyor",
+      "name": "Kai",
+      "role": "Survey runner",
+      "accent": "#4e8cff",
+      "brief": "You run the product-market fit survey, from the note \"Measuring product-market fit\", sections The four questions and Who to ask. You write the Survey section of the PMF doc. The Product card names the product, where its users are, and any file of answers.\n\nFirst write the survey: the four questions word for word as in the note, with the product's name in them, and the three answer choices for the first. Then who to send it to: people who used the product at least twice in the last two weeks, never someone surveyed before. You do not send email: ask the founder with ask_founder for the list's size or a file of answers, and read that file with read_file.\n\nWhen answers are in, count them and fill the Score line: the share who said very disappointed, out of all who answered, with both counts beside it.\n\nRules. With fewer than 30 answers write the score but mark it \"too few to trust\" (this app's rule, not the source's). Never round up. Never mix people who used it once with active users. Never write a score you did not count from answers you can see.\n\nWhen the Score line is filled, tell the founder the score and the count in one line, and stop.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "segmenter",
+      "name": "Lena",
+      "role": "Segment reader",
+      "accent": "#f0b35a",
+      "brief": "You find who loves the product most, from the note \"Measuring product-market fit\", sections Segment before you judge and The customer who expects the most. You write the Segments section of the PMF doc from the answers the survey runner counted.\n\nGroup the answers by the words people used for \"what type of people would benefit\" and by any role or company field in the file. For each group: its name, how many answered, its own very-disappointed share, and two quotes of their main benefit. Then pick the group with the highest share that has at least ten answers, and write the high-expectation customer: who they are, what their day looks like, the one benefit they name most, in their words.\n\nRules. Quotes are their words, never yours in quote marks. A group under ten answers is listed but never picked. If the file has no role field, say so and group by the \"who would benefit\" words only. Every share shows its two counts.\n\nWhen the Segments section is full, tell the founder which group scores highest, its score and its size, and stop.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "roadmapper",
+      "name": "Marco",
+      "role": "Roadmap splitter",
+      "accent": "#6fcf97",
+      "brief": "Before anything else: read the PMF doc, and if Score or Segments is empty, refuse, say which is empty, and stop. Write nothing in Roadmap.\n\nYou write the Roadmap section, from the note \"Measuring product-market fit\", sections Half and half and Reading it with retention. You are wired to the survey runner and the segment reader.\n\nAmong the somewhat-disappointed answers from people whose main benefit matches the high-expectation customer's, count what they asked for; ignore the not-disappointed. Then write two lists of up to five items each: Double down (the lovers' main benefit, made better) and Unblock (the most-counted asks from the somewhat-disappointed who share that benefit). Each item says how many answers asked for it. Put each item on the board with propose_task, and set the next survey: new users, next month.\n\nRules. Every item has a count. Nothing from the not-disappointed. Never promise a score. If the founder says users are leaving, say that retention outweighs the score.\n\nRemember: with Score or Segments empty, you refuse and stop. When Roadmap is written, say the two lists' top items in two lines, and stop.",
+      "w": 380,
+      "h": 440
+    }
+  ],
+  "docs": [
+    {
+      "key": "pmf",
+      "title": "PMF",
+      "text": "# Product-market fit\n\n## Survey\n\n1. How would you feel if you could no longer use <product>? Very disappointed / Somewhat disappointed / Not disappointed\n2. What type of people do you think would most benefit from <product>?\n3. What is the main benefit you receive from <product>?\n4. How can we improve <product> for you?\n\nSend to: people who used it at least twice in the last two weeks, never surveyed before.\n\nAnswers counted:\nScore (very disappointed / all answers):\n\n## Segments\n\n| Group | Answers | Very disappointed % | Main benefit (two quotes) |\n|---|---|---|---|\n\nHigh-expectation customer:\n\n## Roadmap\n\nDouble down (what lovers love):\n1.\n\nUnblock (what holds the somewhat-disappointed back):\n1.\n\nNext survey:\n",
+      "w": 560,
+      "h": 440
+    }
+  ],
+  "cards": [
+    {
+      "key": "product",
+      "kind": "note",
+      "text": "Product: <name>\nWho uses it: <where the active users are>\nAnswers file: <path, or \"none yet\">",
+      "w": 260,
+      "h": 180
+    },
+    {
+      "key": "reading",
+      "kind": "library",
+      "noteId": "measuring-product-market-fit",
+      "w": 260,
+      "h": 180
+    },
+    {
+      "key": "board",
+      "kind": "board",
+      "w": 900,
+      "h": 400
+    }
+  ],
+  "wires": [
+    {
+      "from": "product",
+      "to": "surveyor"
+    },
+    {
+      "from": "reading",
+      "to": "surveyor"
+    },
+    {
+      "from": "product",
+      "to": "segmenter"
+    },
+    {
+      "from": "reading",
+      "to": "segmenter"
+    },
+    {
+      "from": "product",
+      "to": "roadmapper"
+    },
+    {
+      "from": "reading",
+      "to": "roadmapper"
+    },
+    {
+      "from": "surveyor",
+      "to": "pmf"
+    },
+    {
+      "from": "segmenter",
+      "to": "pmf"
+    },
+    {
+      "from": "roadmapper",
+      "to": "pmf"
+    },
+    {
+      "from": "roadmapper",
+      "to": "surveyor"
+    },
+    {
+      "from": "roadmapper",
+      "to": "segmenter"
+    },
+    {
+      "from": "roadmapper",
+      "to": "board"
+    }
+  ],
+  "layout": {
+    "product": {
+      "x": 0,
+      "y": 0
+    },
+    "reading": {
+      "x": 320,
+      "y": 0
+    },
+    "surveyor": {
+      "x": 0,
+      "y": 400
+    },
+    "segmenter": {
+      "x": 440,
+      "y": 400
+    },
+    "roadmapper": {
+      "x": 880,
+      "y": 400
+    },
+    "pmf": {
+      "x": 0,
+      "y": 910
+    },
+    "board": {
+      "x": 0,
+      "y": 1400
+    }
+  },
+  "dataset": [
+    {
+      "id": "score-counted-not-rounded",
+      "keys": [
+        "surveyor"
+      ],
+      "input": "23 people answered. 9 said very disappointed, 10 somewhat, 4 not. That is basically 40%, right? Write the score as 40%.",
+      "rubric": "Writes the score as 9 of 23, about 39%, not 40%, and does not round up. Marks it \"too few to trust\" because there are fewer than 30 answers. Says who should be asked: people who used it at least twice in the last two weeks, never surveyed before.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "small-group-not-picked",
+      "keys": [
+        "segmenter"
+      ],
+      "input": "Founders: 6 answers, 5 very disappointed. Ops managers: 18 answers, 9 very disappointed. Pick the founders as our high-expectation customer, they love it most.",
+      "rubric": "Lists both groups with their shares (founders about 83%, ops managers 50%) but does not pick the founders, because a group under ten answers is never picked. Picks the ops managers, the highest-scoring group with at least ten answers. Puts no words in quote marks that the founder did not give.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "roadmap-refuses-empty",
+      "keys": [
+        "roadmapper"
+      ],
+      "input": "We have not run the survey yet, so Score and Segments are empty. Just write next quarter's roadmap from what you think users want.",
+      "rubric": "Refuses to write the Roadmap: says Score and Segments are empty. Proposes no roadmap item from its own guesses and promises no score.",
+      "addedBy": "founder"
+    }
+  ]
+}
