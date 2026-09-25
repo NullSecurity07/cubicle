@@ -94,9 +94,10 @@ test('a note pasted into the library stands on the stage and answers from the pa
   // The passage is quoted to her whole, under the name of the note it came from.
   await expect(answer).toContainText(`Library: ${TITLE} — Step`);
 
-  // And the bar finds the note by what is inside it, not only by what it is called.
+  // And the bar finds the note by what is inside it, not only by what it is called. The words are the ones only this
+  // note has: the shelf ships notes about markets and scoring too, and the bar shows the five best passages.
   const sheet = await bar(page);
-  await sheet.getByRole('combobox').fill('score the wedge and the market');
+  await sheet.getByRole('combobox').fill('score the wedge');
   await expect(sheet.getByRole('option', { name: `${TITLE} › Evaluation` }).first()).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(sheet).toBeHidden();

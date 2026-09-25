@@ -82,11 +82,13 @@ test('the built-in team lands on the stage, answers from the founder\'s note, an
   await expect(panel(page)).toBeHidden();
 });
 
-test('the new teams are on the shelf, and the LinkedIn content system lands whole with the LinkedIn card, the leads and a board', async ({ page }) => {
+test('the thirteen new teams are on the shelf, and the LinkedIn content system lands whole with the LinkedIn card, the leads and a board', async ({ page }) => {
   await page.getByLabel('Frameworks', { exact: true }).click();
-  for (const name of ['LinkedIn content system', 'Weekly metrics', 'Customer discovery', 'Investor update', 'Product-market fit engine', 'Seed round prep', 'Pre-mortem']) {
+  for (const name of ['LinkedIn content system', 'Weekly metrics', 'Customer discovery', 'Investor update', 'Product-market fit engine', 'Seed round prep', 'Pre-mortem',
+    'Pricing and unit economics', 'Traction channels', 'Hiring scorecard', 'Positioning', 'Working backwards', 'One-page plan']) {
     await expect(panel(page).locator('.frameworks__one').filter({ hasText: name })).toHaveCount(1);
   }
+  await panel(page).screenshot({ path: 'test-results/shots/frameworks-shelf.png' });
   const row = panel(page).locator('.frameworks__one').filter({ hasText: 'LinkedIn content system' });
   await expect(row).toContainText('5 people · 5 docs · 1 sticky note · 1 note · 1 browser · 1 lead list · 1 task board');
   await expect(row.getByText('Built from LinkedIn Founder-Led Content System — Notes v2')).toBeVisible();
