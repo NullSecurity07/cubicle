@@ -11,6 +11,7 @@ import { FPS, type EditPlan, type EditShot, type EditSound } from './mlt.ts';
 import { runLines, type Ran } from './proc.ts';
 import { captionLines, composition, FORMATS, PACE, PACK, paintOf, projectFile, startsOf, type Film, type Pack } from './templates/index.ts';
 import { camOf } from './templates/layouts.ts';
+import { posterOf } from './poster.ts';
 
 // The renderer: our own scenes written as one HTML page, which headless Chrome steps through frame by frame and ffmpeg
 // turns into an MP4. Nothing leaves this machine except what the founder wired to the card, and the same storyboard
@@ -106,10 +107,15 @@ export async function renderProject(bin: string, at: string, film: Film, help: {
   if (rendered.code !== 0) throw new Error(`the render stopped: ${(rendered.out.trim().split('\n').filter(Boolean).at(-1) ?? 'no reason given').slice(0, 200)}`);
   const bytes = await readFile(join(at, 'out.mp4'));
 
-  // One frame out of the opening scene stands in for the film wherever it cannot be played.
+  // One frame stands in for the film wherever it cannot be played: the opening title, settled, with no caption half
+  // way through its phrase on it (`poster.ts`). The page is set once more without its caption track for it, and put
+  // back afterwards, so what is left in the project is the film as rendered.
   report('taking the poster frame…');
   let poster: Piece['poster'];
-  await run(bin, ['snapshot', '.', '--at', ((film.shots[0]?.seconds ?? 1) * 0.6).toFixed(2), '--no-end', '--describe=false', '-o', 'poster'], at, () => {}, signal);
+  const still = posterOf(film);
+  await writeFile(join(at, 'index.html'), composition(still.film));
+  await run(bin, ['snapshot', '.', '--at', still.at.toFixed(2), '--no-end', '--describe=false', '-o', 'poster'], at, () => {}, signal);
+  await writeFile(join(at, 'index.html'), composition(film));
   const shot = (await readdir(join(at, 'poster')).catch(() => [])).find((name) => name.endsWith('.png'));
   if (shot) poster = { ext: 'png', bytes: await readFile(join(at, 'poster', shot)) };
   return { bytes, poster };

@@ -29,6 +29,8 @@ export const flat = (text: string): string => text.toLowerCase().replace(/[^\p{L
 
 export function sourcesOf(material: Material, brief: string): Sources {
   const parts = [
+    // What the product says it is counts as much as anything it says about itself: a close may be that line.
+    material.pitch ?? '',
     ...material.lines,
     ...material.assets.map((one) => `${one.name} ${one.what}`),
     material.brand?.name ?? '',

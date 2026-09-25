@@ -73,7 +73,8 @@ describe('a film remade from notes', () => {
     const shots = made.record!.scenes.map((one) => one.shots[0].bg);
     expect(shots).toEqual(['frame-e0-0.png', 'frame-e1-0.png', 'frame-e2-0.png', 'frame-e3-0.png']);
     // Each picture is drawn from its own scene's subject in the new look.
-    for (const [at, prompt] of asked.entries()) expect(prompt).toContain(`scene ${at}`);
+    // The four are drawn at once, so the order they are asked in is the scheduler's, not the film's.
+    expect(asked.map((prompt) => /scene (\d)/.exec(prompt)?.[1]).sort()).toEqual(['0', '1', '2', '3']);
   });
 
   it('looks at every picture it draws again, and records the words of the one it kept', async () => {

@@ -6,9 +6,11 @@ import type { Pace } from './templates/looks.ts';
 import type { Pack } from './templates/packs.ts';
 import { claimsOf, figureSaid, fillerIn, madeUpNames, preciseFigures, realLine, unfill, ungrounded, type Sources } from './grounding.ts';
 import { inStyle, offStyle, photographic } from './style.ts';
+import { closeScene, firstHeadline, namesTheBrief, type Close } from './close.ts';
+import { freshHeadlines, repeatsCaptions, type Phrases } from './headlines.ts';
 import {
   carriesVisual, CODEY, contrasty, DATA, ECHO_FINE, EMPHASIS_WORDS, facesCamera, figureIn, hasNumber, headlineOf, keywords,
-  kickerOf, listable, listy, NEEDS_TEXT, noFace, opensADoor, plainClose, shorten, subjectOf, trimTo, worthAStat,
+  kickerOf, listable, listy, NEEDS_TEXT, noFace, opensADoor, plainClose, shorten, subjectOf, trimTo, trimWhole, worthAStat,
 } from './wording.ts';
 
 // The critic. A free model asked for a storyboard will, left alone, write the same scene three times, put the whole
@@ -45,6 +47,12 @@ export type Want = {
   // The look the film wears, when it is already known, so the camera moves in its register. The storyboard's own
   // pack wins over this.
   look?: Pack;
+  // The line the film closes on, decided out of the brief and the material before the storyboard (`close.ts`).
+  close?: Close;
+  // The founder's own phrases, the brief's first, for a headline that must not be the captions again (`headlines.ts`).
+  phrases?: Phrases;
+  // The narrator's measured words a second, when the script has been read once (`length.ts`). The budget uses it.
+  rate?: number;
 };
 
 export type Finding = { rule: string; scene?: number; says: string };
@@ -151,7 +159,7 @@ export function criticise(spec: Spec, want: Want): Finding[] {
     say('pictures', `${unused.length === 1 ? 'a picture you were given is' : `${unused.length} pictures you were given are`} not in the film — ${unused.join(', ')}`);
   }
 
-  const budget = budgetOf(want.seconds, scenes.length, want.pace);
+  const budget = budgetOf(want.seconds, scenes.length, want.pace, want.rate);
   const said = saidWords(spec);
   if (said > budget * 1.1) say('length', `the narration runs to ${said} words, which is about ${Math.round(said / 2.4 + scenes.length * 0.4)} seconds, not ${want.seconds}`);
   if (said && said < budget * 0.6) say('length', `the narration is only ${said} words, which leaves the film holding still`);
@@ -189,8 +197,26 @@ export function criticise(spec: Spec, want: Want): Finding[] {
     else if (listy(line)) say('shape', `scene ${index + 1} is a list written as a paragraph`, index + 1);
     else if (contrasty(line)) say('shape', `scene ${index + 1} is a before and an after written as one line`, index + 1);
   });
+  // A headline made of the words the captions are saying under it: the frame says one thing twice.
+  scenes.forEach((scene, index) => {
+    const field = repeatsCaptions(scene, want.captions);
+    if (field) say('echo', `scene ${index + 1}'s ${field === 'text' ? 'headline' : 'heading'} "${scene[field]}" is the words its own captions are saying — give it a different phrase from the brief, or none`, index + 1);
+  });
+  // The close. The founder's own call to action is the line, as written; failing one, a close has to name something
+  // the founder wrote, or it is a line that fits every product and says nothing about this one.
+  const closing = scenes.at(-1);
+  if (scenes.length >= 2 && closing && (closing.layout === 'cta' || closing.layout === 'outro')) {
+    if (want.close?.asked && !sameLine(closing.text, want.close.line)) {
+      say('close', `the film closes on "${closing.text ?? closing.say ?? ''}", and the brief's call to action is "${want.close.line}" — close on that, word for word`, scenes.length);
+    } else if (!want.close?.asked && want.sources && !namesTheBrief(closing, want.sources, want.reel)) {
+      say('close', `the close "${closing.text ?? closing.say ?? ''}" names nothing from the brief${want.close ? ` — close on "${want.close.line}"` : ''}`, scenes.length);
+    }
+  }
   return found;
 }
+
+const sameLine = (a: string | undefined, b: string): boolean =>
+  (a ?? '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim() === b.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 
 // --- putting it right ---------------------------------------------------------------------------------------
 
@@ -271,7 +297,7 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
     if (!CLOSES.has(last.layout) && can('cta')) {
       const line = last.text || last.heading || last.say || '';
       scenes[scenes.length - 1] = {
-        ...last, layout: 'cta', text: trimTo(line, HEADING_WORDS) || (want.reel ? 'Follow for more' : 'Try it this week'),
+        ...last, layout: 'cta', text: trimTo(line, HEADING_WORDS) || want.close?.line || firstHeadline(scenes) || (want.reel ? 'Follow for more' : 'Watch it again'),
         heading: last.heading && countWords(last.heading) <= 4 ? last.heading : undefined,
         image_prompt: undefined, bullets: undefined,
       };
@@ -340,8 +366,13 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
         // material names no place to go, the film closes on something plain and true instead of a button to a
         // website nobody has built.
         if (made.layout === 'cta' || made.layout === 'outro') {
-          note('there is no address or command in your material, so the film closes on something plain rather than a made-up one');
-          keep.push({ ...made, text: want.reel ? 'Follow for more' : 'Try it this week', heading: undefined, say: want.reel ? 'Follow for more.' : 'Try it this week.', source: undefined });
+          // What it closes on instead is the founder's own line (`close.ts`): their call to action, their positioning,
+          // or the film's first headline said again. A line that fits every product is the last resort.
+          const plain = want.close?.line ?? firstHeadline(keep.length ? keep : scenes);
+          note(plain
+            ? `there is no address or command behind that close, so the film closes on "${plain}" instead`
+            : 'there is no address or command in your material, so the film closes on something plain rather than a made-up one');
+          keep.push(plain ? closeScene(made, plain) : { ...made, text: want.reel ? 'Follow for more' : 'Watch it again', heading: undefined, say: want.reel ? 'Follow for more.' : 'Watch it again.', source: undefined });
           continue;
         }
         // Nothing points at this. Either the founder's own words go in its place, or the scene goes.
@@ -596,7 +627,7 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
 
   // 6. The length. A film is as long as what is said over it, so the fit is done in words, and done from the end of
   //    the longest scenes — never by cutting the opening or the close.
-  const budget = budgetOf(want.seconds, scenes.length, want.pace);
+  const budget = budgetOf(want.seconds, scenes.length, want.pace, want.rate);
   let said = scenes.reduce((sum, one) => sum + countWords(one.say), 0);
   if (said > budget * 1.1) {
     note(`the narration was ${said} words for ${want.seconds} seconds, so it is cut back to about ${budget}`);
@@ -610,7 +641,8 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
         const scene = scenes[index];
         const spoken = countWords(scene.say);
         if (spoken <= 4) continue;
-        const shorter = shorten(scene.say!, Math.max(4, spoken - 3));
+        // Whole sentences and clauses only: a line cut word by word loses what it was saying (`trimWhole`).
+        const shorter = trimWhole(scene.say!, Math.max(4, spoken - 3));
         if (countWords(shorter) >= spoken) continue;
         scenes[index] = { ...scene, say: shorter };
         said -= spoken - countWords(shorter);
@@ -674,5 +706,44 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
       : scene));
   }
 
+  // 10. A headline is never the captions again: one made of the words being said under it is given another phrase of
+  //     the founder's, or taken off so the captions carry the line (`headlines.ts`).
+  {
+    const fresh = freshHeadlines(scenes, want.captions, want.phrases ?? { brief: [], lines: [] });
+    scenes = fresh.scenes;
+    for (const line of fresh.notes) note(line);
+  }
+
+  // 11. The close is the founder's line. Their call to action, word for word, whenever they named one; otherwise a
+  //     close that names nothing they wrote becomes their positioning line, or the film's first headline again.
+  const closing = scenes.at(-1);
+  if (scenes.length >= 2 && closing && (closing.layout === 'cta' || closing.layout === 'outro')) {
+    const asked = want.close?.asked ? want.close.line : undefined;
+    // The film's own title is its first headline when no scene is left with one.
+    const title = spec.title && countWords(spec.title) <= HEADING_WORDS ? spec.title.trim() : undefined;
+    const plain = !asked && want.sources && !namesTheBrief(closing, want.sources, want.reel) ? (want.close?.line ?? firstHeadline(scenes) ?? title) : undefined;
+    // The founder's call to action is the whole close: no heading of the model's own ("Get started today") beside it.
+    const line = asked && (!sameLine(closing.text, asked) || !!closing.heading) ? asked : plain;
+    if (line) {
+      note(asked ? `the film closes on your call to action, "${line}"` : `the close named nothing from your brief, so it closes on "${line}"`);
+      scenes = [...scenes.slice(0, -1), closeScene(closing, line)];
+    }
+  }
+
+  // 12. A list is a list of something. A checklist, steps, bullets or a comparison that has lost its lines along the
+  //     way renders as an empty frame — the hero film had two — so it is its headline set as a statement, or a
+  //     picture when it has none.
+  scenes = scenes.map((scene) => {
+    if (!LISTS.has(scene.layout) || (scene.bullets?.filter((one) => one.trim()).length ?? 0) >= 2) return scene;
+    note('a list with nothing left in it is set as its headline instead');
+    const line = scene.text?.trim() || scene.heading?.trim();
+    if (line) return { ...scene, layout: 'statement' as Layout, text: line, heading: undefined, bullets: undefined };
+    return can('picture')
+      ? { ...scene, layout: 'picture' as Layout, heading: undefined, bullets: undefined, image_prompt: scene.image_prompt ?? scene.bg_prompt ?? `${want.bible}. ${subjectOf(scene)}` }
+      : { ...scene, layout: 'statement' as Layout, text: headlineOf(scene.say ?? '', HEADING_WORDS) || undefined, bullets: undefined };
+  });
+
   return { spec: { ...spec, scenes }, notes };
 }
+
+const LISTS = new Set<Layout>(['checklist', 'steps', 'bullets', 'compare', 'chart']);

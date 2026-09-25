@@ -10,6 +10,8 @@ import { FILLER, sourcesOf } from './grounding.ts';
 import type { Wanted } from './voice.ts';
 import { criticiseVisuals, repairVisuals, visualsOf, visualsPrompt, type Visual } from './visuals.ts';
 import { LENSES, motionMoves, SIZES, stillMoves } from './moves.ts';
+import { briefWants, closeLineOf } from './close.ts';
+import { lengthFit, rateOf, readingOf } from './length.ts';
 
 // The director. Not a form to fill in — a person who reads the brief, works out what is being asked for, decides on
 // an angle and a look, writes the beats, and only then writes the storyboard. Every one of those is a separate pass,
@@ -208,15 +210,25 @@ export function planPrompt(understanding: Understanding, asked: Asked, material:
     understanding.pack === 'sketch'
       ? 'This film is drawn by hand from end to end, so the style bible describes one drawing and every picture in the film is that same drawing.'
       : 'Every picture in this film is the same photograph, so the style bible names a real medium and a real light, and it never asks for a cartoon, an illustration, a 3d render or a drawing.',
-    material.lines.length
-      ? 'The last beat asks the viewer to do one thing they really can do — an address, a command or an action the material names. If the material names none, close on something plain and true instead, with no invented website, download or button.'
-      : 'The last beat closes on something plain: no website, no download, no button, because there is nothing behind this film to click.',
+    closingLine(asked, material),
     `Never use these words, in any form: ${FILLER.slice(0, 20).join(', ')}. They are what writing sounds like when it has nothing to say.`,
     material.lines.length ? ['', 'Everything it says about itself:', ...material.lines].join('\n') : '',
     '',
     'The brief:',
     asked.brief,
   ].filter((line) => line !== '').join('\n');
+}
+
+// What the last beat says. The founder's own call to action is the line, word for word; failing one, the product's
+// own positioning line; and only with neither is the director left to find a close — never a line that fits every
+// product. The critic holds the storyboard to the same line afterwards (`close.ts`).
+function closingLine(asked: Asked, material: Material): string {
+  const close = closeLineOf(asked.brief, material);
+  if (close?.asked) return `The last beat is the founder's own call to action, said and shown word for word: "${close.line}". Nothing else closes this film.`;
+  if (close) return `The last beat closes on what this product says it is: "${close.line}" — or on something else the brief itself names. Never a line that could close any film, and no invented website, download or button.`;
+  return material.lines.length
+    ? 'The last beat asks the viewer to do one thing they really can do — an address, a command or an action the material names. If the material names none, close on the film\'s own opening idea, said again. Never a line that could close any film, and no invented website, download or button.'
+    : 'The last beat closes on something plain: no website, no download, no button, because there is nothing behind this film to click.';
 }
 
 export function planOf(raw: unknown, understanding: Understanding, asked: Asked): Plan {
@@ -419,6 +431,7 @@ export async function direct(asked: Asked, material: Material, think: Think,
     // lip-sync one, the critic used to recast a scene as "a person moving" — which is a drawn stranger whose
     // mouth moves to a recording they never made, and is precisely what the founder rejected.
     person: understanding.person && help.lipsync === true,
+    ...briefWants(material, asked.brief),
   };
 
   // The storyboard, and one more go with the reason the first would not do: a model that forgot a field usually
@@ -456,7 +469,11 @@ export async function direct(asked: Asked, material: Material, think: Think,
     for (const line of notes.slice(0, 5)) help.report(line);
   }
   // Whatever survives, the last word on shape and length is the rules', not the model's.
-  const { spec: final } = repair(spec, want);
+  let { spec: final } = repair(spec, want);
+  // The length it reads at, held to the length asked for: once more to the model for lines when it reads short, and
+  // scenes out of the middle when it reads long. Never time added with nothing said in it (`length.ts`).
+  halt();
+  final = await fitLength(final, want, understanding, material, think, help.report);
   // How each picture is taken, last, because every pass above may have changed which scenes are pictures.
   const shots = mendShots(final, { pace: understanding.pace, look: understanding.pack });
   spec = shots.spec;
@@ -607,6 +624,82 @@ export function onCamera(scenes: Scene[], understanding: Understanding, bible: s
   // rather than drawing a stranger, moving their mouth to somebody else's words, and hoping.
   report(NO_FACE_HINT);
   return held;
+}
+
+// The storyboard held to the length asked for. Short, the director is asked once for as many more lines as fill it,
+// set before the close and read by the critic like everything else; long, scenes come out of the middle acts.
+//
+// `measured` is the narrator's real reading of the storyboard, in seconds, when the studio has read it once: that is
+// the length the film will run, and the words it asks for and the budget the critic holds the new lines to are at
+// the narrator's own pace rather than the estimate.
+export async function fitLength(spec: Spec, want: Want, understanding: Understanding, material: Material, think: Think,
+  report: (line: string) => void, measured?: number): Promise<Spec> {
+  const fit = lengthFit(spec, understanding.seconds, understanding.pace, measured);
+  if (!fit) return spec;
+  const reads = Math.round(measured ?? readingOf(spec, understanding.pace));
+  const rate = measured ? rateOf(spec, understanding.pace, measured) : undefined;
+  want = rate ? { ...want, rate } : want;
+  if ('drop' in fit) {
+    report(`the storyboard read at about ${reads} seconds against ${understanding.seconds}, so ${fit.drop.length === 1 ? 'a scene comes' : `${fit.drop.length} scenes come`} out of the middle`);
+    return { ...spec, scenes: spec.scenes.filter((_one, at) => !fit.drop.includes(at)) };
+  }
+  report(`the storyboard read at about ${reads} seconds against ${understanding.seconds}, so the director is asked for ${fit.more} more line${fit.more === 1 ? '' : 's'}`);
+  const added = await newScenes(think, fillPrompt(spec, fit, understanding, material, want.layouts), fit.more + 1);
+  if (!added.scenes.length) {
+    report(`no more lines came back (${added.why}), so the film is as long as what it already says`);
+    return spec;
+  }
+  const closes = ['cta', 'outro', 'logo'].includes(spec.scenes.at(-1)?.layout ?? '');
+  const scenes = closes ? [...spec.scenes.slice(0, -1), ...added.scenes, spec.scenes.at(-1)!] : [...spec.scenes, ...added.scenes];
+  const { spec: filled } = repair({ ...spec, scenes: scenes.slice(0, MAX_SCENES) }, want);
+  const now = Math.round(rate ? saidWords(filled) / rate + filled.scenes.length * 0.45 : readingOf(filled, understanding.pace));
+  if (now < understanding.seconds * 0.85) report(`it still reads at about ${now} seconds, so the film runs ${now} rather than holding still for the rest`);
+  return filled;
+}
+
+// New scenes out of a model's answer, read as loosely as they honestly can be: a bare list or {"scenes": [...]}, and
+// each scene on its own, so one malformed scene does not throw away the rest. Two tries, the second told why.
+export async function newScenes(think: Think, prompt: string, most: number): Promise<{ scenes: Scene[]; why: string }> {
+  let why = 'it answered nothing';
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let said = '';
+    try { said = await think(attempt ? `${prompt}\n\nYour last answer could not be used: ${why}\nAnswer again: one JSON object {"scenes": [...]} and nothing else.` : prompt); } catch (error) { why = (error as Error).message; continue; }
+    const list = listIn(said);
+    if (!list) { why = 'the answer held no list of scenes'; continue; }
+    const scenes = list.slice(0, most).flatMap((one) => {
+      try { return parseSpec({ title: 'more', scenes: [one] }).scenes; } catch (error) { why = (error as Error).message; return []; }
+    }).filter((one) => one.say?.trim());
+    if (scenes.length) return { scenes, why: '' };
+  }
+  return { scenes: [], why };
+}
+const listIn = (said: string): unknown[] | null => {
+  const tries = [said.slice(said.indexOf('{'), said.lastIndexOf('}') + 1), said.slice(said.indexOf('['), said.lastIndexOf(']') + 1)];
+  for (const body of tries) {
+    if (!body) continue;
+    try {
+      const read = JSON.parse(body) as unknown;
+      if (Array.isArray(read)) return read;
+      const scenes = (read as Record<string, unknown>)?.scenes;
+      if (Array.isArray(scenes)) return scenes;
+    } catch { /* the other shape */ }
+  }
+  return null;
+};
+
+export function fillPrompt(spec: Spec, fit: { more: number; words: number }, understanding: Understanding, material: Material, layouts: Layout[]): string {
+  const each = Math.max(5, Math.round(fit.words / fit.more));
+  return [
+    `This ${understanding.seconds}-second storyboard reads short: it needs ${fit.more} more line${fit.more === 1 ? '' : 's'}, about ${fit.words} words said in all, to fill its length with something said rather than a picture held still.`,
+    `Write exactly ${fit.more} new scene${fit.more === 1 ? '' : 's'}, each saying about ${each} words, that go before the closing scene. Answer with one JSON object and nothing else: {"scenes": [ ... ]}.`,
+    'Each new scene says one new thing the film does not already say, as a whole sentence a stranger understands.',
+    `Each scene is {"layout": one of ${layouts.filter((one) => !['cta', 'logo', 'outro', 'title'].includes(one)).join(', ')}, "say", and the fields that layout needs}. A heading is at most ${HEADING_WORDS} words, never the words being said.`,
+    material.lines.length ? 'Everything specific has to come out of the material below, with the words it came from in "source", quoted exactly.' : 'Say only what is generally true: no names and no numbers.',
+    '',
+    'The storyboard so far:',
+    JSON.stringify(spec),
+    ...(material.lines.length ? ['', 'The material:', ...material.lines] : []),
+  ].join('\n');
 }
 
 export function fixPrompt(spec: Spec, found: { says: string }[], understanding: Understanding, layouts: Layout[]): string {

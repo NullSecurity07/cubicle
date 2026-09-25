@@ -75,6 +75,30 @@ export function shorten(said: string, most: number): string {
   return countWords(words) >= 4 && countWords(words) < countWords(one) && endsClean(words) ? `${words.replace(/[.!?]+$/, '')}.` : one;
 }
 
+// A line made shorter only by whole thoughts: a last sentence dropped, or a last clause, and only while what is left
+// is still a sentence of four words or more. Anything else is left as it was. The length pass used to cut word by
+// word, and it cut the site's hero film's promise to "You decide, and nothing leaves." in a film that already ran
+// short — a line with its meaning cut off is worse than a film a second long.
+export function trimWhole(said: string, most: number): string {
+  const line = (said ?? '').trim();
+  const sentences = line.split(/(?<=[.!?])\s+/).filter(Boolean);
+  if (sentences.length > 1) {
+    let kept = sentences;
+    while (kept.length > 1 && countWords(kept.join(' ')) > most) kept = kept.slice(0, -1);
+    return kept.join(' ');
+  }
+  const clauses = line.split(/(?<=[,;:])\s+|\s+[—–]\s+/);
+  let kept = clauses;
+  while (kept.length > 1 && countWords(kept.join(' ')) > most) {
+    const next = kept.slice(0, -1);
+    const left = next.join(' ').replace(/[\s,;:—–]+$/, '');
+    if (countWords(left) < 4 || !endsClean(left)) break;
+    kept = next;
+  }
+  if (kept.length === clauses.length) return line;
+  return `${kept.join(' ').replace(/[\s,;:—–.!?]+$/, '')}.`;
+}
+
 // A headline, out of a line somebody would say. It is English: "Investors ask a brutal question", never "Investors
 // ask brutal question", which is what taking the small words out of a sentence leaves behind — three characters
 // saved and the grammar gone. So the cut is made in whole words, on a clause where there is one, and only the

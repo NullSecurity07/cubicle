@@ -14,7 +14,7 @@ import { finishPicture, looking } from './finish.ts';
 import { hands } from './turns.ts';
 import type { Sight } from './sight.ts';
 import {
-  bibleFor, direct, faceIn, layoutsFor, narratorWanted, onCamera, photograph, readBrief, tellOf, understandingOf,
+  bibleFor, direct, faceIn, fitLength, layoutsFor, narratorWanted, onCamera, photograph, readBrief, tellOf, understandingOf,
   type Asked, type Understanding,
 } from './director.ts';
 import { checkCut, cuttingFor, editFilm, type Edit, type Shot as Cut, type Take } from './editor.ts';
@@ -29,13 +29,14 @@ import {
 } from './spec.ts';
 import { broll, creditOf, photoCredits } from './stock.ts';
 import {
-  afforded, drawnAs, lineUnder, shareOut, shotKey, slotsFor, type Slot, type Visual,
+  afforded, drawnAs, heldUp, lineUnder, photoOfTheLine, shareOut, shotKey, slotsFor, type Slot, type Visual,
 } from './visuals.ts';
 import { isDraft, makingWords, secondsEach } from '../../shared/film-time.ts';
 import { filmMemory, storyboardKey, subjectKey, type KeptSubject } from './remembered.ts';
 import { pictureHash, type FilmRecord, type RecordPicture } from './edits.ts';
 import { recordOf } from './film-record.ts';
 import { sourcesOf } from './grounding.ts';
+import { briefWants } from './close.ts';
 import {
   FORMATS, isPack, PACE, PACKS, PACES, paintOf, quietOf, sceneSeconds, snapToBeats, startsOf,
   type Film, type Pace, type Pack, type Shot,
@@ -119,6 +120,9 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // The one idea the film turns on, which every picture in it is drawn against. A storyboard handed over
         // whole has no plan behind it, so the brief itself stands in for one.
         let angle = asked.prompt.slice(0, 160);
+        // The storyboard as directed and where it is kept, so a storyboard filled out to its length after its first
+        // reading is the one the full film is made from too.
+        let keptAs: { key: string; directed: Awaited<ReturnType<typeof direct>> } | undefined;
         const mayUseAi = !draft && (wantsAi || (autoAi && here));
         if (draft && wantsAi) report('this is a draft, so nothing moving is drawn for it — the full film has the moving shots');
         // Whether anything can really move a mouth to a recording right now. It is the only thing that lets a
@@ -141,6 +145,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
             sources: sourcesOf(material, asked.prompt),
             screens: material.assets.filter((one) => one.kind === 'screen').map((one) => one.name),
             person: understanding.person,
+            ...briefWants(material, asked.prompt),
           };
           const mended = repair(spec, want);
           spec = mended.spec;
@@ -161,6 +166,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           else await memory.keepStoryboard(asked.cardId, { key, speed: draft ? 'draft' : 'full', directed });
           understanding = directed.understanding;
           spec = directed.spec;
+          keptAs = { key, directed };
           bible = directed.bible;
           angle = directed.plan.angle || angle;
         }
@@ -251,6 +257,38 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // again, exactly, the moment the shot list exists and before anything slow has happened.
         const guessed = drawing ? afforded(Math.round(spec.scenes.length * 1.6), drawnHere, 8, draft) : 0;
         report(`${draft ? 'a draft, ' : ''}${spec.scenes.length} scenes, ${makingWords({ seconds, pictures: guessed, clips: here ? wantsClips : 0, narrate: !!saying, here: drawnHere, draft })}`);
+        // --- the length, measured ---------------------------------------------------------------------------
+        //
+        // A film runs as long as its reading (`length.ts`), and the storyboard's own count of its words is a guess at
+        // that: the hero film was budgeted at twenty seconds and read in fifteen. So a directed film is read once, by
+        // the narrator who will read it, before anything is cut; under 85% of the length asked for, the director is
+        // asked once for the lines that fill it, and the reading is made again. Over 115%, scenes come out of the
+        // middle. The first reading is kept and used whenever the script has not changed, so this costs nothing
+        // when the length was right.
+        const sayIt = (prompt: string) => saying!.make({ prompt, voice: narrator.id, ...(omni ? omniAsk : {}) }, { report: () => {}, signal });
+        let firstRead: { script: string; piece: Awaited<ReturnType<typeof sayIt>> } | undefined;
+        if (keptAs && saying && seconds && !studioVoice?.take) {
+          const script = spec.scenes.map((scene) => (scene.say ?? '').trim()).filter(Boolean).join(' ');
+          const piece = script ? await sayIt(script).catch(() => undefined) : undefined;
+          if (signal?.aborted) throw new Error('stopped');
+          if (piece) {
+            firstRead = { script, piece };
+            const measured = wavSeconds(piece.bytes);
+            const want: Want = {
+              seconds, pace: understanding.pace, purpose: understanding.purpose, captions: understanding.captions, bible,
+              layouts: layoutsFor({ ai: mayUseAi, lipsync, material }), reel: understanding.purpose === 'reel' || understanding.purpose === 'ad',
+              product: material.lines.length > 0 || material.assets.length > 0 || !!material.brand,
+              sources: sourcesOf(material, asked.prompt), screens: material.assets.filter((one) => one.kind === 'screen').map((one) => one.name),
+              ...briefWants(material, asked.prompt),
+            };
+            const fitted = await fitLength(spec, want, understanding, material, deps.think, report, measured);
+            if (fitted !== spec) {
+              spec = fitted;
+              await memory.keepStoryboard(asked.cardId, { key: keptAs.key, speed: draft ? 'draft' : 'full', directed: { ...keptAs.directed, spec } });
+            }
+          }
+        }
+
         report('cutting what you gave it and recording the narration…');
         const shots: Shot[] = spec.scenes.map((scene) => ({ scene, seconds: 0 }));
         const said = (index: number, line: string) => report(`scene ${index + 1}: ${line}`);
@@ -356,7 +394,6 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           if (!saying || !script) return;
           report('reading the whole film in one go…');
           try {
-            const sayIt = (prompt: string) => saying.make({ prompt, voice: narrator.id, ...(omni ? omniAsk : {}) }, { report: () => {}, signal });
             // A line the founder already recorded in the wired Voice studio, in this same voice, is said as they
             // recorded it; only the rest of the film is read. A take in any other voice would be two narrators.
             const reuse = studioVoice && omniAsked === !!omni ? takeLine(lines, studioVoice.take, reading) : -1;
@@ -364,7 +401,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
               ? await readAround(lines, reuse, studioVoice.take.bytes, sayIt).catch((error: Error) => { report(`the Voice studio's recording could not be used (${error.message}), so the whole film is read`); return null; })
               : null;
             if (around) report(`scene ${reuse + 1} says the Voice studio's own recording, so that line is used as recorded`);
-            const piece = around ? { ext: 'wav', ...around } : await sayIt(script);
+            const piece = around ? { ext: 'wav', ...around } : firstRead?.script === script ? firstRead.piece : await sayIt(script);
             if (piece.noncommercial || (around && omni)) voiceTerms = piece.credits ?? creditsOf(reading.ref ? `${omniSays}` : `designed as ${omniSays ?? 'a voice'}`);
             await writeFile(join(at, 'assets', 'say.wav'), piece.bytes);
             let file = 'say.wav';
@@ -509,8 +546,10 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
             if (deps.stock && !deps.stock.ready()) {
               try {
                 const looking = content(visual.subject).slice(0, 5).join(' ') || trimTo(visual.line, 4);
+                // A photograph whose own description has none of the line's things in it is of something else.
                 const found = broll(await deps.stock.find({ query: looking, kind: 'photo', shape, many: 6 }, stop),
-                  { speaker: !!scene.person || scene.layout === 'presenter', names: [material.brand?.name ?? ''].filter(Boolean) });
+                  { speaker: !!scene.person || scene.layout === 'presenter', names: [material.brand?.name ?? ''].filter(Boolean) })
+                  .filter((one) => photoOfTheLine(one.what, visual));
                 if (found.length) {
                   const piece = await deps.stock.get(found[0], stop);
                   file = `stock-${name}.${piece.ext}`;
@@ -586,13 +625,19 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           // model never writes the same sentence twice, so until this nothing drawn was ever found again.
           const keys = new Map(wanted.map((one) => [one.at, subjectKey(one, bible)]));
           const known = await memory.subjects([...keys.values()]);
-          const unknown = wanted.filter((one) => !known.has(keys.get(one.at)!));
+          const unknown = wanted.filter((one) => {
+            const before = known.get(keys.get(one.at)!);
+            return !before || !heldUp({ ...one, ...before });
+          });
           const written = unknown.length ? await photograph(unknown, bible, angle, deps.think, { report, signal }) : [];
           await memory.keepSubjects(written.filter((one) => one.subject.trim())
             .map((one): [string, KeptSubject] => [keys.get(one.at)!, { subject: one.subject, metaphor: one.metaphor }]));
           for (const slot of wanted) {
             const before = known.get(keys.get(slot.at)!);
-            const visual = before ? { ...slot, ...before } : written.find((one) => one.at === slot.at) ?? slot;
+            // A subject remembered from an earlier film is held to today's rules like a new one: one that does not
+            // hold up is written again rather than drawn again.
+            const remembered = before ? { ...slot, ...before } : undefined;
+            const visual = remembered && heldUp(remembered) ? remembered : written.find((one) => one.at === slot.at) ?? slot;
             const key = shotKey(visual);
             const mine = new AbortController();
             stops.set(key, mine);

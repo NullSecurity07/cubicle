@@ -291,9 +291,11 @@ export const wordsFor = (seconds: number): number => Math.round(seconds * WORDS_
 // a second of silence each: at a full second a calm twenty-second film was handed fifteen seconds of words and
 // padded out with its last caption frozen on screen. The length follows the reading (`media/length.ts`), so a
 // budget too small is a film too short.
-export function budgetOf(seconds: number, scenes: number, pace: Pace): number {
+// `rate` is the narrator's own words a second where it has been measured (`length.ts`): the estimate is a little
+// slow for Kokoro, which read the site's hero film at about three.
+export function budgetOf(seconds: number, scenes: number, pace: Pace, rate = WORDS_A_SECOND): number {
   const beat = pace === 'punchy' ? 0.40 : 0.45;
-  return Math.max(8, Math.round((seconds - scenes * beat) * WORDS_A_SECOND));
+  return Math.max(8, Math.round((seconds - scenes * beat) * rate));
 }
 
 export const countWords = (text?: string): number => (text ?? '').trim().split(/\s+/).filter(Boolean).length;
