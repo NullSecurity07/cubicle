@@ -46,11 +46,11 @@ describe('the length a storyboard reads at', () => {
     expect(lines[0]).toMatch(/director is asked for \d more line/);
   });
 
-  it('asks only once, and says so, when the model has nothing more to give', async () => {
+  it('asks once (a malformed answer is retried once, told why), and says so when the model has nothing more to give', async () => {
     let calls = 0;
     const lines: string[] = [];
     const same = await fitLength(short, want, understanding, HERO_MATERIAL, async () => { calls += 1; return 'no'; }, (line) => lines.push(line));
-    expect(calls).toBe(1);
+    expect(calls).toBe(2);
     expect(same.scenes).toHaveLength(3);
     expect(lines.at(-1)).toMatch(/as long as what it already says/);
   });
@@ -102,5 +102,19 @@ describe('the length, from the narrator\'s own reading', () => {
     let calls = 0;
     expect(await fitLength(hero, want, understanding, HERO_MATERIAL, async () => { calls += 1; return more; }, () => {}, 18.5)).toBe(hero);
     expect(calls).toBe(0);
+  });
+});
+
+describe('the lines a model sends back', () => {
+  it('are read from a bare list or an object, one malformed scene dropped rather than all of them', async () => {
+    const { newScenes } = await import('./director.ts');
+    const bare = await newScenes(async () => `Here you go: [{"layout":"statement","text":"Rooms hold people","say":"Rooms hold people."},{"layout":"nonsense"}]`, 'p', 3);
+    expect(bare.scenes.map((one) => one.say)).toEqual(['Rooms hold people.']);
+    let calls = 0;
+    const second = await newScenes(async () => (++calls === 1 ? 'sorry' : more), 'p', 3);
+    expect(calls).toBe(2);
+    expect(second.scenes).toHaveLength(2);
+    const none = await newScenes(async () => 'no', 'p', 3);
+    expect(none.why).toMatch(/no list of scenes/);
   });
 });

@@ -644,18 +644,48 @@ export async function fitLength(spec: Spec, want: Want, understanding: Understan
     return { ...spec, scenes: spec.scenes.filter((_one, at) => !fit.drop.includes(at)) };
   }
   report(`the storyboard read at about ${reads} seconds against ${understanding.seconds}, so the director is asked for ${fit.more} more line${fit.more === 1 ? '' : 's'}`);
-  let added: Scene[] = [];
-  try {
-    const raw = await askJson(think, fillPrompt(spec, fit, understanding, material, want.layouts), 1) as Record<string, unknown>;
-    added = parseSpec({ title: spec.title, scenes: Array.isArray(raw?.scenes) ? raw.scenes.slice(0, fit.more + 1) : [] }).scenes;
-  } catch { report('no more lines came back, so the film is as long as what it already says'); return spec; }
+  const added = await newScenes(think, fillPrompt(spec, fit, understanding, material, want.layouts), fit.more + 1);
+  if (!added.scenes.length) {
+    report(`no more lines came back (${added.why}), so the film is as long as what it already says`);
+    return spec;
+  }
   const closes = ['cta', 'outro', 'logo'].includes(spec.scenes.at(-1)?.layout ?? '');
-  const scenes = closes ? [...spec.scenes.slice(0, -1), ...added, spec.scenes.at(-1)!] : [...spec.scenes, ...added];
+  const scenes = closes ? [...spec.scenes.slice(0, -1), ...added.scenes, spec.scenes.at(-1)!] : [...spec.scenes, ...added.scenes];
   const { spec: filled } = repair({ ...spec, scenes: scenes.slice(0, MAX_SCENES) }, want);
   const now = Math.round(rate ? saidWords(filled) / rate + filled.scenes.length * 0.45 : readingOf(filled, understanding.pace));
   if (now < understanding.seconds * 0.85) report(`it still reads at about ${now} seconds, so the film runs ${now} rather than holding still for the rest`);
   return filled;
 }
+
+// New scenes out of a model's answer, read as loosely as they honestly can be: a bare list or {"scenes": [...]}, and
+// each scene on its own, so one malformed scene does not throw away the rest. Two tries, the second told why.
+export async function newScenes(think: Think, prompt: string, most: number): Promise<{ scenes: Scene[]; why: string }> {
+  let why = 'it answered nothing';
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let said = '';
+    try { said = await think(attempt ? `${prompt}\n\nYour last answer could not be used: ${why}\nAnswer again: one JSON object {"scenes": [...]} and nothing else.` : prompt); } catch (error) { why = (error as Error).message; continue; }
+    const list = listIn(said);
+    if (!list) { why = 'the answer held no list of scenes'; continue; }
+    const scenes = list.slice(0, most).flatMap((one) => {
+      try { return parseSpec({ title: 'more', scenes: [one] }).scenes; } catch (error) { why = (error as Error).message; return []; }
+    }).filter((one) => one.say?.trim());
+    if (scenes.length) return { scenes, why: '' };
+  }
+  return { scenes: [], why };
+}
+const listIn = (said: string): unknown[] | null => {
+  const tries = [said.slice(said.indexOf('{'), said.lastIndexOf('}') + 1), said.slice(said.indexOf('['), said.lastIndexOf(']') + 1)];
+  for (const body of tries) {
+    if (!body) continue;
+    try {
+      const read = JSON.parse(body) as unknown;
+      if (Array.isArray(read)) return read;
+      const scenes = (read as Record<string, unknown>)?.scenes;
+      if (Array.isArray(scenes)) return scenes;
+    } catch { /* the other shape */ }
+  }
+  return null;
+};
 
 export function fillPrompt(spec: Spec, fit: { more: number; words: number }, understanding: Understanding, material: Material, layouts: Layout[]): string {
   const each = Math.max(5, Math.round(fit.words / fit.more));
