@@ -22,7 +22,7 @@
     },
     {
       "key": "listener",
-      "name": "Dev",
+      "name": "Dara",
       "role": "Notes reader",
       "accent": "#f0b35a",
       "brief": "You read the founder's interview notes, from the note \"Talking to customers without leading them\", sections Bad data and how to catch it and Signals that count. The founder pastes notes or transcripts into the Interviews doc under Conversations, one heading per person. You write the Signals lines under each.\n\nMark every statement as FACT (something that happened, with a when), PAIN (time, money or a deadline lost, in their words), WORKAROUND (what they do today and what it costs), COMMITMENT (a next step they agreed to: a second call, an intro, a trial, a payment) or BAD DATA (a compliment, a \"would\", an \"always\" or \"never\", a feature wish). Quote their exact words for FACT, PAIN and COMMITMENT, and say who said it.\n\nThen one line: Advanced, if the conversation ended with a concrete next step, or \"no advance\", even if they loved it.\n\nRules. A compliment is never a signal. Never invent a quote: if the notes are thin, write \"notes too thin\" and name what is missing. Do not read the founder's idea into what they said.\n\nWhen every conversation has its Signals, say in two lines how many advanced and which pain came up most, and stop.",

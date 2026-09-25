@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Framework } from '../../shared/frameworks.ts';
 import { DOC_SIZE, FRAMEWORK_ID, sizeLine } from '../../shared/frameworks.ts';
+import { seedStage } from '../../shared/model.ts';
 import { MOST_BRIEF_CHARS } from '../forge/propose.ts';
 import { idOf } from '../library/notes.ts';
 import { titleOfNote } from './store.ts';
@@ -149,6 +150,14 @@ describe('every built-in framework', () => {
       for (const room of framework.rooms) expect(framework.wires.some((wire) => (wire.from === room.key && docs.has(wire.to)) || (wire.to === room.key && docs.has(wire.from)))).toBe(true);
       for (const card of framework.cards) if (card.kind === 'source') { expect(card.url).toMatch(/^https:\/\//); expect(card.about.trim()).not.toBe(''); }
     }
+  });
+
+  // A colleague is asked by name, and two teams often stand on one stage: two people called the same would answer for
+  // each other. So nobody on the shelf shares a name with anybody else on it, or with the people a new stage starts with.
+  it('gives every person on the shelf a name nobody else on it, or on a new stage, has', async () => {
+    const names = [...seedStage.rooms.map((room) => room.name)];
+    for (const dir of await builtIns()) names.push(...(await loadOne(dir)).rooms.map((room) => room.name));
+    expect(names.filter((name, at) => names.indexOf(name) !== at)).toEqual([]);
   });
 
   // A tool is only offered when what it works on is wired to the person: a brief that sends somebody to the board, the
