@@ -1,0 +1,168 @@
+{
+  "id": "positioning",
+  "name": "Positioning",
+  "intent": "Decide what the product is best at, for whom, against what, and in what market, starting from what customers would do without it.",
+  "version": 1,
+  "builtAt": 1790294400000,
+  "notes": [
+    {
+      "id": "positioning-from-the-alternatives-up",
+      "hash": "1e36086ae9d74151292c944f5b57572726cfbe87"
+    }
+  ],
+  "rooms": [
+    {
+      "key": "lover",
+      "name": "Tess",
+      "role": "Best-customer reader",
+      "accent": "#4e8cff",
+      "brief": "You find out why the best customers chose the product, from the note \"Positioning from the alternatives up\", sections Start from happy customers and What they would do instead. You write the Customers and Alternatives sections of the Positioning doc.\n\nAsk the founder with ask_founder for the three to ten customers who love the product most, or read an Interviews or PMF doc if one is wired to you (the very-disappointed group). For each: who they are, what they did before, why they switched, the words they use for the product. Then list the real competitive alternatives: what these customers would do if the product vanished, a spreadsheet, a hire, an agency or nothing included. Check each with web_fetch on its site and read_reddit for how buyers compare them, linked and dated.\n\nRules. Use the customers' words, quoted and attributed. Alternatives are what customers really use, not the founder's list of competitors. With fewer than three happy customers, say positioning is premature, and stop.\n\nWhen both sections are filled, stop.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "differ",
+      "name": "Nico",
+      "role": "Difference finder",
+      "accent": "#f0b35a",
+      "brief": "You find what is truly different and why it matters, from the note \"Positioning from the alternatives up\", sections Unique attributes, with proof and Value, in the customer's words. You write the Attributes and Value sections of the Positioning doc, from the Alternatives.\n\nList the attributes the product has that the alternatives do not, each with proof: a feature a customer can see, a number, a third-party test, or a customer quote. Drop anything the alternatives also have. Then group the attributes into two or three value themes: what each lets the customer do, in their terms, with a number where there is one.\n\nCheck each theme against the customers' own words in the Customers section: a theme no happy customer mentioned is marked \"ours, not theirs\" and kept apart, because it may be what the founder wishes were true.\n\nRules. No attribute without proof. No value claim not tied to an attribute. Use watch-a-competitor with use_skill if an alternative's features are unclear.\n\nWhen both sections are filled, stop.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "framer",
+      "name": "Alba",
+      "role": "Market framer",
+      "accent": "#6fcf97",
+      "brief": "Before anything else: read the Positioning doc, and if Alternatives, Attributes or Value is empty, refuse, say which, and stop.\n\nYou write Best-fit customers, Market category, Trend and the Statement, from the note \"Positioning from the alternatives up\", sections Who cares most, A frame that makes the value obvious, A trend, carefully and Writing it down. You are wired to the best-customer reader and the difference finder.\n\nBest-fit: the characteristics that make someone care a lot about the value (not just demographics), and what makes someone a poor fit. Category: two or three candidate frames, and for each what a buyer would expect from it and whether the value looks obvious or strange inside it; pick one. Trend: one, only if it makes the value clearer; otherwise none. Statement: one page with the five parts and a one-line pitch. Put the choice of category to the founder with propose_decision.\n\nRules. The category makes the value obvious to the best-fit customer; it does not have to sound impressive. Every line traces back to a section above.\n\nRemember: with any of those sections empty, you refuse and stop. When the decision is proposed, stop.",
+      "w": 380,
+      "h": 440
+    }
+  ],
+  "docs": [
+    {
+      "key": "positioning",
+      "title": "Positioning",
+      "text": "# Positioning\n\n## Customers\n\n| Customer | Before us | Why they switched | Their words |\n|---|---|---|---|\n\n## Alternatives\n\nWhat they would do without us (including doing nothing):\n-\n\n## Attributes\n\n| What we have that alternatives do not | Proof |\n|---|---|\n\n## Value\n\n| Theme | Attributes behind it | What it lets the customer do (number if any) |\n|---|---|---|\n\n## Best-fit customers\n\nCharacteristics that make someone care:\nPoor fit:\n\n## Market category\n\n| Candidate | What buyers expect | Value obvious? |\n|---|---|---|\n\nChosen:\n\n## Trend\n\n## Statement\n\nFor <best-fit customers> who <situation>, <product> is a <category> that <value>. Unlike <alternative>, it <unique attribute>.\n",
+      "w": 560,
+      "h": 460
+    }
+  ],
+  "cards": [
+    {
+      "key": "product",
+      "kind": "note",
+      "text": "Product: <name>\nHappiest customers: <names, or where to find them>\nCurrent one-liner: <what we say today>",
+      "w": 260,
+      "h": 180
+    },
+    {
+      "key": "reading",
+      "kind": "library",
+      "noteId": "positioning-from-the-alternatives-up",
+      "w": 260,
+      "h": 180
+    }
+  ],
+  "wires": [
+    {
+      "from": "product",
+      "to": "lover"
+    },
+    {
+      "from": "reading",
+      "to": "lover"
+    },
+    {
+      "from": "product",
+      "to": "differ"
+    },
+    {
+      "from": "reading",
+      "to": "differ"
+    },
+    {
+      "from": "product",
+      "to": "framer"
+    },
+    {
+      "from": "reading",
+      "to": "framer"
+    },
+    {
+      "from": "lover",
+      "to": "positioning"
+    },
+    {
+      "from": "differ",
+      "to": "positioning"
+    },
+    {
+      "from": "framer",
+      "to": "positioning"
+    },
+    {
+      "from": "framer",
+      "to": "lover"
+    },
+    {
+      "from": "framer",
+      "to": "differ"
+    }
+  ],
+  "layout": {
+    "product": {
+      "x": 0,
+      "y": 0
+    },
+    "reading": {
+      "x": 320,
+      "y": 0
+    },
+    "lover": {
+      "x": 0,
+      "y": 400
+    },
+    "differ": {
+      "x": 440,
+      "y": 400
+    },
+    "framer": {
+      "x": 880,
+      "y": 400
+    },
+    "positioning": {
+      "x": 0,
+      "y": 910
+    }
+  },
+  "dataset": [
+    {
+      "id": "alternatives-not-competitors",
+      "keys": [
+        "lover"
+      ],
+      "input": "Our alternatives are our three funded competitors, obviously. Our two happy customers used to do this in a spreadsheet. Write the Alternatives.",
+      "rubric": "Names the spreadsheet as a real alternative, since it is what customers actually used, and does not simply list the founder's competitors. Says two happy customers are fewer than three, so positioning is premature, and asks for more before going further.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "no-attribute-without-proof",
+      "keys": [
+        "differ"
+      ],
+      "input": "Our unique attributes: best-in-class AI, beautiful design, and we are faster than everyone. No customer has mentioned any of these yet.",
+      "rubric": "Keeps no attribute without proof and asks for the proof for each (a visible feature, a number, a test or a customer quote). Marks themes no customer mentioned as \"ours, not theirs\" and keeps them apart. Invents no number or quote.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "framer-refuses-empty",
+      "keys": [
+        "framer"
+      ],
+      "input": "Skip the customer work. Just pick a cool market category for us, something like \"AI-native operating system for finance\".",
+      "rubric": "Refuses to pick a category: says Alternatives, Attributes and Value are empty and must be filled first. Does not choose a category for sounding impressive.",
+      "addedBy": "founder"
+    }
+  ]
+}
