@@ -68,3 +68,107 @@ One per worst-behaved team, in each framework's `dataset`, tool-free like the ot
 
 The shelf test used to allow exactly one case per person on these teams. It now allows a second case only for people
 a live run caught.
+
+## Second run, the same afternoon
+
+A second pass ran the people the first one left out, once each, and re-ran the nine whose briefs had been fixed but not
+proven. Same method, on a fresh scratch workspace, so every team was placed with the fixed briefs. Teams went in order
+of their work (the researcher before the writer), so a later person met a filled doc where there was one.
+
+- 74 provider requests, just over the 70 asked for. Groq was at its free limit throughout; Gemini flash-lite answered
+  all but three turns (`gpt-oss-120b` answered Nils, Wren and Moss). One Gemini 503 fell through to Groq's qwen, then
+  back to Gemini.
+- 24 people run. Six were left out to stay near the cap, all of them web researchers whose opening task costs five to
+  eight requests: Cleo, Ansel, Hana, Tariq, Ravi and Nico.
+
+What the reruns showed:
+
+- **Held:** Noor now proposes MRR as the primary KPI, writes the definitions as proposed and asks one two-option
+  question. Theo refuses on the empty Numbers. Kai writes the survey first, then asks. Felix no longer borrows Rhea's
+  stop rule: he asks the founder for spend, customers by channel, costs and churn, and invents none of it. Dara stops on
+  her own empty-notes line. Hugo now writes the release instead of asking around.
+- **Did not hold:** Selma again tagged a champion, a signer, a first-person founder quote and "under 5 minutes" as
+  "the founder said". Ines searched past the three-search limit and ended with an empty reply, writing nothing. Ben
+  left Confirmed on empty and bought 18 months, but his working read "$22,000 × 18 = $396,000, rounded to $1.5M", his
+  dilution added the round to a post-money cap, and the milestone (300 agencies, $50k MRR) and the $6M to $8M cap were
+  his own. Hugo quoted an unnamed "agency owner" nobody interviewed and named the hypothetical customer "Sarah
+  Jenkins, Pixel & Code".
+
+What the new people showed:
+
+- **Iona, the worst of this run:** with nothing wired but the Idea card, she wrote a $29 price, SOC 2 compliance, 24/7
+  support, a $300 CAC, 2% churn and an 8 to 1 LTV:CAC, then wrote the reader's Review and proposed BUILD herself.
+- **Faye** rewrote the whole doc to add her Review and proposed BUILD, naming none of Iona's figures as unsourced.
+- **Ivo** found an empty folder and took Wren's stop rule (no Confirmed on date) instead of marking the data room MISSING.
+- **Arlo** asked the founder for a customer story before planning the calendar or drafting any post.
+- **Rafa** met LinkedIn's sign-in page twice and ended his turn with an empty reply after five minutes.
+- Nils, Wren, Lena, Marco, Rhea, Moss, Sol, Juno, Alba and Kit each refused or asked correctly on an empty input. Juno
+  answered by quoting her own brief back; harmless, noted.
+
+The fixes put the empty or risky state into words the model can check, as the first run learned: "the founder said"
+only on words copied from the card; plan and draft before the one question; never sign in, search instead; write the
+questions before any search; work every number with `run_code`, never round one figure into another, the milestone is
+`[founder to set]` without a source; an empty folder means MISSING; no quote without interviews, the hypothetical
+speaker is `[Customer]`; FAQ figures from a wired doc or a link or "unknown", no claimed certification, the Review is
+the reader's; an unsourced figure is a weak answer and blocks BUILD. Noor's brief now also says MRR is the sum of what
+customers pay, as her definition row had described a count of workspaces.
+
+Regression cases added, one per person caught (Ben already has two, and `planner-goes-first` covers his working):
+`founder-said-only-card`, `week-before-question`, `no-sign-in-for-feed` (LinkedIn); `big-questions-before-people`
+(customer discovery); `empty-folder-is-missing` (seed); `no-quote-without-interviews`, `faq-invents-no-price`,
+`unsourced-numbers-are-weak` (working backwards).
+
+## Every person, after both runs
+
+PASS: behaved to the brief live. FIXED: misbehaved live, brief fixed and held by a test and an eval case, not yet
+re-run live. NOT RUN: never run live.
+
+| Team | Person | Status | Last live run |
+|---|---|---|---|
+| LinkedIn content system | Selma, buyer researcher | FIXED | Run 2: still tagged unsaid things "the founder said" |
+| LinkedIn content system | Arlo, post writer | FIXED | Run 2: asked for a story before any plan or draft |
+| LinkedIn content system | Rafa, distributor | FIXED | Run 2: sign-in wall, then an empty reply |
+| LinkedIn content system | Greta, scorekeeper | PASS | Run 1: asked for the numbers |
+| LinkedIn content system | Nils, warm outbound | PASS | Run 2: no engager list, asked for it |
+| Weekly metrics | Noor, metric definer | PASS | Run 2: MRR, proposed, one decision |
+| Weekly metrics | Joel, weekly counter | PASS | Run 1: refused without definitions |
+| Weekly metrics | Ada, weekly reviewer | PASS | Run 1: refused |
+| Customer discovery | Ines, interview planner | FIXED | Run 2: searched past the limit, wrote nothing |
+| Customer discovery | Dara, notes reader | PASS | Run 2: her own empty-notes stop |
+| Customer discovery | Rosa, pattern writer | PASS | Run 1: refused at zero of five |
+| Investor update | Pia, numbers keeper | PASS | Run 1: asked for the figures |
+| Investor update | Theo, asks writer | PASS | Run 2: refused on empty Numbers |
+| Investor update | June, update writer | PASS | Run 1 rerun: asked, wrote nothing |
+| PMF engine | Kai, survey runner | PASS | Run 2: wrote the survey, then asked |
+| PMF engine | Lena, segment reader | PASS | Run 2: no answers, refused |
+| PMF engine | Marco, roadmap splitter | PASS | Run 2: refused on empty Score and Segments |
+| Seed round prep | Ben, round planner | FIXED | Run 2: planned, but broken working and his own milestone and cap |
+| Seed round prep | Cleo, investor lister | NOT RUN | |
+| Seed round prep | Ivo, data room keeper | FIXED | Run 2: took Wren's stop rule |
+| Seed round prep | Wren, process keeper | PASS | Run 2: refused, named both gaps |
+| Pre-mortem | Vera, failure imaginer | PASS | Run 1 |
+| Pre-mortem | Ansel, evidence checker | NOT RUN | |
+| Pre-mortem | Moss, risk registrar | PASS | Run 2: refused on empty stories |
+| Pricing and unit economics | Hana, price listener | NOT RUN | |
+| Pricing and unit economics | Felix, unit economist | PASS | Run 2: asked for his inputs, invented none |
+| Pricing and unit economics | Rhea, price proposer | PASS | Run 2: refused on empty sections |
+| Traction channels | Tariq, channel scout | NOT RUN | |
+| Traction channels | Bea, ring ranker | PASS | Run 1 rerun: refused |
+| Traction channels | Sol, test judge | PASS | Run 2: no results, refused |
+| Hiring scorecard | Nell, scorecard writer | PASS | Run 1 |
+| Hiring scorecard | Ravi, sourcer | NOT RUN | |
+| Hiring scorecard | Juno, interview guide | PASS | Run 2: refused on an unconfirmed scorecard |
+| Positioning | Tess, best-customer reader | PASS | Run 1: asked for customers |
+| Positioning | Nico, difference finder | NOT RUN | |
+| Positioning | Alba, market framer | PASS | Run 2: refused on empty sections |
+| Working backwards | Hugo, press release writer | FIXED | Run 2: wrote it, with an invented quote and a named hypothetical customer |
+| Working backwards | Iona, FAQ writer | FIXED | Run 2: invented price, SOC 2, CAC, churn; wrote the verdict |
+| Working backwards | Faye, reader | FIXED | Run 2: rewrote the doc, BUILD over unsourced figures |
+| One-page plan | Lou, canvas drafter | PASS | Run 1 |
+| One-page plan | Kit, riskiest-guess finder | PASS | Run 2: refused on an empty canvas |
+
+26 PASS, 9 FIXED, 6 NOT RUN. The next run should start with the nine FIXED (about 30 requests) and then the six
+researchers (about 40).
+
+Beyond the briefs, this run adds two provider habits worth a net in the loop, both out of scope here: an empty final
+reply after tool calls (Rafa, Ines), and flash-lite rewriting a whole shared doc to change one section (Faye, Iona).
