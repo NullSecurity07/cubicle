@@ -24,6 +24,7 @@ const VERBS: Record<string, [doing: string, done: string]> = {
   read_runway: ['Reading the runway', 'Read the runway'], propose_flow: ['Suggesting a flow', 'Suggested a flow'], propose_scenario: ['Suggesting a scenario', 'Suggested a scenario'],
   read_youtube: ['Reading the video', 'Read the video'], read_feed: ['Reading the feed of', 'Read the feed of'], read_reddit: ['Reading Reddit:', 'Read Reddit:'],
   use_skill: ['Reading the skill', 'Read the skill'], note_founder: ['Noting about you:', 'Noted about you:'], ask_founder: ['Asking you:', 'Asked you:'],
+  gather_month: ['Gathering the month', 'Gathered the month'],
   crawl_site: ['Reading the site', 'Read the site'], watch_page: ['Watching', 'Watching'], list_watches: ['Listing', 'Listed'], stop_watching: ['Stopping the watch on', 'Stopped watching'],
 };
 // Where the founder was when they said it, when they were not at the stage.
