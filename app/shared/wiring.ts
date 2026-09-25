@@ -16,8 +16,8 @@ export const wiredTo = (stage: Wires, cardId: string): Card[] => {
 };
 
 // The kinds of card a person carries into a film they are asked to make. A browser is theirs too: the page they have
-// open is one they meant the film to show.
-const THEIRS = new Set<Card['kind']>(['imagegen', 'image', 'note', 'link', 'project', 'browser']);
+// open is one they meant the film to show. So is a voice studio: the voice they speak in is the one the film is read in.
+const THEIRS = new Set<Card['kind']>(['imagegen', 'image', 'note', 'link', 'project', 'browser', 'voicegen']);
 
 // Three reaches, in the order they matter: what is wired to the studio; the image studio behind a wired picture card;
 // and everything of those kinds wired to whoever is making the film.
@@ -51,8 +51,14 @@ export const docsFor = (stage: Pick<Stage, 'wires' | 'docs'>, cardId?: string, r
 // card with no note picked. A library card is read as a note and named by that note's title (`noteTitle`); a source
 // is read as a link and named by its title, else its site. A doc is named by its title, because what is written in
 // it is not known here.
-export function filmSays(cards: Card[], docTitles: string[], seen: { where: (cardId: string) => string; drawn: (cardId: string) => number; noteTitle?: (noteId: string) => string }): string[] {
+//
+// A voice studio is named by its voice, and only the first one: a film has one narrator. It is left out when the
+// founder picked the film's own narrator on the video card (`cardVoice`), because the card's pick wins. `voiceWho`
+// turns a Kokoro voice id into the name the founder picked it by, the default voice for an empty one.
+export function filmSays(cards: Card[], docTitles: string[], seen: { where: (cardId: string) => string; drawn: (cardId: string) => number; noteTitle?: (noteId: string) => string;
+  voiceWho?: (voiceId: string) => string; cardVoice?: boolean }): string[] {
   const said: string[] = [];
+  let narrated = !!seen.cardVoice;
   for (const card of cards) {
     if (card.kind === 'project' && card.path) said.push(`${card.path.split('/').filter(Boolean).at(-1) ?? 'a'} project`);
     else if (card.kind === 'link' && card.url) said.push(card.title || card.url);
@@ -64,7 +70,21 @@ export function filmSays(cards: Card[], docTitles: string[], seen: { where: (car
     else if (card.kind === 'imagegen') {
       const count = Math.min(3, seen.drawn(card.id));
       if (count) said.push(`${count} picture${count === 1 ? '' : 's'} from the image studio`);
+    } else if (card.kind === 'voicegen' && !narrated) {
+      narrated = true;
+      said.push(voiceStudioSays(card, seen.voiceWho ?? ((id) => id)));
     }
   }
   return [...said, ...docTitles];
+}
+
+// How a wired voice studio's voice is named, on the video card's Using line and in the film's own log alike, so the
+// two say the same words. Kokoro is named by the voice's own name; OmniVoice by the recording it clones, else by the
+// few words its voice is designed from, else by the engine alone.
+export function voiceStudioSays(card: { voice?: string; engine?: string; design?: string; clone?: string }, who: (voiceId: string) => string): string {
+  const studio = 'the voice of the Voice studio';
+  if (card.engine !== 'omnivoice') return `${studio}, ${who(card.voice ?? '')}`;
+  const design = card.design?.trim() ?? '';
+  if (card.clone?.trim()) return `${studio}, cloned from ${card.clone.trim()}`;
+  return `${studio}, OmniVoice${design ? ` (${design.length > 40 ? `${design.slice(0, 39)}…` : design})` : ''}`;
 }

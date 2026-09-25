@@ -332,7 +332,10 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
   const pages = usePages();
   const drawn = usePictureCounts(found.cards.filter((card) => card.kind === 'imagegen').map((card) => card.id));
   const library = useNotes();
-  const using = filmSays(found.cards, found.docs, { where: (cardId) => pages[cardId] ?? '', drawn: (cardId) => drawn[cardId] ?? 0, noteTitle: (noteId) => library.find((note) => note.id === noteId)?.title ?? '' });
+  // A wired voice studio reads the film in its own voice, unless the founder picked a narrator here or turned it off.
+  const voiceWho = (voiceId: string) => ((voices.find((voice) => voice.id === voiceId) ?? voices[0])?.name ?? 'its voice').split(' · ')[0];
+  const using = filmSays(found.cards, found.docs, { where: (cardId) => pages[cardId] ?? '', drawn: (cardId) => drawn[cardId] ?? 0, noteTitle: (noteId) => library.find((note) => note.id === noteId)?.title ?? '',
+    voiceWho, cardVoice: !!data.voice || data.engine === 'omnivoice' || !!data.silent });
   if (data.address?.trim()) using.unshift(data.address.trim());
   const clips = assets.filter((one) => one.kind === 'video').length;
   if (clips) using.push(`${clips} of your clip${clips === 1 ? '' : 's'}`);
@@ -489,13 +492,13 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
             {data.ai === 'off' && <p className="studio__aside">Only what you dropped on this card, what is wired to it, and the film's own type and graphics.</p>}
             {/* Who reads it. One voice a film, and the card says which — a narrator who does not match whoever is
                 on screen is the fastest way to lose a viewer, so the studio would rather show nobody. */}
-            <label className="studio__ai" title="One narrator reads the whole film. Left on Auto, the studio casts the best voice that fits the brief.">
+            <label className="studio__ai" title="One narrator reads the whole film. Left on Auto, a wired Voice studio's voice reads it, or else the studio casts the best voice that fits the brief.">
               Narrator
               <select value={data.engine === 'omnivoice' ? OMNI_NARRATOR : data.voice ?? ''} onChange={(event) => {
                 const picked = event.target.value;
                 updateNodeData(id, picked === OMNI_NARRATOR ? { engine: 'omnivoice', voice: undefined } : { engine: undefined, voice: picked || undefined });
               }}>
-                <option value="">Auto</option>
+                <option value="">{found.cards.some((card) => card.kind === 'voicegen') ? 'The Voice studio\'s voice' : 'Auto'}</option>
                 {voices.map((voice) => <option key={voice.id} value={voice.id}>{voice.name}</option>)}
                 <option value={OMNI_NARRATOR}>OmniVoice · non-commercial</option>
               </select>
