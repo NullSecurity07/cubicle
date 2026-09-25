@@ -130,6 +130,16 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   finds: plain finding spends nothing, and verified email lookups are the one thing that costs credits (one each, 40
   free). The app never runs OpenOutreach's sending verbs. **Sending stays with you**, in the mail card, and a lead
   is marked contacted only by you, or by an email you said yes to.
+- **Deck** (2026-09-25): slides made on this machine, because a founder rewrites a deck every week and should not
+  have to open a slide editor to do it. Write what the deck is for, pick what it is for (pitch, investor update,
+  sales, demo day) and a look (clean, editorial, or brand, which takes a wired project's colours, typeface and logo),
+  and press **Make**. It is made from what is wired to the card: documents, notes, a project's README and a Metrics
+  card. The slides land as a strip of thumbnails with **Download PDF**, printed by the same headless Chrome the films
+  use; there is no PowerPoint file. A critic that is rules, not a model, keeps one idea a slide and a headline under
+  nine words, lets a number on only when the wired material states it, puts "No numbers yet." on traction unless a
+  Metrics card is wired, and names an amount on the ask only when your brief does. Notes under the deck ("merge 2
+  and 3, drop 5, slide 4: say it for a buyer") remake only the slides they touch, as the next version beside the
+  last. A person wired to the card can `make_deck`, `edit_deck` and `read_deck`.
 - **A site read whole, and a page watched** (2026-09-24): `crawl_site` reads a competitor's site in one go, 15
   pages two links deep unless a person asks for more (at most 40, three deep), two at a time and gently, and obeys
   its robots.txt. It gives a map of the pages and quotes the five that best answer your question; every page's text
