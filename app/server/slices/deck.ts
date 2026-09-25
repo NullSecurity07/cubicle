@@ -10,7 +10,7 @@ import { createDecks, type Decks, type Gathered } from '../deck/store.ts';
 import { outlineOf, type Think } from '../deck/storyboard.ts';
 import { projectDir } from '../folder.ts';
 import type { Deps, Slice } from '../install.ts';
-import { docsFor, sourcesFor, wiredTo } from '../media/video.ts';
+import { docsFor, sourcesFor, wiredTo } from '../media/gather.ts';
 import { readProject } from '../media/sources.ts';
 import { wired } from '../prompt.ts';
 import { complete, promptSize } from '../providers.ts';
