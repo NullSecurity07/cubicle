@@ -75,18 +75,29 @@ export function capLines(words: Word[], perLine: number, mostWords = 3, keywords
   const wanted = new Set(keywords.map(bare).filter(Boolean));
   const most = Math.max(1, mostWords);
   // The runs of words with no stop inside them.
-  const runs: Word[][] = [];
+  // A pause is a place to break, but not always the end of a thought: a voice leans on "beside" before "you." A run a
+  // pause ended is joined to the next one when it stopped on a word that leads on, or when what follows is one word —
+  // unless the pause was a real stop, longer than a lean ever is.
+  const LEAN = 0.8;
+  const runs: { words: Word[]; paused: boolean }[] = [];
   let run: Word[] = [];
   words.forEach((word, index) => {
     const last = run.at(-1);
-    if (last && word.at - (last.at + last.seconds) > 0.34) { runs.push(run); run = []; }
+    const gap = last ? word.at - (last.at + last.seconds) : 0;
+    if (last && gap > 0.34) { runs.push({ words: run, paused: gap < LEAN }); run = []; }
     run.push(word);
-    if (ENDS_CLAUSE.test(word.word) || index === words.length - 1) { runs.push(run); run = []; }
+    if (ENDS_CLAUSE.test(word.word) || index === words.length - 1) { runs.push({ words: run, paused: false }); run = []; }
   });
-  if (run.length) runs.push(run);
+  if (run.length) runs.push({ words: run, paused: false });
+  for (let at = runs.length - 2; at >= 0; at -= 1) {
+    const one = runs[at];
+    if (one.paused && (WEAK.has(bare(one.words.at(-1)!.word)) || runs[at + 1].words.length === 1)) {
+      runs.splice(at, 2, { words: [...one.words, ...runs[at + 1].words], paused: runs[at + 1].paused });
+    }
+  }
   const lines: CapLine[] = [];
   for (const phrase of runs) {
-    for (const held of shareOutPhrase(phrase, perLine, most)) {
+    for (const held of shareOutPhrase(phrase.words, perLine, most)) {
       const last = held.at(-1)!;
       lines.push({ words: held, at: held[0].at, seconds: Math.round((last.at + last.seconds - held[0].at) * 1000) / 1000, pop: popIn(held, wanted) });
     }
