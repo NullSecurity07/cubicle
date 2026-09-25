@@ -4,13 +4,13 @@ import {
 } from './spec.ts';
 import type { Pace } from './templates/looks.ts';
 import type { Pack } from './templates/packs.ts';
-import { claimsOf, figureSaid, fillerIn, madeUpNames, preciseFigures, realLine, unfill, ungrounded, type Sources } from './grounding.ts';
+import { claimsOf, figureSaid, fillerIn, flat, fromBrief, madeUpNames, preciseFigures, realLine, saysMostOf, unfill, ungrounded, type Sources } from './grounding.ts';
 import { inStyle, offStyle, photographic } from './style.ts';
 import { closeScene, firstHeadline, namesTheBrief, type Close } from './close.ts';
-import { freshHeadlines, repeatsCaptions, type Phrases } from './headlines.ts';
+import { freshHeadlines, phraseFor, repeatsCaptions, type Phrases } from './headlines.ts';
 import {
   carriesVisual, CODEY, contrasty, DATA, ECHO_FINE, EMPHASIS_WORDS, facesCamera, figureIn, hasNumber, headlineOf, keywords,
-  kickerOf, listable, listy, NEEDS_TEXT, noFace, opensADoor, plainClose, shorten, subjectOf, trimTo, trimWhole, worthAStat,
+  kickerOf, listable, listy, NEEDS_TEXT, noFace, opensADoor, plainClose, shorten, stockHeading, subjectOf, trimTo, trimWhole, wholeBullet, worthAStat,
 } from './wording.ts';
 
 // The critic. A free model asked for a storyboard will, left alone, write the same scene three times, put the whole
@@ -51,6 +51,9 @@ export type Want = {
   close?: Close;
   // The founder's own phrases, the brief's first, for a headline that must not be the captions again (`headlines.ts`).
   phrases?: Phrases;
+  // What the brief asked the film to end on ("end on the promise"), resolved to one of the brief's own clauses
+  // (`close.ts`). It is said last, or last before the call to action.
+  endOn?: string;
   // The narrator's measured words a second, when the script has been read once (`length.ts`). The budget uses it.
   rate?: number;
 };
@@ -236,6 +239,14 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
   const note = (line: string) => { if (!notes.includes(line)) notes.push(line); };
   // What a scene of these words could be, given a shape to try; nothing when its own words will not carry it. Every
   // pass that changes a scene's shape goes through here, so a film never ends up with five of the same thing.
+  const headed = new Set(scenes.flatMap((one) => [one.text, one.heading]).filter((one): one is string => !!one).map((one) => one.toLowerCase()));
+  const listHeading = (scene: Scene): string | undefined => {
+    const own = scene.heading?.trim();
+    if (own && countWords(own) <= HEADING_WORDS && !stockHeading(own)) return own;
+    const fresh = phraseFor(scene.say ?? scene.text ?? '', want.phrases ?? { brief: [], lines: [] }, headed);
+    if (fresh) headed.add(fresh.toLowerCase());
+    return fresh ?? undefined;
+  };
   const recast = (scene: Scene, next: Layout): Scene | null => {
     if (!can(next)) return null;
     if (next === 'picture') return { ...scene, layout: 'picture', image_prompt: scene.image_prompt || `${want.bible}. ${subjectOf(scene)}`, text: scene.text && countWords(scene.text) <= 8 ? scene.text : undefined };
@@ -265,7 +276,8 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
         : null;
     }
     const parts = (scene.text || scene.say || '').split(/[,;]|\band\b/i).map((part) => trimTo(part.trim(), 5)).filter(Boolean).slice(0, 4);
-    return listable(parts) ? { ...scene, layout: next, heading: scene.heading && countWords(scene.heading) <= HEADING_WORDS ? scene.heading : 'What you get', bullets: parts, text: undefined } : null;
+    // A list's heading is its own or the brief's (`listHeading`), never one out of a table that fits every film.
+    return listable(parts) ? { ...scene, layout: next, heading: listHeading(scene), bullets: parts, text: undefined } : null;
   };
   // The shapes already in the film. A recast prefers one that is not in here, which is how variety happens without
   // anybody counting it afterwards.
@@ -339,7 +351,7 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
         note(sources.has
           ? `${unsourced.length === 1 ? 'a number' : `${unsourced.length} numbers`} nobody in your material measured ${unsourced.length === 1 ? 'was' : 'were'} taken out`
           : 'there is nothing behind this film to measure, so the numbers in it were taken out');
-        if (made.layout === 'stat') made = recast(made, 'statement') ?? { ...made, layout: 'statement', text: made.text || 'What matters', heading: undefined };
+        if (made.layout === 'stat') made = recast(made, 'statement') ?? { ...made, layout: 'statement', text: made.text || headlineOf(made.say ?? '', HEADING_WORDS) || undefined, heading: undefined };
         for (const key of ['heading', 'text', 'say'] as const) {
           const said = made[key];
           if (!said) continue;
@@ -375,8 +387,12 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
           keep.push(plain ? closeScene(made, plain) : { ...made, text: want.reel ? 'Follow for more' : 'Watch it again', heading: undefined, say: want.reel ? 'Follow for more.' : 'Watch it again.', source: undefined });
           continue;
         }
-        // Nothing points at this. Either the founder's own words go in its place, or the scene goes.
-        const real = sources.has ? realLine(sources, used) : null;
+        // The founder's own line is never swapped out: one written in the brief, or most of it a sentence of the brief
+        // said again, or the line the brief asked the film to end on. The hero film lost its promise right here.
+        const said = made.say ?? pointless;
+        if (fromBrief(pointless, sources) || (want.endOn && saysMostOf(said, want.endOn))) { keep.push(made); continue; }
+        // Nothing points at this. Either the founder's own words about the same thing go in its place, or the scene goes.
+        const real = sources.has ? realLine(sources, used, { line: `${pointless} ${made.say ?? ''}`, source: made.source }) : null;
         if (real) {
           note(`"${trimTo(pointless, 6)}" is nowhere in your material, so that scene says your own words instead`);
           keep.push({ ...made, text: headlineOf(real, TEXT_WORDS), say: real, heading: undefined, bullets: undefined, source: real, layout: made.layout === 'stat' ? 'statement' : made.layout });
@@ -385,6 +401,14 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
         if (keep.length + 1 < scenes.length && scenes.length - dropped > 3) {
           dropped += 1;
           note(`I could not find "${trimTo(pointless, 6)}" in your material, so ${dropped === 1 ? 'that claim was' : `those ${dropped} claims were`} dropped`);
+          continue;
+        }
+        // A film too short to lose the scene still may not keep the claim: the last resort is a sentence of the
+        // material that is not about the same thing, which is true at least.
+        const any = sources.has ? realLine(sources, used) : null;
+        if (any) {
+          note(`"${trimTo(pointless, 6)}" is nowhere in your material, so that scene says your own words instead`);
+          keep.push({ ...made, text: headlineOf(any, TEXT_WORDS), say: any, heading: undefined, bullets: undefined, source: any, layout: made.layout === 'stat' ? 'statement' : made.layout });
           continue;
         }
       }
@@ -742,6 +766,81 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
       ? { ...scene, layout: 'picture' as Layout, heading: undefined, bullets: undefined, image_prompt: scene.image_prompt ?? scene.bg_prompt ?? `${want.bible}. ${subjectOf(scene)}` }
       : { ...scene, layout: 'statement' as Layout, text: headlineOf(scene.say ?? '', HEADING_WORDS) || undefined, bullets: undefined };
   });
+
+  // 12b. A list's lines are things, and its heading is somebody's. A line that is the tail of the spoken sentence
+  //      ("right here.") is not a list line; a list with one of those in it is its words set plainly, as a
+  //      statement. A heading out of the stock table is the brief's phrase about the line instead, or none.
+  scenes = scenes.map((scene) => {
+    if (scene.layout !== 'checklist' && scene.layout !== 'bullets' && scene.layout !== 'steps') return scene;
+    const kind = scene.layout === 'steps' ? 'step' : 'thing';
+    const lines = (scene.bullets ?? []).filter((one) => one.trim()).map((one) => wholeBullet(one, kind));
+    if (lines.some((one) => !one)) {
+      note('a list line that was only the end of a sentence is set as plain words instead');
+      const heading = scene.heading?.trim() && !stockHeading(scene.heading) ? scene.heading.trim() : undefined;
+      return { ...scene, layout: 'statement' as Layout, text: heading ?? (headlineOf(scene.say ?? '', HEADING_WORDS) || undefined), heading: undefined, bullets: undefined };
+    }
+    const heading = stockHeading(scene.heading) ? listHeading({ ...scene, heading: undefined }) : scene.heading;
+    if (heading !== scene.heading) note(`the list heading "${scene.heading}" fits any film, so it ${heading ? `says "${heading}", from your brief,` : 'is left off'} instead`);
+    return { ...scene, bullets: lines as string[], heading };
+  });
+
+  // 13. A film ends on its close, and the close is said. The site's hero film ended on a picture with nothing said
+  //     over it: a wordmark, a title card or a close with no line is the film stopping rather than ending. Whatever
+  //     is last becomes the close (`close.ts`), with the founder's line when they gave one and its own words when not.
+  if (scenes.length >= 2) {
+    const closing = scenes.at(-1)!;
+    if ((closing.layout !== 'cta' && closing.layout !== 'outro') || !closing.say?.trim()) {
+      const title = spec.title && countWords(spec.title) <= HEADING_WORDS ? spec.title.trim() : undefined;
+      const own = [closing.text, closing.heading].map((one) => one?.trim()).find((one) => !!one && countWords(one) >= 2 && countWords(one) <= HEADING_WORDS);
+      const line = ((want.close?.asked ? want.close.line : undefined) ?? own ?? want.close?.line ?? firstHeadline(scenes) ?? title)?.replace(/[.!\s]+$/, '');
+      if (line) {
+        note(`the film ended on a scene with nothing to say, so it closes on "${line}", said aloud`);
+        scenes = [...scenes.slice(0, -1), closeScene(closing, line)];
+      }
+    }
+  }
+
+  // 13b. …and nothing beside it the founder did not write. A close sets its heading as a button next to the line, and
+  //      the hero film's first run showed "Get started today" there: a door the model made up, beside the founder's
+  //      own. A heading on a close stays only when it is the founder's words as written, in the brief or the material.
+  {
+    const closing = scenes.at(-1);
+    const heading = closing?.heading?.trim();
+    // With nothing wired and no brief to hold it to there is nothing to check it against, and a reel's handle beside
+    // "Follow for more" is the account the film is posted from.
+    if (scenes.length >= 2 && closing && heading && want.sources && !heading.startsWith('@') && (closing.layout === 'cta' || closing.layout === 'outro')) {
+      const theirs = !!want.sources && flat(heading).length >= 3
+        && [want.sources.brief, want.sources.corpus].some((body) => ` ${body} `.includes(` ${flat(heading).replace(/[.]+$/, '')} `));
+      if (!theirs) {
+        note(`"${heading}" beside the close was not yours, so the close is its line alone`);
+        scenes = [...scenes.slice(0, -1), { ...closing, heading: undefined, ...(closing.text ? {} : { text: closing.say?.replace(/[.!\s]+$/, '') }) }];
+      }
+    }
+  }
+
+  // 14. "End on the promise." The line the brief asked the film to end on is the last thing said: the close itself
+  //     when there is no call to action, and the scene just before the close when there is. A scene that already
+  //     says it is moved there; with none, the founder's own sentence for it is added, from the material when a
+  //     sentence there says it, else from the brief as written.
+  if (want.endOn && scenes.length >= 2 && (!want.close?.asked || !sameLine(want.close.line, want.endOn))) {
+    const pin = want.endOn;
+    const at = scenes.length - 2;
+    const says = (scene: Scene) => saysMostOf(scene.say ?? scene.text ?? '', pin);
+    if (!says(scenes[at])) {
+      let found = -1;
+      for (let index = at - 1; index >= 1; index -= 1) if (says(scenes[index])) { found = index; break; }
+      if (found > 0) {
+        const moved = scenes[found];
+        scenes = [...scenes.slice(0, found), ...scenes.slice(found + 1, -1), moved, scenes.at(-1)!];
+        note(`the brief asked to end on "${pin}", so that scene is now the last before the close`);
+      } else {
+        const said = want.sources?.lines.find((line) => saysMostOf(line, pin)) ?? `${pin}.`;
+        const text = countWords(said) <= HEADING_WORDS ? said.replace(/[.!\s]+$/, '') : headlineOf(said, HEADING_WORDS);
+        scenes = [...scenes.slice(0, -1), { layout: 'statement', text, say: said, source: said }, scenes.at(-1)!];
+        note(`the brief asked to end on "${pin}", so the film says it just before the close`);
+      }
+    }
+  }
 
   return { spec: { ...spec, scenes }, notes };
 }

@@ -242,3 +242,43 @@ export const ECHO_FINE = new Set<Layout>(['hook', 'cta', 'logo', 'title', 'stat'
 // means, and a film long enough to have something to measure has to carry one.
 export const DATA = new Set<Layout>(['stat', 'chart', 'compare', 'checklist', 'steps']);
 export const NEEDS_TEXT = new Set<Layout>(['statement', 'quote', 'outro', 'hook', 'cta']);
+
+// --- a list's lines -------------------------------------------------------------------------------------------
+//
+// The hero film's checklist came out as "What you get", then "Your own AI team" and "right here." The heading was
+// out of a table that fits every product, and the second line was the tail of the spoken sentence, full stop and
+// all. A line on a list is a thing: a noun phrase of two to six words, not the end of a sentence. A list whose lines
+// are not that is its words set plainly instead, and a list's heading is the line's or the brief's, never furniture.
+
+// The headings nobody wrote: fine on any list in any film, so they say nothing about this one.
+export const STOCK_HEADINGS = new Set(['what you get', 'what matters', 'keep watching', 'watch this', 'why it matters',
+  'key features', 'features', 'benefits', 'key benefits', 'how it works', 'the highlights', 'highlights', 'at a glance']);
+export const stockHeading = (line?: string): boolean => !!line && STOCK_HEADINGS.has(line.trim().replace(/[.!:\s]+$/, '').toLowerCase());
+
+// Words a list line cannot start on (it is the middle of a sentence) or end on (it is still going, or it is only
+// where or when something is).
+const OPENS_MID = new Set(['and', 'or', 'but', 'so', 'then', 'right', 'here', 'there', 'just', 'also', 'which', 'that',
+  'who', 'to', 'with', 'of', 'for', 'from', 'by', 'as', 'at', 'in', 'on', 'is', 'are', 'was', 'were', 'it', 'they', 'we',
+  'you', 'he', 'she', 'while', 'because', 'when', 'where', 'if', 'even', 'too', 'not']);
+const ENDS_ON_NOTHING = new Set(['here', 'there', 'now', 'today', 'away', 'too', 'again', 'right', 'well', 'soon',
+  'later', 'yet', 'already', 'ever', 'anyway', 'up', 'out', 'off', 'down', 'it', 'them', 'you', 'us']);
+
+// What an instruction cannot end on: it would still be going.
+const ENDS_MID = new Set(['a', 'an', 'the', 'and', 'or', 'but', 'so', 'of', 'to', 'with', 'for', 'from', 'by', 'as',
+  'that', 'which', 'your', 'my', 'our', 'their', 'its', 'is', 'are']);
+
+// A list line as it should be set, or nothing when it is not a list line at all. The full stop or comma a sentence
+// left on it goes; what is left must be two to six words, open on something that can open a phrase, and end on a
+// thing. `steps` may be an instruction ("Wire a person in"), so only the fragment rules hold there.
+export function wholeBullet(line: string, kind: 'thing' | 'step' = 'thing'): string | null {
+  const bare = (line ?? '').trim().replace(/^[-*•\s]+/, '').replace(/[.,;:!?…\s]+$/, '').replace(/\s+/g, ' ');
+  const words = bare.split(' ').filter(Boolean);
+  if (words.length < 2 || words.length > 6) return null;
+  const first = words[0].toLowerCase().replace(/[^\p{L}\p{N}']+/gu, '');
+  const last = words.at(-1)!.toLowerCase().replace(/[^\p{L}\p{N}']+/gu, '');
+  if (OPENS_MID.has(first) || !/^[\p{L}\p{N}]/u.test(bare)) return null;
+  if (!content(bare).length) return null;
+  if (kind === 'thing' && (STOP.has(last) || ENDS_ON_NOTHING.has(last) || /ly$/.test(last))) return null;
+  if (kind === 'step' && ENDS_MID.has(last)) return null;
+  return bare.charAt(0).toUpperCase() + bare.slice(1);
+}

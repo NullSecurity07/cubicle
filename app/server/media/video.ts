@@ -17,7 +17,7 @@ import {
   bibleFor, direct, faceIn, fitLength, layoutsFor, narratorWanted, onCamera, photograph, readBrief, tellOf, understandingOf,
   type Asked, type Understanding,
 } from './director.ts';
-import { checkCut, cuttingFor, editFilm, type Edit, type Shot as Cut, type Take } from './editor.ts';
+import { checkCut, cuttingFor, editFilm, takesOf, type Edit, type Shot as Cut, type Take } from './editor.ts';
 import { ff, ffReady, FFMPEG } from './ff.ts';
 import { fitStill, normalise } from './footage.ts';
 import { DRAWN_BEFORE, mayDrawHere, outOfPictures } from './image.ts';
@@ -34,7 +34,7 @@ import {
 import { isDraft, makingWords, secondsEach } from '../../shared/film-time.ts';
 import { filmMemory, storyboardKey, subjectKey, type KeptSubject } from './remembered.ts';
 import { pictureHash, type FilmRecord, type RecordPicture } from './edits.ts';
-import { recordOf } from './film-record.ts';
+import { pcmSeconds, readPcm, recordOf, wavOfPcm } from './film-record.ts';
 import { sourcesOf } from './grounding.ts';
 import { briefWants } from './close.ts';
 import {
@@ -42,7 +42,7 @@ import {
   type Film, type Pace, type Pack, type Shot,
 } from './templates/index.ts';
 import { camOf } from './templates/layouts.ts';
-import { timeWords, type Part, type Word } from './timings.ts';
+import { hushPcm, sceneClock, timeWords, type Hush, type Part, type Word } from './timings.ts';
 import { gather, narratorOf, takeLine, type VideoAsk, type VideoDeps } from './gather.ts';
 import { settleLength } from './length.ts';
 import { readAround } from './take.ts';
@@ -437,6 +437,15 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           spans.push({ from: counted, to: counted + count });
           counted += count;
         }
+        // How long each scene holds when nothing is said over it: long enough to read what is on it. With a reading,
+        // only the wordless scenes need one; without, every scene does.
+        const quietFor = (spoken: boolean): number[] => spec.scenes.map((scene, index) => (spoken && spans[index].to > spans[index].from ? 0
+          : sceneSeconds([scene.heading, scene.text, ...(scene.bullets ?? [])].filter(Boolean).join(' '), 0, pace)));
+        // The reading on the film's clock: a breath before the first word, and a silence for every wordless scene
+        // where that scene falls, so a title card with no line is silent for its own length and the voice starts on
+        // the first scene that says something (`timings.ts`).
+        const clockOf = (heard: Word[]) => sceneClock(heard, spans, quietFor(true), { ...PACE[pace], min: cuttingFor(pack, pace).min });
+        let hushes: Hush[] = [];
 
         // --- the edit ---------------------------------------------------------------------------------------
         //
@@ -450,35 +459,12 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // measured to fall. The first is what lets the pictures start while the second is still being listened for.
         const style = cuttingFor(pack, pace);
         const cutTo = (heard: Word[], tell: boolean): { takes: Take[]; edit: Edit } => {
-          const takes: Take[] = spec.scenes.map((scene, index): Take => {
-            const span = spans[index];
-            const spoken = heard.length && span.to > span.from
-              ? { from: heard[span.from].at - PACE[pace].lead * 0.5, to: heard[span.to - 1].at + heard[span.to - 1].seconds + PACE[pace].tail * 0.5 }
-              : null;
-            const on = [scene.heading, scene.text, ...(scene.bullets ?? [])].filter(Boolean).join(' ');
-            return {
-              scene, index,
-              from: spoken?.from ?? 0, to: spoken?.to ?? 0,
-              moving: !!shots[index].video,
-              least: spoken ? 0 : sceneSeconds(on, 0, pace),
-            };
+          // The words are already on the film's one clock (`sceneClock`), so every take sits on its own words and a
+          // wordless scene sits in the silence the reading was given for it.
+          const takes: Take[] = takesOf(spec.scenes, spans, heard, {
+            lead: PACE[pace].lead, tail: PACE[pace].tail, min: style.min, floor: PACE[pace].floor,
+            least: quietFor(heard.length > 0), moving: shots.map((one) => !!one.video),
           });
-          // A scene with nothing said over it has no place on the voice's clock, so it takes its seconds from the
-          // one before it: everything after moves along. This is the one thing one continuous reading costs, and it
-          // is cheap — a wordless picture between two sentences is a cutaway, which is what it should have been.
-          let clockShift = 0;
-          for (const one of takes) {
-            if (one.to > one.from) { one.from += clockShift; one.to += clockShift; continue; }
-            one.from = (takes[one.index - 1]?.to ?? 0);
-            one.to = one.from + (one.least ?? PACE[pace].floor);
-            clockShift += one.to - one.from;
-          }
-          // Nothing may start before the one before it ended, whatever the measurement said.
-          for (let index = 1; index < takes.length; index += 1) {
-            takes[index].from = Math.max(takes[index].from, takes[index - 1].to);
-            takes[index].to = Math.max(takes[index].to, takes[index].from + style.min);
-          }
-          takes[0].from = 0;
           // How long the film really runs: as long as its reading and a short beat to close on, never padded to the
           // length asked for with a caption frozen on screen. `media/length.ts` says why.
           const settled = settleLength(takes, heard, target);
@@ -651,7 +637,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // Where the words ought to fall, worked out from how long each sentence took to say. It is what the film
         // is cut against whenever the recording cannot be listened back to, so it is near enough to choose
         // pictures by — and it exists now, where the measurement is most of a minute away on a long film.
-        const rough = voice ? (await timeWords(null, null, parts, PACE[pace].lead, { script: scriptWords })).words : [];
+        const rough = voice ? clockOf((await timeWords(null, null, parts, 0, { script: scriptWords })).words).words : [];
         const early = voice && drawing
           ? drawFor(cutTo(rough, false).edit.shots, rough, true).then(() => true, () => false)
           : Promise.resolve(false);
@@ -660,9 +646,11 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           // And now the one measurement in this studio that was always a guess. Every cut, punch-in and caption
           // in the film lands on one of these.
           report('listening back for where each word falls, and drawing while it does…');
-          const heard = await timeWords(bin, join(at, 'assets', voice.file), parts, PACE[pace].lead, { script: scriptWords, signal })
-            .catch(() => ({ words: rough, how: 'guessed' as const }));
-          words = heard.words;
+          const heard = await timeWords(bin, join(at, 'assets', voice.file), parts, 0, { script: scriptWords, signal })
+            .catch(async () => ({ words: (await timeWords(null, null, parts, 0, { script: scriptWords })).words, how: 'guessed' as const }));
+          const clocked = clockOf(heard.words);
+          words = clocked.words;
+          hushes = clocked.hushes;
           report(heard.how === 'heard'
             ? 'the words were measured, so every cut lands on one'
             : 'the words could not be measured on this machine, so their timing comes from the sentences — the cuts are close rather than exact');
@@ -670,14 +658,27 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         const startedEarly = await early;
         if (signal?.aborted) throw new Error('stopped');
 
+        // The recording, given the same silences as its words, so it plays on the film's clock from 0: the voice
+        // waits out a wordless title instead of reading the next scene's line under it.
+        if (voice && hushes.length) {
+          const read = await readFile(join(at, 'assets', voice.file)).catch(() => null);
+          const pcm = read ? readPcm(read) : null;
+          if (pcm) {
+            const held = hushPcm(pcm, hushes);
+            await writeFile(join(at, 'assets', 'say-film.wav'), wavOfPcm(held));
+            voice = { file: 'say-film.wav', seconds: Math.round(pcmSeconds(held) * 1000) / 1000 };
+          } else report('the narration could not be laid on the film\'s clock, so it may run ahead of a scene with nothing said over it');
+        }
+
         // Somebody speaking on camera needs their own line as sound, cut out of the film's one reading.
         if (voice && words.length && !noFf) {
           for (const [index, scene] of spec.scenes.entries()) {
             if (scene.layout !== 'presenter') continue;
             const span = spans[index];
             if (span.to <= span.from) continue;
-            const from = Math.max(0, words[span.from].at - PACE[pace].lead);
-            const until = Math.max(from + 0.4, words[span.to - 1].at + words[span.to - 1].seconds - PACE[pace].lead);
+            // The recording plays on the film's clock now, so a word's time is its place in the file.
+            const from = Math.max(0, words[span.from].at);
+            const until = Math.max(from + 0.4, words[span.to - 1].at + words[span.to - 1].seconds);
             const file = `say-${index}.wav`;
             await ff(FFMPEG, ['-y', '-loglevel', 'error', '-ss', from.toFixed(3), '-i', join(at, 'assets', voice.file),
               '-t', (until - from).toFixed(3), join(at, 'assets', file)], signal, 120)

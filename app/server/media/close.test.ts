@@ -5,6 +5,7 @@ import { planPrompt, understandingOf, type Material } from './director.ts';
 import { sourcesOf } from './grounding.ts';
 import { HERO_BRIEF, HERO_MATERIAL, heroSpec, HERO_SCENES } from './hero-fixture.ts';
 import { LAYOUTS, type Layout, type Scene } from './spec.ts';
+import { composition } from './templates/index.ts';
 
 // The site's hero film closed on "Try it this week", a line nobody asked for. A close is the founder's call to
 // action, else the product's positioning line, else the film's first headline said again.
@@ -85,5 +86,48 @@ describe('the close, as the founder wrote it', () => {
     const close = last(repair(heroSpec(scenes), want(HERO_MATERIAL, HERO_BRIEF)).spec.scenes);
     expect(close.heading).toBeUndefined();
     expect(close.text).toBe('Get it, free, on your own machine');
+  });
+});
+
+// Run 2 of the hero film ended on a picture with nothing said over it. A film ends on its close, and the close is said.
+describe('the last scene is always the close, said aloud', () => {
+  const closes = (scene: Scene, brief = HERO_BRIEF) => last(repair(heroSpec([...HERO_SCENES.slice(0, -1), scene]), want(HERO_MATERIAL, brief)).spec.scenes);
+
+  it('turns a last picture into the close, with the founder\'s call to action said over it', () => {
+    const close = closes({ layout: 'picture', image_prompt: 'a lamp on a desk' });
+    expect(close.layout).toBe('cta');
+    expect(close.say).toBe('Get it, free, on your own machine.');
+    expect(close.image_prompt).toBeUndefined();
+  });
+
+  it('gives a wordmark or a title card at the end a line to say', () => {
+    for (const layout of ['logo', 'title'] as const) {
+      const close = closes({ layout, heading: 'cubicle' });
+      expect(close.layout).toBe('cta');
+      expect(close.say?.trim()).toBeTruthy();
+    }
+  });
+
+  it('says a silent close\'s own line when the brief named none', () => {
+    const close = closes({ layout: 'cta', text: 'AI people beside you' }, 'a calm launch film about a canvas where AI people work beside a founder');
+    expect(close.say).toBe('AI people beside you.');
+  });
+});
+
+describe('nothing beside the close the founder did not write', () => {
+  it('drops a made-up button when the close is the founder\'s positioning, not a quoted call to action', () => {
+    const brief = 'a calm launch film: a company of your own, on your own machine';
+    const scenes = [...HERO_SCENES.slice(0, -1), { layout: 'cta' as const, heading: 'Get started today', text: 'A company of your own', say: 'A company of your own, on your own machine.' }];
+    const made = repair(heroSpec(scenes), want(HERO_MATERIAL, brief)).spec;
+    expect(last(made.scenes).heading).toBeUndefined();
+    const page = composition({ title: made.title, shape: 'wide', look: 'clean', shots: made.scenes.map((scene) => ({ scene, seconds: 3 })) });
+    expect(page).not.toMatch(/get started today/i);
+  });
+
+  it('keeps a heading on the close that the founder wrote themselves', () => {
+    const brief = 'a calm launch film about a company of your own, free forever';
+    const scenes = [...HERO_SCENES.slice(0, -1), { layout: 'cta' as const, heading: 'free forever', text: 'A company of your own', say: 'A company of your own.' }];
+    const close = last(repair(heroSpec(scenes), want(HERO_MATERIAL, brief)).spec.scenes);
+    expect(close.heading).toBe('free forever');
   });
 });

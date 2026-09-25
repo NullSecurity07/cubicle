@@ -10,7 +10,7 @@ import { FILLER, sourcesOf } from './grounding.ts';
 import type { Wanted } from './voice.ts';
 import { criticiseVisuals, repairVisuals, visualsOf, visualsPrompt, type Visual } from './visuals.ts';
 import { LENSES, motionMoves, SIZES, stillMoves } from './moves.ts';
-import { briefWants, closeLineOf } from './close.ts';
+import { briefWants, closeLineOf, endOnOf } from './close.ts';
 import { lengthFit, rateOf, readingOf } from './length.ts';
 
 // The director. Not a form to fill in — a person who reads the brief, works out what is being asked for, decides on
@@ -224,7 +224,10 @@ export function planPrompt(understanding: Understanding, asked: Asked, material:
 // product. The critic holds the storyboard to the same line afterwards (`close.ts`).
 function closingLine(asked: Asked, material: Material): string {
   const close = closeLineOf(asked.brief, material);
-  if (close?.asked) return `The last beat is the founder's own call to action, said and shown word for word: "${close.line}". Nothing else closes this film.`;
+  // "End on the promise" beside a call to action: the promise is the last thing said before it.
+  const pinned = endOnOf(asked.brief);
+  const before = pinned && close?.asked && close.line !== pinned ? ` The beat just before it says, in the founder's words: "${pinned}".` : '';
+  if (close?.asked) return `The last beat is the founder's own call to action, said and shown word for word: "${close.line}". Nothing else closes this film.${before}`;
   if (close) return `The last beat closes on what this product says it is: "${close.line}" — or on something else the brief itself names. Never a line that could close any film, and no invented website, download or button.`;
   return material.lines.length
     ? 'The last beat asks the viewer to do one thing they really can do — an address, a command or an action the material names. If the material names none, close on the film\'s own opening idea, said again. Never a line that could close any film, and no invented website, download or button.'
@@ -361,7 +364,8 @@ export function specFromPlan(plan: Plan, understanding: Understanding, layouts: 
     }
     if (listy(beat.say) && can('checklist')) {
       const parts = beat.say.split(/[,;]|\band\b/i).map((part) => trimTo(part.trim(), 5)).filter(Boolean).slice(0, 4);
-      if (parts.length >= 2) return { layout: 'checklist', heading: 'What you get', bullets: parts, say: beat.say, bg_prompt: about, source: beat.source };
+      // No stock heading: the critic gives a list the brief's own phrase for it, or none (`critic.ts`, 12b).
+      if (parts.length >= 2) return { layout: 'checklist', bullets: parts, say: beat.say, bg_prompt: about, source: beat.source };
     }
     // One wordless picture in three: a reel that never writes anything is a slideshow of somebody else's photographs.
     if (can('picture') && index % 3 === 2) return { layout: 'picture', image_prompt: about, say: beat.say, source: beat.source };
