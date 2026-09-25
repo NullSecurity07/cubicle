@@ -56,6 +56,14 @@ describe('the cuts of a film whose pack has a break transition', () => {
     expect(clean).toContain('tl.fromTo("#regflash", { opacity: 0 }, { opacity: 1, duration: 0.225, ease: "sine.inOut" }, 11.750);');
     expect(clean).toContain('tl.to("#regflash", { opacity: 0, duration: 0.250, ease: "sine.inOut" }, 12.000);');
   });
+  it('a calm film dips through its own ground, never a sheet of white a viewer reads as a blank frame', () => {
+    const calm = composition({ title: 'One', shape: 'wide', look: 'brand', pace: 'calm', shots: reel.map((one) => shot(one)) });
+    expect(calm).toContain('id="regflash"');
+    expect(calm).not.toMatch(/\.reg-flash \{[^}]*#ffffff/);
+    expect(calm).toMatch(new RegExp(`\\.reg-flash \\{[^}]*background: ${PACK.brand.paint.ground}`));
+    const punchy = composition({ title: 'One', shape: 'wide', look: 'brand', pace: 'punchy', shots: reel.map((one) => shot(one)) });
+    expect(punchy).toMatch(/\.reg-flash \{[^}]*#ffffff/);
+  });
   it('a moving picture on either side of a break is cut to, not whipped — but white goes over anything', () => {
     const moving = reel.map((one, index) => shot(one, 3, index === 3 ? { video: 'clip-3.mp4' } : {}));
     expect(film('creator', moving)).not.toContain('regwhip');

@@ -196,6 +196,12 @@ export function criticise(spec: Spec, want: Want): Finding[] {
 
 // Everything above, done to the storyboard rather than said about it. Nothing here asks anybody anything, and it
 // always terminates: each pass either changes a scene into a shape it is allowed to be or leaves it alone.
+// The shapes a film may end on: each one is its closing line, or the product's own mark, set on the look itself.
+export const CLOSES = new Set<Layout>(['cta', 'logo', 'outro', 'title']);
+// Whether a scene is the film's close, which sits on the look's own ground: nothing is drawn behind it, so the last
+// frame is the closing line and never a picture of something the line is not about.
+export const closesOnGround = (layout: Layout, index: number, count: number): boolean => index === count - 1 && CLOSES.has(layout);
+
 export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } {
   const notes: string[] = [];
   const allowed = new Set(want.layouts);
@@ -256,11 +262,20 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
       scenes[0] = { ...first, layout: 'hook', heading: undefined, text: trimTo(line, HEADING_WORDS) || 'Watch this' };
       note('the film opened on a title card, so the first scene is a hook instead');
     }
+  }
+  // …and every film, reel or not, ends on a scene whose shape carries its closing line. A picture or a paragraph as
+  // the last thing on screen leaves the film to end on whatever was drawn for it — the site's own hero film ended on
+  // an empty warehouse under its last line. The close is the line set as a close, on the look's own ground.
+  if (scenes.length >= 2) {
     const last = scenes.at(-1)!;
-    if (last.layout !== 'cta' && last.layout !== 'logo' && last.layout !== 'outro' && can('cta')) {
+    if (!CLOSES.has(last.layout) && can('cta')) {
       const line = last.text || last.heading || last.say || '';
-      scenes[scenes.length - 1] = { ...last, layout: 'cta', text: trimTo(line, HEADING_WORDS) || 'Follow for more', heading: last.heading && countWords(last.heading) <= 4 ? last.heading : undefined };
-      note('the film had no ending, so the last scene is a call to action');
+      scenes[scenes.length - 1] = {
+        ...last, layout: 'cta', text: trimTo(line, HEADING_WORDS) || (want.reel ? 'Follow for more' : 'Try it this week'),
+        heading: last.heading && countWords(last.heading) <= 4 ? last.heading : undefined,
+        image_prompt: undefined, bullets: undefined,
+      };
+      note('the film had no ending, so the last scene is its closing line, set as a close');
     }
   }
 

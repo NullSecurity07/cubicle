@@ -53,6 +53,22 @@ describe('caption lines', () => {
     expect(lines[2].words[0].word).toBe('one');
   });
 
+  it('groups by phrase: never across a comma or a full stop, never ending a line on a word that leads into the next', () => {
+    const said = (text: string) => text.split(' ').map((word, index) => at(word, index * 0.32));
+    const shown = (text: string, most = 3) => capLines(said(text), 26, most).map((line) => line.words.map((one) => one.word).join(' '));
+    const hero = shown('A small team of AI people works beside a founder; wires are access, so each person reads only what is wired to them.');
+    // The script's own casing, word for word.
+    expect(hero.join(' ')).toBe('A small team of AI people works beside a founder; wires are access, so each person reads only what is wired to them.');
+    expect(hero).not.toContain('AI people works beside');
+    for (const line of hero) {
+      // Punctuation that ends a clause ends the line it is in.
+      expect(line.slice(0, -1)).not.toMatch(/[,;.!?]/);
+      // A line that stops on "of", "a", "the" or "beside" is a line cut in the middle of a phrase.
+      if (!/[,;.!?]$/.test(line)) expect(line).not.toMatch(/\b(of|a|the|to|beside|and)$/i);
+    }
+    expect(hero).toContain('wires are access,');
+  });
+
   it('carries every word once and only once, whatever the budget', () => {
     const words = 'one two three four five six seven eight'.split(' ').map((word, index) => at(word, index * 0.3));
     for (const budget of [6, 12, 20, 40]) {

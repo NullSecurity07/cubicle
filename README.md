@@ -58,6 +58,15 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   the frame high, in capitals, with a black stroke, one to three words at a time and one of them the word the line
   turns on. There is no grain and no vignette over any of it: a grade belongs to a look that declares one as its
   format, on the pictures and never over the type.
+- **A film is never silently worse** (2026-09-25): the site's own hero film came back with four faults, and each
+  one is now a rule. A narrated film is as long as its reading and a beat to close on, never padded to the length
+  asked for — the hero was stretched from fifteen seconds to twenty and held one caption for the last eight; the card
+  says the real length instead, and a calm film is handed enough words to come close. A picture that comes back as a
+  near-uniform white or black frame is drawn once more and, blank again, left out, so the scene sits on the look's
+  own ground with its words; a calm film dips through that ground at an act break rather than flashing white. A claim
+  that is in the founder's brief is grounded as surely as one in the material, and every film ends on a scene whose
+  shape is its closing line, on the look itself, never on a picture of something else. Captions keep the script's
+  casing and its sentences, and are grouped by phrase from the measured timings — never "ai people works beside".
 - **A camera, not a slide** (2026-09-24): every picture and clip scene is taken at a **size** (extreme close-up to
   extreme wide), through a **lens** (24 to 135) and with a **move** out of a fixed table of twenty-one — push in,
   pan, tilt, truck, pedestal, crash zoom, whip pan, a parallax arc across the depth planes, and five that only a

@@ -8,7 +8,7 @@ import { createLibrary } from '../library/notes.ts';
 import { musicBed, MOODS, SFX_DIR, sfxFile, type Mood } from './audio.ts';
 import { type Credit, type Mood as MusicMood } from './music.ts';
 import { noClips } from './clips.ts';
-import { headlineOf, mendShots, repair, trimTo, type Want } from './critic.ts';
+import { closesOnGround, headlineOf, mendShots, repair, trimTo, type Want } from './critic.ts';
 import { lensPhrase } from './moves.ts';
 import { finishPicture, looking } from './finish.ts';
 import { hands } from './turns.ts';
@@ -42,6 +42,7 @@ import {
 } from './templates/index.ts';
 import { camOf } from './templates/layouts.ts';
 import { timeWords, type Part, type Word } from './timings.ts';
+import { settleLength } from './length.ts';
 import { gather, type VideoAsk, type VideoDeps } from './gather.ts';
 import { carryExtras, chromePath, drawingFor, editPlan, renderProject, stageVendor, withJobDir } from './render.ts';
 import { castLine, castVoice, engineOf, isVoice, VOICES, wavSeconds } from './voice.ts';
@@ -423,30 +424,10 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
             takes[index].to = Math.max(takes[index].to, takes[index].from + style.min);
           }
           takes[0].from = 0;
-          // A film that runs short of what was asked for is a film that ends before the viewer expected it to. The
-          // narration is already budgeted to the length, so a shortfall is the breaths around the words rather than
-          // the words themselves — and it is spread across every scene rather than dumped on the last two.
-          //
-          // Which is the whole point: a scene given a little more room is a scene the editor can *cut inside*, and
-          // what the film was short of was picture changes, not holds. Held on the close instead, a real reel came
-          // out at three and a half changes in ten seconds against a floor of four, with the last two shots sitting
-          // still for the difference. The payoff still gets a larger share, because one long hold is the rhythm.
-          const runs = takes.at(-1)?.to ?? 0;
-          if (target && runs > 0 && runs < target * 0.96) {
-            const short = target * 0.98 - runs;
-            const payoff = Math.max(0, takes.length - 2);
-            // The payoff takes a double share; everything else splits the rest by how long it already is.
-            const weights = takes.map((one, index) => Math.max(0.2, one.to - one.from) * (index === payoff ? 2 : 1));
-            const whole = weights.reduce((sum, one) => sum + one, 0) || 1;
-            let shift = 0;
-            for (const [index, one] of takes.entries()) {
-              const share = (short * weights[index]) / whole;
-              one.from += shift;
-              one.to += shift + share;
-              shift += share;
-            }
-            if (tell) report(`the reading came to ${Math.round(runs)} seconds against ${target}, so every scene is given a little more room rather than the film ending early`);
-          }
+          // How long the film really runs: as long as its reading and a short beat to close on, never padded to the
+          // length asked for with a caption frozen on screen. `media/length.ts` says why.
+          const settled = settleLength(takes, heard, target);
+          if (tell && settled) report(settled);
 
           return { takes, edit: editFilm(takes, heard, style, { sfxOn: sfx }) };
         };
@@ -556,7 +537,8 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // one; the second call finds nearly everything it wants already started.
         const drawFor = async (cut: Cut[], heard: Word[], tell: boolean) => {
           const needing = cut.map((one, order) => ({ one, at: order }))
-            .filter(({ one }) => !shots[one.scene].video && !shots[one.scene].image);
+            .filter(({ one }) => !shots[one.scene].video && !shots[one.scene].image
+              && !closesOnGround(shots[one.scene].scene.layout, one.scene, shots.length));
           if (!drawing || !needing.length) return { needing, owners: needing.map(() => -1) };
           const have = new Set(needing.flatMap(({ one }, which) => (pictures.has(shotKey(one)) ? [which] : [])));
           // How many of those can really be drawn today, said in minutes before the waiting starts. Away from this

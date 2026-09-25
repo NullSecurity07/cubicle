@@ -155,3 +155,33 @@ export async function lighten(file: string): Promise<{ from: number; gamma: numb
     return { from, gamma };
   } catch { return null; }
 }
+
+// --- a picture with nothing in it --------------------------------------------------------------------------------
+
+// A picture model asked for something quiet sometimes hands back a sheet of paper: a white frame, or a black one,
+// with nothing on it. Nothing downstream of it could tell — the scrim was solved, the words were set — and a frame
+// of plain white went out in the site's own hero film. It is measured here the way an eye would: how light the whole
+// frame is, and how little it changes across itself. Very light or very dark is not enough on its own, a snowfield
+// or a night sky are both real; very light or very dark *and* flat is nothing.
+export const BLANK_LIGHT = 0.92;
+export const BLANK_DARK = 0.05;
+export const BLANK_SPREAD = 0.04;
+export type Blankness = { light: number; spread: number };
+
+export async function blankness(file: string): Promise<Blankness | null> {
+  try {
+    const { default: sharp } = await import('sharp');
+    const { data } = await sharp(file).removeAlpha().resize(48, 27, { fit: 'fill' }).greyscale().raw().toBuffer({ resolveWithObject: true });
+    if (!data.length) return null;
+    let sum = 0;
+    for (const value of data) sum += value / 255;
+    const light = sum / data.length;
+    let spread = 0;
+    for (const value of data) spread += (value / 255 - light) ** 2;
+    return { light, spread: Math.sqrt(spread / data.length) };
+  } catch { return null; }
+}
+
+// A picture that could not be read is not called blank: that is somebody else's failure to report.
+export const isBlank = (seen: Blankness | null | undefined): boolean =>
+  !!seen && (seen.light > BLANK_LIGHT || seen.light < BLANK_DARK) && seen.spread < BLANK_SPREAD;

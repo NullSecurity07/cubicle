@@ -159,7 +159,10 @@ export function composition(film: Film): string {
   const moves: (BreakMove | null)[] = film.shots.map((shot, index) => {
     if (!style.breaks || !index || !breaks.has(index)) return null;
     if (style.breaks !== 'flash-white' && (shot.video || film.shots[index - 1].video)) return null;
-    try { return breakMove(style.breaks, `#g${index - 1}`, `#g${index}`, starts[index], index, width); } catch { return null; }
+    // A calm film dips through its own ground rather than flashing white. Over a dark look at a calm pace, a third of
+    // a second of full white is not read as energy but as a blank frame — the site's own hero film showed one.
+    const sheet = style.breaks === 'flash-white' && pace === 'calm' ? paint.ground : undefined;
+    try { return breakMove(style.breaks, `#g${index - 1}`, `#g${index}`, starts[index], index, width, sheet); } catch { return null; }
   });
   for (const move of moves) if (move) { extra.css.add(move.css); extra.html.add(move.html); }
   // A scene is given its own length plus the time the next one needs to arrive over it, so the two really overlap.

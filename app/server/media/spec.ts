@@ -286,8 +286,13 @@ export const scenesFor = (seconds: number, pace: Pace): [number, number] => {
 // old studio budgeted the words and forgot the breaths, which is exactly how fifteen seconds came out at eighteen.
 export const WORDS_A_SECOND = 2.4;
 export const wordsFor = (seconds: number): number => Math.round(seconds * WORDS_A_SECOND);
+//
+// The whole film is now one reading, so a scene costs only the pause the voice itself leaves between sentences, not
+// a second of silence each: at a full second a calm twenty-second film was handed fifteen seconds of words and
+// padded out with its last caption frozen on screen. The length follows the reading (`media/length.ts`), so a
+// budget too small is a film too short.
 export function budgetOf(seconds: number, scenes: number, pace: Pace): number {
-  const beat = pace === 'punchy' ? 0.40 : 1.0;
+  const beat = pace === 'punchy' ? 0.40 : 0.45;
   return Math.max(8, Math.round((seconds - scenes * beat) * WORDS_A_SECOND));
 }
 

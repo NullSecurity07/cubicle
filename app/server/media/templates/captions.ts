@@ -52,36 +52,75 @@ export function wordTimes(parts: Part[], from = 0): Word[] {
 // Words are shown a handful at a time: one to three for a reel, two to four for a quieter film, and never more.
 // The break is by count first and by width second — a line of three long words wraps by itself and leaves one of
 // them stranded underneath at the dimness of a word not yet said, which looks like a fault rather than a caption.
-// A line also ends wherever the speaker stops for a beat, and at the end of a sentence.
 //
+// Inside those limits a line is a phrase. It used to be filled greedily, three words and on to the next, which is
+// how the site's own film showed "ai people works beside": a line that began after "of" and stopped before "a
+// founder". Now the narration is first cut where the speaker really stops — a comma, a full stop, a breath in the
+// measured timings — and each of those runs is shared out into the fewest lines that fit, as even as they can be,
+// never ending a line on a word that only leads into the next one. The words are the script's, as written.
 // One word in each line is the one it turns on, and it takes the accent colour. It is the longest word that
 // carries meaning, or the one the director named — never "the", never "is".
 const STOPPISH = new Set(['a', 'an', 'the', 'and', 'or', 'but', 'so', 'if', 'is', 'are', 'was', 'were', 'be', 'to', 'of',
   'in', 'on', 'at', 'for', 'with', 'from', 'by', 'as', 'it', 'its', 'you', 'your', 'we', 'our', 'they', 'their',
   'i', 'my', 'me', 'he', 'she', 'his', 'her', 'them', 'us', 'that', 'this', 'not', 'no', 'do', 'does', 'did']);
 const bare = (word: string) => word.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+// The words a line may not end on, unless the phrase ends there too: each only leads into the word after it.
+const WEAK = new Set(['a', 'an', 'the', 'and', 'or', 'but', 'so', 'if', 'to', 'of', 'in', 'on', 'at', 'for', 'with',
+  'from', 'by', 'as', 'into', 'onto', 'beside', 'about', 'across', 'through', 'between', 'without', 'under', 'over',
+  'than', 'that', 'who', 'which', 'what', 'where', 'when', 'each', 'every', 'only', 'just', 'very', 'is', 'are', 'was',
+  'were', 'be', 'can', 'will', 'would', 'should', 'your', 'our', 'their', 'my', 'its', 'his', 'her', 'no', 'not']);
+const ENDS_CLAUSE = /[.!?,;:\u2014]$/;
 
 export function capLines(words: Word[], perLine: number, mostWords = 3, keywords: string[] = []): CapLine[] {
-  const lines: CapLine[] = [];
   const wanted = new Set(keywords.map(bare).filter(Boolean));
-  let held: Word[] = [];
-  let wide = 0;
-  const close = () => {
-    if (!held.length) return;
-    const last = held.at(-1)!;
-    lines.push({ words: held, at: held[0].at, seconds: Math.round((last.at + last.seconds - held[0].at) * 1000) / 1000, pop: popIn(held, wanted) });
-    held = [];
-    wide = 0;
-  };
-  for (const word of words) {
-    const last = held.at(-1);
-    if (last && (word.at - (last.at + last.seconds) > 0.34 || held.length >= mostWords || wide + word.word.length + 1 > perLine)) close();
-    held.push(word);
-    wide += word.word.length + 1;
-    if (/[.!?]$/.test(word.word)) close();
+  const most = Math.max(1, mostWords);
+  // The runs of words with no stop inside them.
+  const runs: Word[][] = [];
+  let run: Word[] = [];
+  words.forEach((word, index) => {
+    const last = run.at(-1);
+    if (last && word.at - (last.at + last.seconds) > 0.34) { runs.push(run); run = []; }
+    run.push(word);
+    if (ENDS_CLAUSE.test(word.word) || index === words.length - 1) { runs.push(run); run = []; }
+  });
+  if (run.length) runs.push(run);
+  const lines: CapLine[] = [];
+  for (const phrase of runs) {
+    for (const held of shareOutPhrase(phrase, perLine, most)) {
+      const last = held.at(-1)!;
+      lines.push({ words: held, at: held[0].at, seconds: Math.round((last.at + last.seconds - held[0].at) * 1000) / 1000, pop: popIn(held, wanted) });
+    }
   }
-  close();
   return lines;
+}
+
+// The fewest lines a phrase fits in, as even as they come, with no line but the phrase's last ending on a word that
+// leads into the next. A small search over where to break: a phrase is a dozen words at the most.
+function shareOutPhrase(phrase: Word[], perLine: number, most: number): Word[][] {
+  const n = phrase.length;
+  const width = (from: number, to: number) => phrase.slice(from, to).reduce((sum, one) => sum + one.word.length + 1, 0);
+  const cost = (from: number, to: number): number => {
+    const size = to - from;
+    // A single word wider than the line is still a line: `capHtml` sets it smaller rather than wrap it.
+    if (size > most || (size > 1 && width(from, to) > perLine)) return Infinity;
+    const end = bare(phrase[to - 1].word);
+    return 100
+      + (to < n && WEAK.has(end) ? 30 : 0)
+      + (size === 1 && n > 1 ? 20 : 0)
+      + (most - size) ** 2 * 2;
+  };
+  const best: number[] = new Array(n + 1).fill(Infinity);
+  const from: number[] = new Array(n + 1).fill(0);
+  best[0] = 0;
+  for (let to = 1; to <= n; to += 1) {
+    for (let at = Math.max(0, to - most); at < to; at += 1) {
+      const value = best[at] + cost(at, to);
+      if (value < best[to]) { best[to] = value; from[to] = at; }
+    }
+  }
+  const cuts: Word[][] = [];
+  for (let to = n; to > 0; to = from[to]) cuts.unshift(phrase.slice(from[to], to));
+  return cuts;
 }
 
 // Which word in a line is set in the accent colour: the one the director marked if it is here, otherwise the

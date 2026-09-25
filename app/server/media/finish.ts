@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { liftFor, lighten, meanLight, scrimFor } from './contrast.ts';
+import { blankness, isBlank, liftFor, lighten, meanLight, scrimFor } from './contrast.ts';
 import { facesLens, fault, isLettered, type Plies, type Sight } from './sight.ts';
 import type { Scene } from './spec.ts';
 import { PACK, type Pack } from './templates/index.ts';
@@ -35,6 +35,17 @@ export async function finishPicture(one: {
   const { dir, visual, scene, pack, paint, sight, state, stop } = one;
   let file = one.file;
   let kept = visual;
+  // First, whether there is anything in it at all. A frame of plain white or plain black is drawn once more, and
+  // if that one is blank too, no picture goes on screen: the scene sits on the look's own ground with its words,
+  // which is a designed frame, where a white sheet is a hole. This redraw is not one of the film's two, because a
+  // blank picture is not a picture with a fault in it — it is no picture.
+  if (isBlank(await blankness(join(dir, file)))) {
+    if (!one.redraw || stop?.aborted) throw new Error('the picture came back blank, so the scene sits on the look with its words');
+    const second = await one.redraw(visual);
+    if (isBlank(await blankness(join(dir, second)))) throw new Error('the picture came back blank twice, so the scene sits on the look with its words');
+    file = second;
+    if (!state.told.has('blank')) { state.told.add('blank'); one.report('a picture came back blank, so it was drawn again'); }
+  }
   // The picture is looked at before it is used. Every rule this studio has about a picture — nobody staring down
   // the lens, no writing — was only ever applied to the sentence the picture was asked for with, and a picture
   // model does what it likes: a proof film came back with two strangers looking straight at the viewer and a
