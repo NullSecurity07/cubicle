@@ -256,6 +256,24 @@ test('a person rewrites a wired doc: the chip shows it, the doc card updates, th
   await expect(node(page, 'brand-doc').locator('textarea.doc')).toHaveValue('# Brand\n\nCalm tools for founders.');
 });
 
+test('a person changes one section of a shared doc and the other sections survive; a whole rewrite that drops them is refused', async ({ page }) => {
+  const plan = '# Brand\\n\\n## Who it is for\\n\\nFounders who ship alone.\\n\\n## Voice\\n\\nCalm, plain, short.\\n\\n## Price\\n\\nTBD\\n';
+  await send(page, 'marketing', `/tool write_doc {"doc":"Brand doc","text":"${plan}","replace":true}\n/tool replace_section {"doc":"Brand doc","heading":"Price","text":"Nine dollars a month."}`);
+  const reply = node(page, 'marketing').locator('.msg--assistant').last();
+  await expect(reply.locator('.chip--ok summary').last()).toHaveText('Rewrote a section of Brand doc');
+  const doc = node(page, 'brand-doc').locator('textarea.doc');
+  await expect(doc).toHaveValue('# Brand\n\n## Who it is for\n\nFounders who ship alone.\n\n## Voice\n\nCalm, plain, short.\n\n## Price\n\nNine dollars a month.\n');
+
+  await send(page, 'marketing', '/tool write_doc {"doc":"Brand doc","text":"## Price\\n\\nTwelve dollars a month."}');
+  const refused = node(page, 'marketing').locator('.msg--assistant').last();
+  await expect(refused.locator('.chip--fail summary')).toContainText('Could not: rewriting Brand doc');
+  await expect(refused).toContainText('"Brand", "Who it is for", "Voice"');
+  await expect(refused).toContainText('replace_section');
+  await expect(doc).toHaveValue(/## Who it is for\n\nFounders who ship alone\.[\s\S]*Nine dollars a month\./);
+  await node(page, 'marketing').screenshot({ path: 'test-results/shots/loop-habits-refused.png' });
+  await node(page, 'brand-doc').screenshot({ path: 'test-results/shots/loop-habits-doc.png' });
+});
+
 test('a failed tool call shows as such and the person says what went wrong', async ({ page }) => {
   await send(page, 'build', '/tool write_doc {"doc":"Secret plan","text":"mine now"}');
   await expect(node(page, 'build').locator('.chip--fail summary')).toContainText('Could not: rewriting Secret plan');

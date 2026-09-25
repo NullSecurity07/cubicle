@@ -81,7 +81,7 @@ describe('what a person is offered', () => {
     // A person alone on the stage keeps what needs nothing: the web, the files, their notes, the decisions, the playbook.
     // Making a document is always offered, and so is writing to the one just made.
     expect(mine.map((tool) => tool.name)).toEqual([
-      'read_doc', 'write_doc', 'append_doc', 'create_doc', 'list_files', 'read_file', 'write_file', 'web_search', 'web_fetch', 'run_code',
+      'read_doc', 'write_doc', 'replace_section', 'append_doc', 'create_doc', 'list_files', 'read_file', 'write_file', 'web_search', 'web_fetch', 'run_code',
       'propose_decision', 'read_decision', 'remember', 'recall', 'use_skill', 'note_founder',
     ]);
     // Wired to one of everything, and with mail set up, nothing at all is taken away.
@@ -141,7 +141,7 @@ describe('what a person is offered', () => {
     const store = createStore(await mkdtemp(join(tmpdir(), 'offer-docs-')));
     const stage: Stage = { ...(await store.loadStage()), wires: [] };
     const mine = offered(docTools, stage, 'build');
-    expect(mine.map((tool) => tool.name)).toEqual(['read_doc', 'write_doc', 'append_doc', 'create_doc']);
+    expect(mine.map((tool) => tool.name)).toEqual(['read_doc', 'write_doc', 'replace_section', 'append_doc', 'create_doc']);
     const context = { stage, roomId: 'build', store, granted: new Map<string, string>() };
     expect((await runTool(mine, 'create_doc', JSON.stringify({ title: 'Launch plan', text: 'v1' }), context)).ok).toBe(true);
     // Its card and its wire are on the stage whether or not a window is open to put them there.

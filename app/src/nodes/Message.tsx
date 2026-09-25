@@ -7,7 +7,7 @@ import { Approval } from './Approval';
 import { Words } from './Rich';
 
 const VERBS: Record<string, [doing: string, done: string]> = {
-  read_doc: ['Reading', 'Read'], write_doc: ['Rewriting', 'Rewrote'], append_doc: ['Adding to', 'Added to'], create_doc: ['Creating', 'Created'],
+  read_doc: ['Reading', 'Read'], write_doc: ['Rewriting', 'Rewrote'], append_doc: ['Adding to', 'Added to'], replace_section: ['Rewriting a section of', 'Rewrote a section of'], create_doc: ['Creating', 'Created'],
   remember: ['Remembering', 'Remembered'], propose_task: ['Proposing', 'Proposed'], list_tasks: ['Reading', 'Read'],
   ask_person: ['Asking', 'Asked'], code_task: ['Coding:', 'Coded:'], code_reply: ['Telling the coder:', 'Told the coder:'], code_stop: ['Stopping the coder', 'Stopped the coder'], code_status: ['Checking the coder', 'Checked the coder'],
   send_email: ['Sending email to', 'Emailed'], read_inbox: ['Checking', 'Checked'], run_code: ['Running', 'Ran'],

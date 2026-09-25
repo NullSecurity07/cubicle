@@ -38,7 +38,7 @@ async function setup(script: (string | { name: string; args: unknown })[]) {
 
 describe('runs', () => {
   it('does the task in the background, from a clean slate, and lands the result in Review', async () => {
-    const { runs, boards, task, state, seen, notes, store } = await setup([{ name: 'write_doc', args: { doc: 'Brand doc', text: 'Calm tools.' } }, 'Tightened it to one paragraph.']);
+    const { runs, boards, task, state, seen, notes, store } = await setup([{ name: 'write_doc', args: { doc: 'Brand doc', text: 'Calm tools.', replace: true } }, 'Tightened it to one paragraph.']);
     await expect(runs.start('b1', task.id)).rejects.toThrow(/give the task to a person/);
     await boards.change('b1', task.id, { assignee: 'marketing' });
     await runs.start('b1', task.id);
