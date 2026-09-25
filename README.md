@@ -161,6 +161,18 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   reads a one-line summary and `read_runway`, and may only suggest (`propose_flow`, `propose_scenario`); you accept
   or decline on the card. The numbers reach that person's model, so the card says which one and offers to keep them
   on this machine's. It is not accounting: no taxes, no accruals.
+- **Interview** (2026-09-25): a customer conversation is the best evidence a founder has, and it usually ends up
+  as three half-remembered lines. The card is named for the person, their company and the day, and records nothing
+  until you tick that they agreed to be recorded (several places require every party to agree). Then press the red
+  button, with a level meter and a clock, or drop a recording from the call app; a call on headphones is only heard
+  that way. The transcript fills in with a time on every line, and each time plays the call from there. **Nothing
+  leaves the machine**: the sound and the transcript live in `workspace/interviews/`, written down by whisper.cpp
+  (`hyperframes transcribe`, base.en; about 3 to 7 s a minute of talk on this box when it is quiet) with the
+  microphone's Whisper as the fallback; `STAGE_INTERVIEW_MODEL` picks another whisper.cpp model. A person wired to
+  the card reads one line about it each turn and the transcript only with `read_interview`, which can also look for
+  one subject. **Write insights** asks that person, with the `story-interview` skill, for the pains, the workaround,
+  quotes with their times and any sign they would pay, in a doc the card makes beside itself; wire the Customer
+  discovery team's Interviews doc to the card and the insights go there instead.
 - **A site read whole, and a page watched** (2026-09-24): `crawl_site` reads a competitor's site in one go, 15
   pages two links deep unless a person asks for more (at most 40, three deep), two at a time and gently, and obeys
   its robots.txt. It gives a map of the pages and quotes the five that best answer your question; every page's text
