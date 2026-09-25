@@ -41,7 +41,7 @@ export type FilmRecord = {
   bible: string;
   // A product's own colours, for the look that wears them.
   brand?: Brand;
-  narrator?: { voice: string; engine?: string; design?: string; file: string; seconds: number };
+  narrator?: { voice: string; engine?: string; design?: string; language?: string; ref?: string; refText?: string; file: string; seconds: number };
   scenes: RecordScene[];
   pictures: Record<string, RecordPicture>;
   // The bed as it was written or dropped, before it was ducked under this film's narration.
