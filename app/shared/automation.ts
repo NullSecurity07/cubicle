@@ -20,7 +20,9 @@ const CLOCK = /\b(\d{1,2}):(\d{2}) ?(am|pm)?\b/;
 const HOUR = /\b(\d{1,2}) ?(am|pm)\b/;
 const BARE_HOUR = /\bat (\d{1,2})\b/;
 const FILLER = /\b(at|on|every|each|and|the|of|starting|please|run|it|runs)\b|[,&;.!]/g;
-const HELP = 'Try "every day at 9am", "weekdays at 9", "mondays at 14:30", "every 30 minutes" or "in 2 hours".';
+const HELP = 'Try "every day at 9am", "weekdays at 9", "mondays at 14:30", "every month at 9", "every 30 minutes" or "in 2 hours".';
+// Monthly means the first weekday of the month: the day a report on the month before is wanted.
+const MONTHLY = /\b(first weekday of (the |each |every )?month|(every|each) month|monthly)\b/;
 
 // What the field says back: the schedule it understood, or the words it could not place.
 export type Schedule = { repeat: Repeat; next: number; words: string; note?: string } | { problem: string };
@@ -39,6 +41,7 @@ export function nextDue(repeat: Repeat, after: number): number {
   if (repeat.every === 'minutes') return after + repeat.minutes * 60_000;
   // A one-off has nothing after it: 0 is "never again", which every caller already reads as no next run.
   if (repeat.every === 'once') return repeat.at > after ? repeat.at : 0;
+  if (repeat.every === 'month') return firstWeekdayAfter(repeat.time, after);
   const [hours, minutes] = repeat.time.split(':').map(Number);
   const fits = new Set(daysOf(repeat));
   const at = new Date(after);
@@ -50,6 +53,18 @@ export function nextDue(repeat: Repeat, after: number): number {
   return at.getTime();
 }
 
+// The first Monday-to-Friday of a month at a time of day, the first such moment strictly after `after`.
+function firstWeekdayAfter(time: string, after: number): number {
+  const [hours, minutes] = time.split(':').map(Number);
+  const start = new Date(after);
+  for (let month = 0; month < 3; month += 1) {
+    const at = new Date(start.getFullYear(), start.getMonth() + month, 1, hours, minutes, 0, 0);
+    while (at.getDay() === 0 || at.getDay() === 6) at.setDate(at.getDate() + 1);
+    if (at.getTime() > after) return at.getTime();
+  }
+  return 0;
+}
+
 const time = (value: unknown) => (/^([01]\d|2[0-3]):[0-5]\d$/.test(String(value)) ? String(value) : '');
 const weekday = (value: unknown) => (Number.isInteger(value) && (value as number) >= 0 && (value as number) <= 6 ? (value as number) : undefined);
 
@@ -59,6 +74,7 @@ export function cleanRepeat(value: unknown): Repeat | undefined {
   if (!repeat || typeof repeat !== 'object') return undefined;
   const when = time((repeat as { time?: unknown }).time);
   if (repeat.every === 'day' || repeat.every === 'weekdays') return when ? { every: repeat.every, time: when } : undefined;
+  if (repeat.every === 'month') return when ? { every: 'month', time: when } : undefined;
   if (repeat.every === 'week') return when ? { every: 'week', time: when, weekday: weekday((repeat as { weekday?: unknown }).weekday) ?? 1 } : undefined;
   if (repeat.every === 'days') {
     const days = [...new Set((Array.isArray(repeat.weekdays) ? repeat.weekdays : []).flatMap((one) => (weekday(one) === undefined ? [] : [one as number])))].sort();
@@ -83,6 +99,7 @@ export function sayRepeat(repeat?: Repeat): string {
     ? `every ${repeat.minutes / 60} ${repeat.minutes === 60 ? 'hour' : 'hours'}` : `every ${repeat.minutes} minutes`;
   if (repeat.every === 'day') return `every day ${repeat.time}`;
   if (repeat.every === 'weekdays') return `weekdays ${repeat.time}`;
+  if (repeat.every === 'month') return `first weekday of the month ${repeat.time}`;
   if (repeat.every === 'days') return `${repeat.weekdays.map((day) => DAY_NAMES[day].slice(0, 3)).join(', ')} ${repeat.time}`;
   return `${DAY_NAMES[repeat.weekday ?? 1].slice(0, 3)} ${repeat.time}`;
 }
@@ -138,6 +155,12 @@ export function parseSchedule(text: string, now: number): Schedule {
     }
   }
 
+  // Before the weekdays are read: "first weekday of the month" is one phrase, not a list of days.
+  const monthly = !!take(MONTHLY);
+  if (monthly) {
+    if (!when) { const over = left(); return { problem: over ? `I did not understand "${over}". ${HELP}` : `Say what time as well. ${HELP}` }; }
+    return nothingLeft({ every: 'month', time: when });
+  }
   const weekdays = !!take(/\bweekdays?\b/);
   const weekends = !!take(/\bweekends?\b/);
   const named: number[] = [];

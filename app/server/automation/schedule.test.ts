@@ -112,3 +112,22 @@ describe('what a repeat means in time', () => {
     expect(catchUp(undefined)).toBe(false);
   });
 });
+
+describe('a monthly schedule', () => {
+  it('reads "every month", "monthly" and "first weekday of the month", and needs a time', () => {
+    for (const text of ['every month at 9am', 'monthly at 9', 'first weekday of the month at 09:00', 'on the first weekday of each month at 9am']) expect(repeatOf(text)).toEqual({ every: 'month', time: '09:00' });
+    expect(repeatOf('monthly')).toMatch(/Say what time/);
+    expect(sayRepeat({ every: 'month', time: '09:00' })).toBe('first weekday of the month 09:00');
+    expect(cleanRepeat({ every: 'month', time: '09:00' })).toEqual({ every: 'month', time: '09:00' });
+    expect(cleanRepeat({ every: 'month', time: 'nine' })).toBeUndefined();
+    expect(missedDefault({ every: 'month', time: '09:00' })).toBe('once');
+  });
+
+  it('falls on the first Monday to Friday of the next month, skipping a weekend first', () => {
+    // 1 November 2026 is a Sunday, so the first weekday is Monday the 2nd.
+    expect(nextDue({ every: 'month', time: '09:00' }, SATURDAY)).toBe(local('2026-10-01T09:00'));
+    expect(nextDue({ every: 'month', time: '09:00' }, local('2026-10-01T09:00'))).toBe(local('2026-11-02T09:00'));
+    // Before the time on the day itself, it is still today.
+    expect(nextDue({ every: 'month', time: '09:00' }, local('2026-10-01T08:00'))).toBe(local('2026-10-01T09:00'));
+  });
+});
