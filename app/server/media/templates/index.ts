@@ -128,7 +128,17 @@ export function quietOf(shots: Shot[], starts: number[]): { at: number; seconds:
 export function captionLines(film: Film): CapLine[] {
   if (!film.captions || !film.words?.length) return [];
   const quiet = film.quiet ?? quietOf(film.shots, startsOf(film.shots).starts);
-  const spoken = film.words.filter((word) => !quiet.some((gap) => word.at >= gap.at - 0.01 && word.at < gap.at + gap.seconds));
+  const hushed = film.words.map((word) => quiet.some((gap) => word.at >= gap.at - 0.01 && word.at < gap.at + gap.seconds));
+  // A phrase that runs into a hushed stretch takes its first word or two with it. Left on their own they are a
+  // fragment in the band — the site's hero film showed "You" by itself, the rest of "You decide," being hushed
+  // under a scene that wrote the line out. A clause that ended before the hush is whole and stays.
+  for (let at = 1; at < film.words.length; at += 1) {
+    if (!hushed[at] || hushed[at - 1]) continue;
+    let from = at;
+    while (from > 0 && !hushed[from - 1] && !/[.!?,;:\u2014]$/.test(film.words[from - 1].word)) from -= 1;
+    if (at - from > 0 && at - from <= 2) for (let one = from; one < at; one += 1) hushed[one] = true;
+  }
+  const spoken = film.words.filter((_word, at) => !hushed[at]);
   if (!spoken.length) return [];
   const { capChars } = FORMATS[film.shape];
   // The pill sets its type smaller and holds up to two lines, so it takes one more word and a longer measure; its
