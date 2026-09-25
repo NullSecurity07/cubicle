@@ -7,7 +7,7 @@ import { writeAtomic } from './fsx.ts';
 
 // One source of text as it is handed in: a whole doc, a room's conversation, a memory, a decision, a file, a page.
 export type Piece = Omit<Hit, 'score'>;
-type Embedder = (texts: string[]) => Promise<number[][]>;
+export type Embedder = (texts: string[]) => Promise<number[][]>;
 type Passage = Piece & { hash: string; vector?: number[] };
 const CHUNK = 700;
 const TOP = 6;
