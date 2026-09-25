@@ -135,6 +135,7 @@ export function DeckNode({ id, data, selected }: NodeProps<DeckNodeType>) {
           <div className="studio__done">
             <span className="studio__by">{version.slides.length} slides · {LOOK_NAMES[version.look]}</span>
             <a href={fileUrl(version.pdf)} download>Download PDF</a>
+            {version.pptx && <a href={fileUrl(version.pptx)} download title="The slides as a PowerPoint file, to edit in PowerPoint, Keynote or Google Slides">Download PPTX</a>}
             <a href={fileUrl(version.html)} download title="The slides as one web page, fonts included">HTML</a>
           </div>
         )}

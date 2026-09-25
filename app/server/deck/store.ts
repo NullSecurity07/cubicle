@@ -5,6 +5,7 @@ import type { Material } from './critic.ts';
 import { mend } from './critic.ts';
 import { applyEdits, readNotes } from './notes.ts';
 import { deckHtml, type Dress } from './render.ts';
+import { deckToPptx } from './pptx.ts';
 import { rewriteSlide, writeStoryboard, type Think } from './storyboard.ts';
 
 export type Decks = ReturnType<typeof createDecks>;
@@ -84,7 +85,7 @@ export function createDecks(deps: DeckDeps) {
     }
   }
 
-  // The HTML and the PDF of one version, saved beside each other in the shared files.
+  // The HTML, the PDF and the PowerPoint file of one version, saved beside each other in the shared files.
   async function publish(cardId: string, slides: Slide[], title: string, look: DeckLook, gathered: Gathered, number: number, line: (text: string) => void, signal: AbortSignal) {
     dressed.set(cardId, gathered.dress);
     const dress: Dress = { ...gathered.dress, look };
@@ -93,7 +94,8 @@ export function createDecks(deps: DeckDeps) {
     const htmlPath = await deps.save(`${stem}.html`, Buffer.from(html));
     line(`printing ${slides.length} slides to PDF…`);
     const pdf = await deps.save(`${stem}.pdf`, await deps.print(html, signal));
-    return { html: htmlPath, pdf };
+    const pptx = await deps.save(`${stem}.pptx`, await deckToPptx({ title, slides }, dress));
+    return { html: htmlPath, pdf, pptx };
   }
   const nextNumber = (deck: Deck) => (deck.versions.at(-1)?.version ?? 0) + 1;
   const idsFrom = (slides: Slide[]) => {

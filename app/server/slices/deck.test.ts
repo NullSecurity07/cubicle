@@ -73,7 +73,7 @@ describe('the Deck card', { timeout: 60_000 }, () => {
     const { part, use, heard } = await setup();
     closing = part.close;
     const made = await use('make_deck', {});
-    expect(made.text).toMatch(/^Deck version 1, 5 slides, PDF at decks\/seed-deck-for-relay-deck-1-v1\.pdf\./);
+    expect(made.text).toMatch(/^Deck version 1, 5 slides, PDF at decks\/seed-deck-for-relay-deck-1-v1\.pdf, PowerPoint at decks\/seed-deck-for-relay-deck-1-v1\.pptx\./);
     expect(made.text).toContain('4. [Traction] Early and honest about it · No numbers yet.');
     const edited = await use('edit_deck', { notes: 'merge 2 and 3' });
     expect(edited.text).toMatch(/^Version 2: merged slides 2 and 3; kept 3 of 4 slides as they were; slide 2: kept 4 of 5 lines, one idea a slide\./);

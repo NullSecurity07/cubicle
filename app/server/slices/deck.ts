@@ -24,7 +24,7 @@ import { text, type Tool, type ToolContext } from '../tools/registry.ts';
 
 export const DECK_TOOLS = ['make_deck', 'edit_deck', 'read_deck'];
 export const NO_CARD = 'no Deck card is connected to your room. The founder adds one from the dock and draws a wire to it.';
-const HINT = '- A Deck card: slides made from a brief and what is wired to it, printed to PDF. make_deck makes a new version, '
+const HINT = '- A Deck card: slides made from a brief and what is wired to it, printed to PDF and saved as PowerPoint. make_deck makes a new version, '
   + 'edit_deck({ notes }) remakes only the slides the notes touch ("merge 2 and 3", "drop 5", "slide 4: needs a source"), read_deck reads it slide by slide with the speaker notes.';
 
 const decksOn = (stage: Stage) => (stage.cards ?? []).filter((card): card is Extract<Card, { kind: 'deck' }> => card.kind === 'deck');
@@ -100,7 +100,7 @@ export function deckTools(decks: Decks): Tool[] {
         const brief = typeof args.brief === 'string' && args.brief.trim() ? args.brief.trim().slice(0, 4000) : card.brief?.trim() ?? '';
         wait(context);
         const made = await decks.make(card.id, { brief, purpose: purposeOf(args.purpose, card.purpose), look: lookOf(args.look, card.look), roomId: context.roomId });
-        return { text: `Deck version ${made.version}, ${made.slides.length} slides, PDF at ${made.pdf}.\n${outlineOf(made.slides).join('\n')}${made.said?.length ? `\nThe critic: ${made.said.join('; ')}.` : ''}` };
+        return { text: `Deck version ${made.version}, ${made.slides.length} slides, PDF at ${made.pdf}${made.pptx ? `, PowerPoint at ${made.pptx}` : ''}.\n${outlineOf(made.slides).join('\n')}${made.said?.length ? `\nThe critic: ${made.said.join('; ')}.` : ''}` };
       },
     },
     {
@@ -124,7 +124,7 @@ export function deckTools(decks: Decks): Tool[] {
         const one = Number(args.version) ? deck.versions.find((candidate) => candidate.version === Number(args.version)) : deck.versions.at(-1);
         if (!one) return { text: 'The Deck card has no deck yet. make_deck makes one.' };
         const lines = one.slides.map((slide, index) => `${outlineOf([slide])[0].replace(/^1\./, `${index + 1}.`)}${slide.notes ? `\n   Notes: ${slide.notes.replace(/\s+/g, ' ')}` : ''}`);
-        return { text: `"${one.title}", version ${one.version} of ${deck.versions.length}, made ${shortDay(one.at)}${one.notes ? ` from the notes "${one.notes}"` : ''}. PDF: ${one.pdf}\n${lines.join('\n')}` };
+        return { text: `"${one.title}", version ${one.version} of ${deck.versions.length}, made ${shortDay(one.at)}${one.notes ? ` from the notes "${one.notes}"` : ''}. PDF: ${one.pdf}${one.pptx ? `, PowerPoint: ${one.pptx}` : ''}\n${lines.join('\n')}` };
       },
     },
   ];

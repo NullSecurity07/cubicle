@@ -60,6 +60,12 @@ test('the founder makes a deck from a brief, merges two slides with a note, and 
   const pdf = await page.request.get((await deck.getByRole('link', { name: 'Download PDF' }).getAttribute('href'))!);
   expect(pdf.status()).toBe(200);
   expect((await pdf.body()).subarray(0, 5).toString()).toBe('%PDF-');
+  // The same version as a PowerPoint file, beside the PDF: a real zip, which is what a .pptx is.
+  await expect(deck.getByRole('link', { name: 'Download PPTX' })).toHaveAttribute('href', /\.pptx/);
+  const pptx = await page.request.get((await deck.getByRole('link', { name: 'Download PPTX' }).getAttribute('href'))!);
+  expect(pptx.status()).toBe(200);
+  expect((await pptx.body()).subarray(0, 2).toString()).toBe('PK');
+  expect(pptx.headers()['content-type']).toContain('presentationml');
   await expect(deck.locator('.deck__stage iframe')).toBeVisible();
   await deck.locator('.deck__strip button').nth(1).click();
   await expect(deck.locator('.deck__strip button').nth(1)).toHaveClass(/is-shown/);
