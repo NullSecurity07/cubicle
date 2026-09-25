@@ -58,7 +58,8 @@ describe('the Deck card', { timeout: 60_000 }, () => {
     closing = part.close;
     const gathered = await gatherDeck(deps, 'deck-1');
     expect(gathered.material.brief).toBe('Seed deck for Relay');
-    expect(gathered.material.sources.map((one) => one.name)).toEqual(['a note', 'Brand doc']);
+    // The pinned Company brief reaches the deck the way it reaches a film, since the media sweep: a claim from it is fair game.
+    expect(gathered.material.sources.map((one) => one.name)).toEqual(['a note', 'Brand doc', 'Company brief']);
     expect(gathered.material.metrics).toBeUndefined();
     const stage = await store.loadStage();
     stage.cards!.push({ id: 'metrics-1', kind: 'metrics' } as never);
