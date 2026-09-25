@@ -2,7 +2,7 @@ import type { Card, Stage } from './model.ts';
 import { safeHost } from './sources.ts';
 
 // What a film may draw on, worked out the way the server works it out. These three are twins of `wiredTo`,
-// `sourcesFor` and `docsFor` in server/media/video.ts, which is what `gather` really reads when a film is made; the
+// `sourcesFor` and `docsFor` in server/media/gather.ts, which is what `gather` really reads when a film is made; the
 // video card reads these to say, before Make is pressed, what the film will use. Change the rules there and here
 // together, or the card will promise one thing and the film do another. (This file only mirrors them: the server's
 // copies stay where they are, beside the code that depends on their every detail.)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import * as server from '../server/media/video.ts';
+import * as server from '../server/media/gather.ts';
 import type { Card, Stage } from './model.ts';
 import { docsFor, filmSays, sourcesFor, wiredTo } from './wiring.ts';
 
