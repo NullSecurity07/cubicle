@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ModelClient } from './providers.ts';
 import type { ModelMessage } from './prompt.ts';
+import { writeAtomic } from './fsx.ts';
 
 // What was asked before and answered the same way need not be asked again. Two kinds, both on disk under the
 // workspace's own `cache/` folder, both counted: a side call (a summary, a reflection, a compaction note: never a turn,
@@ -12,8 +13,8 @@ export const SIDE_TTL = 6 * 3600_000;
 export const WEB_TTL = 15 * 60_000;
 const SWEEP_EVERY = 3600_000;
 
-export type CacheKind = 'side' | 'web';
-export type CacheEvent = { folder: string; kind: CacheKind; hit: boolean; tokens?: number };
+type CacheKind = 'side' | 'web';
+type CacheEvent = { folder: string; kind: CacheKind; hit: boolean; tokens?: number };
 
 // Whoever keeps count (the usage book) listens here, for its own workspace.
 const listeners = new Set<(event: CacheEvent) => void>();
@@ -34,12 +35,15 @@ export const normalised = (messages: ModelMessage[]) => JSON.stringify(messages.
 
 type Kept<T> = { at: number; value: T };
 
+// When each folder was last swept. Kept here rather than in each cache, because a cache is made afresh for every side
+// call and every web read: held per cache, every single write swept the whole folder.
+const swept = new Map<string, number>();
+
 // One folder of json files, one per key. What is out of date is ignored when read, and swept away once an hour.
 export function diskCache<T>(dir: string, ttl: number, now: () => number = Date.now) {
-  let swept = 0;
   const file = (key: string) => join(dir, `${key}.json`);
   async function sweep() {
-    swept = now();
+    swept.set(dir, now());
     for (const name of await readdir(dir).catch(() => [] as string[])) {
       const info = await stat(join(dir, name)).catch(() => null);
       if (info && now() - info.mtimeMs > ttl) await rm(join(dir, name), { force: true }).catch(() => {});
@@ -54,10 +58,8 @@ export function diskCache<T>(dir: string, ttl: number, now: () => number = Date.
     },
     async put(key: string, value: T) {
       try {
-        await mkdir(dir, { recursive: true });
-        await writeFile(`${file(key)}.tmp`, JSON.stringify({ at: now(), value }));
-        await rename(`${file(key)}.tmp`, file(key));
-        if (now() - swept > SWEEP_EVERY) await sweep();
+        await writeAtomic(file(key), JSON.stringify({ at: now(), value }), { mkdir: true });
+        if (now() - (swept.get(dir) ?? 0) > SWEEP_EVERY) await sweep();
       } catch { /* a cache that cannot be written is only a cache that misses */ }
     },
   };
@@ -115,7 +117,9 @@ export const readAt = (at: number, now: number) => {
 };
 
 // A read that failed is not worth keeping: it should be tried again, not remembered.
-export const worthKeeping = (text: string) => text.trim().length >= 200 && !/could not be read|did not load|came back almost empty|refused this request|could not be fetched|^## [^\n]*\nFailed: |asked for a human check|nothing could be read|nothing was found/i.test(text.slice(0, 600));
+// A read that says it failed: a wall, an empty page, an error written where the text would be.
+export const readFailed = (text: string) => !text.trim() || /could not be read|did not load|came back almost empty|refused this request|could not be fetched|^## [^\n]*\nFailed: |asked for a human check|nothing could be read|nothing was found/i.test(text.slice(0, 600));
+export const worthKeeping = (text: string) => text.trim().length >= 200 && !readFailed(text);
 
 export function webCache(folder: string | null | undefined, now: () => number = Date.now) {
   const disk = folder ? diskCache<string>(join(folder, 'cache', 'web'), WEB_TTL, now) : null;

@@ -69,6 +69,11 @@ describe('prompt', () => {
     expect(buildMessages(stage, 'build', docs, [])[0].content).not.toContain('You can act');
     expect(buildMessages(stage, 'marketing', docs, [], ['write_doc'])[0].content).toContain('You may change only the documents connected to your room ("Brand doc")');
     expect(buildMessages(stage, 'build', docs, [], ['web_search'])[0].content).not.toContain('You may change only');
+    // With nothing wired they may still write to what they make, and are still told a wire is what opens the rest.
+    const making = buildMessages(stage, 'build', docs, [], ['write_doc', 'append_doc', 'create_doc'])[0].content;
+    expect(making).not.toContain('You may change only');
+    expect(making).toContain('A document you make with create_doc is yours to go on writing in this turn');
+    expect(making).toContain('write documents (a wire to one)');
   });
 
   it('says what this room cannot do yet and what the founder would connect for each', () => {

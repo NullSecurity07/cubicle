@@ -1,11 +1,13 @@
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import type { Attention, Stage } from '../../shared/model.ts';
-import { LISTEN_RATE, UPDATES, type ReachState, type ReachUpdates } from '../../shared/reach.ts';
+import { LISTEN_RATE, type ReachState, type ReachUpdates } from '../../shared/reach.ts';
 import { guessGender, recast, voiceFor } from '../../shared/voices.ts';
+import { putToFounder } from '../approvals.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
 import { DEFAULT_VOICE, fakeVoices, isVoice, kokoroVoices, VOICES } from '../media/voice.ts';
 import type { Source } from '../seams.ts';
+import { healthRows } from '../openends/health.ts';
 import { createBridge } from '../reach/bridge.ts';
 import { createDigest, dueAt } from '../reach/digest.ts';
 import { fakeTelegram } from '../reach/fake.ts';
@@ -19,6 +21,7 @@ import { createApi, createPoller } from '../reach/telegram.ts';
 import { createTopics } from '../reach/topics.ts';
 import { createUpdates } from '../reach/updates.ts';
 import { ffmpeg, fakeFfmpeg, oggOf, samplesOf, sayable } from '../reach/voicenotes.ts';
+import { newId, patchStageVia } from '../slice-kit.ts';
 import { text, type Tool } from '../tools/registry.ts';
 
 const SPOKEN = 12;
@@ -69,11 +72,15 @@ export default {
 
     // A voice the app cast under an older, looser rule is cast again under today's, once, as the app starts: people
     // were once handed D-grade voices by the luck of their id. A voice the founder picked is theirs and stays.
-    await deps.store.loadStage().then(async (stage) => {
+    // Through the one stage queue, like every other change a slice makes to the stage.
+    let cast: ReturnType<typeof recast>['changed'] = [];
+    await patchStageVia(deps.store, (stage) => {
       const { rooms, changed } = recast(stage.rooms, VOICES);
       if (!changed.length) return;
-      await deps.store.saveStage({ ...stage, rooms });
-      console.log(`[reach] cast better voices: ${changed.map((one) => `${one.name} ${one.from} to ${one.to}`).join(', ')}`);
+      stage.rooms = rooms;
+      cast = changed;
+    }).then(() => {
+      if (cast.length) console.log(`[reach] cast better voices: ${cast.map((one) => `${one.name} ${one.from} to ${one.to}`).join(', ')}`);
     }).catch(() => {});
 
     const phone = createPhone({
@@ -131,15 +138,13 @@ export default {
       };
     }
 
-    deps.attention.watch((list) => { void phone.show(list).catch(() => {}); });
-    deps.seams.on('turn:before', async (payload, next) => {
+    const off = [deps.attention.watch((list) => { void phone.show(list).catch(() => {}); }), deps.seams.on('turn:before', async (payload, next) => {
       sources.set(payload.roomId, payload.source);
       // The founder writing again *is* the answer to whatever this person asked them, so the question stops waiting.
       const open = payload.source === 'chat' ? asks.get(payload.roomId) : undefined;
       if (open) { asks.delete(payload.roomId); deps.approvals.answer(open.id, { ok: false }); void deps.attention.clear(open.attentionId); }
       return next(payload);
-    });
-    deps.seams.on('turn:after', async (payload, next) => { sources.delete(payload.roomId); return next(payload); });
+    }), deps.seams.on('turn:after', async (payload, next) => { sources.delete(payload.roomId); return next(payload); })];
 
     const askFounder: Tool = {
       name: 'ask_founder',
@@ -151,15 +156,16 @@ export default {
         const choices = (Array.isArray(args.choices) ? args.choices : []).filter((one): one is string => typeof one === 'string' && !!one.trim()).slice(0, 5);
         const id = `ask-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
         const who = context.stage.rooms.find((room) => room.id === context.roomId)?.name;
-        const entry: Attention = {
+        const entry: Attention & { event: { id: string } } = {
           id: `approval:${id}`, kind: 'approval', title: question, at: Date.now(), roomId: context.roomId, who,
           ...(choices.length ? { detail: `Their options: ${choices.join(' · ')}` } : {}),
           event: { id, name: 'ask_founder', args: { answer: choices[0] ?? '' }, waiting: true, question },
         };
-        await deps.attention.raise(entry);
         // In a background run the run waits here, exactly as it waits for an outward step to be allowed.
-        if (sources.get(context.roomId) === 'run') {
-          const answer = await deps.approvals.ask(id, context.signal).finally(() => deps.attention.clear(entry.id));
+        const run = sources.get(context.roomId) === 'run';
+        const asking = await putToFounder(deps.attention, deps.approvals, entry, run ? context.signal : undefined);
+        if (run) {
+          const answer = await asking.answer;
           const said = String(answer.args?.answer ?? '').trim();
           if (!answer.ok) return { text: 'The founder did not answer. Do what you can without it, and say plainly what is still missing.' };
           return { text: `The founder says: ${said.slice(0, 2000) || '(they said yes without words)'}` };
@@ -167,9 +173,8 @@ export default {
         asks.set(context.roomId, { id, attentionId: entry.id });
         // In a conversation the turn ends on the question. An answer given in the app or on the phone is carried
         // into the room as the founder's next message, which is what the person is waiting for anyway.
-        void deps.approvals.ask(id).then(async (answer) => {
+        void asking.answer.then(async (answer) => {
           asks.delete(context.roomId);
-          await deps.attention.clear(entry.id);
           const said = String(answer.args?.answer ?? '').trim();
           if (!answer.ok || !said) return;
           // The turn that asked may still be closing; one more try is enough for that to be over.
@@ -184,14 +189,17 @@ export default {
 
     // A person's own voice, written down on them the first time it is needed. Working it out again every time would
     // be the same answer, but writing it down is what holds it still while the founder adds and removes people.
+    // Written through the one stage queue, so it cannot save over a change made in the same moment.
     async function voiceOf(roomId: string): Promise<string> {
-      const stage = await deps.store.loadStage();
-      const room = stage.rooms.find((one) => one.id === roomId);
-      if (!room) return DEFAULT_VOICE;
-      if (isVoice(room.voice)) return room.voice;
-      const given = voiceFor(room, stage.rooms, VOICES);
-      const mine = { ...room, gender: room.gender ?? guessGender(room.name), voice: given, voiceBy: 'cast' as const };
-      await deps.store.saveStage({ ...stage, rooms: stage.rooms.map((one) => (one.id === room.id ? mine : one)) }).catch(() => {});
+      let given = DEFAULT_VOICE;
+      await patchStageVia(deps.store, (stage) => {
+        const room = stage.rooms.find((one) => one.id === roomId);
+        if (!room) return;
+        if (isVoice(room.voice)) { given = room.voice; return; }
+        given = voiceFor(room, stage.rooms, VOICES);
+        const mine = { ...room, gender: room.gender ?? guessGender(room.name), voice: given, voiceBy: 'cast' as const };
+        stage.rooms = stage.rooms.map((one) => (one.id === room.id ? mine : one));
+      }).catch(() => {});
       return given;
     }
 
@@ -242,6 +250,20 @@ export default {
     void updates.look().catch(() => {});
     const held = await reach.read();
     if (held.on) void running(true).catch(() => {});
+    // The phone's row on the health screen: set up or not, on or off, paired or not, and the last trouble it had.
+    healthRows.set('phone', async () => {
+      const now = await reach.read();
+      const token = !!(await reach.token());
+      const paired = now.paired.length + (now.group ? 1 : 0);
+      return {
+        name: 'Your phone', ok: token && (!now.on || !trouble),
+        detail: !token ? 'no Telegram bot is set up, so nobody can reach you on your phone'
+          : !now.on ? 'a Telegram bot is set up but switched off'
+          : trouble ? trouble
+          : paired ? `Telegram is on, with ${paired === 1 ? 'one chat' : `${paired} chats`} paired` : 'Telegram is on, and no chat is paired yet',
+        fix: 'Make a bot with @BotFather in Telegram, paste its token in the Phone panel (or put TELEGRAM_BOT_TOKEN in .env), switch it on and pair your chat.',
+      };
+    });
 
     return {
       tools: [askFounder],
@@ -297,7 +319,7 @@ export default {
           if (!name) { deps.json(res, 400, { error: 'give this one a name: it becomes the title of the task it starts' }); return true; }
           if (!stage.cards?.some((card) => card.id === boardId && card.kind === 'board')) { deps.json(res, 404, { error: 'that is not a board on the stage' }); return true; }
           const assignee = typeof asked.assignee === 'string' && stage.rooms.some((room) => room.id === asked.assignee) ? asked.assignee : undefined;
-          const id = `h-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+          const id = newId('h-');
           const secret = newSecret();
           await reach.save((one) => { one.hooks = [...one.hooks, { id, name, boardId, assignee, secret, at: Date.now() }]; });
           // The only time the secret is ever answered: the screen shows it once and says so.
@@ -370,6 +392,8 @@ export default {
       async close() {
         await poller.close();
         unwatch();
+        for (const stop of off) stop();
+        healthRows.delete('phone');
         await outbox.settled();
         await book.settled();
         await reach.settled();

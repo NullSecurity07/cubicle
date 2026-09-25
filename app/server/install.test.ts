@@ -1,10 +1,12 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, writeFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Stage } from '../shared/model.ts';
+import { hub } from './events.ts';
 import { installSlices, lateRuns, loadSlices, type Deps, type Installed, type Runs, type Slice } from './install.ts';
+import { stubDeps } from './slice-stubs.ts';
 import type { Tool } from './tools/registry.ts';
 
 const FIXTURES = resolve(import.meta.dirname, 'install.fixtures');
@@ -127,4 +129,65 @@ describe('slices', () => {
     expect(await extras.route({} as IncomingMessage, {} as ServerResponse, '/api/example')).toBe(true);
     expect(answered).toEqual([[200, { ok: true }]]);
   });
+  it('lets a slow tick finish before that slice is ticked again, and ticks the others meanwhile', async () => {
+    let release = () => {};
+    const slow: string[] = [];
+    const quick: string[] = [];
+    const extras = await installSlices([
+      slice('slow', { async tick() { slow.push('start'); await new Promise<void>((done) => { release = done; }); slow.push('end'); } }),
+      slice('quick', { async tick() { quick.push('tick'); } }),
+    ], deps());
+    const first = extras.tick();
+    await new Promise((done) => { setTimeout(done, 10); });
+    // The half minute comes round again while the slow one is still going.
+    await extras.tick();
+    expect(slow).toEqual(['start']);
+    expect(quick).toEqual(['tick']);
+    release();
+    await first;
+    expect(slow).toEqual(['start', 'end']);
+    expect(quick).toEqual(['tick', 'tick']);
+    // Once it has finished it is ticked as before.
+    const again = extras.tick();
+    await new Promise((done) => { setTimeout(done, 10); });
+    release();
+    await again;
+    expect(slow).toEqual(['start', 'end', 'start', 'end']);
+  });
+
+  it('says so when two slices bring a tool of the same name', async () => {
+    const said: string[] = [];
+    await installSlices([slice('first', { tools: [tool('same')] }), slice('second', { tools: [tool('same'), tool('other')] })], deps(), (name, error) => said.push(`${name}: ${error.message}`));
+    expect(said).toEqual(['second: its tool same has the same name as one from first; calls go to first\'s']);
+  });
+
+  // The real folder, with the same stubs `pnpm check:providers` hands round: every slice installs, and no two of them
+  // bring a tool of the same name. The check once failed on the dashboard for weeks because nothing ran this.
+  it('installs every real slice with the stub deps, none skipped and no tool twice', async () => {
+    const dir = resolve(import.meta.dirname, 'slices');
+    const files = (await readdir(dir)).filter((one) => one.endsWith('.ts') && !one.endsWith('.test.ts') && !one.endsWith('.d.ts'));
+    const said: string[] = [];
+    const onError = (name: string, error: Error) => { said.push(`${name}: ${error.message}`); };
+    const scratch = await mkdtemp(join(tmpdir(), 'slices-real-'));
+    const deps = stubDeps(scratch, resolve(import.meta.dirname, '../..'));
+    // Every seam handler and window opening a slice adds, counted, so closing can be seen to take each one off again.
+    let seamsOn = 0;
+    const on = deps.seams.on.bind(deps.seams);
+    deps.seams.on = ((name, handler) => { seamsOn += 1; const off = on(name, handler); return () => { seamsOn -= 1; off(); }; }) as typeof deps.seams.on;
+    const openings = hub.opening.length;
+    const extras = await installSlices(await loadSlices(dir, onError), deps, onError);
+    let closed = false;
+    try {
+      expect(said).toEqual([]);
+      expect(extras.names).toHaveLength(files.length);
+      const names = extras.tools.map((one) => one.name);
+      expect(names.filter((name, at) => names.indexOf(name) !== at)).toEqual([]);
+      expect(names.length).toBeGreaterThan(20);
+      expect(seamsOn).toBeGreaterThan(5);
+      await extras.close();
+      closed = true;
+      expect(seamsOn).toBe(0);
+      expect(hub.opening.length).toBe(openings);
+    } finally { if (!closed) await extras.close(); }
+  }, 30_000);
 });

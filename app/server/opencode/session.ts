@@ -1,6 +1,6 @@
 import { diffLine, type CoderAsk, type CoderEvent, type CoderLine, type CoderModels, type CoderPatch, type CoderState } from '../../shared/coder.ts';
 import type { Attention } from '../../shared/model.ts';
-import type { Answer } from '../approvals.ts';
+import { askFounder, type Answer } from '../approvals.ts';
 import { MCP_NAME, type McpLocal } from './config.ts';
 import { translate, type RawEvent } from './events.ts';
 import { GONE, needsRestart, type Engine } from './server.ts';
@@ -248,9 +248,9 @@ export function createCoder(deps: Deps) {
     tell(card, shown(card));
     const key = `coder:${ask.id}`;
     const question = `Allow the coder to ${verb(ask)}?`;
-    const answering = approvals.ask(key);
-    await attention.raise({ id: key, kind: 'approval', title: question, at: now(), cardId: card.id, who: `The ${card.name} coder`, coder: ask, event: { id: key, name: 'coder_permission', args: { [ask.tool === 'bash' ? 'command' : 'file']: ask.what }, waiting: true, question } }).catch(() => {});
-    const answer = await answering;
+    // A "Needs you" list that cannot be written to is no reason to stop: the question is on the card as well.
+    const book = { raise: (entry: Attention) => attention.raise(entry).catch(() => {}), clear: (id: string) => attention.clear(id).catch(() => {}) };
+    const answer = await askFounder(book, approvals, { id: key, kind: 'approval', title: question, at: now(), cardId: card.id, who: `The ${card.name} coder`, coder: ask, event: { id: key, name: 'coder_permission', args: { [ask.tool === 'bash' ? 'command' : 'file']: ask.what }, waiting: true, question } });
     if (!card.permissions.some((one) => one.id === ask.id)) return;
     const reply = !answer.ok ? 'reject' : answer.args?.reply === 'always' ? 'always' : 'once';
     const message = typeof answer.args?.message === 'string' ? answer.args.message.trim().slice(0, 500) : '';

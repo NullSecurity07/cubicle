@@ -1,13 +1,12 @@
-import { join, resolve } from 'node:path';
 import type { Run } from '../../shared/evals.ts';
-import type { ForgeJob, ForgeMode, Person, Proposal } from '../../shared/forge.ts';
+import type { ForgeJob, Person, Proposal } from '../../shared/forge.ts';
 import { FORGE_CHANNEL } from '../../shared/forge.ts';
 import type { Case } from '../../shared/frameworks.ts';
 import { frameworkId } from '../../shared/frameworks.ts';
 import { answerCase, createPassages } from '../evals/answer.ts';
 import { busyWith, claiming } from '../evals/lock.ts';
-import { fakeJudge, type Judge } from '../evals/score.ts';
-import { autoevalsJudge, judgeClientsOf, readyEnough } from '../evals/scorers.ts';
+import { askWords, failWith, jobLines, judgeFor as judgeOf } from '../evals/job.ts';
+import type { Judge } from '../evals/score.ts';
 import { createRunStore } from '../evals/store.ts';
 import { buildTeam, runOf, scorecardOf, withWinners, type PersonResult } from '../forge/build.ts';
 import { readNotes, shapesOf, type NoteRead } from '../forge/notes.ts';
@@ -16,11 +15,11 @@ import { createFrameworks } from '../frameworks/store.ts';
 import { hub } from '../events.ts';
 import type { Deps, Slice } from '../install.ts';
 import { completeJson } from '../json.ts';
-import { createLibrary, noteOf } from '../library/notes.ts';
+import { noteOf } from '../library/notes.ts';
 import type { ModelMessage } from '../prompt.ts';
-import { complete, promptSize, type ModelClient } from '../providers.ts';
-import { createRecall, localEmbedder, wordEmbedder } from '../recall.ts';
+import { promptSize, type ModelClient } from '../providers.ts';
 import { route } from '../router.ts';
+import { newId, sharedLibrary } from '../slice-kit.ts';
 
 // The forge: the founder chooses the notes they learned from, says in a line what they want a team for, and a model
 // proposes one. They read it, change what they like, and press Build — and then every person is written twice, put
@@ -32,7 +31,6 @@ const ONE = /^\/api\/forge\/([a-z0-9][a-z0-9-]{0,63})$/;
 const STOP = /^\/api\/forge\/([a-z0-9][a-z0-9-]{0,63})\/stop$/;
 const RUNNING: ForgeJob['state'][] = ['reading', 'proposing', 'building', 'testing'];
 const MOST_LINES = 400;
-const WARM_AFTER = 7000;
 
 // Everything one forge job is, including the parts the window is never shown: the notes it read, what it may stop,
 // and which models have answered so far.
@@ -48,22 +46,16 @@ const view = (job: Job): ForgeJob => ({
   ...(job.critiques ? { critiques: job.critiques } : {}), ...(job.error ? { error: job.error } : {}),
 });
 
-const newJobId = () => `forge-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+const newJobId = () => newId('forge-');
 
 export default {
   name: 'forge',
   install(deps: Deps) {
-    const library = createLibrary(deps.workspace);
     const frameworks = createFrameworks(deps.workspace);
     const runs = createRunStore(frameworks.folder);
-    // The library's own recall, over the same passages and the same saved vectors the library slice uses: a note is
-    // chunked and embedded once for this workspace however many things are asking about it.
-    const recall = createRecall({
-      dir: join(library.folder, '.recall'),
-      embed: deps.fake ? wordEmbedder : localEmbedder(resolve(deps.root, 'app/.cache/recall')),
-      gather: library.pieces,
-    });
-    setTimeout(() => { void recall.warm().catch(() => {}); }, WARM_AFTER).unref();
+    // The library's one recall, the same passages and the same saved vectors the library slice uses: a note is chunked
+    // and embedded once for this workspace however many things are asking about it.
+    const { library, recall } = sharedLibrary(deps);
 
     let job: Job | null = null;
     // What the rest of the app is told when it wants to start something long: the forge is busy, in the forge's own
@@ -72,10 +64,7 @@ export default {
 
     // A line the founder reads while they wait. It is kept on the job for whoever asks afterwards, and said at once
     // on the window's one live feed for whoever is watching now.
-    const say = (held: Job, line: string) => {
-      held.lines = [...held.lines, line].slice(-MOST_LINES);
-      hub.say(FORGE_CHANNEL, { kind: 'forge', jobId: held.id, line });
-    };
+    const say = jobLines<Job>((held, line) => hub.say(FORGE_CHANNEL, { kind: 'forge', jobId: held.id, line }), MOST_LINES);
 
     // The roomiest model that is ready: proposing a team is the one call in the app that is given whole sections of
     // the founder's notes, so it goes to whichever configured model can hold the most of them. `route` decides what
@@ -87,25 +76,13 @@ export default {
 
     // One model call that comes back as words, counted. Everything the forge spends goes through here or through a
     // person's own turn, so the number the founder watches is the number that was really spent.
-    const ask = async (held: Job, messages: ModelMessage[]): Promise<string> => {
-      const reply = await complete(messages, { onToken: () => {}, signal: held.stop.signal }, biggest(promptSize(messages)));
-      held.calls += 1;
-      held.models.add(reply.client.name);
-      deps.usage.record(reply.client.name, reply.usage, reply.quota);
-      return reply.text;
-    };
+    const ask = (held: Job, messages: ModelMessage[]) => askWords(deps, held, messages, biggest(promptSize(messages)));
 
     // The judge. In fake mode nothing is asked of any model: the scores come from the case's own id, so a browser
     // journey and the unit tests run offline and say the same thing twice. Otherwise it is the `autoevals` scorers,
     // through the key this app already holds — and, when no configured provider speaks the OpenAI API at all, the
     // one prompt of our own that `score.ts` still knows how to write.
-    const judgeFor = (held: Job): Judge => {
-      if (deps.fake) return fakeJudge;
-      const clients = judgeClientsOf(deps.clients, readyEnough(deps.usage));
-      if (!clients.length) return ({ messages }) => ask(held, messages);
-      held.models.add(clients[0].name);
-      return autoevalsJudge({ clients, onCall: () => { held.calls += 1; }, onLimited: (name, milliseconds) => { deps.usage.cool(name, milliseconds); } });
-    };
+    const judgeFor = (held: Job): Judge => judgeOf(deps, held, (messages) => ask(held, messages));
 
     // The passages of the founder's notes that answer one case, asked for once and kept: the same three go to the
     // person answering and to the judge scoring them, which is the only way the two can be talking about the same
@@ -139,12 +116,7 @@ export default {
       return id;
     };
 
-    const failed = (held: Job, error: Error) => {
-      if (job !== held) return;
-      held.state = 'failed';
-      held.error = error.message;
-      say(held, error.message);
-    };
+    const failed = failWith<Job>(() => job, say);
 
     // Reading the notes and proposing the team. One model call, and one retry if what came back was not the shape a
     // framework has to be — the model is shown exactly what was wrong with its own answer.

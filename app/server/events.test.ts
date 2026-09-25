@@ -71,6 +71,37 @@ describe('one live connection carrying every feed', () => {
     } finally { extras.opening.splice(0); }
   });
 
+  it('hears what happens while its opening is still being read, and nothing older than an opening after it', async () => {
+    const rooms = feedOf<RoomEvent>();
+    const skills = feedOf<SkillEvent>();
+    const attention = feedOf<Attention[]>();
+    let release = () => {};
+    const slow = new Promise<void>((resolve) => { release = resolve; });
+    const later: Skill[] = [{ id: 's2', name: 'Newer' } as unknown as Skill];
+    let book: Skill[] = [];
+    const events = createEvents({
+      attention: { list: async () => { await slow; return []; }, watch: attention.watch },
+      skills: { list: async () => book, watch: skills.watch },
+      rooms, media: feedOf<MediaEvent>(), boards: { list: async () => [], watchAll: () => () => {} }, stage: async () => stageOf(),
+    });
+    const heard: Envelope[] = [];
+    const joining = events.join((envelope) => heard.push(envelope));
+    await Promise.resolve();
+    // A word of a reply and a skill learned while the window is still being given its opening.
+    rooms.tell({ roomId: 'marketing', turn: 't1', token: 'Hello' });
+    skills.tell({ skills: [] });
+    book = later;
+    release();
+    await joining;
+    expect(heard).toEqual([
+      { channel: 'attention', data: [], snapshot: true },
+      { channel: 'skills', data: { skills: later }, snapshot: true },
+      { channel: 'rooms', data: { roomId: 'marketing', turn: 't1', token: 'Hello' } },
+    ]);
+    rooms.tell({ roomId: 'marketing', turn: 't1', token: ' there' });
+    expect(heard.at(-1)).toEqual({ channel: 'rooms', data: { roomId: 'marketing', turn: 't1', token: ' there' } });
+  });
+
   it('puts everything that happens afterwards in an envelope that says which feed it came from', async () => {
     const { events, attention, skills, rooms, media, boards } = hub(stageOf('one'));
     const window = await join(events);

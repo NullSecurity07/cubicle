@@ -5,12 +5,12 @@ import { DASHBOARD_CHANNEL, type DashCheck, type DashMedia, type Dashboard, type
 import { counted, type Run } from '../../shared/evals.ts';
 import { LEAD_STAGES, type Lead, type LeadStage } from '../../shared/leads.ts';
 import { KEPT_MARK, type Card, type ChatMessage, type Media, type Stage } from '../../shared/model.ts';
-import { createRunStore } from '../evals/store.ts';
 import { hub } from '../events.ts';
-import { createFrameworks } from '../frameworks/store.ts';
+import { FRAMEWORK_ID, type Framework } from '../../shared/frameworks.ts';
 import type { Deps, Slice } from '../install.ts';
-import { backupDir, listBackups } from '../openends/backup.ts';
-import { checkAll } from '../openends/health.ts';
+import { leadsCardIds } from '../leads/store.ts';
+import { backupDirOf, listBackups } from '../openends/backup.ts';
+import { checkAll, outsideHealth } from '../openends/health.ts';
 import { coderHealth } from '../opencode/server.ts';
 import { providerOf } from '../providers.ts';
 import type { TraceLine } from '../trace.ts';
@@ -101,10 +101,10 @@ export async function readDay(deps: Pick<Deps, 'workspace' | 'attention' | 'boar
   // Only the leads cards that are on the stage: a card taken away took its list to the trash.
   const leadsByStage = Object.fromEntries(LEAD_STAGES.map((one) => [one, 0])) as Record<LeadStage, number>;
   let leadsChangedToday = 0;
-  const leadsCards = cards.filter((one) => one.kind === 'leads');
+  const leadsCards = leadsCardIds(stage);
   const today = localDay(now);
-  for (const card of leadsCards) {
-    for (const lead of await read<Lead[]>(join(deps.workspace, 'leads', `${card.id}.json`), [])) {
+  for (const id of leadsCards) {
+    for (const lead of await read<Lead[]>(join(deps.workspace, 'leads', `${id}.json`), [])) {
       if (lead.stage in leadsByStage) leadsByStage[lead.stage] += 1;
       if (localDay(lead.updatedAt) === today) leadsChangedToday += 1;
     }
@@ -125,7 +125,7 @@ export async function readDay(deps: Pick<Deps, 'workspace' | 'attention' | 'boar
 
   return {
     needsYou, tasksDue, tasksRunning, watchesChanged, leadsByStage, leadsChangedToday,
-    ...(leadsCards[0] ? { leadsCardId: leadsCards[0].id } : {}),
+    ...(leadsCards[0] ? { leadsCardId: leadsCards[0] } : {}),
     decisionsPending, unreadMessages: replies.length, replies,
   };
 }
@@ -191,18 +191,28 @@ export async function readTokens(deps: Pick<Deps, 'workspace' | 'usage' | 'clien
 
 // ---------------------------------------------------------------- teams, skills, media
 
-export async function readTeams(workspace: string, root: string, stage: Stage): Promise<DashTeam[]> {
-  const frameworks = createFrameworks(workspace);
-  const runs = createRunStore(frameworks.folder);
+// Read through the dashboard's file cache: a framework or a run that has not been written since the last refresh is not
+// read again. Only the newest run of each is opened; its file name is its moment, so the names sort the way time does.
+export async function readTeams(workspace: string, root: string, stage: Stage, read: Read = fileCache()): Promise<DashTeam[]> {
+  const folder = join(workspace, 'frameworks');
   const shipped = new Set(await readdir(resolve(root, 'app/frameworks')).catch(() => [] as string[]));
   const teams: DashTeam[] = [];
-  for (const framework of await frameworks.list().catch(() => [])) {
-    const placedRoom = stage.rooms.find((room) => room.framework?.id === framework.id);
-    const last: Run | undefined = (await runs.list(framework.id).catch(() => []))[0];
+  for (const one of await readdir(folder, { withFileTypes: true }).catch(() => [])) {
+    if (!one.isDirectory() || !FRAMEWORK_ID.test(one.name)) continue;
+    const framework = await read<Pick<Framework, 'name' | 'scorecard'> | null>(join(folder, one.name, 'framework.json'), null);
+    if (!framework?.name) continue;
+    const id = one.name;
+    const runs = join(folder, id, 'runs');
+    let last: Run | undefined;
+    for (const file of (await jsonIn(runs)).sort().reverse()) {
+      const run = await read<Run | null>(join(runs, file), null);
+      if (run && typeof run.at === 'number' && Array.isArray(run.cases)) { last = run; break; }
+    }
+    const placedRoom = stage.rooms.find((room) => room.framework?.id === id);
     const lastEval = last
       ? { mean: last.mean, at: last.at, judged: last.cases.filter(counted).length, of: last.cases.length }
       : framework.scorecard ? { mean: framework.scorecard.mean, at: framework.scorecard.at, judged: framework.scorecard.cases, of: framework.scorecard.cases } : null;
-    teams.push({ id: framework.id, name: framework.name, builtIn: shipped.has(framework.id), placed: !!placedRoom, ...(placedRoom ? { placedRoomId: placedRoom.id } : {}), lastEval });
+    teams.push({ id, name: framework.name, builtIn: shipped.has(id), placed: !!placedRoom, ...(placedRoom ? { placedRoomId: placedRoom.id } : {}), lastEval });
   }
   // What is on the stage first, then the founder's own, then the ones that came with the app.
   return teams.sort((a, b) => Number(b.placed) - Number(a.placed) || Number(a.builtIn) - Number(b.builtIn) || a.name.localeCompare(b.name));
@@ -257,10 +267,10 @@ export default {
     // last answer is served and a new one is asked for in the background once it is a minute old.
     let health: { at: number; checks: DashCheck[] } = { at: 0, checks: [] };
     let checking: Promise<void> | null = null;
-    const dir = deps.fake && !process.env.STAGE_BACKUP_DIR ? join(deps.workspace, 'backups') : backupDir(process.env);
+    const dir = backupDirOf(deps);
     function checkHealth() {
       if (checking || Date.now() - health.at < HEALTH_FOR) return;
-      checking = checkAll({ workspace: deps.workspace, root: deps.root, backupDir: dir, backups: () => listBackups(dir), outside: () => [], coder: () => coderHealth.now() })
+      checking = checkAll({ workspace: deps.workspace, root: deps.root, backupDir: dir, backups: () => listBackups(dir), outside: () => outsideHealth.now(), coder: () => coderHealth.now() })
         .then((checks) => {
           const fresh = checks.map(({ name, ok, detail }) => ({ name, ok, detail }));
           const moved = JSON.stringify(fresh) !== JSON.stringify(health.checks);
@@ -275,7 +285,7 @@ export default {
       const now = Date.now();
       const stage = await deps.store.loadStage();
       const [day, tokens, teams, skills, media] = await Promise.all([
-        readDay(deps, stage, read, now), readTokens(deps, stage, read, now), readTeams(deps.workspace, deps.root, stage),
+        readDay(deps, stage, read, now), readTokens(deps, stage, read, now), readTeams(deps.workspace, deps.root, stage, read),
         readSkills(deps, stage, read, now), readMedia(deps.workspace, stage, read, now),
       ]);
       return { at: now, day, tokens, health: health.checks, teams, skills, media };

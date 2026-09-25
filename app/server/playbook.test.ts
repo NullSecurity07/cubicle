@@ -177,3 +177,21 @@ describe('the playbook block', () => {
     expect(blockOf(await ask('the invoice from Acme is two weeks overdue, chase it'))).toBe('');
   });
 });
+
+describe('what a person can follow', () => {
+  it('leaves out a skill whose steps need a tool this turn does not offer', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'playbook-tools-'));
+    const skills = createSkills(dir);
+    await skills.create({ ...FIXTURES[1], procedure: ['Find the invoice number with read_file in the shared files', 'Send one polite reminder with send_email', 'Ask the founder before anything goes out'] });
+    const recall = createRecall({ dir, embed: wordEmbedder, gather: gatherPieces(createStore(dir), createDecisions(dir), async () => ({ notes: '', summary: '' }), skills) });
+    const seams = createSeams();
+    seams.on('turn:before', createPlaybook({ skills, recall, tools: () => ['read_file', 'send_email', 'web_search'] }).before);
+    const query = 'a customer has not paid and the due date has passed, chase the unpaid invoice';
+    const ask = async (offered?: string[]) => blockOf((await seams.run('turn:before', { roomId: 'marketing', source: 'chat', query, messages: [{ role: 'system', content: 'You are Maya.' }], ...(offered ? { offered } : {}) } as never)).messages);
+    expect(await ask(['read_file', 'send_email'])).toContain('Chase an unpaid invoice');
+    // No mailbox this turn: the procedure cannot be followed, so it is not put in front of them.
+    expect(await ask(['read_file', 'web_search'])).toBe('');
+    // A turn that did not say what it offered is shown the playbook as before.
+    expect(await ask()).toContain('Chase an unpaid invoice');
+  });
+});

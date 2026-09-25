@@ -2,14 +2,37 @@ import type { ToolEvent, Usage } from '../shared/model.ts';
 import type { ModelMessage } from './prompt.ts';
 import { complete, type Failure, type ModelClient } from './providers.ts';
 import type { Answer } from './approvals.ts';
-import type { Seams, Source } from './seams.ts';
+import { resultCap } from './context/shrink.ts';
+import type { Offered } from './playbook.ts';
+import type { Payloads, Seams, Source } from './seams.ts';
 import { runTool, type Tool, type ToolContext } from './tools/registry.ts';
 import type { UsageBook } from './usage.ts';
 
 const MAX_STEPS = 8;
+// What the founder's receipt keeps of a result. The model is handed the whole of it: a five-page read, the last of
+// several searches and the error at the end of a long run all sit past this, and the shrinker at the door knows how
+// to make a long result small without throwing its end away.
 const RESULT_CHARS = 6000;
+// The most any one result may take of a prompt when nothing else has made it smaller: no shrinker listening, or a
+// JSON answer that could not lose whole entries. Only a turn with no model limit at all ever reaches this.
+const RESULT_CEILING = 60_000;
+const CUT = '\n… (cut) …\n';
 
-export type TurnEvents = { token(token: string): void; tool(event: ToolEvent): void; notice?(text: string): void };
+// A long text cut to `cap`, keeping its start and its last block: the end of a result is where a run's error, a
+// search's list of sources and the founder's Undo line all are.
+function cutKeepingEnd(text: string, cap: number): string {
+  if (text.length <= cap) return text;
+  const lastBlock = text.slice(text.lastIndexOf('\n\n') + 1);
+  const tail = lastBlock.length <= cap / 4 ? lastBlock : text.slice(-Math.floor(cap / 4));
+  return `${text.slice(0, Math.max(0, cap - tail.length - CUT.length))}${CUT}${tail}`;
+}
+
+// Every tool result in the prompt held under the cap once whatever listens before a step has had its turn at them.
+const bounded = (messages: ModelMessage[], cap: number) => messages.some((message) => message.role === 'tool' && message.content.length > cap)
+  ? messages.map((message) => (message.role === 'tool' && message.content.length > cap ? { ...message, content: cutKeepingEnd(message.content, cap) } : message))
+  : messages;
+
+type TurnEvents = { token(token: string): void; tool(event: ToolEvent): void; notice?(text: string): void };
 export type TurnResult = { text: string; tools: ToolEvent[]; provider: string; model: string; usage: Usage; stopped: boolean };
 
 // One turn of one person: ask the model, run the tools it calls, hand the results back, until it answers in words.
@@ -42,10 +65,13 @@ export async function runTurn(input: {
     usage.failed(client.name, error);
   };
 
-  if (seams) messages = (await seams.run('turn:before', { roomId, source, query, messages })).messages;
+  // What this turn offers rides along for the playbook, which leaves out procedures that need anything else.
+  const before: Payloads['turn:before'] & Offered = { roomId, source, query, messages, offered: tools.map((tool) => tool.name) };
+  if (seams) messages = (await seams.run('turn:before', before)).messages;
 
   for (let step = 1; step <= MAX_STEPS && !signal?.aborted; step += 1) {
     if (seams) messages = (await seams.run('step:before', { roomId, step, messages })).messages;
+    messages = bounded(messages, Math.min(resultCap(clients), RESULT_CEILING));
     const offered = step < MAX_STEPS ? tools : [];
     const gap = text && !/\s$/.test(text) ? '\n\n' : '';
     let first = true;
@@ -109,11 +135,15 @@ export async function runTurn(input: {
       // A tool that runs a turn of its own inside itself asks the founder on this turn's path, not on one of its own.
       context.approve = input.approve;
       const ran = refusal ? { text: refusal, ok: false, args, effect: undefined } : await runTool(tools, call.name, rawArgs, context);
-      let event: ToolEvent = { id: call.id, name: call.name, args: ran.args, ok: ran.ok, result: ran.text.slice(0, RESULT_CHARS), effect: ran.effect };
+      // Whatever rewrites a result (the secrets taken out, the Undo line put on) sees all of it, and the model gets
+      // all of what comes back; only the receipt the founder keeps is cut.
+      let event: ToolEvent = { id: call.id, name: call.name, args: ran.args, ok: ran.ok, result: ran.text, effect: ran.effect };
       if (seams) event = (await seams.run('tool:after', { roomId, event })).event;
+      const full = event.result ?? '';
+      if (full.length > RESULT_CHARS) event = { ...event, result: cutKeepingEnd(full, RESULT_CHARS) };
       done.push(event);
       events.tool(event);
-      messages.push({ role: 'tool', tool_call_id: call.id, content: event.result ?? '' });
+      messages.push({ role: 'tool', tool_call_id: call.id, content: full });
     }
   }
 

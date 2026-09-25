@@ -1,36 +1,28 @@
 import { existsSync } from 'node:fs';
-import { basename } from 'node:path';
 import { coderChannel, type CoderEvent } from '../../shared/coder.ts';
-import type { Card, Stage } from '../../shared/model.ts';
 import { hub } from '../events.ts';
-import { projectDir } from '../folder.ts';
 import type { Deps, Slice } from '../install.ts';
+import { projects, refOf, wiredProject } from '../opencode/cards.ts';
+
+export { CODER_TOOLS } from '../opencode/cards.ts';
 import { graphMcp, writeCoderHome } from '../opencode/config.ts';
 import { fakeEngine } from '../opencode/fake.ts';
-import { coderHealth, createOpencodeServer, findBin } from '../opencode/server.ts';
+import { cardLog, GRAPH_HINT, graphJson, mcpCommand } from '../opencode/graph-kit.ts';
+import { coderHealth, createOpencodeServer, findBin, NOT_INSTALLED } from '../opencode/server.ts';
 import { createCoder, type Coder } from '../opencode/session.ts';
-import { wired } from '../prompt.ts';
+import { patchStageVia } from '../slice-kit.ts';
 import { text, type Tool, type ToolContext } from '../tools/registry.ts';
-import { cardLog, GRAPH_HINT, graphJson, mcpCommand } from './graph.ts';
 
 // The coder card: a running OpenCode in one project folder, driven by the founder from the card or by any person
 // wired to it. One server for the whole app, one lasting session per card, every step on the card as it happens.
-type Project = Extract<Card, { kind: 'project' }>;
-const projects = (stage: Stage) => (stage.cards ?? []).filter((card): card is Project => card.kind === 'project');
-const nameOf = (card: Project) => basename(card.path.trim().replace(/\/+$/, '')) || 'Project';
 const NO_CARD = 'no coder card is connected to your room. Ask the founder to add one from the dock (More cards, then Coder), set its folder and draw a wire to it.';
 
-// The card as the coder needs it: the folder checked, its name, and whatever session and model the stage holds.
-const refOf = (card: Project, forbidden: string[]) => ({ id: card.id, dir: projectDir(card.path, forbidden), name: nameOf(card), session: card.session, model: card.model });
 
 // What a wired person may do with the coder. Starting work and following it up wait for the founder's yes, with the
-// words editable; stopping and looking never do.
-export function coderTools(coder: Coder, forbidden: string[]): Tool[] {
-  const cardFor = (context: ToolContext) => {
-    const cards = projects(context.stage);
-    const [id] = wired(context.stage, context.roomId, cards.map((one) => one.id));
-    return cards.find((one) => one.id === id);
-  };
+// words editable; stopping and looking never do. `ready` refuses the two that start work on a machine with no opencode,
+// before the founder is asked and before the safety net copies the folder: both would be for nothing.
+export function coderTools(coder: Coder, forbidden: string[], ready: () => string | null = () => null): Tool[] {
+  const cardFor = (context: ToolContext) => wiredProject(context.stage, context.roomId);
   const need = (context: ToolContext) => { const card = cardFor(context); if (!card) throw new Error(NO_CARD); return card; };
   const who = (context: ToolContext) => context.stage.rooms.find((one) => one.id === context.roomId)?.name;
   const folder = (context: ToolContext) => cardFor(context)?.path || '(no folder set)';
@@ -58,7 +50,7 @@ export function coderTools(coder: Coder, forbidden: string[]): Tool[] {
       description: 'Give the coder wired to your room a piece of coding work. It works inside that project folder: reads the code, edits files and runs commands, each step shown to the founder, then reports what it did and what changed. '
         + 'Write a complete brief: the goal, the files or area, how to check it works. It remembers earlier work in the same folder. The founder approves the brief before it starts, and approves each edit and command.',
       parameters: { type: 'object', properties: { brief: { type: 'string', description: 'The full brief for the coder' } }, required: ['brief'] },
-      ready: () => null,
+      ready,
       approval: async (_args, context) => (cardFor(context) ? `Start this coding task in ${folder(context)}?` : null),
       run: (args, context) => send(context, text(args, 'brief', 8000)),
     },
@@ -66,7 +58,7 @@ export function coderTools(coder: Coder, forbidden: string[]): Tool[] {
       name: 'code_reply', perTurn: 3,
       description: 'Say something more to the coder in the same session: steer it, answer what it asked, or ask for changes to what it just did. Same wait and report as code_task, and the founder approves it the same way.',
       parameters: { type: 'object', properties: { text: { type: 'string', description: 'What to tell the coder' } }, required: ['text'] },
-      ready: () => null,
+      ready,
       approval: async (_args, context) => (cardFor(context) ? `Send this to the coder in ${folder(context)}?` : null),
       run: (args, context) => send(context, text(args, 'text', 8000)),
     },
@@ -97,13 +89,15 @@ export default {
     const forbidden = [deps.workspace, deps.root];
     const bin = findBin();
     const engine = deps.fake ? fakeEngine() : createOpencodeServer({ bin, env: process.env, home: () => writeCoderHome({ workspace: deps.workspace, env: process.env }) });
+    const healthBefore = coderHealth.now;
     coderHealth.now = () => ({ ...engine.health(), bin });
 
     // The session lives on the card in the saved stage, so the same conversation carries on after a restart.
+    // Through the one stage queue, so a map finishing at the same moment does not save a copy without this.
     async function remember(cardId: string, session: string) {
-      const stage = await deps.store.loadStage();
-      if (!projects(stage).some((one) => one.id === cardId)) return;
-      await deps.store.saveStage({ ...stage, cards: (stage.cards ?? []).map((one) => (one.id === cardId && one.kind === 'project' ? { ...one, session: session || undefined } : one)) });
+      await patchStageVia(deps.store, (stage) => {
+        stage.cards = (stage.cards ?? []).map((one) => (one.id === cardId && one.kind === 'project' ? { ...one, session: session || undefined } : one));
+      });
     }
     // A folder Graphify has mapped: the coder reads that map through Graphify's own tools, told so in one sentence.
     async function map(dir: string) {
@@ -124,12 +118,12 @@ export default {
       const { lines, state, permission, waiting, session, model } = coder.snapshot(id);
       return { channel: coderChannel(id), data: { lines, state, permission: permission ?? null, waiting, session, model } satisfies CoderEvent };
     });
-    hub.opening.push(opening);
+    const unopen = hub.open(opening);
 
     const cardOf = async (cardId: string) => projects(await deps.store.loadStage()).find((one) => one.id === cardId);
 
     return {
-      tools: coderTools(coder, forbidden),
+      tools: coderTools(coder, forbidden, () => (deps.fake || bin ? null : NOT_INSTALLED)),
       async route(req, res, path) {
         if (path === '/api/coder/models' && req.method === 'GET') {
           try { deps.json(res, 200, await coder.models()); } catch (error) { deps.json(res, 503, { error: (error as Error).message }); }
@@ -177,8 +171,8 @@ export default {
       },
       async close() {
         cardLog.add = logBefore;
-        const at = hub.opening.indexOf(opening);
-        if (at >= 0) hub.opening.splice(at, 1);
+        coderHealth.now = healthBefore;
+        unopen();
         await engine.stop();
       },
     };

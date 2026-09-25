@@ -1,16 +1,17 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { ModelInfo, Usage } from '../shared/model.ts';
 import { createBreaker } from './breaker.ts';
 import { fromCache, onCache } from './cache.ts';
 import { providerOf, type ModelClient, type Quota } from './providers.ts';
+import { writeAtomic } from './fsx.ts';
 
 type Count = { requests: number; input: number; output: number };
 // What a call was for. A turn is a person answering; the rest are the calls around it.
-export type CallKind = 'turn' | 'side' | 'eval' | 'retain' | 'reflect' | 'compaction';
+type CallKind = 'turn' | 'side' | 'eval' | 'retain' | 'reflect' | 'compaction';
 // Per tool: how many results went into a prompt, and how many characters they came to before and after shrinking.
-export type ToolCount = { results: number; before: number; after: number };
-export type CacheCount = { hits: number; misses: number; tokensSaved: number };
+type ToolCount = { results: number; before: number; after: number };
+type CacheCount = { hits: number; misses: number; tokensSaved: number };
 // `kinds`, `tools` and `cache` came later: a day written before them still reads, as a day without them.
 type State = { day: string; providers: Record<string, Count>; kinds?: Record<string, Count>; tools?: Record<string, ToolCount>; cache?: Record<string, CacheCount> };
 type Seen = { at: number; tokens: number };
@@ -39,9 +40,7 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     if (!path) return;
     const text = JSON.stringify(state, null, 2);
     saving = saving.then(async () => {
-      await mkdir(dirname(path), { recursive: true });
-      await writeFile(`${path}.tmp`, text);
-      await rename(`${path}.tmp`, path);
+      await writeAtomic(path, text, { mkdir: true });
     }).catch(() => {});
   };
 

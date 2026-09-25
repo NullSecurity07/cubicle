@@ -1,17 +1,17 @@
 import { appendFile, mkdir, readdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Usage } from '../shared/model.ts';
+import { localDay } from './clock.ts';
 import type { Handler, Source } from './seams.ts';
 
 // What one turn cost and what it did. Written after the founder already has their reply, so nothing here is in their way.
 export type TraceLine = { at: number; roomId: string; source: Source; provider: string; model: string; usage: Usage; tools: { name: string; ok: boolean }[]; stopped: boolean };
 export type Totals = { turns: number; input: number; output: number; tools: number; failed: number };
-export type Trace = ReturnType<typeof createTrace>;
 
 const KEEP_DAYS = 30;
 const MAX_DAYS = 90;
 const DAY = 86_400_000;
-const dayOf = (at: number) => { const day = new Date(at); return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`; };
+const dayOf = localDay;
 const add = (totals: Record<string, Totals>, key: string, line: TraceLine) => {
   const one = (totals[key] ??= { turns: 0, input: 0, output: 0, tools: 0, failed: 0 });
   one.turns += 1;

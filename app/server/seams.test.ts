@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createSeams, SAFETY_FAILED, type SeamName } from './seams.ts';
+import { createSeams, SAFETY_FAILED, withSystem, type SeamName } from './seams.ts';
 
 const turn = (query = 'go') => ({ roomId: 'build', source: 'chat' as const, query, messages: [{ role: 'user' as const, content: query }] });
 const call = (args: Record<string, unknown> = {}) => ({ roomId: 'build', call: { id: 'c1', name: 'web_search', args } });
@@ -69,5 +69,15 @@ describe('seams', () => {
     expect((await seams.run('tool:after', payload)).event.result).toBe('rewritten');
     off();
     expect((await seams.run('tool:after', payload)).event.result).toBe('done');
+  });
+});
+
+describe('withSystem', () => {
+  it('adds a paragraph to the system prompt and leaves a payload without one as it came', () => {
+    const payload = { roomId: 'r', messages: [{ role: 'system' as const, content: 'You are Ana.' }, { role: 'user' as const, content: 'hi' }] };
+    expect(withSystem(payload, 'Notes.').messages).toEqual([{ role: 'system', content: 'You are Ana.\n\nNotes.' }, { role: 'user', content: 'hi' }]);
+    expect(payload.messages[0].content).toBe('You are Ana.');
+    const bare = { messages: [{ role: 'user' as const, content: 'hi' }] };
+    expect(withSystem(bare, 'Notes.')).toBe(bare);
   });
 });

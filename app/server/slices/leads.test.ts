@@ -94,6 +94,20 @@ describe('the Leads card', () => {
     expect((await list())[0].stage).toBe('contacted');
   });
 
+  it('takes an email with a lead, or for one already here, and then a sent email moves them to contacted', async () => {
+    const { part, seams, list, use } = await setup();
+    closing = part.close;
+    expect((await use('add_lead', { person: 'Ada Lovelace', company: 'Engines Ltd', email: 'not an address' })).text).toMatch(/is not an email address/);
+    expect(await list()).toEqual([]);
+    expect((await use('add_lead', { person: 'Ada Lovelace', company: 'Engines Ltd' })).text).toBe('Added Ada Lovelace at Engines Ltd.');
+    expect((await use('add_lead', { person: 'Ada Lovelace', company: 'Engines Ltd', email: 'ada@engines.example' })).text)
+      .toBe('Ada Lovelace at Engines Ltd is already here, in New. Their email is now ada@engines.example.');
+    expect((await use('add_lead', { person: 'Grace Hopper', company: 'Navy', email: 'grace@navy.example' })).text).toBe('Added Grace Hopper at Navy.');
+    expect((await list()).map((one) => one.person.email)).toEqual(['ada@engines.example', 'grace@navy.example']);
+    await seams.run('tool:after', { roomId: 'marketing', event: { id: 'c', name: 'send_email', args: { to: 'ADA@engines.example', subject: 'Hello' }, ok: true } });
+    expect((await list()).map((one) => one.stage)).toEqual(['contacted', 'new']);
+  });
+
   it('leaves a lead alone when an email went to somebody else, or was refused', async () => {
     const { part, seams, list, call } = await setup();
     closing = part.close;

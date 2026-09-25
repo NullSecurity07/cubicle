@@ -12,7 +12,9 @@ import type { Store } from '../store.ts';
 // `query` is what set this turn off in the founder's own words, for a tool that has to tell what the founder asked
 // for from what the model made up — a year in a search query is the founder's when they typed it and nobody else's.
 export type ToolContext = { stage: Stage; roomId: string; store: Store; granted: Map<string, string>; calls?: Map<string, number>; query?: string; report?: (effect: ToolEffect) => void; signal?: AbortSignal; approve?: (event: ToolEvent, signal?: AbortSignal) => Promise<Answer> };
-export type ToolResult = { text: string; effect?: ToolEffect };
+// The person a tool is running for: the room whose turn this is.
+export const speaker = (context: Pick<ToolContext, 'stage' | 'roomId'>) => context.stage.rooms.find((room) => room.id === context.roomId);
+type ToolResult = { text: string; effect?: ToolEffect };
 // `perTurn` stops a person from looping on a costly tool: past it, the tool answers with a nudge to use what it has.
 // `approval` makes the turn wait for the founder's yes. `ready` returns why the tool cannot work yet, before anyone is asked.
 // `approval` may also be a function, for tools where only some calls reach outward: it returns the question to put to the founder, or null.

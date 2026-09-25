@@ -1,5 +1,37 @@
+import type { Box, Stage } from '../../shared/model.ts';
 import { wiredDocIds } from '../prompt.ts';
 import { text, type Tool, type ToolContext } from './registry.ts';
+
+// A new doc card's size, and the gap kept round it: the same the window uses when it places one.
+const [WIDTH, HEIGHT, GAP] = [340, 300, 40];
+
+// Where a doc made by a person lands: beside them, in the nearest place nothing else is standing.
+function besideRoom(stage: Stage, room: Box): { x: number; y: number } {
+  const boxes: Box[] = [...stage.rooms, ...stage.docs, ...(stage.cards ?? [])];
+  const hits = (x: number, y: number) => boxes.some((one) => x < one.x + one.w + GAP && x + WIDTH + GAP > one.x && y < one.y + one.h + GAP && y + HEIGHT + GAP > one.y);
+  const start = { x: room.x + (room.w || 380) + 80, y: room.y };
+  for (let ring = 0; ring <= 6; ring += 1) {
+    for (let row = -ring; row <= ring; row += 1) {
+      for (let column = -ring; column <= ring; column += 1) {
+        if (Math.max(Math.abs(row), Math.abs(column)) !== ring) continue;
+        const [x, y] = [start.x + column * (WIDTH + GAP), start.y + row * (HEIGHT + GAP)];
+        if (!hits(x, y)) return { x, y };
+      }
+    }
+  }
+  return start;
+}
+
+// The doc's card and its wire to the person who made it, put on the stage here rather than by whichever window
+// happens to be open: a doc made from the phone, in a board run or by a colleague asked to do it has no window
+// watching, and without this it had no card, no wire, and nobody could reach it again. The wire has the name the
+// window gives it too, so a window that does hear of it adds nothing twice.
+const docOnStage = (roomId: string, id: string, title: string) => (stage: Stage) => {
+  const room = stage.rooms.find((one) => one.id === roomId);
+  if (!room || stage.docs.some((one) => one.id === id)) return;
+  stage.docs.push({ id, title, ...besideRoom(stage, room), w: WIDTH, h: HEIGHT });
+  stage.wires.push({ id: `${roomId}-${id}`, from: roomId, fromHandle: 'r', to: id, toHandle: 'l' });
+};
 
 // Docs this person may touch, by title: the wired ones plus any made during this turn.
 function reachable(context: ToolContext) {
@@ -59,6 +91,8 @@ export const docTools: Tool[] = [
       const id = `doc-${Math.random().toString(36).slice(2, 8)}`;
       await context.store.writeDoc(id, text(args, 'text'));
       context.granted.set(id, title);
+      // A stage that cannot be saved just now still leaves a doc the person can write to this turn.
+      await Promise.resolve().then(() => context.store.patchStage(docOnStage(context.roomId, id, title))).catch(() => {});
       return { text: `Created "${title}".`, effect: { kind: 'doc-created', id, title } };
     },
   },

@@ -2,7 +2,7 @@ import { mkdtemp, readdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { seedStage, type ToolEvent } from '../shared/model.ts';
+import type { ToolEvent } from '../shared/model.ts';
 import { runTurn } from './loop.ts';
 import type { ModelMessage } from './prompt.ts';
 import type { ModelClient, ModelTurn } from './providers.ts';
@@ -240,6 +240,32 @@ describe('runTurn with seams', () => {
     expect(reply.text).toBe('all done');
     await done;
     expect(told).toMatchObject({ roomId: 'build', source: 'run', query: 'the task', reply: { text: 'all done' } });
+  });
+
+  it('hands the model the whole of a long result, and cuts only the receipt, keeping its end', async () => {
+    const pages = Array.from({ length: 5 }, (_, at) => `Page ${at + 1}\n${'words '.repeat(1500)}`).join('\n\n');
+    const long: Tool = { name: 'long', description: 'a five-page read', parameters: { type: 'object', properties: {} }, async run() { return { text: `${pages}\n\nSources: the fifth page` }; } };
+    const client = scripted([[{ name: 'long', args: {} }], 'read it']);
+    const heard = listening(client);
+    const { reply } = await go(client, createSeams(), { tools: [long] });
+    expect(heard[1].at(-1)).toMatchObject({ role: 'tool', content: `${pages}\n\nSources: the fifth page` });
+    expect(reply.tools[0].result!.length).toBeLessThanOrEqual(6000);
+    expect(reply.tools[0].result).toMatch(/^Page 1/);
+    expect(reply.tools[0].result).toMatch(/… \(cut\) …\n\nSources: the fifth page$/);
+  });
+
+  it('holds a long result under the smallest model\'s share when nothing before the step made it smaller', async () => {
+    const text = `${Array.from({ length: 400 }, (_, at) => `line ${at}`).join('\n')}\n\nError: the last line is the one that matters`;
+    const long: Tool = { name: 'long', description: 'a long log', parameters: { type: 'object', properties: {} }, async run() { return { text }; } };
+    const client = { ...scripted([[{ name: 'long', args: {} }], 'saw it']), maxPromptChars: 8000 };
+    const heard: ModelMessage[][] = [];
+    const step = client.step;
+    client.step = async (messages, options) => { heard.push(structuredClone(messages)); return step(messages, options); };
+    await go(client, createSeams(), { tools: [long] });
+    const seen = heard[1].at(-1)!.content as string;
+    expect(seen.length).toBeLessThanOrEqual(2000);
+    expect(seen).toMatch(/^line 0\n/);
+    expect(seen).toMatch(/Error: the last line is the one that matters$/);
   });
 
   it('takes an approval that fails as a no, and finishes the turn', async () => {

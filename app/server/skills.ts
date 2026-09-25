@@ -1,5 +1,7 @@
-import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
+import { trashStamp } from './clock.ts';
+import { folderCache, freshId, safeId, slugOf, writeAtomic } from './fsx.ts';
 import type { Skill, SkillEvent, SkillSource, SkillState, SkillVersion } from '../shared/model.ts';
 
 export type Skills = ReturnType<typeof createSkills>;
@@ -14,8 +16,7 @@ export const CAPS = { name: 60, when: 160, steps: 8, step: 240, pitfalls: 5, pit
 const HISTORY = 5;
 const SAME_WORK = 10 * 60_000;
 const FIELDS = ['name', 'when', 'procedure', 'pitfalls', 'verify'] as const;
-const safe = (id: string) => { if (!/^[a-z0-9][a-z0-9-]{0,79}$/.test(id)) throw new Error(`bad id: ${id}`); return id; };
-const slug = (name: string) => name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'skill';
+const safe = (id: string) => safeId(id, 80);
 const flat = (value: unknown) => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '');
 
 function line(value: unknown, what: string, max: number): string {
@@ -58,7 +59,7 @@ export const bodyOf = (skill: Skill) => [`${skill.name}. ${skill.when}`, skill.p
 // Only the words are required; everything a skill is counted or sorted by has an answer that is true of a new one.
 const list_ = (value: unknown): string[] => (Array.isArray(value) ? value.filter((one): one is string => typeof one === 'string' && !!one.trim()) : []);
 const number_ = (value: unknown, fallback = 0) => (typeof value === 'number' && Number.isFinite(value) ? value : fallback);
-export function whatIsThere(held: Partial<Skill>, id: string): Skill | null {
+function whatIsThere(held: Partial<Skill>, id: string): Skill | null {
   const words = [held.name, held.when, held.verify];
   if (words.some((one) => typeof one !== 'string' || !one.trim()) || !list_(held.procedure).length) return null;
   return {
@@ -80,8 +81,7 @@ export function createSkills(dir: string, now: () => number = Date.now) {
   const watchers = new Set<(event: SkillEvent) => void>();
   let queue: Promise<unknown> = Promise.resolve();
 
-  async function list(): Promise<Skill[]> {
-    await queue;
+  async function read(): Promise<Skill[]> {
     const names = await readdir(folder).catch(() => [] as string[]);
     const found: Skill[] = [];
     for (const name of names.filter((one) => one.endsWith('.json') && !one.endsWith('.tmp'))) {
@@ -92,13 +92,18 @@ export function createSkills(dir: string, now: () => number = Date.now) {
     }
     return found.sort((a, b) => b.createdAt - a.createdAt);
   }
+  // Every turn's playbook reads the list, so it is read off the disk only when something changed.
+  const cache = folderCache(folder, read);
+  async function list(): Promise<Skill[]> {
+    await queue;
+    return cache.get();
+  }
   const get = async (id: string) => (await list()).find((one) => one.id === id);
   function save(skill: Skill) {
     const text = JSON.stringify(skill, null, 2);
     const job = queue.then(async () => {
-      await mkdir(folder, { recursive: true });
-      await writeFile(`${path(skill.id)}.tmp`, text);
-      await rename(`${path(skill.id)}.tmp`, path(skill.id));
+      await writeAtomic(path(skill.id), text, { mkdir: true });
+      cache.drop();
     });
     queue = job.catch(() => {});
     // Told before the caller hears back, so a panel and whoever asked for the change never disagree about the playbook.
@@ -107,11 +112,7 @@ export function createSkills(dir: string, now: () => number = Date.now) {
   async function tellAll() { if (watchers.size) { const skills = await list(); for (const tell of watchers) tell({ skills }); } }
   const version = (skill: Skill): SkillVersion => ({ name: skill.name, when: skill.when, procedure: skill.procedure, pitfalls: skill.pitfalls, verify: skill.verify, at: now() });
   const held = async (id: string) => { const skill = await get(id); if (!skill) throw new Error('unknown skill'); return skill; };
-  async function freshId(name: string) {
-    const taken = new Set((await readdir(folder).catch(() => [] as string[])).map((one) => one.replace(/\.json$/, '')));
-    const base = slug(name);
-    for (let count = 1; ; count += 1) { const id = count === 1 ? base : `${base}-${count}`; if (!taken.has(id)) return id; }
-  }
+  const newId = (name: string) => freshId(folder, slugOf(name, 'skill'), '.json');
 
   return {
     list,
@@ -119,7 +120,7 @@ export function createSkills(dir: string, now: () => number = Date.now) {
     settled: () => queue,
     async create(input: Record<string, unknown> & { by: Skill['by']; source: SkillSource }): Promise<Skill> {
       const fields = checkFields(input);
-      return save({ id: await freshId(fields.name), ...fields, state: 'active', by: input.by, source: input.source, uses: 0, patches: 0, createdAt: now(), history: [] });
+      return save({ id: await newId(fields.name), ...fields, state: 'active', by: input.by, source: input.source, uses: 0, patches: 0, createdAt: now(), history: [] });
     },
     // What the learner sends back: a field and the line to swap. Anything it cannot find is an error, because a patch
     // that half lands leaves a procedure nobody wrote.
@@ -173,7 +174,8 @@ export function createSkills(dir: string, now: () => number = Date.now) {
     async remove(id: string) {
       await queue;
       await mkdir(join(dir, 'trash'), { recursive: true });
-      await rename(path(id), join(dir, 'trash', `${new Date(now()).toISOString().replace(/[:.]/g, '-')}-${safe(id)}.json`));
+      await rename(path(id), join(dir, 'trash', `${trashStamp(now())}-${safe(id)}.json`));
+      cache.drop();
       await tellAll();
     },
     watch(tell: (event: SkillEvent) => void) { watchers.add(tell); return () => { watchers.delete(tell); }; },
