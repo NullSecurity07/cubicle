@@ -81,3 +81,30 @@ test('the built-in team lands on the stage, answers from the founder\'s note, an
   await page.keyboard.press('Escape');
   await expect(panel(page)).toBeHidden();
 });
+
+test('the new teams are on the shelf, and the LinkedIn content system lands whole with the LinkedIn card, the leads and a board', async ({ page }) => {
+  await page.getByLabel('Frameworks', { exact: true }).click();
+  for (const name of ['LinkedIn content system', 'Weekly metrics', 'Customer discovery', 'Investor update', 'Product-market fit engine', 'Seed round prep', 'Pre-mortem']) {
+    await expect(panel(page).locator('.frameworks__one').filter({ hasText: name })).toHaveCount(1);
+  }
+  const row = panel(page).locator('.frameworks__one').filter({ hasText: 'LinkedIn content system' });
+  await expect(row).toContainText('5 people · 5 docs · 1 sticky note · 1 note · 1 browser · 1 lead list · 1 task board');
+  await expect(row.getByText('Built from LinkedIn Founder-Led Content System — Notes v2')).toBeVisible();
+  await row.getByRole('button', { name: 'Place' }).click();
+  await expect(panel(page)).toBeHidden();
+
+  for (const role of ['Buyer researcher', 'Post writer', 'Distributor', 'Scorekeeper', 'Outbound']) await expect(person(page, role)).toHaveCount(1);
+  // A doc's title is the value of its title box, so the titles are read from there rather than from the words inside.
+  const titles = async () => (await page.locator('.react-flow__node-doc').getByLabel('Doc title').evaluateAll((boxes) => boxes.map((box) => (box as HTMLInputElement).value)));
+  await expect.poll(async () => (await titles()).filter((title) => ['ICP worksheet', 'Content calendar', 'Posts', 'Weekly scorecard', 'DM drafts'].includes(title)).sort())
+    .toEqual(['Content calendar', 'DM drafts', 'ICP worksheet', 'Posts', 'Weekly scorecard']);
+  await expect(page.locator('.react-flow__node-browser')).toHaveCount(1);
+  await expect(page.locator('.react-flow__node-browser')).toContainText('LinkedIn');
+  await expect(page.locator('.react-flow__node-leads')).toHaveCount(1);
+  await expect(page.locator('.react-flow__node-board')).toHaveCount(1);
+  await expect(page.locator('.react-flow__node-library')).toContainText('LinkedIn Founder-Led Content System — Notes v2');
+  // Thirty wires of its own, on top of the one the seed stage came with.
+  await expect(page.locator('.react-flow__edge')).toHaveCount(31);
+  await expect.poll(async () => ((await (await page.request.get('/api/stage')).json()) as { rooms: { role: string }[] }).rooms.some((room) => room.role === 'Outbound')).toBe(true);
+  await page.screenshot({ path: 'test-results/shots/linkedin-content-system.png' });
+});
