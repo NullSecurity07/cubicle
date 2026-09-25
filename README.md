@@ -140,6 +140,16 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   Metrics card is wired, and names an amount on the ask only when your brief does. Notes under the deck ("merge 2
   and 3, drop 5, slide 4: say it for a buyer") remake only the slides they touch, as the next version beside the
   last. A person wired to the card can `make_deck`, `edit_deck` and `read_deck`.
+- **Metrics** (2026-09-25): the few numbers a founder steers by, on the stage where people can read them. One card
+  holds a north star, large, with how it moved since last week (or month) and a line of the last twelve, and up to
+  six more numbers beneath it. Paste a table or drop a `.csv` or `.json` file, a date then one column a number or
+  one row a reading; the card says which rows it skipped and why. Or type today's value into the row at its foot.
+  Every point says where it came from when you hover it. **Every sum is worked out in TypeScript**, never by a
+  model: the change, the percentage, how many periods in a row, and whether a target is on pace. A person wired to
+  the card reads a dated summary of it on every turn and more with `read_metrics`; `propose_target` puts a suggested
+  target in Needs you for you to accept or decline, and `log_metric` writes a number **only after you say yes**,
+  naming who wrote it. Needs you also brings up a number that reached its target, got worse three periods in a row,
+  or has had no entry for two. The readings live in `workspace/metrics/<card>.json`.
 - **A site read whole, and a page watched** (2026-09-24): `crawl_site` reads a competitor's site in one go, 15
   pages two links deep unless a person asks for more (at most 40, three deep), two at a time and gently, and obeys
   its robots.txt. It gives a map of the pages and quotes the five that best answer your question; every page's text

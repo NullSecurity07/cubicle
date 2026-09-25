@@ -18,6 +18,7 @@ const NEW = {
   board: { size: [980, 440], data: {} },
   leads: { size: [900, 420], data: {} },
   deck: { size: [440, 640], data: { brief: '' } },
+  metrics: { size: [380, 440], data: {} },
   note: { size: [220, 180], data: { text: '' } },
   image: { size: [300, 260], data: { path: '' } },
   link: { size: [320, 150], data: { url: '' } },
