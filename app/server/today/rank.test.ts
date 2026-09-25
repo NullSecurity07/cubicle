@@ -23,7 +23,8 @@ describe('rank', () => {
     const [first, second] = rank([signal('fresh', 'metric-alert', 0), signal('old', 'lead-stale', 3)], NOW);
     expect(first).toMatchObject({ id: 'old', score: 75 + 15 });
     expect(first.why).toBe('First of today\'s 5: "A lead is waiting on you" weighs 75, plus 15 for waiting 3 days. A fixed table ranks these; no model picks them.');
-    expect(first.reason).toBe('A lead is waiting on you · 3 days');
+    expect(first.reason).toBe('A lead is waiting on you · waiting 3 days');
+    expect(second.reason).toBe('A number to look at · new today');
     expect(second.score).toBe(70);
     expect(rank([signal('ancient', 'page-changed', 400)], NOW)[0].score).toBe(25 + AGE_MOST);
   });

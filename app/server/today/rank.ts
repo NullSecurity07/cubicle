@@ -19,7 +19,7 @@ export const WEIGHTS: Record<string, { weight: number; label: string }> = {
   'run-approval': { weight: 95, label: 'A task is stopped until you answer' },
   'runway-low': { weight: 90, label: 'Cash is running short' },
   'lead-stale': { weight: 75, label: 'A lead is waiting on you' },
-  'metric-alert': { weight: 70, label: 'A number moved' },
+  'metric-alert': { weight: 70, label: 'A number to look at' },
   'proposed-decision': { weight: 60, label: 'A decision is yours to make' },
   'review-due': { weight: 55, label: 'A decision is due for a second look' },
   'run-failed': { weight: 50, label: 'Work stopped halfway' },
@@ -39,7 +39,8 @@ export const AGE_PER_DAY = 5;
 export const AGE_MOST = 25;
 const DAY = 86_400_000;
 
-const waited = (days: number) => (days < 1 ? 'today' : days === 1 ? '1 day' : `${days} days`);
+const waited = (days: number) => (days === 1 ? '1 day' : `${days} days`);
+const waiting = (days: number) => (days < 1 ? 'new today' : `waiting ${waited(days)}`);
 const place = (index: number) => ['First', 'Second', 'Third', 'Fourth', 'Fifth'][index] ?? `Number ${index + 1}`;
 
 // The ranking itself: pure, so it can be checked with a hand-built list. Highest score first; a tie goes to what has
@@ -55,7 +56,7 @@ export function rank(signals: Signal[], now: number, dismissed: ReadonlySet<stri
   return scored.slice(0, size).map(({ one, table, days, bonus, score }, index) => {
     const approval = one.kind === 'approval' || one.kind === 'run-approval';
     const title = approval && !one.lapsed ? `${one.who ?? 'Someone'} needs your OK: ${one.title}` : one.title;
-    const when = one.kind === 'task-due' ? `at ${clockTime(one.at)}` : waited(days);
+    const when = one.kind === 'task-due' ? `at ${clockTime(one.at)}` : waiting(days);
     const reason = [table.label, one.kind === 'task-due' || !approval ? one.who : undefined, when].filter(Boolean).join(' · ');
     const why = `${place(index)} of today's ${size}: "${table.label}" weighs ${table.weight}${bonus ? `, plus ${bonus} for waiting ${waited(days)}` : ''}. A fixed table ranks these; no model picks them.`;
     return {
