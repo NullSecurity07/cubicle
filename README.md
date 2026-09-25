@@ -120,6 +120,12 @@ Everything here works today, one line each:
   discovery team's Interviews doc to the card and the insights go there instead. The browser checks press the red
   button for real, with Chromium's stand-in microphone playing a tone, and the checks' fake transcriber measures the
   WebM the browser recorded from its own blocks, so a recording that came out empty or cut short fails the check.
+- **Drops in the desktop window** (2026-09-25): dragging a file from the file manager onto the stage should do in the
+  desktop window what it does in the browser. WebKitGTK, which draws the window on Linux, gives a page no dropped
+  files at all, and a drop the page cannot take makes the window open the file in place of the stage. So the window
+  takes the drop itself, reads the files and hands them to the page as an ordinary drop at the same spot: a note
+  becomes a library card, a picture a picture card, a recording on an Interview card goes to that card. While a file
+  is dragged over, cards light up as they do in the browser.
 - **Survey** (2026-09-25): the Sean Ellis question ("how would you feel if you could no longer use it?") is the
   quickest honest read on product-market fit, and a founder should not need a survey tool's dashboard to score it.
   The card starts from PMF (the four Sean Ellis questions), NPS or a blank, and the questions edit in place. The app
