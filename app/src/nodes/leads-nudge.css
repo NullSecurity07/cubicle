@@ -1,0 +1,5 @@
+/* The quiet mark on a lead that is owed a message: one warm dot in the row's corner, explained on hover. */
+.lead:has(.lead__chase) { position: relative; }
+.lead__chase { position: absolute; top: 6px; right: 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--needs); box-shadow: 0 0 0 2px rgba(230, 169, 60, 0.18); cursor: help; animation: lead-chase-in 0.3s ease both; }
+@keyframes lead-chase-in { from { opacity: 0; transform: scale(0.4); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .lead__chase { animation: none; } }

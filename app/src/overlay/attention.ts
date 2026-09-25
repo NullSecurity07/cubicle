@@ -20,6 +20,7 @@ export const WHAT: Record<Attention['kind'], string> = {
   'run-failed': 'could not finish', missed: 'missed a repeat', 'review-due': 'Decision to look at again', 'proposed-source': 'suggests a website', 'page-changed': 'saw a watched page change',
   'metric-alert': 'A number to look at', 'proposed-target': 'suggests a target',
   'runway-low': 'Runway is short', 'proposed-runway': 'suggests a change to the runway',
+  'lead-stale': 'A lead to follow up',
 };
 export const ago = (at: number, now = Date.now()) => {
   const minutes = Math.max(0, Math.round((now - at) / 60_000));
