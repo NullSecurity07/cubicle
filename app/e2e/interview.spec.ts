@@ -1,4 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
+import { existsSync, mkdtempSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // The Interview card: the founder adds it from the dock and says who the call is with, ticks that they agreed to be
 // recorded, drops a recording on the card and sees the transcript fill in with times (a fixed one: the checks never
@@ -20,6 +23,18 @@ function silentWav(seconds: number): number[] {
   head.writeUInt32LE(rate, 24); head.writeUInt32LE(rate * 2, 28); head.writeUInt16LE(2, 32); head.writeUInt16LE(16, 34);
   head.write('data', 36, 'ascii'); head.writeUInt32LE(data, 40);
   return [...Buffer.concat([head, Buffer.alloc(data)])];
+}
+
+function toneWav(seconds: number): number[] {
+  const rate = 48000;
+  const samples = Buffer.alloc(seconds * rate * 2);
+  for (let i = 0; i < seconds * rate; i += 1) {
+    const t = i / rate;
+    samples.writeInt16LE(Math.round(Math.sin(2 * Math.PI * 440 * t) * (0.25 + 0.2 * Math.sin(2 * Math.PI * 2 * t)) * 32767), i * 2);
+  }
+  const head = Buffer.from(silentWav(0).slice(0, 44));
+  head.writeUInt32LE(36 + samples.length, 4); head.writeUInt32LE(rate, 24); head.writeUInt32LE(rate * 2, 28); head.writeUInt32LE(samples.length, 40);
+  return [...Buffer.concat([head, samples])];
 }
 
 async function drag(page: Page, from: { x: number; y: number }, to: { x: number; y: number }, steps = 12) {
@@ -67,6 +82,13 @@ async function tidy(page: Page) {
     wires: stage.wires.filter((one: { id: string }) => one.id === 'marketing-brand-doc'),
   } });
 }
+
+// A microphone for the whole file (a launch option cannot be set per group): the drop journey never asks for it.
+// Chromium's own fake microphone is silent in the headless build, so it plays a tone from a file instead: 440 Hz,
+// swelling and fading twice a second like a voice, on a loop. Written here, before the browser starts.
+const tone = join(mkdtempSync(join(tmpdir(), 'stage-e2e-mic-')), 'voice.wav');
+writeFileSync(tone, Buffer.from(toneWav(4)));
+test.use({ launchOptions: { args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${tone}`] } });
 
 const broke: string[] = [];
 test.beforeEach(async ({ page }) => {
@@ -168,4 +190,48 @@ test('the founder records with consent, the transcript fills in with times, and 
   const chat = (await (await page.request.get('/api/rooms/marketing/chat')).json()) as { id: string; text: string }[];
   const from = chat.findIndex((message) => message.text.startsWith('Read the interview with Ana'));
   for (const message of chat.slice(Math.max(0, from))) if (from >= 0) await page.request.delete(`/api/rooms/marketing/chat/${message.id}`);
+});
+
+// The microphone for real: Chromium's fake capture device stands in for the founder's microphone (a steady tone),
+// the browser's own recorder makes the WebM, and the server keeps it and measures it, as it does for a real call.
+test.describe('with a microphone', () => {
+  test('the founder presses Record, talks for three seconds, stops, and the recording is kept and written down', async ({ page, context }) => {
+    await context.grantPermissions(['microphone']);
+    await page.getByRole('button', { name: 'More cards' }).click();
+    await page.getByRole('menuitem', { name: 'Add interview', exact: true }).click();
+    const card = page.locator('.react-flow__node-interview');
+    await expect(card).toBeVisible();
+    const id = (await card.getAttribute('data-id'))!;
+    await card.getByLabel('Who').fill('Ben');
+    await card.getByRole('button', { name: 'Done' }).click();
+    await card.getByLabel('Ben agreed to be recorded').check();
+
+    const record = card.getByRole('button', { name: 'Record', exact: true });
+    await expect(record).toBeEnabled();
+    await record.click();
+    const stop = card.getByRole('button', { name: 'Stop recording' });
+    await expect(stop).toBeVisible();
+    await expect(card.getByText('Recording. Press the square to stop.')).toBeVisible();
+    // The clock runs and the meter moves with the tone.
+    await expect(card.getByLabel('Recording time')).toHaveText('0:02', { timeout: 5_000 });
+    await expect.poll(async () => card.locator('.interview__meter i').evaluate((bar) => new DOMMatrixReadOnly(getComputedStyle(bar).transform).a)).toBeGreaterThan(0);
+    await card.screenshot({ path: 'test-results/shots/interview-recording.png', animations: 'disabled' });
+    await page.waitForTimeout(1_500);
+    await stop.click();
+
+    // Kept on this machine, measured from the file itself, and written down.
+    const transcript = card.getByRole('region', { name: 'Transcript' });
+    await expect(transcript.locator('li')).toHaveCount(4, { timeout: 15_000 });
+    await expect(transcript.locator('li').nth(1)).toContainText('Last month it took us four days, mostly chasing receipts in email.');
+    await expect(card.getByRole('list', { name: 'Recordings' })).toContainText('Recording 1');
+    const { data: kept } = await (await page.request.get(`/api/interviews/${id}`)).json() as { data: { recordings: { path: string; seconds: number }[] } };
+    expect(kept.recordings).toHaveLength(1);
+    expect(kept.recordings[0].seconds).toBeGreaterThan(2);
+    expect(kept.recordings[0].seconds).toBeLessThan(10);
+    const file = join(process.env.STAGE_WORKSPACE!, 'interviews', kept.recordings[0].path);
+    expect(file.startsWith(join(process.env.STAGE_WORKSPACE!, 'interviews', id) + '/')).toBe(true);
+    expect(existsSync(file) && statSync(file).size).toBeGreaterThan(1000);
+    await expect(transcript.locator('h3')).toHaveText(new RegExp(`^Transcript ${Math.round(kept.recordings[0].seconds)} s$`));
+    await card.screenshot({ path: 'test-results/shots/interview-recorded.png', animations: 'disabled' });
+  });
 });

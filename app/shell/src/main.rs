@@ -16,6 +16,8 @@ use std::time::{Duration, Instant};
 
 use tauri::{Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 
+mod drop;
+
 struct Server(Mutex<Option<Child>>);
 
 fn app_dir() -> PathBuf {
@@ -143,13 +145,15 @@ fn main() {
         .manage(Server(Mutex::new(server)))
         .setup(move |app| {
             let handle = app.handle().clone();
-            WebviewWindowBuilder::new(app, "stage", WebviewUrl::External(url.parse().expect("a valid url")))
+            let window = WebviewWindowBuilder::new(app, "stage", WebviewUrl::External(url.parse().expect("a valid url")))
                 .title("Stage")
                 .inner_size(1440.0, 900.0)
                 .min_inner_size(900.0, 600.0)
                 .focused(!perf || std::env::var_os("STAGE_PERF_FOCUS").is_some())
                 // Runs at the start of every page load, so it is in place before the stage renders.
                 .initialization_script(if perf { PERF_SCRIPT } else { "" })
+                // Files dropped on the window reach the page through the shell: see drop.rs.
+                .initialization_script(drop::SCRIPT)
                 .on_navigation(move |target| {
                     if target.path() == "/__perf" {
                         println!("webkit perf: {}", target.query().unwrap_or(""));
@@ -159,6 +163,7 @@ fn main() {
                     true
                 })
                 .build()?;
+            drop::bridge(&window);
             Ok(())
         })
         .build(tauri::generate_context!())
