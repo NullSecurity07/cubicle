@@ -135,7 +135,9 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   sales, demo day) and a look (clean, editorial, or brand, which takes a wired project's colours, typeface and logo),
   and press **Make**. It is made from what is wired to the card: documents, notes, a project's README and a Metrics
   card. The slides land as a strip of thumbnails with **Download PDF**, printed by the same headless Chrome the films
-  use; there is no PowerPoint file. A critic that is rules, not a model, keeps one idea a slide and a headline under
+  use, and **Download PPTX** beside it, because an investor who asks for "the deck, editable" means PowerPoint: the
+  same slides in the same look's colours and typefaces, charts as real charts, speaker notes where a presenter looks
+  for them, each source at the foot. A critic that is rules, not a model, keeps one idea a slide and a headline under
   nine words, lets a number on only when the wired material states it, puts "No numbers yet." on traction unless a
   Metrics card is wired, and names an amount on the ask only when your brief does. Notes under the deck ("merge 2
   and 3, drop 5, slide 4: say it for a buyer") remake only the slides they touch, as the next version beside the

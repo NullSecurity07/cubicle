@@ -33,6 +33,8 @@ describe('a deck', () => {
     expect(made.slides.find((one) => one.shape === 'traction')?.lines).toEqual(['No numbers yet.']);
     expect(made.pdf).toMatch(/^decks\/seed-deck-for-relay-deck-1-v1\.pdf$/);
     expect(files.get(made.pdf)!.toString()).toContain('/Count 5');
+    expect(made.pptx).toBe('decks/seed-deck-for-relay-deck-1-v1.pptx');
+    expect(files.get(made.pptx!)!.subarray(0, 2).toString()).toBe('PK');
     expect(files.get(made.html)!.toString()).toContain('<section class="slide slide--title"');
     const deck = await decks.read('deck-1');
     expect(deck.state).toBe('idle');

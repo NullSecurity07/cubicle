@@ -57,7 +57,7 @@ export const openFeed = (res: ServerResponse) => {
 const MIME: Record<string, string> = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', svg: 'image/svg+xml', ico: 'image/x-icon',
   mp4: 'video/mp4', webm: 'video/webm', wav: 'audio/wav', mp3: 'audio/mpeg', ogg: 'audio/ogg', m4a: 'audio/mp4',
-  pdf: 'application/pdf', csv: 'text/csv', json: 'application/json', md: 'text/markdown',
+  pdf: 'application/pdf', csv: 'text/csv', json: 'application/json', md: 'text/markdown', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   html: 'text/html', js: 'text/javascript', css: 'text/css', woff2: 'font/woff2',
 };
 // A page, a script or a style sheet is only ever the app's own. One a person or a page produced is served as the
