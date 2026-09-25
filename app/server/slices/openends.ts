@@ -19,7 +19,8 @@ export default {
   name: 'openends',
   order: 120,
   async install(deps) {
-    const dir = backupDirOf(deps);
+    // Asked each time: the founder may point backups somewhere else (Health, "Back up to…") while the app runs.
+    const dirOf = () => backupDirOf(deps);
     const safe = createSafeBook(deps.workspace);
     const { entries, problem } = await loadEntries(deps.workspace);
     // A file the founder wrote wrong is one row on the screen, never a start that fails.
@@ -37,8 +38,8 @@ export default {
     const outsideBefore = outsideHealth.now;
     outsideHealth.now = outside;
     const health = () => checkAll({
-      workspace: deps.workspace, root: deps.root, backupDir: dir,
-      backups: () => listBackups(dir),
+      workspace: deps.workspace, root: deps.root, backupDir: dirOf(),
+      backups: () => listBackups(dirOf()),
       outside,
       coder: () => coderHealth.now(),
     });
@@ -48,8 +49,9 @@ export default {
       async route(req, res, path) {
         if (path === '/api/health' && req.method === 'GET') { deps.json(res, 200, { checks: await health() }); return true; }
         if (path === '/api/insights' && req.method === 'GET') { deps.json(res, 200, await insights.read(days(req.url ?? '/'))); return true; }
-        if (path === '/api/backups' && req.method === 'GET') { deps.json(res, 200, { dir, kept: 5, backups: await listBackups(dir) }); return true; }
+        if (path === '/api/backups' && req.method === 'GET') { const dir = dirOf(); deps.json(res, 200, { dir, kept: 5, backups: await listBackups(dir) }); return true; }
         if (path === '/api/backups' && req.method === 'POST') {
+          const dir = dirOf();
           const made = await makeBackup({ workspace: deps.workspace, dir });
           deps.json(res, 200, { ...made, dir, kept: 5, backups: await listBackups(dir) });
           return true;

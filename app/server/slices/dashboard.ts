@@ -267,9 +267,11 @@ export default {
     // last answer is served and a new one is asked for in the background once it is a minute old.
     let health: { at: number; checks: DashCheck[] } = { at: 0, checks: [] };
     let checking: Promise<void> | null = null;
-    const dir = backupDirOf(deps);
+    // Asked each time: the founder may point backups somewhere else while the app runs.
+    const dirOf = () => backupDirOf(deps);
     function checkHealth() {
       if (checking || Date.now() - health.at < HEALTH_FOR) return;
+      const dir = dirOf();
       checking = checkAll({ workspace: deps.workspace, root: deps.root, backupDir: dir, backups: () => listBackups(dir), outside: () => outsideHealth.now(), coder: () => coderHealth.now() })
         .then((checks) => {
           const fresh = checks.map(({ name, ok, detail }) => ({ name, ok, detail }));

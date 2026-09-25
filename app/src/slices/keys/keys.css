@@ -1,0 +1,25 @@
+/* The Keys panel: rows like Health's, grouped under the names Health uses, one quiet action each. */
+
+.keys .playbook__note { margin: 0 0 10px; }
+.keys code { font: 11px/1 ui-monospace, 'SF Mono', Menlo, monospace; color: var(--muted); overflow-wrap: anywhere; }
+.keys__restart { margin: 0 0 10px; padding: 8px 11px; border-radius: 10px; font-size: 12.5px; line-height: 1.45; color: var(--text); background: color-mix(in srgb, var(--needs) 16%, transparent); }
+.keys__check { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.keys__check small { font-size: 11.5px; color: var(--muted); }
+.keys__group-name { position: sticky; top: -14px; z-index: 1; margin: 0 -18px; padding: 14px 18px 7px; background: rgb(17, 18, 21); font-size: 11px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.keys__rows { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.keys__row { display: flex; align-items: flex-start; gap: 10px; border-radius: 11px; padding: 9px 11px; background: rgba(255, 255, 255, 0.035); }
+.keys__row > .quota__dot { margin-top: 5px; }
+.keys__row > .quota__dot.is-missing { background: transparent; box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.28); }
+.keys__what { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.keys__what b { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 8px; font-size: 13.5px; font-weight: 600; }
+.keys__said { font-size: 11.5px; line-height: 1.45; color: var(--muted); overflow-wrap: anywhere; }
+.keys__row.is-failing .keys__said { color: var(--problem); }
+.keys__form { display: flex; gap: 6px; margin-top: 6px; }
+.keys__form input { flex: 1; min-width: 0; border: 1px solid var(--card-border); border-radius: 8px; padding: 6px 9px; outline: 0; background: rgba(255, 255, 255, 0.05); color: var(--text); font: 12.5px ui-monospace, 'SF Mono', Menlo, monospace; }
+.keys__form input:focus { border-color: var(--focus); }
+.keys__form .playbook__act:disabled { opacity: 0.4; cursor: default; }
+.keys__acts { flex: none; align-self: center; display: flex; align-items: center; gap: 6px; }
+.keys__acts span { font-size: 11.5px; color: var(--muted); }
+.keys__quiet { border: 0; border-radius: 8px; padding: 5px 9px; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px; cursor: pointer; opacity: 0; transition: opacity 0.15s, background 0.15s; }
+.keys__row:hover .keys__quiet, .keys__quiet:focus-visible { opacity: 1; }
+.keys__quiet:hover { background: rgba(255, 255, 255, 0.08); color: var(--text); }
