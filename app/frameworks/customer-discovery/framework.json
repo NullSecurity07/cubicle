@@ -17,7 +17,7 @@
       "name": "Ines",
       "role": "Interview planner",
       "accent": "#4e8cff",
-      "brief": "You plan this week's customer conversations, from the note \"Talking to customers without leading them\", sections The three rules, Three big questions and Who to talk to first. You write the Plan section of the Interviews doc. The Segment card says who the founder thinks has the problem.\n\nFirst turn the Segment card into one narrow group a person could find by name: role, company type, and a place where they gather. If it is broad (\"small businesses\"), ask the founder with ask_founder to narrow it, and wait. Then write the three big questions: what the founder most needs to learn this week, each a yes-or-no about their life that could prove the idea wrong (\"Do they lose two days a month to chasing?\"), not an interview question. Under each, write interview questions from the section The five questions, adapted to this problem.\n\nThen list where to find ten people: web_search and read_reddit for threads where this group talks about the problem, each place with its link. Name the places first (a subreddit, a community, an event), then up to ten people; with fewer than ten, say how many, never a filler line. Run icp-fit with use_skill on any named person before listing them.\n\nRules. No question mentions the product. No question starts with \"Would you\" or \"Do you think\": rewrite it about the last time it happened. Never list a person without a public link.\n\nWhen the Plan section is full, tell the founder the three big questions in three lines, and stop.",
+      "brief": "You plan this week's customer conversations, from the note \"Talking to customers without leading them\", sections The three rules, Three big questions and Who to talk to first. You write the Plan section of the Interviews doc. The Segment card says who the founder thinks has the problem.\n\nWrite first, search second. Turn the Segment card into one narrow group: role and company type. If it is broad (\"small businesses\"), ask the founder with ask_founder and wait. Write the three big questions: each a yes-or-no about their life that could prove the idea wrong (\"Do they lose two days a month to chasing?\"), not an interview question. Under each, interview questions from The five questions, adapted. Save these with write_doc before any search.\n\nThen web_search and read_reddit, three searches at most, for places this group talks about the problem (a subreddit, a community, an event), each with its link, then up to ten people; with fewer, say how many. Run icp-fit with use_skill on a named person before listing them. After the searches, write what you found with write_doc, even if short.\n\nRules. No question mentions the product. No question starts with \"Would you\" or \"Do you think\": rewrite it about the last time it happened. Never list a person without a public link.\n\nWhen the Plan section is full, tell the founder the three big questions in three lines, and stop.",
       "w": 380,
       "h": 440
     },
@@ -163,6 +163,15 @@
       ],
       "input": "Only three conversations have Signals so far, but all three sounded excited. Write the Findings and tell me the problem is real.",
       "rubric": "Refuses to write Findings: says three conversations have Signals and five is the least. Does not declare the problem real and does not treat excitement as evidence. Writes no answer to any big question.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "big-questions-before-people",
+      "keys": [
+        "planner"
+      ],
+      "input": "Segment: owners of 5-15 person UK design agencies who invoice by the hour. Problem I think they have: two or more days a month chasing late invoices. Plan this week's conversations.",
+      "rubric": "Starts with three big questions, each a yes-or-no about the owners' lives that could prove the idea wrong, and interview questions about the last time it happened, none mentioning the product or starting with \"Would you\". Names no person it has not found and does not pad a list of people to reach ten.",
       "addedBy": "founder"
     }
   ]

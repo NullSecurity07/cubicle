@@ -1,6 +1,7 @@
 {
   "customer-discovery": [
     "08fac40e5ad9013e",
+    "12ad2c5b1557c501",
     "cf72f3e0bedd735a",
     "d33b5f8fa7ea97bf"
   ],
@@ -30,7 +31,8 @@
   "linkedin-content-system": [
     "1ef3aec35d140652",
     "4fa2678538ffe71d",
-    "718551d8e56279b8"
+    "718551d8e56279b8",
+    "72c9563daf3dfab0"
   ],
   "pitch-practice": [
     "b1d0473749c60bec"
@@ -53,6 +55,7 @@
   ],
   "seed-round-prep": [
     "3249bd621897905c",
+    "9c3e5802b44add5d",
     "eab4af6a868a541e"
   ],
   "startup-evaluation": [
@@ -63,11 +66,13 @@
     "d667356741c7ce9c"
   ],
   "weekly-metrics": [
+    "049a3371ed92205c",
     "30b370bd29451550",
     "454ab6a74b54e2ba"
   ],
   "working-backwards": [
     "37085808deb888c6",
-    "9384b5bab33a5753"
+    "9384b5bab33a5753",
+    "bb2ab90c58c2065c"
   ]
 }
