@@ -45,12 +45,10 @@
         <a class="button button--quiet" href="#stage">See it work</a>
       </div>
       <figure class="shot shot--hero">
-        <picture>
-          <source media="(max-width: 640px)" srcset="media/stage-phone.webp" width="780" height="574">
-          <img src="media/stage-desktop.webp" width="1440" height="900" fetchpriority="high"
-            alt="The stage: rooms for Maya in marketing, Dev in build and Rafa in sales, wired to a brand doc, a company brief, a video studio and a leads board.">
-        </picture>
-        <figcaption>Taken from the app in its test mode, with a made-up company. So is every picture on this page.</figcaption>
+        <!-- A muted loop, so it may play on its own. theme.js holds it on the poster for a visitor who asked for less motion. -->
+        <video src="media/hero.mp4" poster="media/hero.webp" width="1280" height="720" autoplay muted loop playsinline preload="none" data-hero
+          aria-label="A short film about the product: a canvas where a small team of AI people works beside a founder, each reading only what is wired to them, with nothing leaving the machine."></video>
+        <figcaption>Made by the app's own Video studio, from this page and the product's README. Every picture below is taken from the app in its test mode, with a made-up company.</figcaption>
       </figure>
     </section>
 
