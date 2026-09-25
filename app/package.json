@@ -19,6 +19,8 @@
     "check:media": "node scripts/check-media.ts",
     "check:evals": "node scripts/check-evals.ts",
     "vendor:hyperframes": "node scripts/vendor-hyperframes.ts",
+    "site:shots": "node scripts/site-shots.ts",
+    "site:film": "node scripts/site-film.ts",
     "gate": "tsc --noEmit && vitest run && playwright test"
   },
   "dependencies": {

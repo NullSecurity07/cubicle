@@ -1,0 +1,6 @@
+Hero film for the product website, made by the app's own Video studio.
+Made: 2026-09-25 · Hyperframes · brief: A 20 second marketing film for the top of the product website, made to be understood with the sound off: a canvas where a small team of AI people works beside a founder; wires are access, so each person reads only what is wired to them; nothing leaves the machine. Calm and confident, show the product itself, end on the promise.
+Words and storyboard: the free hosted models (Groq or Gemini). Pictures: Cloudflare Workers AI (FLUX.1 schnell).
+Narration: Kokoro, on this machine. The site copy carries no sound track, so neither the voice nor any music is heard.
+
+Studio file: 6354 KB · site file: 669 KB (1280,720 · 19.366667) · poster: 19 KB

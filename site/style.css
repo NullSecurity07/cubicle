@@ -188,8 +188,8 @@ h2 {
 
 /* ---- Pictures of the app ---- */
 .shot { margin: 0; }
-.shot img {
-  width: 100%; border-radius: 14px; border: 1px solid var(--line); box-shadow: var(--shadow); background: #0a0a0a;
+.shot img, .shot video {
+  display: block; width: 100%; height: auto; border-radius: 14px; border: 1px solid var(--line); box-shadow: var(--shadow); background: #0a0a0a;
 }
 .shot figcaption { margin-top: 14px; font-size: 0.875rem; color: var(--muted); }
 /* A single card stands at the size it reads best, not stretched across the column. */
