@@ -88,6 +88,8 @@ export type MediaResult = {
   film?: string;
   // A film remade from notes: the one it was made from, the first of its line, which version it is and the notes.
   edited?: { from: string; root: string; version: number; notes: string };
+  // A voice studio's recording: who read it (`voiceKey` in server/media/voice.ts), so a film can reuse it in that voice.
+  speaker?: string;
 };
 export type MediaCredit = { title: string; by: string; licence: string; source: string };
 // Something the founder dropped on a studio card for it to build with: their own footage, a photograph, a music track.

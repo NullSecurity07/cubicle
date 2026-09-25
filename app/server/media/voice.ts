@@ -226,6 +226,18 @@ export function voiceMakers(cacheDir: string, env: NodeJS.ProcessEnv = process.e
 export const engineOf = (voices: Maker | undefined, engine: unknown): Maker | undefined =>
   !voices || typeof engine !== 'string' ? undefined : voices.engine === engine ? voices : voices.others?.find((one) => one.engine === engine);
 
+// Who read a recording, as one string: the engine and everything that decides how that engine sounds. A voice
+// studio's recording carries it, so a film can tell whether a take it would reuse was read in the voice it is about
+// to read everything else in. Two recordings with the same key sound like the same person.
+export function voiceKey(ask: { [key: string]: unknown }): string {
+  const said = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
+  if (said(ask.engine) === OMNI_ENGINE) {
+    const clone = said(ask.clone);
+    return [OMNI_ENGINE, clone ? `clone:${clone}` : `design:${said(ask.design).toLowerCase()}`, `language:${said(ask.language).toLowerCase()}`].join('|');
+  }
+  return `kokoro|${isVoice(ask.voice) ? ask.voice : DEFAULT_VOICE}`;
+}
+
 // A second of quiet: enough to show a player and a download, and it costs nothing in the checks.
 export const fakeVoices: Maker = {
   name: 'fake',

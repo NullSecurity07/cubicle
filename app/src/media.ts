@@ -72,9 +72,11 @@ export function useMedia(id: string) {
     setProblem('');
     askedAt.current = Date.now();
     setAsked(true);
-    try { await makeMedia(id, ask); }
+    // A studio reads the stage as the server has it — what is wired to it, and a wired voice studio's voice — so a
+    // change the founder made a moment ago is saved before the asking, not a second after it.
+    try { await flushStage(); await makeMedia(id, ask); }
     catch (error) { setProblem((error as Error).message); setAsked(false); }
-  }, [id]);
+  }, [id, flushStage]);
 
   return { media, hint, drawnHere, making, problem, make, reload };
 }

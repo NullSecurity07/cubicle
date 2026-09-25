@@ -42,7 +42,8 @@ import {
 } from './templates/index.ts';
 import { camOf } from './templates/layouts.ts';
 import { timeWords, type Part, type Word } from './timings.ts';
-import { gather, type VideoAsk, type VideoDeps } from './gather.ts';
+import { gather, narratorOf, takeLine, type VideoAsk, type VideoDeps } from './gather.ts';
+import { readAround } from './take.ts';
 import { carryExtras, chromePath, drawingFor, editPlan, renderProject, stageVendor, withJobDir } from './render.ts';
 import { castLine, castVoice, engineOf, isVoice, VOICES, wavSeconds } from './voice.ts';
 import { creditsOf, designOf, NONCOMMERCIAL, OMNI_ENGINE } from './omnivoice.ts';
@@ -102,7 +103,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         const draft = isDraft(asked.speed);
         const memory = filmMemory(deps.cacheDir ? join(deps.cacheDir, 'films') : undefined);
 
-        const { material, files, bed } = await gather(deps, asked, at, report, signal);
+        const { material, files, bed, narrator: studioVoice } = await gather(deps, asked, at, report, signal);
         if (signal?.aborted) throw new Error('stopped');
         if (material.using.length) report(`using: ${material.using.join(', ')}`);
 
@@ -198,15 +199,24 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // the best one that fits what the brief asked for. The founder's pick on the card overrules all of it.
         const table = await deps.voices?.cast?.().catch(() => undefined) ?? VOICES;
         const wanted = narratorWanted(asked.prompt, understanding);
-        const narrator = isVoice(asked.voice) ? (table.find((one) => one.id === asked.voice) ?? castVoice(wanted, table)) : castVoice(wanted, table);
-        // Kokoro reads every film. OmniVoice only when the founder set the film's engine by hand: its weights forbid
-        // selling what it makes, and a film is usually selling something, so it is never picked here on its own.
-        const borrowed = asked.engine === OMNI_ENGINE ? engineOf(deps.voices, OMNI_ENGINE) : undefined;
-        const borrowAsk = { prompt: '', engine: OMNI_ENGINE, design: asked.design };
-        const borrowHint = borrowed ? borrowed.ready(borrowAsk) : asked.engine === OMNI_ENGINE ? 'it is not on this machine' : null;
-        if (asked.engine === OMNI_ENGINE && asked.narrate !== false && borrowHint) report(`OmniVoice cannot read this film (${borrowHint}), so Kokoro does`);
-        const omni = borrowed && !borrowHint ? designOf(asked.design) : null;
-        if (asked.narrate !== false) report(omni ? `narrator: OmniVoice, ${omni.instruct} · ${NONCOMMERCIAL}` : castLine(narrator));
+        // A wired voice studio is the founder saying whose voice this is, unless they picked one on this card, which wins.
+        const reading = narratorOf(asked, studioVoice);
+        const narrator = isVoice(reading.voice) ? (table.find((one) => one.id === reading.voice) ?? castVoice(wanted, table)) : castVoice(wanted, table);
+        // Kokoro reads every film. OmniVoice only when the founder chose it by hand — on this card, or on the voice
+        // studio they wired to it: its weights forbid selling what it makes, and a film is usually selling something,
+        // so it is never picked here on its own. A voice cloned in that studio is cloned here too.
+        const omniAsked = reading.engine === OMNI_ENGINE;
+        const borrowed = omniAsked ? engineOf(deps.voices, OMNI_ENGINE) : undefined;
+        const omniAsk = { engine: OMNI_ENGINE, design: reading.design,
+          ...(reading.ref ? { clone: reading.clone, ref: reading.ref, ...(reading.refText ? { refText: reading.refText } : {}) } : {}),
+          ...(reading.language ? { language: reading.language } : {}) };
+        const borrowAsk = { prompt: '', ...omniAsk };
+        const borrowHint = borrowed ? borrowed.ready(borrowAsk) : omniAsked ? 'it is not on this machine' : null;
+        if (omniAsked && asked.narrate !== false && borrowHint) report(`OmniVoice cannot read this film (${borrowHint}), so Kokoro does`);
+        // A cloned voice is the recording's, whatever the design says, so a design is read only when nothing is cloned.
+        const omni = borrowed && !borrowHint ? designOf(reading.ref ? undefined : reading.design) : null;
+        const omniSays = reading.ref ? `cloned from ${reading.clone ?? 'a recording'}` : omni?.instruct;
+        if (asked.narrate !== false) report(omni ? `narrator: OmniVoice, ${omniSays} · ${NONCOMMERCIAL}` : castLine(narrator));
         const narratorGender = omni ? (omni.kept.includes('male') ? 'm' : omni.kept.includes('female') ? 'f' : narrator.gender) : narrator.gender;
         // Whoever is on screen has to sound like themselves. The only description of a drawn or dropped picture
         // anybody has is the words it was drawn from, so that is what is read — and where it says a man and the
@@ -345,8 +355,16 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           if (!saying || !script) return;
           report('reading the whole film in one go…');
           try {
-            const piece = await saying.make({ prompt: script, voice: narrator.id, ...(omni ? { engine: OMNI_ENGINE, design: asked.design } : {}) }, { report: () => {}, signal });
-            if (piece.noncommercial) voiceTerms = piece.credits ?? creditsOf(`designed as ${omni?.instruct ?? 'a voice'}`);
+            const sayIt = (prompt: string) => saying.make({ prompt, voice: narrator.id, ...(omni ? omniAsk : {}) }, { report: () => {}, signal });
+            // A line the founder already recorded in the wired Voice studio, in this same voice, is said as they
+            // recorded it; only the rest of the film is read. A take in any other voice would be two narrators.
+            const reuse = studioVoice && omniAsked === !!omni ? takeLine(lines, studioVoice.take, reading) : -1;
+            const around = reuse >= 0 && studioVoice?.take
+              ? await readAround(lines, reuse, studioVoice.take.bytes, sayIt).catch((error: Error) => { report(`the Voice studio's recording could not be used (${error.message}), so the whole film is read`); return null; })
+              : null;
+            if (around) report(`scene ${reuse + 1} says the Voice studio's own recording, so that line is used as recorded`);
+            const piece = around ? { ext: 'wav', ...around } : await sayIt(script);
+            if (piece.noncommercial || (around && omni)) voiceTerms = piece.credits ?? creditsOf(reading.ref ? `${omniSays}` : `designed as ${omniSays ?? 'a voice'}`);
             await writeFile(join(at, 'assets', 'say.wav'), piece.bytes);
             let file = 'say.wav';
             let spoke = wavSeconds(piece.bytes);
@@ -828,7 +846,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           record = recordOf({
             title: spec.title, spec: { ...spec, scenes: shots.map((one) => one.scene) }, shape, look: film.look, pace, captions, sfx, music: mood, bible,
             shots: edit.shots.map((one, order) => ({ ...cut[order], scene: one.scene, take: one.take, seconds: cut[order].seconds })),
-            narrator: voice && saying ? { voice: narrator.id, ...(omni ? { engine: OMNI_ENGINE, design: asked.design } : {}), file: voice.file, seconds: voice.seconds } : undefined,
+            narrator: voice && saying ? { voice: narrator.id, ...(omni ? { engine: OMNI_ENGINE, design: reading.design, ...(reading.ref ? { ref: reading.ref, ...(reading.refText ? { refText: reading.refText } : {}) } : {}), ...(reading.language ? { language: reading.language } : {}) } : {}), file: voice.file, seconds: voice.seconds } : undefined,
             words, pictures: Object.fromEntries(madeFrom),
             bed: bedSource && music ? { source: bedSource, mood, own: !!bed, ...(credit ? { credit } : {}) } : undefined,
             brand,
@@ -848,5 +866,5 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
 }
 
 // The studio's other halves, by the names the app has always imported them under.
-export { fakeVideos } from './fake-video.ts';
+export { fakeVideos, fakeVideosOf } from './fake-video.ts';
 export type { VideoAsk, VideoDeps } from './gather.ts';

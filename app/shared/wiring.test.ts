@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import * as server from '../server/media/gather.ts';
 import type { Card, Stage } from './model.ts';
-import { docsFor, filmSays, sourcesFor, wiredTo } from './wiring.ts';
+import { docsFor, filmSays, sourcesFor, voiceStudioSays, wiredTo } from './wiring.ts';
 
 const box = { x: 0, y: 0, w: 100, h: 100 };
 const cards: Card[] = [
@@ -66,5 +66,39 @@ describe('what the video card says it will use', () => {
 
   it('leaves out an empty picture or note card, a blank browser and a studio that has drawn nothing', () => {
     expect(filmSays(sourcesFor(stage, 'film'), [], { where: () => 'about:blank', drawn: () => 0 })).toEqual(['a picture', 'a note', 'Example', 'shop project', 'a note from your library', 'startups.rip']);
+  });
+});
+
+describe('a voice studio wired to a film', () => {
+  const voiced: Stage = {
+    ...stage,
+    cards: [...cards, { id: 'voice', kind: 'voicegen', voice: 'af_sarah', ...box }, { id: 'other-voice', kind: 'voicegen', voice: 'bm_george', ...box }, { id: 'their-voice', kind: 'voicegen', ...box }],
+    wires: [...stage.wires, wire('voice', 'film'), wire('film', 'other-voice'), wire('maya', 'their-voice')],
+  };
+  const who = (id: string) => ({ af_sarah: 'Sarah', bm_george: 'George' } as Record<string, string>)[id] ?? 'Heart';
+  const seen = { where: () => '', drawn: () => 0, voiceWho: who };
+
+  it('is found exactly as the server finds it, from the studio and from whoever is making the film', () => {
+    for (const [cardId, roomId] of [['film', undefined], ['film', 'maya'], [undefined, 'maya']] as const) {
+      expect(sourcesFor(voiced, cardId, roomId)).toEqual(server.sourcesFor(voiced, cardId, roomId));
+    }
+    expect(sourcesFor(voiced, undefined, 'maya').map((card) => card.id)).toContain('their-voice');
+  });
+
+  it('is named by its voice, once, on the Using line', () => {
+    const says = filmSays(sourcesFor(voiced, 'film'), [], seen);
+    expect(says).toContain('the voice of the Voice studio, Sarah');
+    expect(says.filter((one) => one.startsWith('the voice of'))).toHaveLength(1);
+    expect(filmSays(sourcesFor(voiced, undefined, 'maya'), [], seen)).toContain('the voice of the Voice studio, Heart');
+  });
+
+  it("is left off when the founder picked the film's own narrator", () => {
+    expect(filmSays(sourcesFor(voiced, 'film'), [], { ...seen, cardVoice: true }).join()).not.toContain('Voice studio');
+  });
+
+  it('names an OmniVoice studio by its clone, else its design', () => {
+    expect(voiceStudioSays({ engine: 'omnivoice', clone: 'founder.wav', design: 'calm' }, who)).toBe('the voice of the Voice studio, cloned from founder.wav');
+    expect(voiceStudioSays({ engine: 'omnivoice', design: 'older man, low pitch' }, who)).toBe('the voice of the Voice studio, OmniVoice (older man, low pitch)');
+    expect(voiceStudioSays({ engine: 'omnivoice' }, who)).toBe('the voice of the Voice studio, OmniVoice');
   });
 });

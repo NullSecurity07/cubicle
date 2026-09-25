@@ -134,7 +134,11 @@ export async function remakeFilm(film: { path: string; record: FilmRecord }, ops
     const voice = edited.voice ?? narrator?.voice ?? '';
     const engine = edited.engine ?? narrator?.engine;
     const reader = engine === OMNI_ENGINE ? engineOf(deps.voices, OMNI_ENGINE) : deps.voices;
-    const readerAsk = { prompt: '', ...(engine === OMNI_ENGINE ? { engine: OMNI_ENGINE, design: narrator?.design } : {}) };
+    // A film read in a cloned voice or another language is read again the same way: the recording it cloned and the
+    // language travel in its record.
+    const readerAsk = { prompt: '', ...(engine === OMNI_ENGINE ? { engine: OMNI_ENGINE, design: narrator?.design,
+      ...(narrator?.ref ? { ref: narrator.ref, ...(narrator.refText ? { refText: narrator.refText } : {}) } : {}),
+      ...(narrator?.language ? { language: narrator.language } : {}) } : {}) };
     const saying = narrator && reader && !reader.ready(engine === OMNI_ENGINE ? readerAsk : undefined) ? reader : null;
     const oldBytes = narrator ? await deps.readFile?.(part(narrator.file)).catch(() => null) : null;
     const old = oldBytes ? readPcm(oldBytes) : null;
@@ -377,7 +381,7 @@ export async function remakeFilm(film: { path: string; record: FilmRecord }, ops
       title: record.title, spec: { ...edited.spec, scenes: final }, counts: segments.map((one) => one.words.length),
       shape, look: pack, pace, captions: edited.captions, sfx: record.sfx, music: mood, bible,
       shots: cut.map((shot, order) => ({ ...shot, scene: edit.shots[order].scene, take: edit.shots[order].take, seconds: shot.seconds })),
-      narrator: narrator && voiceFile ? { voice, ...(engine ? { engine } : {}), ...(narrator.design ? { design: narrator.design } : {}), file: voiceFile.file, seconds: voiceFile.seconds } : undefined,
+      narrator: narrator && voiceFile ? { voice, ...(engine ? { engine } : {}), ...(narrator.design ? { design: narrator.design } : {}), ...(engine === OMNI_ENGINE ? { ...(narrator.ref ? { ref: narrator.ref } : {}), ...(narrator.refText ? { refText: narrator.refText } : {}), ...(narrator.language ? { language: narrator.language } : {}) } : {}), file: voiceFile.file, seconds: voiceFile.seconds } : undefined,
       words, pictures, brand: record.brand,
       bed: bedSource && music ? { source: bedSource, mood, ...(record.bed?.own && bedSource === record.bed.source ? { own: true } : {}), ...(credit ? { credit } : {}) } : undefined,
     });

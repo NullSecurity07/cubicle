@@ -61,6 +61,14 @@ describe('media jobs', () => {
     expect(fine.ready('imagegen')).toBeNull();
   });
 
+  it("writes down who read a voice studio's recording, so a film can reuse it in that voice", async () => {
+    const dir = await folder();
+    const media = createMedia({ dir, store: createStore(dir), makers: { voicegen: [maker('voice')], imagegen: [maker('one')] } });
+    const voice: Card = { id: 'voice-1', kind: 'voicegen', x: 0, y: 0, w: 1, h: 1 };
+    expect(await media.make(voice, { prompt: 'Hello there.', voice: 'af_sarah' })).toMatchObject({ speaker: 'kokoro|af_sarah' });
+    expect((await media.make(card, { prompt: 'a kite' })).speaker).toBeUndefined();
+  });
+
   it('reads a job that the app closed on as failed, never as still making', async () => {
     const dir = await folder();
     const held: Media = { state: 'making', log: ['drawing it…'], results: [] };

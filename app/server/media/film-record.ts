@@ -44,7 +44,7 @@ export function recordOf(film: {
   title: string; spec: Spec; shape: Shape; look: Pack; pace: Pace; captions: boolean; sfx: boolean; music: Mood; bible: string;
   // Every shot as rendered, with the scene it belongs to.
   shots: (RecordShot & { scene: number })[];
-  narrator?: { voice: string; engine?: string; design?: string; file: string; seconds: number };
+  narrator?: { voice: string; engine?: string; design?: string; language?: string; ref?: string; refText?: string; file: string; seconds: number };
   words?: Word[];
   pictures: Record<string, RecordPicture>;
   bed?: FilmRecord['bed'];

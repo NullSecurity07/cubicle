@@ -7,7 +7,7 @@ import { fakeImages, firstOf, imageMakers, spentFile } from '../media/image.ts';
 import { lettered } from '../media/lettering.ts';
 import { createMedia } from '../media/jobs.ts';
 import { createMusic, fakeMusic } from '../media/music.ts';
-import { fakeVideos, hyperframesVideos } from '../media/video.ts';
+import { fakeVideosOf, hyperframesVideos } from '../media/video.ts';
 import { createSight, sightDir } from '../media/sight.ts';
 import { pexels } from '../media/stock.ts';
 import { fakeVoices, voiceMakers } from '../media/voice.ts';
@@ -64,7 +64,7 @@ export function wireStudios(deps: { root: string; workspace: string; fake: boole
     makers: {
       imagegen: pictures,
       voicegen: voices,
-      videogen: fake ? [fakeVideos] : [hyperframesVideos({
+      videogen: fake ? [fakeVideosOf({ stage: () => store.loadStage() })] : [hyperframesVideos({
         dir: workspace, images: filmPictures, voices: voices[0], think: storyboard, clips, local, lipsync: online, music,
         // Real photographs somebody took, when the founder has put a free Pexels key in .env. Without one the
         // studio draws every picture, which is what it did before and still does for anything nobody has photographed.
@@ -79,6 +79,8 @@ export function wireStudios(deps: { root: string; workspace: string; fake: boole
         assets: (cardId) => media.assetsOf(cardId),
         // A wired image studio's own pictures, newest first: a wire is the founder saying "use these".
         pictures: async (cardId) => (await media.read(cardId)).results.map((one) => ({ path: one.path, prompt: one.prompt })),
+        // A wired voice studio's recordings, newest first, with who read each: its newest can be a line of the film.
+        recordings: async (cardId) => (await media.read(cardId)).results.map((one) => ({ path: one.path, prompt: one.prompt, ...(one.speaker ? { speaker: one.speaker } : {}) })),
         fileOf: (path) => store.pathOf(path),
         readDoc: (id) => store.readDoc(id),
         readFile: (path) => store.readFileBytes(path),

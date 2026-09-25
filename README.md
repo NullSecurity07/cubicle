@@ -17,6 +17,8 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   Everything made lands in `workspace/files/media/` and can be downloaded or put on the stage. A finished film
   (not a draft) also gets a `<film>.mlt` that Shotcut or Kdenlive opens, with its pictures and sound in
   `<film>.parts/` beside it, so a founder can move a cut by hand.
+  A wired **Voice studio** narrates the film in its own voice (OmniVoice clones and designs too, credits included) unless the video card's Narrator is set, which wins;
+  "Using:" names it ("the voice of the Voice studio, Sarah"), and a line the studio already recorded in that voice is reused word for word.
 - **What a film is made of** (2026-09-19): the Video studio builds from what is really there. Wire a **project
   card** to it and it reads that folder read-only — the README, the landing copy, the CSS variables, the typeface,
   the logo — and can wear the product's own colours (the `brand` look); wire a **link** or **browser** card, or

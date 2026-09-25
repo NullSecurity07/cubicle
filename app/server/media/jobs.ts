@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Card, Media, MediaAsset, MediaCredit, MediaEvent, MediaKind, MediaResult } from '../../shared/model.ts';
 import type { Store } from '../store.ts';
-import type { Voice } from './voice.ts';
+import { voiceKey, type Voice } from './voice.ts';
 import { mltOf, type EditPlan } from './mlt.ts';
 import { isRecord, type FilmRecord } from './edits.ts';
 
@@ -220,6 +220,7 @@ export function createMedia(deps: { dir: string; store: Store; makers: Makers; n
             const at = now();
             const made: MediaResult = { path: await deps.store.saveFileBytes(piece.name ? freeName(piece.name, piece.ext) : nameOf(ask, at, piece.ext), piece.bytes), prompt: ask.prompt, at };
             if (piece.by) made.by = piece.by;
+            if (card.kind === 'voicegen') made.speaker = voiceKey(ask);
             if (piece.poster) made.poster = await deps.store.saveFileBytes(nameOf(ask, at + 1, piece.poster.ext), piece.poster.bytes);
             if (piece.credit) made.music = piece.credit;
             if (piece.noncommercial) made.noncommercial = true;

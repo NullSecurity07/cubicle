@@ -12,6 +12,9 @@ import type { Sight } from './sight.ts';
 import { readProject, VIEWPORTS } from './sources.ts';
 import type { Spec } from './spec.ts';
 import type { Stock } from './stock.ts';
+import { voiceStudioSays } from '../../shared/wiring.ts';
+import { OMNI_ENGINE } from './omnivoice.ts';
+import { DEFAULT_VOICE, isVoice, VOICES, voiceKey } from './voice.ts';
 
 // What a film may draw on, and how it is found: what a video studio is asked for, what it can reach, and the one
 // read of everything the founder wired to it before a word of the film is written.
@@ -60,6 +63,9 @@ export type VideoDeps = {
   // The pictures another studio card has already made, newest first: a wired image studio's work is the film's.
   // The words each was drawn from come with it, because they are the only description of the picture anybody has.
   pictures?: (cardId: string) => Promise<{ path: string; prompt: string }[]>;
+  // What a wired voice studio has recorded, newest first: the words each says and who read them (`voiceKey`), so a
+  // line the founder already recorded can be the film's own rather than read a second time.
+  recordings?: (cardId: string) => Promise<{ path: string; prompt: string; speaker?: string }[]>;
   fileOf?: (path: string) => string;
   readDoc?: (id: string) => Promise<string>;
   readFile?: (path: string) => Promise<Buffer | null>;
@@ -79,8 +85,9 @@ export const wiredTo = (stage: Stage, cardId: string): Card[] => {
 // What kinds of card a person carries into a film they are asked to make. A founder who wires an image studio to
 // Sam and then asks Sam for a film has already said which pictures to use; making them wire it a second time, to
 // the video card as well, is a rule they have to learn rather than a thing that works.
-// A browser card is one too: the page it has open is what the founder pointed that person at.
-const THEIRS = new Set<Card['kind']>(['imagegen', 'image', 'note', 'link', 'project', 'browser']);
+// A browser card is one too: the page it has open is what the founder pointed that person at. And a voice studio:
+// the voice that person speaks in is the voice the film is read in.
+const THEIRS = new Set<Card['kind']>(['imagegen', 'image', 'note', 'link', 'project', 'browser', 'voicegen']);
 
 // Everything a film may draw on, found the way a founder would point at it rather than the way a graph is stored.
 // Three reaches, in the order they matter: what is wired to the studio; what is wired to *that* — a picture card on
@@ -117,6 +124,42 @@ export const docsFor = (stage: Stage, cardId?: string, roomId?: string, granted:
   return [...new Set([...onStage, ...granted])];
 };
 
+// A wired voice studio, read as the film's narrator: the voice the founder set on it, and for OmniVoice the design,
+// the language and the recording it clones (`ref` is where that recording really is on disk, `refText` its words
+// when the studio made it). `take` is the studio's newest recording, which a film says in place of reading that
+// line again when the words match; `speaker` is who read it (`voiceKey`), when the studio wrote that down.
+export type StudioNarrator = {
+  cardId: string; voice?: string; engine?: string; design?: string; clone?: string; language?: string;
+  ref?: string; refText?: string; says: string;
+  take?: { text: string; bytes: Buffer; speaker?: string };
+};
+
+// Whose voice reads the film. The founder's own pick on the video card wins — a Kokoro voice, or OmniVoice set by
+// hand — then a wired voice studio's, then nothing, which leaves the film to cast its own narrator.
+export type NarratorAsk = { voice?: string; engine?: string; design?: string; clone?: string; language?: string; ref?: string; refText?: string; from: 'card' | 'studio' | 'auto' };
+export const cardPicked = (asked: Pick<VideoAsk, 'voice' | 'engine'>): boolean => isVoice(asked.voice) || asked.engine === OMNI_ENGINE;
+export function narratorOf(asked: Pick<VideoAsk, 'voice' | 'engine' | 'design'>, studio?: StudioNarrator): NarratorAsk {
+  if (cardPicked(asked) || !studio) {
+    return { ...(isVoice(asked.voice) ? { voice: asked.voice } : {}), ...(asked.engine === OMNI_ENGINE ? { engine: OMNI_ENGINE, design: asked.design } : {}), from: cardPicked(asked) ? 'card' : 'auto' };
+  }
+  if (studio.engine === OMNI_ENGINE) {
+    return { engine: OMNI_ENGINE, design: studio.design, from: 'studio',
+      ...(studio.language ? { language: studio.language } : {}),
+      ...(studio.ref ? { clone: studio.clone, ref: studio.ref, ...(studio.refText ? { refText: studio.refText } : {}) } : {}) };
+  }
+  return { voice: isVoice(studio.voice) ? studio.voice : DEFAULT_VOICE, from: 'studio' };
+}
+
+// Which line of the script the studio's newest recording already says, or -1. The words have to match exactly,
+// spaces aside, and the recording has to have been read in the voice the film is about to read the rest in: a take
+// in somebody else's voice is two narrators in one film. A take made before recordings said who read them is trusted.
+const plain = (text: string) => text.trim().replace(/\s+/g, ' ');
+export function takeLine(lines: string[], take: StudioNarrator['take'], reading: NarratorAsk): number {
+  if (!take || !plain(take.text) || reading.from !== 'studio') return -1;
+  if (take.speaker && take.speaker !== voiceKey(reading)) return -1;
+  return lines.findIndex((line) => plain(line) === plain(take.text));
+}
+
 // Where each of a page's shots is taken from: the top, then what is under it, on a desktop and on a phone.
 const SCROLLS = { desktop: [0, 780, 1700], mobile: [0, 900] };
 
@@ -135,6 +178,10 @@ export async function gather(deps: VideoDeps, asked: VideoAsk, at: string, repor
     const stage = await deps.stage?.().catch(() => undefined);
     const cards = stage ? sourcesFor(stage, asked.cardId, asked.roomId) : [];
     const addresses: { url: string; own: boolean; label: string }[] = [];
+    // The first voice studio wired in, as the narrator; a film has one. Not read at all when the founder picked the
+    // film's narrator on the card, or turned the narration off.
+    let narrator: StudioNarrator | undefined;
+    const listens = !cardPicked(asked) && asked.narrate !== false;
     if (asked.address?.trim()) addresses.push({ url: asked.address.trim(), own: true, label: asked.address.trim() });
 
     for (const card of cards) {
@@ -181,6 +228,14 @@ export async function gather(deps: VideoDeps, asked: VideoAsk, at: string, repor
         else if (card.kind === 'image' && card.path) {
           const bytes = await deps.readFile?.(card.path).catch(() => null);
           if (bytes) { const name = `picture-${files.size + 1}`; await writeFile(join(at, 'assets', `${name}.png`), bytes); files.set(name, { file: `${name}.png`, kind: 'image', where: 'job' }); material.assets.push({ name, kind: 'image', what: 'a picture the founder put on the stage — use it as a scene' }); }
+        } else if (card.kind === 'voicegen') {
+          if (!listens || narrator) continue;
+          narrator = await studioNarrator(card);
+          material.using.push(narrator.says);
+          // The newest recording's words are material like any other, and the director is told it may say them
+          // word for word: a line said exactly as recorded is the founder's own take, not a second reading of it.
+          const words = narrator.take?.text.trim();
+          if (words && words.length <= 400) material.lines.push(`A line already recorded in the Voice studio, which the film may say word for word as one scene's line:\n"${words}"`);
         } else if (card.kind === 'imagegen') {
           // A picture studio wired to a video studio is a picture studio whose pictures belong in the film. The
           // founder does not have to say so: they drew a wire, and a wire is the saying.
@@ -251,7 +306,29 @@ export async function gather(deps: VideoDeps, asked: VideoAsk, at: string, repor
     const clipCount = dropped.filter((one) => one.kind === 'video').length;
     if (clipCount) material.using.push(`${clipCount} of your clip${clipCount === 1 ? '' : 's'}`);
     const bed = dropped.find((one) => one.kind === 'audio');
-    return { material, files, bed };
+    return { material, files, bed, narrator };
+
+    // A voice studio's settings, the recording it clones found on disk the way the studio itself finds it, and its
+    // newest recording. A clone that cannot be found is said and left out: the studio's design reads the film instead.
+    async function studioNarrator(card: Extract<Card, { kind: 'voicegen' }>): Promise<StudioNarrator> {
+      const who = (id: string) => (VOICES.find((one) => one.id === id) ?? VOICES.find((one) => one.id === DEFAULT_VOICE))!.who;
+      const made = (await deps.recordings?.(card.id).catch(() => [])) ?? [];
+      const found: StudioNarrator = { cardId: card.id, voice: card.voice, engine: card.engine, design: card.design, language: card.language, says: '' };
+      const clone = card.engine === OMNI_ENGINE ? card.clone?.trim() : '';
+      if (clone) {
+        const dropped = (await deps.assets?.(card.id).catch(() => [])) ?? [];
+        const asset = dropped.find((one) => (one.name === clone || one.path === clone) && one.kind === 'audio');
+        const result = made.find((one) => one.path === clone || one.path === asset?.path);
+        const path = asset?.path ?? result?.path;
+        if (path && deps.fileOf) Object.assign(found, { clone, ref: deps.fileOf(path), ...(result?.prompt ? { refText: result.prompt } : {}) });
+        else report(`the Voice studio clones ${clone}, which is not on that card any more, so its designed voice reads the film`);
+      }
+      found.says = voiceStudioSays({ ...card, clone: found.ref ? clone : undefined }, who);
+      const newest = made[0];
+      const bytes = newest ? await deps.readFile?.(newest.path).catch(() => null) : null;
+      if (newest && bytes) found.take = { text: newest.prompt, bytes, ...(newest.speaker ? { speaker: newest.speaker } : {}) };
+      return found;
+    }
 
     // The pictures a wired image studio has made, newest first. Its results live in the same sidecar every studio
     // card keeps, which is `assets` on the card for dropped files and `results` for made ones.
