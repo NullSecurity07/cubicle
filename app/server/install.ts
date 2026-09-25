@@ -106,6 +106,19 @@ export async function installSlices(slices: Slice[], deps: Deps, onError: (name:
     try { parts.push({ name: slice.name, part: await slice.install(deps) }); }
     catch (error) { onError(slice.name, error as Error); }
   }
+  // Two tools of one name would both be offered, and a call would quietly go to whichever was installed first. Nothing
+  // collides today; this says so the day something does, naming the slice that came second.
+  const owners = new Map<string, string>();
+  for (const { name, part } of parts) {
+    for (const tool of part.tools ?? []) {
+      const first = owners.get(tool.name);
+      if (first) onError(name, new Error(`its tool ${tool.name} has the same name as one from ${first}; calls go to ${first}'s`));
+      else owners.set(tool.name, name);
+    }
+  }
+  // A slice's tick that is still going when the next half minute comes is left to finish, not started again beside
+  // itself: a crawl can take twenty seconds, and two of them would read the same page twice.
+  const ticking = new Set<string>();
 
   return {
     names: parts.map((one) => one.name),
@@ -127,7 +140,11 @@ export async function installSlices(slices: Slice[], deps: Deps, onError: (name:
       return false;
     },
     async tick(): Promise<void> {
-      for (const { name, part } of parts) if (part.tick) await part.tick().catch((error: Error) => onError(name, error));
+      for (const { name, part } of parts) {
+        if (!part.tick || ticking.has(name)) continue;
+        ticking.add(name);
+        try { await part.tick().catch((error: Error) => onError(name, error)); } finally { ticking.delete(name); }
+      }
     },
     async close(): Promise<void> {
       for (const { name, part } of parts) if (part.close) await part.close().catch((error: Error) => onError(name, error));

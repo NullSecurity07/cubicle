@@ -1,8 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Slice } from '../install.ts';
-import { backupDir, listBackups, makeBackup } from '../openends/backup.ts';
-import { checkAll } from '../openends/health.ts';
+import { backupDirOf, listBackups, makeBackup } from '../openends/backup.ts';
+import { checkAll, outsideHealth } from '../openends/health.ts';
 import { coderHealth } from '../opencode/server.ts';
 import { createInsights } from '../openends/insights.ts';
 import { connectAll, createSafeBook, FILE, loadEntries, outsideTools, outsideView, type Connected } from '../openends/mcp.ts';
@@ -19,9 +19,7 @@ export default {
   name: 'openends',
   order: 120,
   async install(deps) {
-    // A check run works on a throwaway workspace and has no business writing into the founder's own folders, so its
-    // backups land beside that workspace instead.
-    const dir = deps.fake && !process.env.STAGE_BACKUP_DIR ? join(deps.workspace, 'backups') : backupDir(process.env);
+    const dir = backupDirOf(deps);
     const safe = createSafeBook(deps.workspace);
     const { entries, problem } = await loadEntries(deps.workspace);
     // A file the founder wrote wrong is one row on the screen, never a start that fails.
@@ -35,10 +33,13 @@ export default {
       today: () => deps.usage.info(deps.clients, true),
       counts: () => deps.usage.today(),
     });
+    const outside = () => connections.map((one) => ({ name: one.entry.name, ok: one.ok, detail: one.detail }));
+    const outsideBefore = outsideHealth.now;
+    outsideHealth.now = outside;
     const health = () => checkAll({
       workspace: deps.workspace, root: deps.root, backupDir: dir,
       backups: () => listBackups(dir),
-      outside: () => connections.map((one) => ({ name: one.entry.name, ok: one.ok, detail: one.detail })),
+      outside,
       coder: () => coderHealth.now(),
     });
 
@@ -87,7 +88,10 @@ export default {
         }
         return false;
       },
-      async close() { for (const one of connections) await one.rpc?.close().catch(() => {}); },
+      async close() {
+        outsideHealth.now = outsideBefore;
+        for (const one of connections) await one.rpc?.close().catch(() => {});
+      },
     };
   },
 } satisfies Slice;

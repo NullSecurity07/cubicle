@@ -199,7 +199,7 @@ export default {
       changed: (roomId) => hub.say(MEMORY_CHANNEL, { id: roomId }),
       ...(deps.fake ? { log: () => {} } : {}),
     });
-    deps.seams.on('turn:after', retain.after);
-    return { tools: reflectTools({ recall: deps.recall, decisions: deps.decisions, memory: deps.memory }) };
+    const off = deps.seams.on('turn:after', retain.after);
+    return { tools: reflectTools({ recall: deps.recall, decisions: deps.decisions, memory: deps.memory }), async close() { off(); } };
   },
 } satisfies Slice;

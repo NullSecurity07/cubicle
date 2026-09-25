@@ -7,7 +7,7 @@ import { complete, promptSize, type ModelClient } from '../providers.ts';
 import { route } from '../router.ts';
 import type { Seams } from '../seams.ts';
 import type { Store } from '../store.ts';
-import { text, type Tool, type ToolContext } from '../tools/registry.ts';
+import { text, type Tool } from '../tools/registry.ts';
 import type { UsageBook } from '../usage.ts';
 import { correction, HANDOVER_SHAPE, readHandover, spoken, told } from './handover.ts';
 

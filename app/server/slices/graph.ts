@@ -1,16 +1,16 @@
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { copyFile, mkdir, readFile, stat } from 'node:fs/promises';
-import { basename, delimiter, dirname, join, resolve } from 'node:path';
-import { coderChannel, type CoderEvent, type CoderLine, type GraphMark, type GraphView } from '../../shared/coder.ts';
-import type { Card, Stage } from '../../shared/model.ts';
+import { basename, dirname, join, resolve } from 'node:path';
+import { coderChannel, type CoderEvent, type GraphMark, type GraphView } from '../../shared/coder.ts';
 import { timeOrDay } from '../clock.ts';
 import { hub } from '../events.ts';
 import { projectDir } from '../folder.ts';
 import type { Deps, Slice } from '../install.ts';
-import { wired } from '../prompt.ts';
+import { nameOf, projects, refOf as refCard, wiredProject, type CardRef, type Project } from '../opencode/cards.ts';
+import { cardLog, findTool, GRAPH_TOOLS, graphJson, mapDir, NO_MAP, NOT_HERE, PIN } from '../opencode/graph-kit.ts';
 import { childEnv } from '../safety/env.ts';
+import { offerWhenWired, patchStageVia } from '../slice-kit.ts';
 import type { Tool, ToolContext } from '../tools/registry.ts';
 
 // The map of a code folder, made by Graphify: every file, function and class, what calls and imports what, and the
@@ -18,52 +18,11 @@ import type { Tool, ToolContext } from '../tools/registry.ts';
 // not even to name the groups. A person wired to a coder card maps its folder once, then asks the map questions
 // instead of reading file after file; the coder itself reads the same map through Graphify's own tools.
 
-// The Graphify this app is tested with. Installed by the founder as a uv tool, never by the app.
-export const PIN = '0.9.66';
-export const INSTALL = `uv tool install graphifyy==${PIN}`;
-export const NOT_HERE = `Graphify is not on this machine: ${INSTALL}`;
-export const NO_MAP = 'This folder has no map yet: run map_folder first.';
-// What the coder is told when its folder has a map. One sentence, only then.
-export const GRAPH_HINT = 'This folder has a knowledge graph: use the graphify tools (query_graph, get_neighbors, shortest_path...) before reading many files.';
+export { cardLog, findTool, GRAPH_HINT, GRAPH_TOOLS, graphJson, hasMcpPart, INSTALL, mapDir, mcpCommand, NO_MAP, NOT_HERE, PIN, type CardRef } from '../opencode/graph-kit.ts';
 
 const MAP_LIMIT = 10 * 60_000;
 const ASK_LIMIT = 60_000;
 const LINES = 40;
-
-// Where a folder's map is kept: in the app's own workspace, never in the founder's folder. Graphify writes wherever
-// GRAPHIFY_OUT says, so the project stays exactly as the founder left it.
-export function mapDir(workspace: string, folder: string): string {
-  const name = basename(folder).toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'folder';
-  return join(workspace, 'graphs', `${name}-${createHash('sha1').update(resolve(folder)).digest('hex').slice(0, 10)}`, 'graphify-out');
-}
-export const graphJson = (workspace: string, folder: string) => join(mapDir(workspace, folder), 'graph.json');
-
-// A program in ~/.local/bin (where uv puts its tools) or on the PATH. The app may be started from a desktop entry
-// whose PATH never had ~/.local/bin in it, so that folder is looked in first. Only the environment given is read.
-export function findTool(name: string, env: NodeJS.ProcessEnv = process.env): string | null {
-  const places = [...(env.HOME ? [join(env.HOME, '.local/bin')] : []), ...(env.PATH ?? '').split(delimiter).filter(Boolean)];
-  return places.map((dir) => join(dir, name)).find((path) => existsSync(path)) ?? null;
-}
-
-// How the coder's opencode starts Graphify's own tool server for one map. graphify-mcp needs its `mcp` part: when the
-// installed tool has it, it runs as it is; when it does not, uvx runs the same pinned version with that part, in uv's
-// own cache, without touching the founder's install. Neither there: no tool server, and the coder simply reads files.
-export function mcpCommand(graph: string, env: NodeJS.ProcessEnv = process.env): string[] | null {
-  const server = findTool('graphify-mcp', env);
-  if (server && hasMcpPart(server)) return [server, graph];
-  const uvx = findTool('uvx', env);
-  return uvx ? [uvx, '--from', `graphifyy[mcp]==${PIN}`, 'graphify-mcp', graph] : null;
-}
-// Whether the Python behind a uv tool's script can import `mcp`: its first line names that Python, and the package is
-// a folder beside it. Looked at, never run.
-export function hasMcpPart(script: string): boolean {
-  try {
-    const python = /^#!\s*(\S+)/.exec(readFileSync(script, 'utf8').split('\n', 1)[0])?.[1];
-    if (!python) return false;
-    const lib = join(dirname(dirname(python)), 'lib');
-    return readdirSync(lib).some((version) => existsSync(join(lib, version, 'site-packages', 'mcp')));
-  } catch { return false; }
-}
 
 // One Graphify command, its lines as they come. The runner is swapped for a made-up one in fake mode and in tests.
 export type Ran = { code: number | null; out: string };
@@ -187,17 +146,7 @@ const count = (value: number) => value.toLocaleString('en-GB');
 export const markOf = (summary: MapSummary): GraphMark => ({ at: summary.at, nodes: summary.nodes, edges: summary.edges, communities: summary.communities });
 const dated = (name: string, at: number, now: number) => `Map of ${name}, made ${timeOrDay(at, now)}${now - at > 86_400_000 ? ` (${Math.floor((now - at) / 86_400_000)} days ago)` : ''}.`;
 
-type Project = Extract<Card, { kind: 'project' }>;
-const projects = (stage: Stage) => (stage.cards ?? []).filter((card): card is Project => card.kind === 'project');
-const nameOf = (card: Project) => basename(card.path.trim().replace(/\/+$/, '')) || 'Project';
 const NO_CARD = 'no coder card is connected to your room. Ask the founder to wire one to you.';
-
-// Where map lines go: the coder card's own log. The coder slice points this at the coder, so a window opened later
-// still finds them; until then they go straight to the card's channel.
-export type CardRef = { id: string; dir: string; name: string; session?: string; model?: string };
-export const cardLog: { add(card: CardRef, line: Omit<CoderLine, 'at'>): void } = {
-  add: (card, line) => hub.say(coderChannel(card.id), { line: { ...line, at: Date.now() } } satisfies CoderEvent),
-};
 
 type Options = { workspace: string; forbidden: string[]; run: Runner; ready: () => string | null; env?: NodeJS.ProcessEnv; now?: () => number;
   // Writes the map's counts onto the card in the saved stage.
@@ -206,7 +155,7 @@ type Options = { workspace: string; forbidden: string[]; run: Runner; ready: () 
 // Mapping, one folder at a time, and the three things a wired person may do with it.
 export function createMaps({ workspace, forbidden, run, ready, env = process.env, now = Date.now, keep }: Options) {
   const running = new Map<string, Promise<MapSummary>>();
-  const refOf = (card: Project): CardRef => ({ id: card.id, dir: projectDir(card.path, forbidden), name: nameOf(card), session: card.session, model: card.model });
+  const refOf = (card: Project): CardRef => refCard(card, forbidden);
   const tell = (cardId: string, event: CoderEvent) => hub.say(coderChannel(cardId), event);
 
   function map(card: Project, signal?: AbortSignal): Promise<MapSummary> {
@@ -255,11 +204,7 @@ export function createMaps({ workspace, forbidden, run, ready, env = process.env
   }
 
   function tools(): Tool[] {
-    const cardFor = (context: ToolContext) => {
-      const cards = projects(context.stage);
-      const [id] = wired(context.stage, context.roomId, cards.map((one) => one.id));
-      return cards.find((one) => one.id === id);
-    };
+    const cardFor = (context: ToolContext) => wiredProject(context.stage, context.roomId);
     const need = (context: ToolContext) => { const card = cardFor(context); if (!card) throw new Error(NO_CARD); return card; };
     // The folder with its map, for the two tools that read one. No map is a sentence, not an error.
     const mapped = async (context: ToolContext) => {
@@ -339,10 +284,11 @@ export default {
     const run = deps.fake ? fakeRunner : spawnRunner(() => findTool('graphify'));
     const ready = () => (deps.fake || findTool('graphify') ? null : NOT_HERE);
     // The map's counts go onto the card, the way the coder's session does, so they are there after a restart.
+    // Through the one stage queue, so a coder session saved at the same moment does not save a copy without this.
     async function keep(cardId: string, mark: GraphMark) {
-      const stage = await deps.store.loadStage();
-      if (!projects(stage).some((one) => one.id === cardId)) return;
-      await deps.store.saveStage({ ...stage, cards: (stage.cards ?? []).map((one) => (one.id === cardId && one.kind === 'project' ? { ...one, graph: mark } : one)) });
+      await patchStageVia(deps.store, (stage) => {
+        stage.cards = (stage.cards ?? []).map((one) => (one.id === cardId && one.kind === 'project' ? { ...one, graph: mark } : one));
+      });
     }
     const maps = createMaps({ workspace: deps.workspace, forbidden, run, ready, keep });
     const cardOf = async (cardId: string) => projects(await deps.store.loadStage()).find((one) => one.id === cardId);
@@ -350,10 +296,7 @@ export default {
     return {
       tools: maps.tools(),
       // Offered only to a person with a coder card wired to them: the map is of that card's folder.
-      offer(tools: Tool[], stage: Stage, roomId: string) {
-        if (wired(stage, roomId, projects(stage).map((one) => one.id)).length) return tools;
-        return tools.filter((tool) => !['map_folder', 'ask_graph', 'affected_by'].includes(tool.name));
-      },
+      offer: offerWhenWired('project', GRAPH_TOOLS),
       async route(req, res, path) {
         const asked = /^\/api\/coder\/([\w-]{1,80})\/(map|graph|graph\.html)$/.exec(path);
         if (!asked) return false;

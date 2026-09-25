@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
-import { backupDir, leaveOut, landingPlace, listBackups, makeBackup, restore } from './backup.ts';
+import { backupDir, backupDirOf, leaveOut, landingPlace, listBackups, makeBackup, restore } from './backup.ts';
 import { END, packTar, splitPath, tarBlock, tarEntries } from './tar.ts';
 
 const dir = (what: string) => mkdtemp(join(tmpdir(), `${what}-`));
@@ -123,5 +123,14 @@ describe('putting one back', () => {
     const fresh = join(await dir('restored'), 'from-bad');
     await expect(restore(archive, fresh)).rejects.toThrow('nothing was unpacked');
     expect(await readdir(fresh).catch(() => null)).toBe(null);
+  });
+});
+
+describe('backupDirOf', () => {
+  it('keeps a fake run beside its workspace, unless the machine names a folder', () => {
+    expect(backupDirOf({ fake: true, workspace: '/w' }, {})).toBe('/w/backups');
+    expect(backupDirOf({ fake: true, workspace: '/w' }, { STAGE_BACKUP_DIR: '/b' })).toBe('/b');
+    expect(backupDirOf({ fake: false, workspace: '/w' }, { STAGE_BACKUP_DIR: '/b' })).toBe('/b');
+    expect(backupDirOf({ fake: false, workspace: '/w' }, {})).toBe(backupDir({}));
   });
 });

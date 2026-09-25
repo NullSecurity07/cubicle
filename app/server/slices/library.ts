@@ -1,35 +1,24 @@
-import { join, resolve } from 'node:path';
 import type { Card } from '../../shared/model.ts';
 import type { Slice } from '../install.ts';
-import { createLibrary, noteOf, notesBlock, NOTE_FLOOR, TOP_CHUNKS } from '../library/notes.ts';
+import { noteOf, notesBlock, NOTE_FLOOR, TOP_CHUNKS } from '../library/notes.ts';
 import { wired } from '../prompt.ts';
-import { createRecall, localEmbedder, wordEmbedder } from '../recall.ts';
-import type { Handler } from '../seams.ts';
+import { withSystem, type Handler } from '../seams.ts';
+import { sharedLibrary } from '../slice-kit.ts';
 
 // The founder's library: the notes they learn from, kept as files, and the passages of them a person is given when
 // one is wired to their room. A note is never pasted whole — what goes into a turn is the two or three passages that
 // answer the question in front of that person, so the founder's own documents keep their room in the prompt.
 const NOTE_ID = /^\/api\/library\/([a-z0-9][a-z0-9-]{0,79})$/;
-const WARM_AFTER = 6000;
 
 export default {
   name: 'library',
   install(deps) {
-    const library = createLibrary(deps.workspace);
-    // Its own index, beside the notes rather than in with the workspace's: a note is not a doc on the stage, and the
-    // vectors can be deleted with the folder. The embedder is the one the app itself uses, chosen the same way.
-    const recall = createRecall({
-      dir: join(library.folder, '.recall'),
-      embed: deps.fake ? wordEmbedder : localEmbedder(resolve(deps.root, 'app/.cache/recall')),
-      gather: library.pieces,
-    });
-    // Once, a little after the app has settled, so the first question of the day does not pay for the whole library.
-    setTimeout(() => { void recall.warm().catch(() => {}); }, WARM_AFTER).unref();
+    // The workspace's one library and recall, shared with the evals, the forge and the frameworks, and warmed once.
+    const { library, recall } = sharedLibrary(deps);
 
     // Every note wired to this person, each asked what it has to say about the question, best passages first.
     const before: Handler<'turn:before'> = async (payload, next) => {
-      const [system, ...rest] = payload.messages;
-      if (system?.role !== 'system' || !payload.query.trim()) return next(payload);
+      if (payload.messages[0]?.role !== 'system' || !payload.query.trim()) return next(payload);
       const stage = await deps.store.loadStage().catch(() => null);
       if (!stage) return next(payload);
       const cards = (stage.cards ?? []).filter((card): card is Card & { kind: 'library' } => card.kind === 'library');
@@ -46,13 +35,14 @@ export default {
       }
       const block = notesBlock(found);
       if (!block) return next(payload);
-      return next({ ...payload, messages: [{ ...system, content: `${system.content}\n\n${block}` }, ...rest] });
+      return next(withSystem(payload, block));
     };
     // A check script hands round stub deps with no seams in them; the routes still work, and half a feature is
     // better than a slice that refuses to install.
-    if (deps.seams) deps.seams.on('turn:before', before);
+    const off = deps.seams ? deps.seams.on('turn:before', before) : () => {};
 
     return {
+      async close() { off(); },
       async route(req, res, path) {
         if (!path.startsWith('/api/library')) return false;
         const method = req.method ?? 'GET';

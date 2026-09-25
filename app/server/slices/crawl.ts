@@ -4,11 +4,11 @@ import { join } from 'node:path';
 import { newMessageId, type Attention } from '../../shared/model.ts';
 import { dnsResolve, publicUrl, unwrapRedirect, webUrl, type Resolve } from '../browser.ts';
 import type { Deps, Slice } from '../install.ts';
-import { decode, htmlToText } from '../readers.ts';
+import { attr, clip, createPace, decode, failure, getPublic as getPublicWeb, htmlToText, isoDay, oneLine, when, type Got } from '../readers.ts';
 import type { Tool, ToolContext } from '../tools/registry.ts';
 import { webCache } from '../cache.ts';
 import { UNTRUSTED } from '../tools/web.ts';
-import { attr, createPace, isoDay, when } from './readers.ts';
+import { newId } from '../slice-kit.ts';
 
 // A competitor's whole site read in one go, and a page kept an eye on. Both are plain reads of public pages from this
 // machine, the way a person with a browser would make them: robots.txt is obeyed, one site is asked gently, and a
@@ -32,46 +32,13 @@ const AGENT = 'cubicle-reader/1.0 (desktop app; reads a public site for its owne
 // Addresses that are never a page: documents, pictures, archives, media and feeds.
 const NOT_A_PAGE = /\.(pdf|png|jpe?g|gif|webp|svg|ico|bmp|tiff?|avif|zip|gz|tgz|bz2|xz|7z|rar|tar|dmg|exe|msi|pkg|deb|rpm|apk|mp3|mp4|m4a|wav|ogg|webm|mov|avi|css|js|mjs|json|xml|rss|atom|txt|csv|xlsx?|docx?|pptx?|woff2?|ttf|otf|eot)$/i;
 
-const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim();
-const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text);
-
 // ---------------------------------------------------------------- fetching
 
-export type Got = { status: number; url: string; type: string; body: string };
-
-// A read of the open web that can never be steered onto this machine: the address, and every address a redirect sends
-// it on to, is checked the way the browser checks one.
-export async function getPublic(raw: string, http: typeof fetch, resolveHost: Resolve | undefined, signal: AbortSignal): Promise<Got> {
-  let url = await publicUrl(raw, resolveHost);
-  for (let hop = 0; hop < 5; hop += 1) {
-    const response = await http(url, { headers: { 'user-agent': AGENT, accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5' }, redirect: 'manual', credentials: 'omit', signal });
-    const location = response.headers.get('location');
-    if (response.status >= 300 && response.status < 400 && location) { await response.body?.cancel().catch(() => {}); url = await publicUrl(unwrapRedirect(new URL(location, url).href), resolveHost); continue; }
-    const type = response.headers.get('content-type') ?? '';
-    // Only a page is worth its bytes; anything else is let go unread.
-    if (type && !/html/i.test(type) && !/^text\/plain/i.test(type)) { await response.body?.cancel().catch(() => {}); return { status: response.status, url, type, body: '' }; }
-    return { status: response.status, url, type, body: await capped(response) };
-  }
-  throw new Error('it redirected too many times');
-}
-async function capped(response: Response): Promise<string> {
-  if (!response.body) return (await response.text()).slice(0, BODY_BYTES);
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  while (size < BODY_BYTES) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    size += value.length;
-  }
-  await reader.cancel().catch(() => {});
-  return Buffer.concat(chunks).toString('utf8');
-}
-const failure = (error: unknown) => {
-  const message = (error as Error).message ?? String(error);
-  return /timeout|aborted/i.test((error as Error).name ?? '') || /timeout|aborted/i.test(message) ? 'it took too long to answer' : message;
-};
+export type { Got };
+const ACCEPT = 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.5';
+// The crawl reads pages only, follows a link-tracker to where it really points, and keeps the body under 3 MB.
+export const getPublic = (raw: string, http: typeof fetch, resolveHost: Resolve | undefined, signal: AbortSignal): Promise<Got> =>
+  getPublicWeb(raw, { http, resolveHost, signal, agent: AGENT, accept: ACCEPT, htmlOnly: true, unwrap: true, bodyBytes: BODY_BYTES });
 
 // ---------------------------------------------------------------- one page
 
@@ -353,20 +320,34 @@ export function diffOf(before: string, after: string, most = 3): string {
 const sameUrl = (one: string, other: string) => { try { return keyOf(webUrl(one)) === keyOf(webUrl(other)) && new URL(webUrl(one)).search === new URL(webUrl(other)).search; } catch { return one.trim() === other.trim(); } };
 
 export function createWatches(dir: string) {
-  const fileOf = (roomId: string) => join(dir, `${roomId.replace(/[^\w-]/g, '_')}.json`);
+  const keyOf = (roomId: string) => roomId.replace(/[^\w-]/g, '_');
+  const fileOf = (key: string) => join(dir, `${key}.json`);
+  // Every watch, read from disk once and then kept here: the half-minute tick and the "needs you" list both ask for
+  // all of them, and only this ever writes them. Callers are handed copies, so nothing changes the table but `change`.
+  let table: Promise<Map<string, Watch[]>> | null = null;
+  const load = () => (table ??= (async () => {
+    const files = (await readdir(dir).catch(() => [] as string[])).filter((one) => one.endsWith('.json'));
+    const read = await Promise.all(files.map(async (one) => [one.slice(0, -5), await readFile(join(dir, one), 'utf8').then((body) => JSON.parse(body) as Watch[], () => [])] as const));
+    return new Map(read);
+  })());
+  const copy = (list: Watch[]) => list.map((one) => ({ ...one }));
+  const read = async (roomId: string): Promise<Watch[]> => copy((await load()).get(keyOf(roomId)) ?? []);
+  const write = async (key: string, list: Watch[]) => { await mkdir(dir, { recursive: true }); await writeFile(`${fileOf(key)}.tmp`, JSON.stringify(list, null, 2)); await rename(`${fileOf(key)}.tmp`, fileOf(key)); };
   let queue: Promise<unknown> = Promise.resolve();
-  const read = async (roomId: string): Promise<Watch[]> => { try { return JSON.parse(await readFile(fileOf(roomId), 'utf8')) as Watch[]; } catch { return []; } };
-  const write = async (roomId: string, list: Watch[]) => { await mkdir(dir, { recursive: true }); await writeFile(`${fileOf(roomId)}.tmp`, JSON.stringify(list, null, 2)); await rename(`${fileOf(roomId)}.tmp`, fileOf(roomId)); };
-  // One change at a time, so a tick and a tool never write over each other.
+  // One change at a time, so a tick and a tool never write over each other. The table changes only once the file has.
   const change = <T>(roomId: string, edit: (list: Watch[]) => T | Promise<T>): Promise<T> => {
-    const job = queue.then(async () => { const list = await read(roomId); const out = await edit(list); await write(roomId, list); return out; });
+    const job = queue.then(async () => {
+      const key = keyOf(roomId);
+      const list = await read(roomId);
+      const out = await edit(list);
+      await write(key, list);
+      (await load()).set(key, copy(list));
+      return out;
+    });
     queue = job.catch(() => {});
     return job;
   };
-  async function all(): Promise<Watch[]> {
-    const files = await readdir(dir).catch(() => [] as string[]);
-    return (await Promise.all(files.filter((one) => one.endsWith('.json')).map((one) => readFile(join(dir, one), 'utf8').then((body) => JSON.parse(body) as Watch[], () => [])))).flat();
-  }
+  const all = async (): Promise<Watch[]> => [...(await load()).values()].flatMap(copy);
   return { read, all, change, settled: () => queue };
 }
 export type Watches = ReturnType<typeof createWatches>;
@@ -488,7 +469,7 @@ export function crawlTools(options: CrawlOptions, watches: Watches): Tool[] {
         let page: Awaited<ReturnType<typeof readWatched>>;
         try { page = await readWatched(url, options, context.signal); } catch (error) { return { text: `The page could not be read, so it is not watched: ${failure(error)}.` }; }
         const at = now();
-        const watch: Watch = { id: `w${at.toString(36)}${Math.random().toString(36).slice(2, 6)}`, url, what: str(args, 'what').slice(0, 200), roomId: context.roomId, title: page.title, hash: hashOf(page.text), text: page.text.slice(0, WATCH_TEXT), addedAt: at, checkedAt: at, readAt: at };
+        const watch: Watch = { id: newId('w', 4, '', at), url, what: str(args, 'what').slice(0, 200), roomId: context.roomId, title: page.title, hash: hashOf(page.text), text: page.text.slice(0, WATCH_TEXT), addedAt: at, checkedAt: at, readAt: at };
         const added = await watches.change(context.roomId, (list) => {
           if (list.some((one) => sameUrl(one.url, url))) return false;
           list.push(watch);
@@ -552,8 +533,12 @@ export default {
       ...(deps.fake ? { http: fakeSite, resolveHost: async () => [] } : {}),
       save: (name, text) => deps.store.writeFile(name, text),
     };
-    deps.attention.source(watchAttention(watches, deps));
+    // The attention book has no way to take a source off again (attention.ts), so a closed crawl reports nothing.
+    let closed = false;
+    const report = watchAttention(watches, deps);
+    deps.attention.source(async () => (closed ? [] : report()));
     return {
+      async close() { closed = true; },
       tools: crawlTools(options, watches),
       // Every half minute, at most one page read. Never in fake mode, and never while the app is closed.
       async tick() { await checkOne(watches, deps, options); },

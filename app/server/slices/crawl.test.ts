@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -266,5 +266,24 @@ describe('crawl_site, asked twice', () => {
     // Another question is another crawl: the best pages depend on it.
     await tool.run({ url: 'https://acme.test/' }, { ...context, query: 'careers' });
     expect(fetched).toBeGreaterThan(once);
+  });
+});
+
+describe('the watch table', () => {
+  it('reads the files once, keeps every change on disk, and hands out copies', async () => {
+    const dir = join(await mkdtemp(join(tmpdir(), 'watch-table-')), 'watch');
+    await mkdir(dir, { recursive: true });
+    const one = { id: 'w1', url: 'https://a.test/', what: '', roomId: 'ana', title: 'A', hash: 'h', text: 't', addedAt: 1, checkedAt: 1, readAt: 1 };
+    await writeFile(join(dir, 'ana.json'), JSON.stringify([one]));
+    const watches = createWatches(dir);
+    expect(await watches.all()).toEqual([one]);
+    // Written behind its back: the table is what the app reads now, so this is not seen.
+    await writeFile(join(dir, 'ana.json'), '[]');
+    expect(await watches.read('ana')).toHaveLength(1);
+    (await watches.read('ana'))[0].title = 'changed by a caller';
+    expect((await watches.read('ana'))[0].title).toBe('A');
+    await watches.change('bo', (list) => { list.push({ ...one, id: 'w2', roomId: 'bo' }); });
+    expect((await watches.all()).map((watch) => watch.id).sort()).toEqual(['w1', 'w2']);
+    expect(JSON.parse(await readFile(join(dir, 'bo.json'), 'utf8'))).toHaveLength(1);
   });
 });

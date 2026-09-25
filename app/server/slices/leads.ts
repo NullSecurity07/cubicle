@@ -1,13 +1,13 @@
 import { resolve } from 'node:path';
 import { LEAD_STAGES, leadName, leadsChannel, STAGE_NAMES, type Lead, type LeadsEvent } from '../../shared/leads.ts';
-import type { Stage } from '../../shared/model.ts';
 import { shortDay } from '../clock.ts';
 import { hub } from '../events.ts';
 import type { Slice } from '../install.ts';
 import { createOutreach, fakeRunner, outreachEnv, uvxRunner } from '../leads/openoutreach.ts';
-import { isStage, leadsFor, type Leads } from '../leads/store.ts';
+import { EMAIL, isStage, leadsCardIds, leadsFor, type Leads } from '../leads/store.ts';
 import { wired } from '../prompt.ts';
-import type { Handler } from '../seams.ts';
+import { withSystem, type Handler } from '../seams.ts';
+import { offerWhenWired } from '../slice-kit.ts';
 import { text, type Tool, type ToolContext } from '../tools/registry.ts';
 
 // The Leads card: the founder's list of people to sell to, a light CRM on the stage. People wired to it add, score,
@@ -20,7 +20,7 @@ export const FIND_MAX = 25;
 const HINT = '- A Leads card: the founder\'s list of people to sell to. Read it with list_leads, add with add_lead, score with score_lead (the icp-fit skill), '
   + 'write down evidence with note_lead, move with move_lead. Only the founder marks a lead contacted. find_leads finds new ones with OpenOutreach.';
 
-const cardsOf = (stage: Stage) => (stage.cards ?? []).filter((card) => card.kind === 'leads').map((card) => card.id);
+const cardsOf = leadsCardIds;
 const cardOf = (context: ToolContext) => wired(context.stage, context.roomId, cardsOf(context.stage))[0];
 const need = (context: ToolContext) => { const id = cardOf(context); if (!id) throw new Error(NO_CARD); return id; };
 const nameOf = (context: ToolContext) => context.stage.rooms.find((room) => room.id === context.roomId)?.name ?? 'a person';
@@ -37,13 +37,21 @@ export function leadTools(leads: Leads, outreach: ReturnType<typeof createOutrea
   return [
     {
       name: 'add_lead', perTurn: 5,
-      description: 'Add a person to the Leads card wired to you. Name them and their company.',
-      parameters: { type: 'object', properties: { person: { type: 'string', description: 'Full name' }, company: { type: 'string' }, why: { type: 'string', description: 'Why they may buy, with a link' } }, required: ['person', 'company'] },
+      description: 'Add a person to the Leads card wired to you. Name them and their company. Give their email when you know it; for someone already on the card, it sets theirs.',
+      parameters: { type: 'object', properties: { person: { type: 'string', description: 'Full name' }, company: { type: 'string' }, email: { type: 'string', description: 'Their work email, if known' }, why: { type: 'string', description: 'Why they may buy, with a link' } }, required: ['person', 'company'] },
       async run(args, context) {
         const id = need(context);
         const why = typeof args.why === 'string' ? args.why : '';
-        const { lead, added } = await leads.add(id, { name: text(args, 'person', 120), company: text(args, 'company', 120), source: 'person', ...(why.trim() ? { note: { by: nameOf(context), text: why } } : {}) });
-        return { text: added ? `Added ${leadName(lead)}.` : `${leadName(lead)} is already here, in ${STAGE_NAMES[lead.stage]}.` };
+        const email = typeof args.email === 'string' ? args.email.trim() : '';
+        if (email && !EMAIL.test(email)) return { text: `"${email.slice(0, 200)}" is not an email address. Add them without it, or with the right one.` };
+        const { lead, added } = await leads.add(id, { name: text(args, 'person', 120), company: text(args, 'company', 120), source: 'person', ...(email ? { email } : {}), ...(why.trim() ? { note: { by: nameOf(context), text: why } } : {}) });
+        if (added) return { text: `Added ${leadName(lead)}.` };
+        // Already here: an email given now fills in, or corrects, the one on the card.
+        if (email && email !== lead.person.email) {
+          await leads.email(id, lead.id, email);
+          return { text: `${leadName(lead)} is already here, in ${STAGE_NAMES[lead.stage]}. Their email is now ${email}.` };
+        }
+        return { text: `${leadName(lead)} is already here, in ${STAGE_NAMES[lead.stage]}.` };
       },
     },
     {
@@ -125,15 +133,14 @@ export default {
 
     // A window that opens late gets every leads card's list at once.
     const opening = async () => Promise.all((await onStage()).map(async (id) => ({ channel: leadsChannel(id), data: await leads.read(id) })));
-    hub.opening.push(opening);
+    const unopen = hub.open(opening);
 
     // A person wired to a Leads card is told it is there, in one line, beside the other cards they can reach.
     const before: Handler<'turn:before'> = async (payload, next) => {
-      const [system, ...rest] = payload.messages;
-      if (system?.role !== 'system') return next(payload);
+      if (payload.messages[0]?.role !== 'system') return next(payload);
       const stage = await deps.store.loadStage().catch(() => null);
       if (!stage || !wired(stage, payload.roomId, cardsOf(stage)).length) return next(payload);
-      return next({ ...payload, messages: [{ ...system, content: `${system.content}\n\n${HINT}` }, ...rest] });
+      return next(withSystem(payload, HINT));
     };
     // An email the founder said yes to, to somebody on a wired Leads card, is the founder contacting them.
     const after: Handler<'tool:after'> = async (payload, next) => {
@@ -156,10 +163,7 @@ export default {
     return {
       tools: leadTools(leads, outreach),
       // Offered only to a person with a Leads card wired to them.
-      offer(tools, stage, roomId) {
-        if (wired(stage, roomId, cardsOf(stage)).length) return tools;
-        return tools.filter((tool) => !LEAD_TOOLS.includes(tool.name));
-      },
+      offer: offerWhenWired('leads', LEAD_TOOLS),
       async route(req, res, path) {
         const asked = /^\/api\/leads\/([a-z0-9][a-z0-9-]{0,63})(?:\/(lead-[a-z0-9]{1,40})(?:\/(notes))?)?$/.exec(path);
         if (!asked) return false;
@@ -172,7 +176,8 @@ export default {
           if (!leadId && method === 'POST') {
             const sent = await deps.body(req);
             const line = typeof sent?.line === 'string' ? sent.line : '';
-            const { lead, added } = await leads.add(cardId, { name: String(sent?.name ?? ''), company: String(sent?.company ?? ''), source: 'founder', ...(line.trim() ? { note: { by: 'Founder', text: line } } : {}) });
+            const email = typeof sent?.email === 'string' && EMAIL.test(sent.email.trim()) ? sent.email.trim() : '';
+            const { lead, added } = await leads.add(cardId, { name: String(sent?.name ?? ''), company: String(sent?.company ?? ''), source: 'founder', ...(email ? { email } : {}), ...(line.trim() ? { note: { by: 'Founder', text: line } } : {}) });
             if (added) deps.json(res, 200, lead);
             else deps.json(res, 409, { error: `${leadName(lead)} is already here` });
             return true;
@@ -190,8 +195,7 @@ export default {
       },
       async close() {
         for (const stop of off) stop();
-        const at = hub.opening.indexOf(opening);
-        if (at >= 0) hub.opening.splice(at, 1);
+        unopen();
         await leads.settled();
       },
     };

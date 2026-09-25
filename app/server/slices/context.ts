@@ -12,13 +12,12 @@ export default {
   install(deps) {
     // A check script hands round stub deps with no seams in them. The offering half still holds without them, and
     // half a feature is better than a slice that refuses to install.
+    const off: (() => void)[] = [];
     if (deps.seams) {
       const compaction = createCompaction(deps);
       // Every tool result is made smaller at the door first; compaction then only has what is left to fit.
-      deps.seams.on('step:before', createShrinking(deps));
-      deps.seams.on('step:before', compaction.before);
-      deps.seams.on('step:error', compaction.error);
+      off.push(deps.seams.on('step:before', createShrinking(deps)), deps.seams.on('step:before', compaction.before), deps.seams.on('step:error', compaction.error));
     }
-    return { offer: offered };
+    return { offer: offered, async close() { for (const one of off) one(); } };
   },
 } satisfies Slice;

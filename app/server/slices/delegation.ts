@@ -1,12 +1,16 @@
 import { CODE_TOOLS_HINT, createCodeTools } from '../delegation/codetools.ts';
 import { delegationTools } from '../delegation/delegate.ts';
 import type { Slice } from '../install.ts';
+import { offerWhenWired } from '../slice-kit.ts';
 import { colleagueIds } from '../prompt.ts';
 import { offerToolsToCode } from '../sandbox.ts';
-import type { Handler } from '../seams.ts';
+import { withSystem, type Handler } from '../seams.ts';
 
 // Real delegation: a person hands a whole piece of work to a wired colleague and gets back what they did, and code in
 // the sandbox reaches the person's own tools without the sandbox gaining a single new way out.
+// The one tool that needs somebody to hand work to.
+export const DELEGATION_TOOLS = ['delegate_task'] as const;
+
 export default {
   name: 'delegation',
   install(deps) {
@@ -14,10 +18,10 @@ export default {
     offerToolsToCode(createCodeTools({ toolsFor: deps.toolsFor, seams: deps.seams }));
     // What a person needs to know about calling tools from code goes in front of them, and only when they have the
     // tool it is about.
-    deps.seams.on('turn:before', (async (payload, next) => {
-      const [system, ...rest] = payload.messages;
+    const off = deps.seams.on('turn:before', (async (payload, next) => {
+      const [system] = payload.messages;
       if (system?.role !== 'system' || !/You can act with these tools:[^.]*\brun_code\b/.test(system.content)) return next(payload);
-      return next({ ...payload, messages: [{ ...system, content: `${system.content}\n\n${CODE_TOOLS_HINT}` }, ...rest] });
+      return next(withSystem(payload, CODE_TOOLS_HINT));
     }) satisfies Handler<'turn:before'>);
 
     return {
@@ -26,8 +30,8 @@ export default {
         promptFor: deps.promptFor, toolsFor: deps.toolsFor,
       }),
       // Nobody to hand work to, nothing to describe: the same rule `ask_person` lives by.
-      offer: (tools, stage, roomId) => (colleagueIds(stage, roomId).length ? tools : tools.filter((tool) => tool.name !== 'delegate_task')),
-      async close() { offerToolsToCode(null); },
+      offer: offerWhenWired((stage, roomId) => colleagueIds(stage, roomId).length > 0, DELEGATION_TOOLS),
+      async close() { off(); offerToolsToCode(null); },
     };
   },
 } satisfies Slice;

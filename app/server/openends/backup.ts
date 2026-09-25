@@ -17,6 +17,10 @@ const AGAIN = [/^browsers(\/|$)/, /^\.index(\/|$)/, /^\.cache(\/|$)/, /^trash(\/
 export const leaveOut = (path: string) => AGAIN.some((pattern) => pattern.test(path));
 // Where they go. The founder's own folder, unless this machine says otherwise — which is what a test sets.
 export const backupDir = (env: NodeJS.ProcessEnv = process.env) => env.STAGE_BACKUP_DIR || join(homedir(), 'Cubicle backups');
+// The folder the app itself uses. A check run works on a throwaway workspace and has no business writing into the
+// founder's own folders, so in fake mode its backups land beside that workspace unless the machine says otherwise.
+export const backupDirOf = (deps: { fake: boolean; workspace: string }, env: NodeJS.ProcessEnv = process.env) =>
+  (deps.fake && !env.STAGE_BACKUP_DIR ? join(deps.workspace, 'backups') : backupDir(env));
 
 const stamp = (at: number) => {
   const when = new Date(at);

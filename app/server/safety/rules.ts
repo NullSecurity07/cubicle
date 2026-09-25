@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { NEVER_ALWAYS, reachOf, type AllowRule } from '../../shared/safety.ts';
+import { newId } from '../slice-kit.ts';
 
 // The standing yeses. One rule is one person, one tool and the one argument that says how far the call goes, so
 // "always allow emails to alex@example.com" never becomes "always allow emails". They live in the workspace, in plain
@@ -32,7 +33,7 @@ export function createRules(path: string, now: () => number = Date.now) {
       const rules = await read();
       const had = rules.find((one) => one.roomId === call.roomId && one.tool === call.tool && one.reach === found.reach);
       if (had) return had;
-      const rule: AllowRule = { id: `rule-${now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, roomId: call.roomId, who: call.who, tool: call.tool, reach: found.reach, label: found.label, at: now() };
+      const rule: AllowRule = { id: newId('rule-', 6, '-', now()), roomId: call.roomId, who: call.who, tool: call.tool, reach: found.reach, label: found.label, at: now() };
       await write([...rules, rule]);
       return rule;
     },

@@ -4,7 +4,8 @@ import { FRAMEWORK_ID } from '../../shared/frameworks.ts';
 import { copyBuiltIns, createFrameworks } from '../frameworks/store.ts';
 import { frameworkFrom, place } from '../frameworks/place.ts';
 import type { Slice } from '../install.ts';
-import { createLibrary, inUse } from '../library/notes.ts';
+import { inUse } from '../library/notes.ts';
+import { sharedLibrary } from '../slice-kit.ts';
 
 // Frameworks: teams the founder does not have to build twice. A framework holds the people, their briefs, the docs
 // they share, the cards they need and the wires between them; placing it mints fresh ids and hands the window one
@@ -32,7 +33,7 @@ export default {
   name: 'frameworks',
   async install(deps) {
     const frameworks = createFrameworks(deps.workspace);
-    const library = createLibrary(deps.workspace);
+    const { library } = sharedLibrary(deps);
 
     // The library has to be able to ask, in the middle of a delete, whether a framework is holding a note — and it
     // cannot wait for a file to be read. So who holds what is kept here and read again after every change.

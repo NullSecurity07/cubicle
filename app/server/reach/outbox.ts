@@ -1,5 +1,6 @@
 import { appendFile, mkdir, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { newId } from '../slice-kit.ts';
 
 // `roomId` is who wrote it, so that a reply to it on the phone reaches them; `threadId` is the topic it belongs in.
 // Both are written down with the words, because a message resent after a restart has to land where it was meant to.
@@ -8,7 +9,7 @@ import { dirname } from 'node:path';
 export type Outgoing = { id: string; chatId: number; text: string; at: number; roomId?: string; threadId?: number; loud?: boolean; file?: string };
 export type Outbox = ReturnType<typeof createOutbox>;
 
-const newId = () => `out-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+const newOutId = () => newId('out-', 5);
 
 // Every reply that goes out to the phone is written down before it is sent and marked once it has gone. The file is
 // only ever appended to, so a crash can lose nothing it had accepted; on the next start, whatever is written and
@@ -28,7 +29,7 @@ export function createOutbox(path: string) {
   return {
     settled: () => queue.catch(() => {}),
     async write(chatId: number, text: string, extra: Omit<Partial<Outgoing>, 'id' | 'chatId' | 'text'> = {}): Promise<Outgoing> {
-      const entry: Outgoing = { id: newId(), chatId, text, at: Date.now(), ...extra };
+      const entry: Outgoing = { id: newOutId(), chatId, text, at: Date.now(), ...extra };
       await line(entry);
       return entry;
     },
