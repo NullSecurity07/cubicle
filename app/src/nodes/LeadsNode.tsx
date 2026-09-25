@@ -12,6 +12,7 @@ import './leads.css';
 import { LeadStaleMark } from './LeadNudge';
 import { pressed } from '../keys';
 import { useAttempt } from '../attempt';
+import { csvIn, LeadsImport, readDropped } from './LeadsImport';
 
 const day = (at: number) => new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 const SOURCE: Record<Lead['source'], string> = { founder: 'added by you', person: 'added by a person', openoutreach: 'found by OpenOutreach', twenty: 'added in Twenty' };
@@ -29,6 +30,9 @@ export function LeadsNode({ id, selected }: NodeProps<LeadsNodeType>) {
   const [drafter, setDrafter] = useState('');
   const [twenty, setTwenty] = useState<TwentyStatus | null>(null);
   const flushStage = useFlushStage();
+  // The import sheet, open with what was dropped on the card (or nothing, for a paste). null: shut.
+  const [importing, setImporting] = useState<string | null>(null);
+  const [dropping, setDropping] = useState(false);
 
   useEffect(() => {
     let stop = () => {};
@@ -70,10 +74,22 @@ export function LeadsNode({ id, selected }: NodeProps<LeadsNodeType>) {
       <header className="card__header card__header--doc">
         <svg className="doc-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="6" cy="5.5" r="2.4" fill="none" stroke="currentColor" strokeWidth="1.2" /><path d="M1.800 13.500c.5-2.600 2.200-4 4.200-4s3.700 1.400 4.200 4M11 4.500h3.500M11 7.500h3.500M12 10.500h2.500" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" /></svg>
         <div className="card__name">Leads {!empty && <span>{leads.length}</span>}</div>
+        <button type="button" className="leads__import nodrag" onClick={() => { setOpenId(null); setImporting(''); }}>Import</button>
         {!empty && <button type="button" className="leads__copy nodrag" onClick={copy}>{copied ? 'Copied' : 'Copy as CSV'}</button>}
         <CardActions id={id} what="this Leads card (its leads stay in the workspace)" />
       </header>
-      <div className="leads nodrag nowheel">
+      <div
+        className={`leads nodrag nowheel${dropping ? ' is-dropping' : ''}`}
+        onDragOver={(event) => { if (csvIn(event)) { event.preventDefault(); setDropping(true); } }}
+        onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropping(false); }}
+        onDrop={(event) => {
+          if (!csvIn(event)) return;
+          event.preventDefault();
+          event.stopPropagation();
+          setDropping(false);
+          void readDropped(event).then((words) => { if (words === null) setProblem('That is not a spreadsheet. Drop a .csv file on the card.'); else { setOpenId(null); setImporting(words); } });
+        }}
+      >
         <form className="leads__add" onSubmit={(event) => { event.preventDefault(); add(); }}>
           <input aria-label="Lead name" placeholder="Name" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
           <input aria-label="Company" placeholder="Company" value={draft.company} onChange={(event) => setDraft({ ...draft, company: event.target.value })} />
@@ -104,13 +120,14 @@ export function LeadsNode({ id, selected }: NodeProps<LeadsNodeType>) {
               </section>
             );
           })}
-          {empty && <p className="leads__empty">No leads yet. Add one above, or wire a person to this card and ask them to find some.</p>}
+          {empty && <p className="leads__empty">No leads yet. Add one above, import a spreadsheet, or wire a person to this card and ask them to find some.</p>}
         </div>
       </div>
       {twenty?.connected && twenty.problem && (
         <p className="leads__twenty nodrag" title={twenty.url}>Twenty: {twenty.problem} since {new Date(twenty.since ?? Date.now()).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</p>
       )}
       {problem && !open && <p className="board__problem nodrag">{problem}</p>}
+      {importing !== null && <LeadsImport cardId={id} first={importing} onClose={() => setImporting(null)} />}
       {open && (
         <aside className="leadview nodrag nowheel" role="dialog" aria-label={open.person.name}>
           <div className="leadview__head">
