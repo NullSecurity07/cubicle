@@ -150,6 +150,17 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   target in Needs you for you to accept or decline, and `log_metric` writes a number **only after you say yes**,
   naming who wrote it. Needs you also brings up a number that reached its target, got worse three periods in a row,
   or has had no entry for two. The readings live in `workspace/metrics/<card>.json`.
+- **Runway** (2026-09-25): a single burn number is a spreadsheet; what a founder wants is "how long do we have, and
+  what if we hire in January". The card holds cash and the day it was counted, then what goes out and comes in each
+  month (a label, an amount, start and end months, growth for revenue), and reads back burn, **months left** and the
+  day cash runs out. Up to three scenarios sit beside Base as tabs, each a set of changes (add a flow, drop a Base
+  one, a one-off sum such as a raise), and each is drawn as a line of cash over 24 months. Every number is plain
+  TypeScript in `shared/runway.ts`, never a model, and **Export CSV** gives the same numbers to any spreadsheet. A
+  bank statement can be pasted as CSV: it is grouped by payee on this machine and nothing counts until you tick it.
+  Under six months the months turn amber, under three red, and Needs you says so once per crossing. A wired person
+  reads a one-line summary and `read_runway`, and may only suggest (`propose_flow`, `propose_scenario`); you accept
+  or decline on the card. The numbers reach that person's model, so the card says which one and offers to keep them
+  on this machine's. It is not accounting: no taxes, no accruals.
 - **A site read whole, and a page watched** (2026-09-24): `crawl_site` reads a competitor's site in one go, 15
   pages two links deep unless a person asks for more (at most 40, three deep), two at a time and gently, and obeys
   its robots.txt. It gives a map of the pages and quotes the five that best answer your question; every page's text

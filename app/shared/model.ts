@@ -38,6 +38,8 @@ export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean; 
   | { kind: 'deck'; brief?: string; purpose?: 'pitch' | 'update' | 'sales' | 'demo-day'; look?: 'clean' | 'editorial' | 'brand' }
   // The founder's numbers: a north star and a few beside it. The readings live in `<workspace>/metrics/<id>.json`, owned by the server.
   | { kind: 'metrics'; title?: string; period?: 'week' | 'month' }
+  // The founder's cash and burn; the numbers live in `<workspace>/runway/<id>.json`, owned by the server.
+  | { kind: 'runway'; currency?: string }
   // Studios: the founder, or a wired person, says what they want and the server makes it. Only what was asked for lives
   // on the card; what came out lives in a sidecar the server owns.
   | { kind: 'imagegen'; prompt?: string; shape?: Shape }
@@ -123,7 +125,8 @@ export type Task = {
 export type BoardEvent = { tasks: Task[] } | { effect: ToolEffect; roomId: string };
 
 // One thing waiting for the founder. `lapsed`: the approval belonged to a turn that ended with the app; it can only be asked again.
-export type AttentionKind = 'approval' | 'run-approval' | 'proposed-task' | 'proposed-decision' | 'run-failed' | 'missed' | 'review-due' | 'proposed-source' | 'page-changed' | 'metric-alert' | 'proposed-target';
+export type AttentionKind = 'approval' | 'run-approval' | 'proposed-task' | 'proposed-decision' | 'run-failed' | 'missed' | 'review-due' | 'proposed-source' | 'page-changed'
+  | 'metric-alert' | 'proposed-target' | 'runway-low' | 'proposed-runway';
 export type Attention = {
   id: string; kind: AttentionKind; title: string; detail?: string; at: number; who?: string;
   roomId?: string; cardId?: string; taskId?: string; decisionId?: string; event?: ToolEvent; lapsed?: boolean;
