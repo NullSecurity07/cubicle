@@ -65,6 +65,9 @@
 .dash__group h4 { margin: 0 0 8px; display: flex; align-items: baseline; gap: 8px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
 .dash__group h4 > span { font-weight: 500; letter-spacing: 0.01em; text-transform: none; font-variant-numeric: tabular-nums; }
 .dash__head .dash__link { margin-right: -8px; }
+.dash__backup { margin: 0 0 8px; font-size: 12.5px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dash__backup span { color: var(--muted); }
+.dash__backup.is-late { color: var(--needs); }
 .dash__empty { margin: 0; padding: 12px 14px; border-radius: 11px; background: var(--dash-raise); font-size: 13px; line-height: 1.45; color: var(--muted); }
 .dash__pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 26px; }
 @container (max-width: 620px) { .dash__pair { grid-template-columns: minmax(0, 1fr); } }

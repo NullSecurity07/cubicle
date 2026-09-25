@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 
@@ -217,4 +217,57 @@ test('insights add up what the work came to, and say so kindly when there is not
   }
   await page.keyboard.press('Escape');
   await expect(insights).toBeHidden();
+});
+
+test('backups can be sent to a folder off this machine, and the dashboard says when the last one was made', async ({ page }) => {
+  // The dashboard asks its health rows again after a new backup, and those ask programs on the PATH for their
+  // versions: seconds each on a busy machine.
+  test.setTimeout(60_000);
+  const away = `${workspace()}-offsite`;
+  const folder = join(away, 'Cubicle backups');
+  try {
+    await bar(page, 'health');
+    const health = panel(page, 'Health');
+    await shown(page, 'Health');
+    const part = health.locator('.health__part').filter({ hasText: 'Backup' });
+    await part.getByRole('button', { name: 'Back up to…' }).click();
+    const where = part.getByRole('form', { name: 'Where backups go' });
+    // It starts from where they go now, and a folder inside the workspace it would copy is refused in words.
+    await expect(where.getByLabel('Backup folder')).toHaveValue(join(workspace(), 'backups'));
+    await where.getByLabel('Backup folder').fill(join(workspace(), 'inside'));
+    await where.getByRole('button', { name: 'Use this folder' }).click();
+    await expect(part).toContainText('inside the workspace it would be copying');
+    await where.getByLabel('Backup folder').fill(folder);
+    await expect(part.locator('.msg--problem')).toBeHidden();
+    await page.screenshot({ path: 'test-results/shots/backup-to.png', clip: (await health.boundingBox())! });
+    await where.getByRole('button', { name: 'Use this folder' }).click();
+    await expect(where).toBeHidden();
+    await expect(part).toContainText(`They go to ${folder}`);
+    await expect(part).toContainText('Nothing has been backed up yet.');
+
+    await part.getByRole('button', { name: 'Back up now' }).click();
+    await expect(part.locator('.health__files li').first()).toContainText(/^cubicle-\d{4}-\d{2}-\d{2}-\d{4}\.tar\.gz/, { timeout: 20_000 });
+    expect((await readdir(folder)).filter((name) => name.endsWith('.tar.gz'))).toHaveLength(1);
+    // The folder is written down where the app reads it next time it starts.
+    expect(await readFile(join(workspace(), '.env'), 'utf8')).toContain(`STAGE_BACKUP_DIR='${folder}'`);
+    await page.keyboard.press('Escape');
+    await expect(health).toBeHidden();
+
+    await bar(page, 'dashboard');
+    const today = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    const line = page.locator('.dash__backup');
+    await expect(line).toContainText(`Last backup ${today}`);
+    await expect(line).toContainText(`to ${folder}`);
+    await expect(line).not.toHaveClass(/is-late/);
+    // The Backup row under it is asked again once the dashboard sees a new backup, and says the same.
+    await expect(page.locator('.dash__health li').filter({ hasText: 'Backup' })).toContainText('the newest made today', { timeout: 30_000 });
+    await line.scrollIntoViewIfNeeded();
+    await line.locator('xpath=..').screenshot({ path: 'test-results/shots/dashboard-last-backup.png' });
+    await page.keyboard.press('Escape');
+  } finally {
+    // Back to the default folder, from the page: only the app's own window may write .env.
+    await page.goto('/');
+    await page.evaluate(() => fetch('/api/keys-file/STAGE_BACKUP_DIR', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ value: '' }) }));
+    await rm(away, { recursive: true, force: true });
+  }
 });

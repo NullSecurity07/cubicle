@@ -295,6 +295,12 @@ export function Dashboard() {
 
               <div className="dash__group">
                 <div className="dash__head"><h4>Health</h4><button type="button" className="dash__link" onClick={() => panel('health')}>Open Health</button></div>
+                {board.backup && (
+                  <p className={`dash__backup${!board.backup.at || Date.now() - board.backup.at > 7 * 86_400_000 ? ' is-late' : ''}`} title={board.backup.dir}>
+                    {board.backup.at ? `Last backup ${new Date(board.backup.at).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}` : 'Nothing backed up yet'}
+                    <span> · to {board.backup.dir}</span>
+                  </p>
+                )}
                 {board.health.length ? (
                   <ul className="dash__health">
                     {board.health.map((one) => (

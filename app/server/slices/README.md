@@ -42,3 +42,5 @@ Set in the environment of a check or a test run, beside the other `STAGE_*` swit
 - `STAGE_FAKE_TELEGRAM=0` — turns off the stand-in Telegram that the reach slice uses in fake mode, for a check that
   wants no phone at all.
 - `STAGE_BACKUP_DIR` — where backups go. In fake mode they go beside the workspace unless this is set.
+- `STAGE_ENV_FILE` — the `.env` file the Keys panel and "Back up to…" write. The repository root's `.env` by
+  default, and `.env` beside the workspace in fake mode, so a check run never writes into the founder's own keys.

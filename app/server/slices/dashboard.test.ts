@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, utimes, writeFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -104,6 +104,24 @@ async function setup() {
 }
 
 describe('the dashboard', () => {
+  it('says when the newest backup was made, from the folder backups go to now', async () => {
+    expect((await (await setup()).get()).body.backup).toEqual({ at: null, dir: expect.stringMatching(/backups$/) });
+    const { get, workspace } = await setup();
+    await mkdir(join(workspace, 'backups'), { recursive: true });
+    await writeFile(join(workspace, 'backups', 'cubicle-2026-09-24-0900.tar.gz'), 'x');
+    await utimes(join(workspace, 'backups', 'cubicle-2026-09-24-0900.tar.gz'), NOW / 1000, NOW / 1000);
+    expect((await get()).body.backup).toEqual({ at: NOW, dir: join(workspace, 'backups') });
+  });
+
+  it('asks its Backup health row again once a backup lands, whatever the health it already held', { timeout: 60_000 }, async () => {
+    const { get, workspace } = await setup();
+    const row = async () => (await get()).body.health.find((one) => one.name === 'Backup');
+    await expect.poll(row, { timeout: 30_000 }).toMatchObject({ ok: false });
+    await mkdir(join(workspace, 'backups'), { recursive: true });
+    await writeFile(join(workspace, 'backups', 'cubicle-2026-09-25-0900.tar.gz'), 'x');
+    await expect.poll(async () => (await row())?.detail, { timeout: 30_000, interval: 200 }).toMatch(/1 kept in .*the newest made/);
+  });
+
   it('reads the founder\'s day, each row carrying where it lives', async () => {
     const { get, running, due } = await setup();
     const { handled, body } = await get();
