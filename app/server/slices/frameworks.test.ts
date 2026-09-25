@@ -16,8 +16,8 @@ import slice from './frameworks.ts';
 const root = resolve(import.meta.dirname, '../../..');
 const BUILT_IN = 'startup-evaluation';
 const NOTE = 'evaluating-a-startup-idea-first-time-founder-notes';
-const BUILT_INS = ['due-diligence', 'launch-team', 'pitch-practice', BUILT_IN];
-const NOTES = ['documents-that-moved-capital', NOTE, 'linkedin-craft', 'reading-a-company-from-outside', 'where-to-post-your-startup'];
+const BUILT_INS = ['due-diligence', 'launch-team', 'linkedin-content-system', 'pitch-practice', BUILT_IN];
+const NOTES = ['documents-that-moved-capital', NOTE, 'linkedin-craft', 'linkedin-founder-led-content-system-notes-v2', 'reading-a-company-from-outside', 'where-to-post-your-startup'];
 
 // Everything the frameworks extra reaches for: a workspace, the stage as it is, and the two http helpers.
 async function setup() {

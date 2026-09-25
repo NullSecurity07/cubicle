@@ -109,9 +109,14 @@ const loadOne = async (dir: string) => JSON.parse(await readFile(resolve(shelf, 
 type Box = { x: number; y: number; w: number; h: number };
 const overlap = (one: Box, other: Box) => one.x < other.x + other.w && other.x < one.x + one.w && one.y < other.y + other.h && other.y < one.y + one.h;
 
+// The teams on the shelf, in folder order. A folder added without being named here is a team nobody decided to ship.
+const SHIPPED = ['due-diligence', 'launch-team', 'linkedin-content-system', 'pitch-practice', 'startup-evaluation'];
+// The teams written after the eval runner stopped offering tools, held to the same rule as the three that lean on them.
+const NO_TOOL_CASES = ['launch-team', 'pitch-practice', 'due-diligence', 'linkedin-content-system'];
+
 describe('every built-in framework', () => {
-  it('ships the four teams', async () => {
-    expect(await builtIns()).toEqual(['due-diligence', 'launch-team', 'pitch-practice', 'startup-evaluation']);
+  it('ships every team on the shelf', async () => {
+    expect(await builtIns()).toEqual(SHIPPED);
   });
 
   it('is named by its folder, and gives every person a name, a colour and a brief the forge would accept', async () => {
@@ -184,7 +189,7 @@ describe('every built-in framework', () => {
   // that lean on tools test the rules that hold without them: asking first, refusing, never inventing, the shape.
   it('asks nothing of the three tool-using teams that only a tool could do, one case per person', async () => {
     const needsTool = /search_source|web_search|web_fetch|read_youtube|read_reddit|read_feed|\bsearches\b|\bopens? the\b|writes? .* into the .* doc|each with its link|ends with a link|linked\)/i;
-    for (const dir of ['launch-team', 'pitch-practice', 'due-diligence']) {
+    for (const dir of NO_TOOL_CASES) {
       const framework = await loadOne(dir);
       for (const held of framework.dataset) expect(held.rubric ?? '', `${dir}: ${held.id}`).not.toMatch(needsTool);
       for (const room of framework.rooms) expect(framework.dataset.filter((held) => held.keys.includes(room.key)), `${dir}: ${room.key}`).toHaveLength(1);
@@ -281,5 +286,53 @@ describe('due diligence', () => {
     for (const pair of ['writer>brief', 'writer>profiler', 'writer>people', 'writer>risks', 'profiler>browser', 'risks>browser']) expect(wired.has(pair), pair).toBe(true);
     expect(wired.has('people>brief')).toBe(false);
     expect(framework.dataset.find((held) => held.keys.includes('writer'))?.rubric).toContain('Refuses');
+  });
+});
+
+const wiresOf = (framework: Framework) => new Set(framework.wires.map((wire) => `${wire.from}>${wire.to}`));
+
+describe('the LinkedIn content system', () => {
+  const NOTE = 'LinkedIn Founder-Led Content System — Notes v2';
+
+  it('researches, writes, distributes, keeps score and follows up, and says so in one line', async () => {
+    const framework = await loadOne('linkedin-content-system');
+    expect(framework.rooms.map((room) => room.role)).toEqual(['Buyer researcher', 'Post writer', 'Distributor', 'Scorekeeper', 'Outbound']);
+    expect(sizeLine(framework)).toBe('5 people · 5 docs · 1 sticky note · 1 note · 1 browser · 1 lead list · 1 task board');
+    expect(framework.docs.map((doc) => doc.title)).toEqual(['ICP worksheet', 'Content calendar', 'Posts', 'Weekly scorecard', 'DM drafts']);
+    const across = framework.rooms.map((room) => framework.layout[room.key].x);
+    expect([...across].sort((one, two) => one - two)).toEqual(across);
+    const linkedin = framework.cards.find((card) => card.kind === 'browser');
+    expect(linkedin && 'app' in linkedin && linkedin.app?.key).toBe('linkedin');
+    expect(framework.docs[3].text).toContain('| Week | Posts | Impressions | ICP engagers | Warm convos | Meetings |');
+    for (const day of ['Mon: Visibility', 'Tue: Trust', 'Wed: Visibility', 'Thu: Trust', 'Fri: Conversion']) expect(framework.docs[2].text).toContain(day);
+  });
+
+  it('works from the owner\'s own sections, and nobody but the founder posts, connects or sends', async () => {
+    const [researcher, writer, distributor, scorekeeper, outbound] = (await loadOne('linkedin-content-system')).rooms.map((room) => room.brief);
+    for (const brief of [researcher, writer, distributor, scorekeeper, outbound]) expect(brief).toContain(NOTE);
+    expect(researcher).toContain('1. Buyer research');
+    expect(researcher).toContain('ask_founder');
+    expect(researcher).toContain('never fill a [ ___ ] blank with a guess');
+    for (const words of ['CPIO', 'Hook patterns', '4. Pre-publishing checklist', 'linkedin-post', 'hook-extract', 'humanize-draft', 'You never post', 'first comment']) expect(writer).toContain(words);
+    for (const words of ['The three moves', 'linkedin-comment', 'linkedin-reply', 'never comment, connect, like, message or withdraw', 'ceiling']) expect(distributor).toContain(words);
+    expect(scorekeeper.startsWith('Before anything else')).toBe(true);
+    for (const words of ['Never estimate', 'ICP engagers', 'four things per post', 'four weeks']) expect(scorekeeper).toContain(words);
+    for (const words of ['The soft DM', 'add_lead', 'note_lead', 'icp-fit', 'no link, no calendar', 'You never send']) expect(outbound).toContain(words);
+  });
+
+  it('wires the LinkedIn card only to those who read it, the leads only to outbound, and the board to the two who plan the week', async () => {
+    const framework = await loadOne('linkedin-content-system');
+    const wired = wiresOf(framework);
+    for (const room of framework.rooms) for (const pair of [`who>${room.key}`, `reading>${room.key}`]) expect(wired.has(pair), pair).toBe(true);
+    for (const pair of ['researcher>icp', 'researcher>linkedin', 'writer>posts', 'writer>calendar', 'writer>board', 'distributor>calendar', 'distributor>linkedin',
+      'scorekeeper>scorecard', 'scorekeeper>board', 'scorekeeper>writer', 'outbound>dms', 'outbound>leads', 'outbound>icp']) expect(wired.has(pair), pair).toBe(true);
+    expect([...wired].filter((pair) => pair.endsWith('>leads'))).toEqual(['outbound>leads']);
+    expect(wired.has('writer>linkedin')).toBe(false);
+  });
+
+  it('keeps the owner\'s notes word for word', async () => {
+    const words = await readFile(resolve(shelf, 'linkedin-content-system', 'notes', 'linkedin-content-system.md'), 'utf8');
+    expect(titleOfNote('linkedin-content-system.md', words)).toBe(NOTE);
+    for (const heading of ['## 1. Buyer research', '## 3. Writing a post — the CPIO framework', '## 4. Pre-publishing checklist', '## 7. Warm outbound', '## 10. Weekly operating rhythm']) expect(words).toContain(heading);
   });
 });
