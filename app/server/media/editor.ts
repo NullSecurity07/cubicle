@@ -343,3 +343,38 @@ export function checkCut(shots: Shot[], scenes: Scene[], moving: boolean[] = [])
   }
   return notes;
 }
+
+// The scenes of a film as takes on the film's one clock. `words` are already on that clock (`sceneClock` in
+// `timings.ts` put a silence into the reading for every wordless scene), so a spoken scene runs from a breath before
+// its first word to a beat after its last, and a wordless one takes its own `least[index]` seconds from where the
+// scene before it ended — which is exactly the silence the reading was given for it. Nothing here moves a take off
+// its words any more: a scene the cut shifted without the voice is how captions ended up under the wrong picture.
+//
+// The takes are laid end to end, with no gap between one and the next, because the film counts each shot's start by
+// adding up the lengths before it. A gap here would be time the captions knew about and the pictures did not.
+export function takesOf(scenes: Scene[], spans: { from: number; to: number }[], words: Word[],
+  opts: { lead: number; tail: number; min: number; floor: number; least: number[]; moving?: boolean[] }): Take[] {
+  const takes: Take[] = scenes.map((scene, index): Take => {
+    const span = spans[index];
+    const spoken = words.length && span && span.to > span.from && span.to <= words.length
+      ? { from: words[span.from].at - opts.lead * 0.5, to: words[span.to - 1].at + words[span.to - 1].seconds + opts.tail * 0.5 }
+      : null;
+    return { scene, index, from: spoken?.from ?? 0, to: spoken?.to ?? 0, moving: !!opts.moving?.[index], least: spoken ? 0 : opts.least[index] };
+  });
+  for (const one of takes) {
+    if (one.to > one.from) continue;
+    one.from = takes[one.index - 1]?.to ?? 0;
+    one.to = one.from + (one.least || opts.floor);
+  }
+  // Nothing may start before the one before it ended, whatever the measurement said.
+  for (let index = 1; index < takes.length; index += 1) {
+    takes[index].from = Math.max(takes[index].from, takes[index - 1].to);
+    takes[index].to = Math.max(takes[index].to, takes[index].from + opts.min);
+  }
+  if (takes.length) takes[0].from = 0;
+  // …and nothing is left between two takes: the one before holds until the next arrives.
+  for (let index = 1; index < takes.length; index += 1) {
+    if (takes[index].from > takes[index - 1].to) takes[index - 1].to = takes[index].from;
+  }
+  return takes;
+}

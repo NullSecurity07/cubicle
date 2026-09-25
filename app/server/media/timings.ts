@@ -206,3 +206,91 @@ export async function timeWords(bin: string | null, wav: string | null, parts: P
 
 const run = (command: string, args: string[], at: string, signal?: AbortSignal) =>
   runLines(command, args, { cwd: at, env: { ...process.env, NO_COLOR: '1' }, signal });
+
+// --- one clock for the voice and the cut ---------------------------------------------------------------------------
+//
+// The film is read in one go and cut against that reading, so a scene with nothing said over it has no place on the
+// voice's clock. The cut used to make room for one by pushing every later scene along — and left the voice where it
+// was. The site's hero film opened on a wordless title card: the voice started under it anyway, the next scene's
+// captions played over the title, and the whole film ran three seconds behind its own narration, so the close's line
+// was said over the picture before it and the close itself sat there in silence.
+//
+// So the reading is given the silence too. Every wordless scene becomes a hush put into the recording, as long as the
+// scene is, at the breath between the line before it and the line after it; the words after it move along by the
+// same amount. After this the recording, the words, the cut and the captions all count one clock, and a caption can
+// only ever land on the scene whose line is being read.
+
+// Which words of the reading belong to each scene: the scene's line is `from` up to (not including) `to`.
+export type Span = { from: number; to: number };
+// A silence to put into the recording `at` seconds into it, `seconds` long.
+export type Hush = { at: number; seconds: number };
+
+const ms = (value: number) => Math.round(value * 1000) / 1000;
+
+// `words` are on the recording's own clock (a word's `at` is where it is in the file). What comes back is the same
+// words on the film's clock, and the hushes that turn the recording into one that plays on that clock from 0:
+//
+//   - a breath of `lead` before the first word, the same breath every scene is given before its line;
+//   - for each scene with no line, its own `quiet[index]` seconds of silence, placed where the scene falls, so the
+//     line after it starts a breath after the scene has ended — never under it.
+//
+// A wordless scene after the last line needs no hush: nothing is said after it, and the film simply runs on.
+export function sceneClock(words: Word[], spans: Span[], quiet: number[], pace: { lead: number; tail: number; min?: number }): { words: Word[]; hushes: Hush[] } {
+  if (!words.length) return { words: [], hushes: [] };
+  const out = words.map((one) => ({ ...one }));
+  const hushes: Hush[] = [];
+  let shift = 0;
+  const hush = (at: number, seconds: number) => {
+    if (seconds <= 0.001) return;
+    const same = hushes.find((one) => Math.abs(one.at - at) < 0.0005);
+    if (same) same.seconds = ms(same.seconds + seconds);
+    else hushes.push({ at: ms(at), seconds: ms(seconds) });
+    shift += seconds;
+  };
+  hush(0, pace.lead);
+  // Where the last scene placed so far ends, on the film's clock: a spoken scene a short beat after its last word, as
+  // the cut has it (`takesOf`), and a wordless one when its own seconds are up.
+  let end = 0;
+  for (const [index, span] of spans.entries()) {
+    if (span.to > span.from) {
+      for (let at = span.from; at < span.to && at < words.length; at += 1) out[at] = { ...words[at], at: ms(words[at].at + shift) };
+      const last = out[Math.min(span.to, words.length) - 1];
+      const from = index ? Math.max(end, out[span.from].at - pace.lead * 0.5) : 0;
+      end = Math.max(last.at + last.seconds + pace.tail * 0.5, from + (pace.min ?? 0));
+      continue;
+    }
+    end += Math.max(pace.min ?? 0, quiet[index] ?? 0);
+    const next = span.from;
+    if (next >= words.length) continue;
+    // The next line starts a breath after this scene is over, wherever the reading had it.
+    const wanted = end + pace.lead;
+    const now = words[next].at + shift;
+    if (wanted <= now) continue;
+    // In the breath between the two lines, so no word is cut in half by the silence.
+    const at = next === 0 ? 0 : (words[next - 1].at + words[next - 1].seconds + words[next].at) / 2;
+    hush(at, wanted - now);
+  }
+  // Words no span reached (a script longer than its scenes) still move with the last hush.
+  const placed = new Set(spans.flatMap((span) => Array.from({ length: Math.max(0, span.to - span.from) }, (_one, at) => span.from + at)));
+  for (let at = 0; at < words.length; at += 1) if (!placed.has(at)) out[at] = { ...words[at], at: ms(words[at].at + shift) };
+  return { words: out, hushes: hushes.sort((one, two) => one.at - two.at) };
+}
+
+// The recording with its hushes in it, as samples: what plays from the film's 0 on the film's own clock.
+export function hushPcm<P extends { rate: number; samples: Float32Array }>(pcm: P, hushes: Hush[]): P {
+  if (!hushes.length) return pcm;
+  const cuts = [...hushes].sort((one, two) => one.at - two.at);
+  const extra = cuts.reduce((sum, one) => sum + Math.round(one.seconds * pcm.rate), 0);
+  const samples = new Float32Array(pcm.samples.length + extra);
+  let read = 0;
+  let write = 0;
+  for (const cut of cuts) {
+    const upTo = Math.min(pcm.samples.length, Math.max(read, Math.round(cut.at * pcm.rate)));
+    samples.set(pcm.samples.subarray(read, upTo), write);
+    write += upTo - read;
+    read = upTo;
+    write += Math.round(cut.seconds * pcm.rate);
+  }
+  samples.set(pcm.samples.subarray(read), write);
+  return { ...pcm, samples };
+}
