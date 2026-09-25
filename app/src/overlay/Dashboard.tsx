@@ -30,6 +30,7 @@ const plural = (count: number, one: string, many = `${one}s`) => `${count} ${cou
 const WHAT: Record<DashNeed['kind'], string> = {
   approval: 'needs your OK', 'run-approval': 'needs your OK on a task', 'proposed-task': 'suggests a task', 'proposed-decision': 'asks for a decision',
   'run-failed': 'could not finish', missed: 'missed a repeat', 'review-due': 'Decision to look at again', 'proposed-source': 'suggests a website', 'page-changed': 'saw a watched page change',
+  'runway-low': 'Runway is short', 'proposed-runway': 'suggests a change to the runway',
 };
 const KIND_WORD: Record<DashMedia['kind'], string> = { picture: 'Picture', voice: 'Voice', film: 'Film' };
 

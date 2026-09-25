@@ -18,6 +18,7 @@ const VERBS: Record<string, [doing: string, done: string]> = {
   map_folder: ['Mapping the folder', 'Mapped the folder'], ask_graph: ['Asking the map:', 'Asked the map:'], affected_by: ['Tracing what depends on', 'Traced what depends on'],
   add_lead: ['Adding lead', 'Added lead'], score_lead: ['Scoring', 'Scored'], note_lead: ['Noting on', 'Noted on'], move_lead: ['Moving', 'Moved'],
   list_leads: ['Reading', 'Read'], find_leads: ['Finding', 'Found'],
+  read_runway: ['Reading the runway', 'Read the runway'], propose_flow: ['Suggesting a flow', 'Suggested a flow'], propose_scenario: ['Suggesting a scenario', 'Suggested a scenario'],
   read_youtube: ['Reading the video', 'Read the video'], read_feed: ['Reading the feed of', 'Read the feed of'], read_reddit: ['Reading Reddit:', 'Read Reddit:'],
   crawl_site: ['Reading the site', 'Read the site'], watch_page: ['Watching', 'Watching'], list_watches: ['Listing', 'Listed'], stop_watching: ['Stopping the watch on', 'Stopped watching'],
 };
