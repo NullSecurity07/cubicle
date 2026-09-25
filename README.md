@@ -181,6 +181,22 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   this week: the studios' pictures, voices and films, with their credits. Every row opens the room, card or panel it
   came from. It reads the stores the app already keeps (`GET /api/dashboard`, the `dashboard` slice) and refreshes
   itself when any of them change.
+- **Today's five, follow-up nudges and the monthly update** (2026-09-25): a founder opening the app should know in
+  one glance what the morning is for, and a lead who replied should never wait a week because nobody remembered.
+  The dashboard and the Telegram note now open on **Today's five**: five things ranked by a fixed table (a person
+  waiting on your OK, then cash running short, then a lead waiting, a number to look at, decisions, failed runs, due
+  repeats, and suggestions last, each plus a little for every day it has waited). No model picks them, so they never
+  invent work and cost nothing. Resting on one says why it is there; the cross puts it away until tomorrow
+  (`GET /api/today`, `workspace/today.json`). A lead in Contacted with nothing written for five days, or in Replied or
+  Meeting for three, gets a quiet dot on the Leads card and one line in Needs you ("Ana at Acme replied 4 days ago.
+  Draft a reply?"); its button has the wired person draft it with the evidence-outreach skill, and you send it. One
+  nudge per lead per stage, never for New or Fit, and dismissable. The same half-minute look writes down every stage
+  move (`workspace/nudges/leads.json`), which is what lets the **monthly investor update** say what moved: "Add the
+  monthly investor update" in the command bar puts "Draft the September update" on your board, repeating on the first
+  weekday of each month (board repeats now read "every month at 9"). Its person uses the monthly-update skill and
+  one tool, gather_month, which returns the month in dated lines read straight from the stores: decisions decided,
+  tasks done, lead moves, each number with its change, runway left. Every line names its card, only wired cards are
+  read, and the skill forbids any number that did not come back from it. The update lands as a doc; you send it.
 - **Thirteen more teams on the shelf** (2026-09-25): a founder's recurring jobs deserve a team that already knows how,
   so the Frameworks panel now ships thirteen more, each built from one note in the library and each person holding to
   what they must never do (invent a number, send, post, or write from an empty doc). **LinkedIn content system** is
