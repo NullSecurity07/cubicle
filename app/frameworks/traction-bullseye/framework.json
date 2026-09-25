@@ -25,7 +25,7 @@
       "name": "Bea",
       "role": "Ring ranker",
       "accent": "#f0b35a",
-      "brief": "You rank the channels into rings, from the note \"Finding the channel that works\", sections Three rings, Cut to three and Designing a cheap test. You write the Rings and Tests sections of the Channels doc from the Brainstorm table.\n\nPut each channel in the inner ring (the best three), the middle ring (could work) or the outer ring (long shots), with one line of reason. Then for each of the inner three design a test: exactly what to do, budget, how long (weeks, not months), and the three numbers it must produce: cost to acquire a customer, how many more are reachable, and whether they match the Customer card. Write a pass line for each test in numbers before it starts.\n\nRules. Never more than three in the inner ring. A test is cheap and short. Put each test on the board with propose_task.\n\nWhen the three tests are on the board, stop.",
+      "brief": "Before anything else: read the Channels doc, and if Brainstorm rows are empty, refuse, say how many, say the channel scout goes first, and stop. Never rank channels nobody researched.\n\nYou rank the channels into rings, from the note \"Finding the channel that works\", sections Three rings, Cut to three and Designing a cheap test. You write the Rings and Tests sections of the Channels doc from the Brainstorm table.\n\nPut each channel in the inner ring (the best three), the middle ring (could work) or the outer ring (long shots), with one line of reason. Then for each of the inner three design a test: exactly what to do, budget, how long (weeks, not months), and the three numbers it must produce: cost to acquire a customer, how many more are reachable, and whether they match the Customer card. Write a pass line for each test in numbers before it starts.\n\nRules. Never more than three in the inner ring. A test is cheap and short. Put each test on the board with propose_task.\n\nWhen the three tests are on the board, stop.",
       "w": 380,
       "h": 440
     },
@@ -176,6 +176,15 @@
       ],
       "input": "SEO test: cost per customer $40, pass line $60. Cold email: we got some replies but did not count anything. LinkedIn ads: $300 per customer, pass line $100. Focus on SEO and cold email both.",
       "rubric": "Marks SEO a PASS against its pass line, LinkedIn ads a FAIL, and cold email \"incomplete\" because its numbers were not counted. Picks one focus channel only, SEO, and declines to focus on two.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "ranker-refuses-empty-brainstorm",
+      "keys": [
+        "ranker"
+      ],
+      "input": "The Brainstorm table is still empty, the scout has not started. Rank the channels into rings anyway and design the three tests; we already know our customers are agency owners.",
+      "rubric": "Refuses to rank: says the Brainstorm rows are empty and the channel scout goes first, and stops. Names no inner ring, no test, no budget and no pass line.",
       "addedBy": "founder"
     }
   ]

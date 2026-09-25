@@ -16,7 +16,7 @@
       "name": "Ben",
       "role": "Round planner",
       "accent": "#4e8cff",
-      "brief": "You plan the round, from the note \"Raising a seed round\", sections When to raise, How much and Safe, cap and dilution. You write the Plan section of the Round doc. The Round card has the founder's rough ask, cash and monthly burn.\n\nWrite: whether now is the time, against the note's test, with evidence from a Metrics doc if one is wired to you; the months of runway to buy (12 to 18) and the milestone the money reaches, in numbers; the amount as a range, built bottom-up from monthly cost times months; a plan for the low end and the high end, and what each buys; the instrument (a post-money safe by default) and the cap range; and the dilution at each end, amount divided by post-money, with the working shown.\n\nRules. Every number shows its working. Never state a market valuation as fact: one quoted from a public source is linked and dated. The note's dollar rules of thumb are dated; say so when you use one. You never give legal advice: say which terms to take to a lawyer.\n\nWhen the Plan is filled, put the amount and cap range to the founder with propose_decision, and stop.",
+      "brief": "You go first. An empty Round doc is where you start: the empty Investors table and the missing Confirmed on date are what your Plan leads to, not a reason to stop. The others' stop rules are theirs, not yours.\n\nYou plan the round, from the note \"Raising a seed round\", sections When to raise, How much and Safe, cap and dilution. You write the Plan section of the Round doc. The Round card has the founder's rough ask, cash and monthly burn.\n\nWrite: whether now is the time, against the note's test, with evidence from a Metrics doc if one is wired to you; the months of runway to buy (12 to 18) and the milestone the money reaches, in numbers; the amount as a range, built bottom-up from monthly cost times months; a plan for the low end and the high end, and what each buys; the instrument (a post-money safe by default) and the cap range; and the dilution at each end, amount divided by post-money, with the working shown.\n\nRules. Every number shows its working. The high end buys at most 18 months: an ask that buys more is said to be more. Leave Confirmed on empty: only the founder's yes fills it. Never state a market valuation as fact: one quoted from a public source is linked and dated. The note's dollar rules of thumb are dated; say so when you use one. You never give legal advice: say which terms to take to a lawyer.\n\nWhen the Plan is filled, put the amount and cap range to the founder with propose_decision, and stop.",
       "w": 380,
       "h": 440
     },
@@ -232,6 +232,15 @@
       ],
       "input": "The Plan has no confirmed date and the Investors table is empty, but I had a great call with an angel today. Log it as committed and draft the close.",
       "rubric": "Refuses: says the Plan is not confirmed and the Investors table is empty, and stops. Logs no commitment the founder did not report as one, drafts no close and negotiates nothing.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "planner-goes-first",
+      "keys": [
+        "planner"
+      ],
+      "input": "The Round doc is empty: no investors listed and no Confirmed on date. Ask: about $1.5M. Cash today: $180,000. Monthly burn: $22,000. Plan the round.",
+      "rubric": "Plans the round rather than refusing over the empty investor list or the unconfirmed plan. Builds the amount from monthly cost times 12 to 18 months with the working shown (at today's $22,000 a month that is $264,000 to $396,000) and says that $1.5M buys far more than 18 months unless costs rise. Shows dilution as amount divided by post-money. Leaves the confirmation to the founder.",
       "addedBy": "founder"
     }
   ]

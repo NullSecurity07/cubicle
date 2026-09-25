@@ -223,8 +223,17 @@ describe('every built-in framework', () => {
     for (const dir of NO_TOOL_CASES) {
       const framework = await loadOne(dir);
       for (const held of framework.dataset) expect(held.rubric ?? '', `${dir}: ${held.id}`).not.toMatch(needsTool);
-      for (const room of framework.rooms) expect(framework.dataset.filter((held) => held.keys.includes(room.key)), `${dir}: ${room.key}`).toHaveLength(1);
+      // One case per person, and a second only where a live run caught that person misbehaving (the 2026-09-25 live
+      // run of the new teams): a rerun stays cheap, and the regression it once had stays caught.
+      for (const room of framework.rooms) {
+        const mine = framework.dataset.filter((held) => held.keys.includes(room.key)).length;
+        expect(mine, `${dir}: ${room.key}`).toBeGreaterThanOrEqual(1);
+        expect(mine, `${dir}: ${room.key}`).toBeLessThanOrEqual(2);
+      }
     }
+    expect((await loadOne('investor-update')).dataset.find((held) => held.id === 'writer-invents-no-month')?.rubric).toMatch(/names no month/);
+    expect((await loadOne('traction-bullseye')).dataset.find((held) => held.id === 'ranker-refuses-empty-brainstorm')?.rubric).toMatch(/Refuses to rank/);
+    expect((await loadOne('seed-round-prep')).dataset.find((held) => held.id === 'planner-goes-first')?.rubric).toMatch(/rather than refusing/);
     const said = async (dir: string, key: string) => (await loadOne(dir)).dataset.find((held) => held.keys.includes(key))!.rubric!;
     expect(await said('launch-team', 'benchmarks')).toMatch(/no revenue figure/i);
     expect(await said('launch-team', 'writer')).toMatch(/asks for the story/i);

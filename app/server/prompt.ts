@@ -187,7 +187,7 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
     memory && (memory.notes.trim() || memory.summary.trim())
       ? `Your memory (the founder can read and edit it).${memory.notes.trim() ? `\nNotes you kept:\n${memory.notes.trim()}` : ''}${memory.summary.trim() ? `\nEarlier conversation, in short:\n${memory.summary.trim()}` : ''}`
       : '',
-    team.length ? `Colleagues connected to your room. Ask one with ask_person when their field decides the answer; say in your reply what they told you.\n${team.join('\n')}` : '',
+    team.length ? `Colleagues connected to your room, each with their own brief: its rules and stop conditions bind them, never you. Ask one with ask_person when their field decides the answer; say in your reply what they told you.\n${team.join('\n')}` : '',
     // The day goes last of all, among the things that change. It turns over once every twenty-four hours, so at the
     // head it would throw away the whole cached prefix each morning for nothing; here it only costs what already
     // changes every turn. Last is also the strongest place left: a small model reads the end of its instructions
