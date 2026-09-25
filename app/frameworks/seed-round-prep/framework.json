@@ -2,6 +2,7 @@
   "id": "seed-round-prep",
   "name": "Seed round prep",
   "intent": "Decide how much to raise and on what terms, build the investor list, the one-page summary and a lean data room, and run the process to a close.",
+  "stage": "Raise",
   "version": 1,
   "builtAt": 1790294400000,
   "notes": [

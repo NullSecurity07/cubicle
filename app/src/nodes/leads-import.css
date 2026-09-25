@@ -1,0 +1,21 @@
+/* Import over the whole Leads card: the paste on top, what it will do under it, one press at the foot. It rises the
+   way the lead view slides in, so it reads as a sheet on the card rather than a new place. */
+
+.leadsimport { position: absolute; inset: 0; z-index: 3; display: flex; flex-direction: column; border-radius: 13px; background: #0e0f13; box-shadow: 0 0 0 1px var(--card-border) inset; cursor: auto; animation: leadsimport-in 0.22s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.leadsimport__body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 9px; padding: 12px 14px; scrollbar-width: thin; }
+.leadsimport__body textarea { flex: 1 0 96px; min-height: 96px; box-sizing: border-box; width: 100%; border: 1px solid var(--card-border); border-radius: 9px; padding: 8px 10px; outline: 0; resize: none; background: rgba(255, 255, 255, 0.05); color: var(--text); font: 12px/1.5 ui-monospace, 'SF Mono', Menlo, monospace; transition: border-color 0.15s; }
+.leadsimport__body textarea:focus { border-color: var(--focus); }
+.leadsimport__note { margin: 0; font-size: 12px; line-height: 1.45; color: var(--muted); }
+.leadsimport__note.is-problem { color: var(--needs); }
+.leadsimport__done { margin: 0; padding: 8px 11px; border-radius: 9px; font-size: 12.5px; color: var(--text); background: color-mix(in srgb, var(--ok) 16%, transparent); }
+.leadsimport__rows { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 12px; }
+.leadsimport__rows th { padding: 0 8px 4px 0; text-align: left; font-size: 10.5px; font-weight: 650; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+.leadsimport__rows th:last-child, .leadsimport__rows td:last-child { width: 64px; }
+.leadsimport__rows td { padding: 5px 8px 5px 0; border-top: 1px solid var(--card-border); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.leadsimport__yes { display: inline-block; padding: 0 5px; border-radius: 4px; font-size: 10.5px; font-weight: 700; color: #fff; background: #0a66c2; }
+.leads__import { flex: none; border: 0; border-radius: 7px; padding: 3px 10px; font: inherit; font-size: 11.5px; font-weight: 550; color: var(--muted); background: rgba(255, 255, 255, 0.07); cursor: pointer; transition: background 0.15s, color 0.15s; }
+.leads__import:hover { color: var(--text); background: rgba(255, 255, 255, 0.13); }
+.leads.is-dropping { outline: 2px dashed var(--focus); outline-offset: -6px; border-radius: 12px; }
+
+@keyframes leadsimport-in { from { opacity: 0; transform: translateY(8px); } }
+@media (prefers-reduced-motion: reduce) { .leadsimport { animation: none; } }

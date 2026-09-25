@@ -99,6 +99,22 @@ describe('the built-in frameworks', () => {
     expect(await library.list()).toHaveLength(1);
   });
 
+  it('puts a copy made before there were shelves on its shelf, and changes nothing else of it', async () => {
+    const { workspace, frameworks, library } = await setup();
+    const from = await builtIns();
+    await copyBuiltIns(from, frameworks, library);
+    await frameworks.save(team({ intent: 'Changed by the founder.' }));
+    await writeFile(join(from, 'pressure-test', 'framework.json'), JSON.stringify(team({ stage: 'Find out', intent: 'Shipped words.' }), null, 2));
+    await copyBuiltIns(from, frameworks, library);
+    const held = JSON.parse(await readFile(join(workspace, 'frameworks', 'pressure-test', 'framework.json'), 'utf8')) as Framework;
+    expect(held.stage).toBe('Find out');
+    expect(held.intent).toBe('Changed by the founder.');
+    // A shelf the founder chose is theirs as well.
+    await frameworks.save({ ...held, stage: 'Raise' });
+    await copyBuiltIns(from, frameworks, library);
+    expect((await frameworks.read('pressure-test'))?.stage).toBe('Raise');
+  });
+
   it('leaves a note the founder already has under that title alone', async () => {
     const { frameworks, library } = await setup();
     await library.add({ title: 'Evaluating an idea', text: 'My own words.', source: 'paste' });
@@ -140,6 +156,19 @@ describe('a built-in team that changed since the workspace copied it', () => {
     expect((await frameworks.read('pressure-test'))?.shippedHash).toMatch(/^[0-9a-f]{16}$/);
     expect(await trashed(workspace)).toHaveLength(1);
     expect(await updatesOf(await movedOn(), frameworks)).toEqual(new Set());
+  });
+
+  it('does not count a shelf as a change: a copy from before shelves is still untouched, and gets its shelf', async () => {
+    const { frameworks, library } = await setup();
+    const dir = await builtIns();
+    const shipped = team({ stage: 'Find out' });
+    await writeFile(join(dir, 'pressure-test', 'framework.json'), JSON.stringify(shipped, null, 2));
+    await writeFile(join(dir, 'shipped.json'), JSON.stringify({ 'pressure-test': [contentHash(shipped as unknown as Record<string, unknown>)] }));
+    expect(contentHash(team() as unknown as Record<string, unknown>)).toBe(contentHash(shipped as unknown as Record<string, unknown>));
+    await frameworks.save(team());
+    expect(await copyBuiltIns(dir, frameworks, library)).toEqual([]);
+    expect((await frameworks.read('pressure-test'))?.stage).toBe('Find out');
+    expect(await updatesOf(dir, frameworks)).toEqual(new Set());
   });
 
   it('keeps a copy the founder edited and marks it as having an update', async () => {

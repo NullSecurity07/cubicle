@@ -2,6 +2,7 @@
   "id": "weekly-metrics",
   "name": "Weekly metrics",
   "intent": "Agree four or five written metric definitions, one primary KPI with a weekly goal, and a retention view, then review them every week without changing the definitions.",
+  "stage": "Run the company",
   "version": 1,
   "builtAt": 1790294400000,
   "notes": [

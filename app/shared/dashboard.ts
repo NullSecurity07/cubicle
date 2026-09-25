@@ -57,6 +57,8 @@ export type DashMedia = {
 
 export type Dashboard = {
   at: number; day: DashDay; tokens: DashTokens; health: DashCheck[]; teams: DashTeam[]; skills: DashSkills; media: DashMedia[];
+  // The newest backup (null: none yet) and the folder they go to.
+  backup?: { at: number | null; dir: string };
 };
 
 // What the live feed says when anything under the dashboard moved. The open panel reads itself again.

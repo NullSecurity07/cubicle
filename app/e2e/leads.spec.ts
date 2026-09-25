@@ -92,3 +92,56 @@ test('Draft first message asks the wired person for one', async ({ page }) => {
   expect(from).toBeGreaterThanOrEqual(0);
   for (const message of all.slice(from)) await page.request.delete(`/api/rooms/marketing/chat/${message.id}`);
 });
+
+test('a pasted spreadsheet becomes leads, read before it lands, and a dropped CSV file opens the same sheet', async ({ page }) => {
+  const card = node(page, ID);
+  await card.getByLabel('Lead name').fill('Grace Hopper');
+  await card.getByLabel('Company').fill('Navy');
+  await card.getByRole('button', { name: 'Add', exact: true }).click();
+  await expect(card.locator('.lead')).toHaveCount(1);
+
+  await card.getByRole('button', { name: 'Import', exact: true }).click();
+  const sheet = card.getByRole('dialog', { name: 'Import leads' });
+  await expect(sheet).toBeVisible();
+  // Columns named the way a CRM export names them, tabs as a spreadsheet copies them.
+  await sheet.getByLabel('Rows to import').fill([
+    'Full Name\tOrganisation\tWork Email\tLinkedIn Profile',
+    'Ada Lovelace\tAnalytical\tada@analytical.io\tlinkedin.com/in/ada',
+    'Grace Hopper\tNavy\t\t',
+    'Katherine Johnson\t\tkj@langley-research.org\t',
+    '\tNobody Inc\t\t',
+  ].join('\n'));
+  await expect(sheet).toContainText('Reads Name, Company, Email, LinkedIn.');
+  await expect(sheet).toContainText('1 row has no name and will be left out.');
+  // The company comes from a work address when the row has none.
+  await expect(sheet.locator('tbody tr')).toHaveCount(3);
+  await expect(sheet.locator('tbody tr').nth(2)).toContainText('Langley Research');
+  // The sheet rises in; the picture is taken once it has arrived.
+  await sheet.evaluate((element) => Promise.all(element.getAnimations().map((one) => one.finished)));
+  await page.screenshot({ path: 'test-results/shots/leads-import-preview.png', clip: (await card.boundingBox())! });
+  await sheet.getByRole('button', { name: 'Import 3 leads' }).click();
+  await expect(sheet.getByRole('status')).toHaveText('Added 2 leads, 1 already here, 1 skipped (row 5: no name).');
+  await sheet.getByRole('button', { name: 'Done' }).click();
+  await expect(sheet).toBeHidden();
+  await expect(card.locator('section[aria-label="New"] .lead')).toHaveCount(3);
+  await card.locator('.lead', { hasText: 'Ada Lovelace' }).click();
+  await expect(card.getByRole('dialog', { name: 'Ada Lovelace' }).getByRole('link', { name: 'LinkedIn' })).toHaveAttribute('href', 'https://linkedin.com/in/ada');
+  await card.getByLabel('Close lead').click();
+
+  // A file dropped anywhere on the card opens the sheet with its rows in it.
+  const drop = await page.evaluateHandle(() => {
+    const moving = new DataTransfer();
+    moving.items.add(new File(['name,company,email\nAlan Turing,Bletchley,alan@bletchley.uk\n'], 'contacts.csv', { type: 'text/csv' }));
+    return moving;
+  });
+  await card.locator('.leads__stages').dispatchEvent('dragover', { dataTransfer: drop });
+  await card.locator('.leads__stages').dispatchEvent('drop', { dataTransfer: drop });
+  await expect(sheet.getByLabel('Rows to import')).toHaveValue(/Alan Turing,Bletchley/);
+  await sheet.getByRole('button', { name: 'Import 1 lead' }).click();
+  await expect(sheet.getByRole('status')).toHaveText('Added 1 lead.');
+  // The focus is on Done once the rows are in, so Escape shuts the sheet from where the founder is.
+  await expect(sheet.getByRole('button', { name: 'Done' })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(sheet).toBeHidden();
+  await expect(card.locator('.lead')).toHaveCount(4);
+});

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { Case, Framework } from '../../shared/frameworks';
-import { sizeLine } from '../../shared/frameworks';
+import { matchesFramework, shelve, sizeLine } from '../../shared/frameworks';
 import { removeFramework, rerunEvals, saveFramework, takeFrameworkUpdate } from '../api';
 import { refreshFrameworks, useFrameworks, usePlaceFramework } from '../frameworks';
 import { useNotes } from '../library';
@@ -142,6 +142,7 @@ export function FrameworksPanel() {
   // The forge lives inside this panel rather than beside it in the dock: forging a team and keeping one are the same
   // shelf, and a founder who has just built a team is one press from placing it.
   const [forging, setForging] = useState(false);
+  const [query, setQuery] = useState('');
 
   async function put(framework: Framework) {
     try { setProblem(''); await saveFramework(framework.id, framework); await refreshFrameworks(); }
@@ -183,75 +184,88 @@ export function FrameworksPanel() {
     catch (error) { setProblem((error as Error).message); }
   }
 
+  // What the founder typed into the search, and the shelf it leaves: the four stages of a company in order, then
+  // everything else, each one only when something on it matches.
+  const shelves = shelve(frameworks.filter((framework) => matchesFramework(framework, query)));
+
+  // One team on the shelf: what it is for, what it puts on the stage, what it needs, and what can be done with it.
+  const row = (framework: Framework) => {
+    const missing = framework.notes.filter((note) => !notes.some((held) => held.id === note.id));
+    return (
+      <li key={framework.id} className="frameworks__one">
+        <div className="frameworks__head">
+          <BlocksIcon />
+          <div className="frameworks__what">
+            <b>{framework.name}</b>
+            {framework.intent && <p>{framework.intent}</p>}
+            <small className="frameworks__size">
+              {sizeLine(framework)}
+              <ScorePill framework={framework} notes={notes} models={models} />
+            </small>
+            {framework.notes.length > 0 && (
+              <small className={missing.length ? 'frameworks__needs is-missing' : 'frameworks__needs'}>
+                {missing.length
+                  ? `Add ${missing.map((note) => nameOfNote(note.id)).join(', ')} to your notes: its people read from it.`
+                  : `Built from ${framework.notes.map((note) => notes.find((held) => held.id === note.id)?.title ?? nameOfNote(note.id)).join(', ')}`}
+              </small>
+            )}
+          </div>
+          <button type="button" className="frameworks__place" disabled={busy === framework.id} onClick={() => void land(framework)}>Place</button>
+        </div>
+        {framework.update && (
+          <div className="frameworks__update">
+            <p><b>An update is available.</b> Your copy has changes of yours, so it was kept. Teams already on the stage keep their briefs either way.</p>
+            <button type="button" disabled={busy === framework.id} onClick={() => void take(framework)}>Take the update</button>
+          </div>
+        )}
+        <div className="frameworks__acts">
+          <button type="button" aria-expanded={open?.id === framework.id && open.what === 'cases'} onClick={() => setOpen(open?.id === framework.id && open.what === 'cases' ? null : { id: framework.id, what: 'cases' })}>
+            {framework.dataset.length === 1 ? '1 test case' : `${framework.dataset.length} test cases`}
+          </button>
+          {framework.rooms.length > 0 && (
+            <button type="button" aria-expanded={open?.id === framework.id && open.what === 'people'} onClick={() => setOpen(open?.id === framework.id && open.what === 'people' ? null : { id: framework.id, what: 'people' })}>
+              Briefs
+            </button>
+          )}
+          <button type="button" aria-expanded={open?.id === framework.id && open.what === 'runs'} onClick={() => setOpen(open?.id === framework.id && open.what === 'runs' ? null : { id: framework.id, what: 'runs' })}>
+            Runs
+          </button>
+          {framework.dataset.length > 0 && <button type="button" onClick={() => void score(framework)}>Rerun evals</button>}
+          {sure === framework.id ? (
+            <>
+              <span>Remove this team?</span>
+              <button type="button" onClick={() => void forget(framework)}>Remove</button>
+              <button type="button" onClick={() => setSure(null)}>Keep</button>
+            </>
+          ) : <button type="button" onClick={() => { setProblem(''); setSure(framework.id); }}>Remove</button>}
+        </div>
+        {open?.id === framework.id && open.what === 'cases' && <Cases framework={framework} onChanged={put} />}
+        {open?.id === framework.id && open.what === 'people' && <Briefs framework={framework} onSave={rewrite} />}
+        {open?.id === framework.id && open.what === 'runs' && <Runs framework={framework} watch={watch} onChanged={async () => { await refreshFrameworks(); }} />}
+      </li>
+    );
+  };
+
   return (
     <PanelShell name="frameworks" title="Frameworks" note="Teams that land ready to work">
       {forging ? <ForgeView onPlace={land} onBack={() => setForging(false)} /> : (
       <>
-      <div className="library__ways">
-        <button type="button" onClick={() => { setProblem(''); setForging(true); }}>Forge</button>
-        <span className="forge__hint">Build a team from your notes</span>
+      <div className="frameworks__top">
+        <input
+          type="search" className="frameworks__search" aria-label="Search frameworks" placeholder="Search teams by name or what they are for"
+          value={query} onChange={(event) => setQuery(event.target.value)} {...(query ? { 'data-holds-escape': '' } : {})}
+          onKeyDown={(event) => { if (pressed(event, 'cancel') && query) { event.stopPropagation(); setQuery(''); } }}
+        />
+        <button type="button" className="frameworks__forge" title="Build a team from your notes" onClick={() => { setProblem(''); setForging(true); }}>Forge</button>
       </div>
       {problem && <p className="msg--problem">{problem}</p>}
-      {frameworks.length === 0 ? <p className="library__empty">Nothing here yet. Select a few cards on the stage and save them as a framework, and they will come back in one press.</p> : (
-        <ul className="frameworks__list">
-          {frameworks.map((framework) => {
-            const missing = framework.notes.filter((note) => !notes.some((held) => held.id === note.id));
-            return (
-              <li key={framework.id} className="frameworks__one">
-                <div className="frameworks__head">
-                  <BlocksIcon />
-                  <div className="frameworks__what">
-                    <b>{framework.name}</b>
-                    {framework.intent && <p>{framework.intent}</p>}
-                    <small className="frameworks__size">
-                      {sizeLine(framework)}
-                      <ScorePill framework={framework} notes={notes} models={models} />
-                    </small>
-                    {framework.notes.length > 0 && (
-                      <small className={missing.length ? 'frameworks__needs is-missing' : 'frameworks__needs'}>
-                        {missing.length
-                          ? `Add ${missing.map((note) => nameOfNote(note.id)).join(', ')} to your notes: its people read from it.`
-                          : `Built from ${framework.notes.map((note) => notes.find((held) => held.id === note.id)?.title ?? nameOfNote(note.id)).join(', ')}`}
-                      </small>
-                    )}
-                  </div>
-                  <button type="button" className="frameworks__place" disabled={busy === framework.id} onClick={() => void land(framework)}>Place</button>
-                </div>
-                {framework.update && (
-                  <div className="frameworks__update">
-                    <p><b>An update is available.</b> Your copy has changes of yours, so it was kept. Teams already on the stage keep their briefs either way.</p>
-                    <button type="button" disabled={busy === framework.id} onClick={() => void take(framework)}>Take the update</button>
-                  </div>
-                )}
-                <div className="frameworks__acts">
-                  <button type="button" aria-expanded={open?.id === framework.id && open.what === 'cases'} onClick={() => setOpen(open?.id === framework.id && open.what === 'cases' ? null : { id: framework.id, what: 'cases' })}>
-                    {framework.dataset.length === 1 ? '1 test case' : `${framework.dataset.length} test cases`}
-                  </button>
-                  {framework.rooms.length > 0 && (
-                    <button type="button" aria-expanded={open?.id === framework.id && open.what === 'people'} onClick={() => setOpen(open?.id === framework.id && open.what === 'people' ? null : { id: framework.id, what: 'people' })}>
-                      Briefs
-                    </button>
-                  )}
-                  <button type="button" aria-expanded={open?.id === framework.id && open.what === 'runs'} onClick={() => setOpen(open?.id === framework.id && open.what === 'runs' ? null : { id: framework.id, what: 'runs' })}>
-                    Runs
-                  </button>
-                  {framework.dataset.length > 0 && <button type="button" onClick={() => void score(framework)}>Rerun evals</button>}
-                  {sure === framework.id ? (
-                    <>
-                      <span>Remove this team?</span>
-                      <button type="button" onClick={() => void forget(framework)}>Remove</button>
-                      <button type="button" onClick={() => setSure(null)}>Keep</button>
-                    </>
-                  ) : <button type="button" onClick={() => { setProblem(''); setSure(framework.id); }}>Remove</button>}
-                </div>
-                {open?.id === framework.id && open.what === 'cases' && <Cases framework={framework} onChanged={put} />}
-                {open?.id === framework.id && open.what === 'people' && <Briefs framework={framework} onSave={rewrite} />}
-                {open?.id === framework.id && open.what === 'runs' && <Runs framework={framework} watch={watch} onChanged={async () => { await refreshFrameworks(); }} />}
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      {frameworks.length === 0 ? <p className="library__empty">Nothing here yet. Select a few cards on the stage and save them as a framework, and they will come back in one press.</p>
+        : shelves.length === 0 ? <p className="library__empty">No team matches “{query.trim()}”.</p> : shelves.map((group) => (
+          <section key={group.shelf} className="frameworks__shelf" aria-label={group.shelf}>
+            <h3 className="frameworks__shelf-name">{group.shelf}<span>{group.frameworks.length}</span></h3>
+            <ul className="frameworks__list">{group.frameworks.map(row)}</ul>
+          </section>
+        ))}
       </>
       )}
     </PanelShell>

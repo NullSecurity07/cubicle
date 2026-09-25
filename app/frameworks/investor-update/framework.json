@@ -2,6 +2,7 @@
   "id": "investor-update",
   "name": "Investor update",
   "intent": "Send a short monthly update with the same metrics at the top, specific asks near the top, and an honest recap, in under an hour of the founder's time.",
+  "stage": "Run the company",
   "version": 1,
   "builtAt": 1790294400000,
   "notes": [

@@ -67,3 +67,15 @@
   .insights__totals { grid-template-columns: repeat(2, 1fr); }
   .insights__name { width: 72px; }
 }
+
+/* Choosing where backups go: the drives and synced folders this machine has, then the folder itself. */
+.backup__where { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; padding: 11px 12px; border-radius: 11px; border: 1px solid var(--card-border); background: rgba(255, 255, 255, 0.03); }
+.backup__where .playbook__note { margin: 0; }
+.backup__where input { border: 1px solid var(--card-border); border-radius: 8px; padding: 7px 10px; outline: 0; background: rgba(255, 255, 255, 0.05); color: var(--text); font: 12.5px ui-monospace, 'SF Mono', Menlo, monospace; }
+.backup__where input:focus { border-color: var(--focus); }
+.backup__where .playbook__act:disabled { opacity: 0.4; cursor: default; }
+.backup__places { display: flex; flex-wrap: wrap; gap: 6px; }
+.backup__places button { border: 1px solid var(--card-border); border-radius: 999px; padding: 4px 12px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+.backup__places button:hover { color: var(--text); background: rgba(255, 255, 255, 0.07); }
+.backup__places button.is-on { color: var(--text); border-color: var(--focus); background: rgba(78, 140, 255, 0.14); }
+.backup__where .playbook__end { margin-top: 0; }

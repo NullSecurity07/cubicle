@@ -3,7 +3,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Framework } from '../../shared/frameworks.ts';
-import { DOC_SIZE, FRAMEWORK_ID, sizeLine } from '../../shared/frameworks.ts';
+import { DOC_SIZE, FRAMEWORK_ID, SHELVES, sizeLine } from '../../shared/frameworks.ts';
 import { seedStage } from '../../shared/model.ts';
 import { MOST_BRIEF_CHARS } from '../forge/propose.ts';
 import { idOf } from '../library/notes.ts';
@@ -121,6 +121,12 @@ const NO_TOOL_CASES = ['launch-team', 'pitch-practice', 'due-diligence', 'linked
 describe('every built-in framework', () => {
   it('ships every team on the shelf', async () => {
     expect(await builtIns()).toEqual(SHIPPED);
+  });
+
+  it('sits every team on one of the four shelves, so none of them lands under More', async () => {
+    const shelves = await Promise.all(SHIPPED.map(async (id) => (JSON.parse(await readFile(resolve(here, '..', id, 'framework.json'), 'utf8')) as Framework).stage));
+    expect(shelves.filter((stage) => !(SHELVES as readonly (string | undefined)[]).includes(stage))).toEqual([]);
+    expect(shelves.filter((stage) => stage === 'Raise')).toHaveLength(3);
   });
 
   it('is named by its folder, and gives every person a name, a colour and a brief the forge would accept', async () => {

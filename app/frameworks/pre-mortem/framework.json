@@ -2,6 +2,7 @@
   "id": "pre-mortem",
   "name": "Pre-mortem",
   "intent": "Before a big bet (a launch, a hire, a round, a pivot), imagine it has already failed, collect every reason why, and turn the likely ones into a watched risk register.",
+  "stage": "Run the company",
   "version": 1,
   "builtAt": 1790294400000,
   "notes": [

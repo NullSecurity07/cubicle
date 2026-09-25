@@ -2,6 +2,7 @@
   "id": "startup-evaluation",
   "name": "Startup evaluation",
   "intent": "Pressure-test a startup idea the way the founder's notes do it: find the fatal flaw early, while fixing it costs a week instead of a year.",
+  "stage": "Run the company",
   "version": 1,
   "builtAt": 1790035200000,
   "notes": [

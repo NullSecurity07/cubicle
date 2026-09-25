@@ -2,6 +2,7 @@
   "id": "launch-team",
   "name": "Launch team",
   "intent": "Get a product in front of its first users in the first 30 days, from the list of places to post through LinkedIn posts, one post at a time, with the founder pressing send.",
+  "stage": "Build and sell",
   "version": 1,
   "builtAt": 1790208000000,
   "notes": [

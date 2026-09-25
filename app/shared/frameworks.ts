@@ -29,6 +29,9 @@ export type Scorecard = { mean: number; byPerson: Record<string, number>; cases:
 
 export type Framework = {
   id: string; name: string; intent: string; version: number; builtAt: number;
+  // Which part of the company's life the team is for, one of `SHELVES`. The panel groups the shelf by it; a team
+  // without one (the founder's own, or one written before shelves) sits under "More".
+  stage?: string;
   // What it was built from, and the hash of those notes' words at the time: a note edited since is a framework whose
   // briefs may no longer match what the founder learned.
   notes: { id: string; hash: string }[];
@@ -84,4 +87,33 @@ export function sizeLine(framework: Pick<Framework, 'rooms' | 'docs' | 'cards'>)
     framework.docs.length ? count(framework.docs.length, 'doc') : '',
     ...[...kinds].map(([kind, many]) => count(many, CARD_NAMES[kind] ?? kind)),
   ].filter(Boolean).join(' · ');
+}
+
+// The shelf in the order a company lives it: finding out whether anyone wants it, building and selling it, running it,
+// and raising for it. A framework names one of these as its `stage`; anything else is kept under "More".
+export const SHELVES = ['Find out', 'Build and sell', 'Run the company', 'Raise'] as const;
+export const MORE = 'More';
+export const shelfOf = (framework: Pick<Framework, 'stage'>): string =>
+  (SHELVES as readonly string[]).includes(framework.stage ?? '') ? framework.stage! : MORE;
+
+// Does this framework answer what the founder typed? Every word they typed has to be somewhere in its name, what it
+// is for, or its shelf, in any order: "investor raise" finds the seed round, "pricing" finds unit economics.
+const folded = (text: string) => text.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+export function matchesFramework(framework: Pick<Framework, 'name' | 'intent' | 'stage'>, query: string): boolean {
+  const words = folded(query).split(/[^a-z0-9]+/).filter(Boolean);
+  if (!words.length) return true;
+  const hay = folded(`${framework.name} ${framework.intent} ${shelfOf(framework)}`);
+  return words.every((word) => hay.includes(word));
+}
+
+// The shelf, grouped: each shelf in order with its frameworks by name, and "More" last, in the order it was handed
+// (newest first), because what is there is mostly the founder's own and the one they just saved is the one they want.
+// A shelf with nothing on it is left out, so a search that finds two teams shows two headings at most.
+export function shelve<T extends Pick<Framework, 'name' | 'stage'>>(frameworks: T[]): { shelf: string; frameworks: T[] }[] {
+  return [...SHELVES, MORE]
+    .map((shelf) => {
+      const mine = frameworks.filter((one) => shelfOf(one) === shelf);
+      return { shelf, frameworks: shelf === MORE ? mine : mine.sort((a, b) => a.name.localeCompare(b.name)) };
+    })
+    .filter((group) => group.frameworks.length > 0);
 }

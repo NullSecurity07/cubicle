@@ -1,4 +1,5 @@
 import type { Skill } from '../../../shared/model';
+import type { BackupPlaces } from '../../../shared/keys-file';
 import type { Backups, Check, Insights, Outside } from '../../../shared/openends';
 import { request as ask, send } from '../../api';
 
@@ -8,6 +9,10 @@ const post = (body?: unknown) => send('POST', body);
 export const getHealth = () => ask<{ checks: Check[] }>('/api/health').then((held) => held.checks);
 export const getBackups = () => ask<Backups>('/api/backups');
 export const makeBackup = () => ask<Backups & { dropped: number }>('/api/backups', post());
+// Where backups go: the places this machine has, and the folder written into .env through the keys route, which makes
+// it ready before it is written down. An empty folder is the default again.
+export const getBackupPlaces = () => ask<BackupPlaces>('/api/keys-file/places');
+export const backUpTo = (folder: string) => ask<unknown>('/api/keys-file/STAGE_BACKUP_DIR', send('PUT', { value: folder }));
 export const getOutside = () => ask<Outside>('/api/outside');
 export const markSafe = (name: string, safe: boolean) => ask<Outside>('/api/outside/safe', post({ name, safe }));
 export const getInsights = (days: number) => ask<Insights>(`/api/insights?days=${days}`);

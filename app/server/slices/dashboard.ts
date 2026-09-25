@@ -267,9 +267,18 @@ export default {
     // last answer is served and a new one is asked for in the background once it is a minute old.
     let health: { at: number; checks: DashCheck[] } = { at: 0, checks: [] };
     let checking: Promise<void> | null = null;
-    const dir = backupDirOf(deps);
-    function checkHealth() {
+    // Asked each time: the founder may point backups somewhere else while the app runs.
+    const dirOf = () => backupDirOf(deps);
+    // Set when the rows are asked for again while a check is already out: that check read the world as it was, so
+    // one more follows it as soon as it is done.
+    let again = false;
+    // The backups folder and its newest backup as the last check saw them: its Backup row is about exactly that.
+    let sawBackup: { dir: string; at: number | null } | null = null;
+    function checkHealth(fresh = false) {
+      if (fresh) { health = { ...health, at: 0 }; if (checking) again = true; }
       if (checking || Date.now() - health.at < HEALTH_FOR) return;
+      const dir = dirOf();
+      void listBackups(dir).then((held) => { sawBackup = { dir, at: held[0]?.at ?? null }; });
       checking = checkAll({ workspace: deps.workspace, root: deps.root, backupDir: dir, backups: () => listBackups(dir), outside: () => outsideHealth.now(), coder: () => coderHealth.now() })
         .then((checks) => {
           const fresh = checks.map(({ name, ok, detail }) => ({ name, ok, detail }));
@@ -278,7 +287,7 @@ export default {
           if (moved) changed();
         })
         .catch(() => { health = { ...health, at: Date.now() }; })
-        .finally(() => { checking = null; });
+        .finally(() => { checking = null; if (again) { again = false; checkHealth(true); } });
     }
 
     async function make(): Promise<Dashboard> {
@@ -288,10 +297,18 @@ export default {
         readDay(deps, stage, read, now), readTokens(deps, stage, read, now), readTeams(deps.workspace, deps.root, stage, read),
         readSkills(deps, stage, read, now), readMedia(deps.workspace, stage, read, now),
       ]);
-      return { at: now, day, tokens, health: health.checks, teams, skills, media };
+      const dir = dirOf();
+      const backup = { at: (await listBackups(dir))[0]?.at ?? null, dir };
+      return { at: now, day, tokens, health: health.checks, teams, skills, media, backup };
     }
     async function current(): Promise<Dashboard> {
-      checkHealth();
+      // The backups folder may be anywhere (a USB drive), so it is not watched: a copy that names another newest
+      // backup, or another folder, than the one there now is stale, and so is its Backup health row. Five files at
+      // most, so this is cheap.
+      const dir = dirOf();
+      const newest = (await listBackups(dir))[0]?.at ?? null;
+      if (copy && (copy.body.backup?.dir !== dir || copy.body.backup?.at !== newest)) dirty = true;
+      checkHealth(!!sawBackup && (sawBackup.dir !== dir || sawBackup.at !== newest));
       if (copy && !dirty && Date.now() - copy.at < FRESH_FOR && copy.body.health === health.checks) return copy.body;
       making ??= (async () => {
         dirty = false;

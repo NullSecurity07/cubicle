@@ -141,7 +141,7 @@ export async function checkAll(deps: HealthDeps): Promise<Check[]> {
     name: 'Models',
     ok: pools.length > 0,
     detail: pools.length ? `${total} ${total === 1 ? 'key' : 'keys'}: ${pools.map((one) => `${one.provider} (${one.keys})`).join(', ')}` : 'no keys found, so nobody here can answer you',
-    fix: 'Put a free key in the .env file beside the app, as GROQ_API_KEY. A second key for the same provider goes in as GROQ_API_KEY_2, a third as _3.',
+    fix: 'Open Keys from the command bar and paste a free key, such as Groq\'s. A second key for the same provider goes in .env as GROQ_API_KEY_2, a third as _3.',
   });
 
   checks.push(freeProviders(env));

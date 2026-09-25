@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Backup, Backups, Check, Outside } from '../../../shared/openends';
 import { PanelShell } from '../../overlay/PanelShell';
-import { getBackups, getHealth, getOutside, makeBackup, markSafe } from './api';
+import type { BackupPlaces } from '../../../shared/keys-file';
+import { backUpTo, getBackupPlaces, getBackups, getHealth, getOutside, makeBackup, markSafe } from './api';
+import { pressed } from '../../keys';
 
 // Is everything working? One line a thing, green or red, and when it is red, what you would do about it.
 // Nothing here says what a key is — only that there is one, and how many a provider has.
@@ -29,11 +31,27 @@ function Backing({ held, onMade }: { held: Backups | null; onMade: (held: Backup
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState('');
   const [made, setMade] = useState<Backup | null>(null);
+  // Choosing where they go: the places this machine has, and the folder typed so far. null: not choosing.
+  const [places, setPlaces] = useState<BackupPlaces | null>(null);
+  const [folder, setFolder] = useState('');
 
   async function now() {
     setBusy(true);
     setProblem('');
     try { const done = await makeBackup(); setMade(done.backups[0] ?? null); onMade(done); }
+    catch (error) { setProblem((error as Error).message); }
+    finally { setBusy(false); }
+  }
+  async function choose() {
+    setProblem('');
+    try { const found = await getBackupPlaces(); setPlaces(found); setFolder(found.current); }
+    catch (error) { setProblem((error as Error).message); }
+  }
+  // The folder is made and written to once before it is kept, so a drive that is not plugged in says so here.
+  async function keep(next: string) {
+    setBusy(true);
+    setProblem('');
+    try { await backUpTo(next); setPlaces(null); setMade(null); onMade(await getBackups()); }
     catch (error) { setProblem((error as Error).message); }
     finally { setBusy(false); }
   }
@@ -55,10 +73,35 @@ function Backing({ held, onMade }: { held: Backups | null; onMade: (held: Backup
         </ul>
       )}
       {held && !held.backups.length && <p className="panel__empty">Nothing has been backed up yet.</p>}
+      {places && (
+        <form
+          className="backup__where" aria-label="Where backups go" data-holds-escape
+          onSubmit={(event) => { event.preventDefault(); if (folder.trim()) void keep(folder); }}
+          onKeyDown={(event) => { if (pressed(event, 'cancel')) { event.stopPropagation(); setPlaces(null); setProblem(''); } }}
+        >
+          <p className="playbook__note">A USB drive or a folder a sync service carries, so a copy lives off this machine. The next backup goes there; the ones already made stay where they are.</p>
+          {places.places.length > 0 && (
+            <div className="backup__places">
+              {places.places.map((one) => (
+                <button key={one.path} type="button" className={folder === one.path ? 'is-on' : undefined} title={one.path} onClick={() => { setFolder(one.path); setProblem(''); }}>{one.label}</button>
+              ))}
+            </div>
+          )}
+          <input aria-label="Backup folder" autoFocus spellCheck={false} value={folder} placeholder="/run/media/you/USB/Cubicle backups" onChange={(event) => { setFolder(event.target.value); setProblem(''); }} />
+          <div className="playbook__end">
+            {places.custom && <button type="button" className="playbook__act" disabled={busy} onClick={() => void keep('')}>Use the default</button>}
+            <button type="button" className="playbook__act" onClick={() => { setPlaces(null); setProblem(''); }}>Cancel</button>
+            <button type="submit" className="playbook__act primary" disabled={busy || !folder.trim() || folder.trim() === places.current}>Use this folder</button>
+          </div>
+        </form>
+      )}
       {problem && <p className="msg--problem">{problem}</p>}
-      <div className="playbook__end">
-        <button type="button" className="playbook__act primary" disabled={busy} onClick={() => void now()}>{busy ? 'Backing up…' : 'Back up now'}</button>
-      </div>
+      {!places && (
+        <div className="playbook__end">
+          <button type="button" className="playbook__act" disabled={busy} onClick={() => void choose()}>Back up to…</button>
+          <button type="button" className="playbook__act primary" disabled={busy} onClick={() => void now()}>{busy ? 'Backing up…' : 'Back up now'}</button>
+        </div>
+      )}
     </section>
   );
 }
@@ -127,18 +170,18 @@ export function HealthPanel() {
   const [outside, setOutside] = useState<Outside | null>(null);
   const [problem, setProblem] = useState('');
 
+  // Each part is asked for on its own and shown as it comes: the checks can take seconds, and a backup list that
+  // arrives after the founder has already made one, or moved them somewhere else, must not put the old list back.
+  const moved = useRef(false);
+  // The checks are asked again after a backup; only the latest answer is shown, whichever arrives first.
+  const asked = useRef(0);
+  const recheck = () => { const mine = ++asked.current; return getHealth().then((one) => { if (mine === asked.current) setChecks(one); }); };
   useEffect(() => {
     let live = true;
-    const load = async () => {
-      try {
-        const [one, two, three] = await Promise.all([getHealth(), getBackups(), getOutside()]);
-        if (!live) return;
-        setChecks(one);
-        setBackups(two);
-        setOutside(three);
-      } catch (error) { if (live) setProblem((error as Error).message); }
-    };
-    void load();
+    const fail = (error: Error) => { if (live) setProblem(error.message); };
+    recheck().catch(fail);
+    getBackups().then((two) => { if (live && !moved.current) setBackups(two); }, fail);
+    getOutside().then((three) => { if (live) setOutside(three); }, fail);
     return () => { live = false; };
   }, []);
 
@@ -152,7 +195,7 @@ export function HealthPanel() {
         {!checks && !problem && <p className="panel__empty">Looking…</p>}
         {checks && <ul className="health__rows">{checks.map((check) => <Row key={check.name} check={check} />)}</ul>}
         {/* A backup answers one of the rows above it, so the rows are asked again the moment one is made. */}
-        <Backing held={backups} onMade={(held) => { setBackups(held); void getHealth().then(setChecks, () => {}); }} />
+        <Backing held={backups} onMade={(held) => { moved.current = true; setBackups(held); void recheck().catch(() => {}); }} />
         <Outsiders held={outside} onChange={setOutside} />
       </div>
     </PanelShell>

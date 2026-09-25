@@ -155,3 +155,31 @@ test('a built-in team copied before a fix gets the fix on the next start, and an
   await weekly.screenshot({ path: 'test-results/shots/frameworks-update-taken.png' });
   await page.keyboard.press('Escape');
 });
+
+test('the shelf is grouped by the stage of the company, and a search narrows it to what the founder typed', async ({ page }) => {
+  await page.getByLabel('Frameworks', { exact: true }).click();
+  const shelves = panel(page).locator('.frameworks__shelf-name');
+  // The four stages in the order a company lives them. Every built-in team sits on one, so nothing is under More.
+  await expect(shelves).toHaveText(['Find out5', 'Build and sell5', 'Run the company4', 'Raise3']);
+  await expect(panel(page).getByRole('region', { name: 'Raise' }).locator('.frameworks__one')).toHaveText([/Due diligence/i, /Pitch practice/i, /Seed round prep/i]);
+
+  const search = panel(page).getByLabel('Search frameworks');
+  await search.fill('pricing');
+  await expect(panel(page).locator('.frameworks__one')).toHaveCount(1);
+  await expect(panel(page).locator('.frameworks__one')).toContainText('Pricing and unit economics');
+  await expect(shelves).toHaveText(['Build and sell1']);
+  // Every word has to be there, in any order: the shelf's own name counts.
+  await search.fill('investor raise');
+  await expect(panel(page).locator('.frameworks__one')).toHaveText([/Pitch practice/, /Seed round prep/]);
+  await expect(shelves).toHaveText(['Raise2']);
+  await search.fill('underwater basket weaving');
+  await expect(panel(page).getByText('No team matches “underwater basket weaving”.')).toBeVisible();
+  await panel(page).screenshot({ path: 'test-results/shots/frameworks-search-empty.png' });
+
+  // Escape empties the search first; the panel stays until the second one.
+  await search.press('Escape');
+  await expect(search).toHaveValue('');
+  await expect(panel(page).locator('.frameworks__one')).toHaveCount(17);
+  await expect(panel(page)).toBeVisible();
+  await panel(page).screenshot({ path: 'test-results/shots/frameworks-shelves.png' });
+});

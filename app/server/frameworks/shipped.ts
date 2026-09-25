@@ -5,8 +5,9 @@ import { join } from 'node:path';
 // What a team is, for telling a copy the founder never touched from one they changed: everything in the file except
 // the bookkeeping the app writes into it by itself. The id is the folder's name, `shippedHash` records which shipped
 // version a copy came from, and `version` and `scorecard` are what promoting an evals run bumps — a scored team is
-// still the team that shipped, with the same briefs.
-const BOOKKEEPING = new Set(['id', 'shippedHash', 'version', 'scorecard', 'update']);
+// still the team that shipped, with the same briefs. `stage` is the shelf the panel shows it on: moving a team to
+// another shelf changes nothing anybody on it reads.
+const BOOKKEEPING = new Set(['id', 'shippedHash', 'version', 'scorecard', 'update', 'stage']);
 
 // Keys in one order, so the same team written by a different hand, or with its fields shuffled, hashes the same.
 const steady = (value: unknown): unknown => {
