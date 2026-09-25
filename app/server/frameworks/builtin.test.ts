@@ -240,6 +240,14 @@ describe('every built-in framework', () => {
     expect((await loadOne('investor-update')).dataset.find((held) => held.id === 'writer-invents-no-month')?.rubric).toMatch(/names no month/);
     expect((await loadOne('traction-bullseye')).dataset.find((held) => held.id === 'ranker-refuses-empty-brainstorm')?.rubric).toMatch(/Refuses to rank/);
     expect((await loadOne('seed-round-prep')).dataset.find((held) => held.id === 'planner-goes-first')?.rubric).toMatch(/rather than refusing/);
+    // The second live run (2026-09-25): each person it caught has a case that holds them to the fixed brief.
+    const caught: [string, string, RegExp][] = [
+      ['linkedin-content-system', 'founder-said-only-card', /only what the card says/], ['linkedin-content-system', 'week-before-question', /instead of stopping to ask first/],
+      ['linkedin-content-system', 'no-sign-in-for-feed', /Refuses to sign in/], ['customer-discovery', 'big-questions-before-people', /does not pad/],
+      ['seed-round-prep', 'empty-folder-is-missing', /Marks every data room item MISSING/], ['working-backwards', 'no-quote-without-interviews', /not a made-up person/],
+      ['working-backwards', 'faq-invents-no-price', /claims no certification/], ['working-backwards', 'unsourced-numbers-are-weak', /Does not give BUILD/],
+    ];
+    for (const [dir, id, rubric] of caught) expect((await loadOne(dir)).dataset.find((held) => held.id === id)?.rubric, `${dir}: ${id}`).toMatch(rubric);
     const said = async (dir: string, key: string) => (await loadOne(dir)).dataset.find((held) => held.keys.includes(key))!.rubric!;
     expect(await said('launch-team', 'benchmarks')).toMatch(/no revenue figure/i);
     expect(await said('launch-team', 'writer')).toMatch(/asks for the story/i);
@@ -359,6 +367,9 @@ describe('the LinkedIn content system', () => {
     expect(researcher).toContain('1. Buyer research');
     expect(researcher).toContain('ask_founder');
     expect(researcher).toContain('never fill a [ ___ ] blank with a guess');
+    expect(researcher).toContain('"The founder said" goes only on words copied from the Who we sell to card');
+    expect(writer).toContain('your one ask_founder comes after all five are drafted');
+    expect(distributor).toContain('If the card shows a sign-in page, never sign in');
     for (const words of ['CPIO', 'Hook patterns', '4. Pre-publishing checklist', 'linkedin-post', 'hook-extract', 'humanize-draft', 'You never post', 'first comment']) expect(writer).toContain(words);
     for (const words of ['The three moves', 'linkedin-comment', 'linkedin-reply', 'never comment, connect, like, message or withdraw', 'ceiling']) expect(distributor).toContain(words);
     expect(scorekeeper.startsWith('Before anything else')).toBe(true);
@@ -398,7 +409,7 @@ const TEAMS: Record<string, Team> = {
     note: 'Talking to customers without leading them', roles: ['Interview planner', 'Notes reader', 'Pattern writer'],
     size: '3 people · 1 doc · 1 sticky note · 1 note', doc: 'Interviews', headings: ['## Plan', '## Conversations', '## Findings'],
     sections: [['The three rules', 'Three big questions', 'Who to talk to first', 'The five questions'], ['Bad data and how to catch it', 'Signals that count'], ['Reading the pattern']],
-    words: [['No question mentions the product', '"Would you"', 'ask_founder', 'icp-fit'], ['FACT', 'PAIN', 'WORKAROUND', 'COMMITMENT', 'BAD DATA', 'no advance'], ['YES', 'NO', 'UNCLEAR', 'one-off', 'zombies']],
+    words: [['No question mentions the product', '"Would you"', 'ask_founder', 'icp-fit', 'with write_doc before any search'], ['FACT', 'PAIN', 'WORKAROUND', 'COMMITMENT', 'BAD DATA', 'no advance'], ['YES', 'NO', 'UNCLEAR', 'one-off', 'zombies']],
   },
   'investor-update': {
     note: 'The monthly update', roles: ['Numbers keeper', 'Asks writer', 'Update writer'],
@@ -416,7 +427,7 @@ const TEAMS: Record<string, Team> = {
     note: 'Raising a seed round', roles: ['Round planner', 'Investor lister', 'Data room keeper', 'Process keeper'],
     size: '4 people · 1 doc · 1 sticky note · 1 note · 1 browser · 1 task board', doc: 'Round', headings: ['## Plan', '## Investors', '## One-pager', '## Data room', '## Questions they will ask', '## Pipeline'],
     sections: [['When to raise', 'How much', 'Safe, cap and dilution'], ['Who to meet', 'Warm first'], ['The one-pager', 'The data room', 'Questions they will ask'], ['Every meeting ends with a next step', 'Close fast']],
-    words: [['post-money', 'working', 'lawyer', 'propose_decision'], ['"not found"', 'Due diligence', 'evidence-outreach', 'You never send'], ['HAVE, MISSING or N/A', 'IP assignment'], ['no next step', 'You never negotiate']],
+    words: [['post-money', 'working', 'lawyer', 'propose_decision', 'run_code', '[founder to set]'], ['"not found"', 'Due diligence', 'evidence-outreach', 'You never send'], ['HAVE, MISSING or N/A', 'IP assignment', 'An empty folder is not a reason to stop'], ['no next step', 'You never negotiate']],
   },
   'pre-mortem': {
     note: 'Imagining the failure first', roles: ['Failure imaginer', 'Evidence checker', 'Risk registrar'],
@@ -452,7 +463,7 @@ const TEAMS: Record<string, Team> = {
     note: 'Writing the launch first', roles: ['Press release writer', 'FAQ writer', 'Reader'],
     size: '3 people · 1 doc · 1 sticky note · 1 note', doc: 'PR/FAQ', headings: ['## Press release', '## External FAQ', '## Internal FAQ', '## Review'],
     sections: [['The press release, part by part', 'Plain words'], ['External questions', 'Internal questions'], ['Reading it together']],
-    words: [['Under one page', '[hypothetical]', 'no superlative without a number'], ['top three reasons this will fail', '"unknown"'], ['BUILD', 'REVISE', 'DROP', 'two revision rounds']],
+    words: [['Under one page', '[hypothetical]', 'no superlative without a number', 'spoken by [Customer]'], ['top three reasons this will fail', '"unknown"', 'Never claim a certification'], ['BUILD', 'REVISE', 'DROP', 'two revision rounds', 'the verdict is not BUILD']],
   },
   'lean-canvas': {
     note: 'The business on one page', roles: ['Canvas drafter', 'Riskiest-guess finder'],
