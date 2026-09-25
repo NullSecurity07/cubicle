@@ -40,6 +40,8 @@ export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean; 
   | { kind: 'metrics'; title?: string; period?: 'week' | 'month' }
   // The founder's cash and burn; the numbers live in `<workspace>/runway/<id>.json`, owned by the server.
   | { kind: 'runway'; currency?: string }
+  // A customer interview recorded and written down on this machine. The sound and the transcript live in `<workspace>/interviews/`, owned by the server.
+  | { kind: 'interview'; who: string; company?: string; on?: string }
   // Studios: the founder, or a wired person, says what they want and the server makes it. Only what was asked for lives
   // on the card; what came out lives in a sidecar the server owns.
   | { kind: 'imagegen'; prompt?: string; shape?: Shape }
