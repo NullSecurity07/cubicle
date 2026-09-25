@@ -65,7 +65,8 @@ test.beforeEach(async ({ page }) => {
   page.on('pageerror', (error) => broke.push(error.message));
   await tidy(page);
   await page.goto('/');
-  await expect(node(page, 'marketing')).toBeVisible();
+  // The first page a fresh server serves is compiled on the way, which takes a while on a busy machine.
+  await expect(node(page, 'marketing')).toBeVisible({ timeout: 20_000 });
 });
 
 test.afterEach(async ({ page }) => {
@@ -87,7 +88,7 @@ test('the founder pastes numbers, a wired person reads them, suggests a target t
   await expect(card).toBeVisible();
   const id = (await card.getAttribute('data-id'))!;
   await expect(card.getByText('Paste a table or drop a CSV: a date, then one column for each number.')).toBeVisible();
-  await page.screenshot({ path: 'test-results/shots/metrics-empty.png', clip: (await card.boundingBox())! });
+  await card.screenshot({ path: 'test-results/shots/metrics-empty.png', animations: 'disabled' });
 
   await card.getByLabel('Paste numbers').fill(CSV);
   await card.getByRole('button', { name: 'Read', exact: true }).click();

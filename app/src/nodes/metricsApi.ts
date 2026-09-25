@@ -17,11 +17,18 @@ export const removeMetric = (cardId: string, key: string) => call(`${base(cardId
 export const answerTarget = (cardId: string, proposalId: string, accept: boolean) => call(`${base(cardId)}/proposals/${proposalId}`, 'POST', { accept });
 export const dismissMetricAlert = (cardId: string, id: string) => call(`${base(cardId)}/dismiss`, 'POST', { id });
 
-// The card's numbers as the server says them, the newest revision winning, read once as well as heard.
+// The card's numbers as the server says them, the newest revision winning, read once as well as heard. The first read
+// is tried again for a few seconds: a stage save already on its way can make the flush before it return early, so a
+// card just added may be asked about a moment before the server has heard of it.
 export const watchMetrics = (cardId: string, onEvent: (event: MetricsEvent) => void) => {
   let seen = -1;
+  let gone = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const newer = (event: MetricsEvent) => { if (event.rev < seen) return; seen = event.rev; onEvent(event); };
   const stop = feed<MetricsEvent>(metricsChannel(cardId), newer);
-  void getMetrics(cardId).then(newer, () => {});
-  return stop;
+  const first = (tries: number) => void getMetrics(cardId).then(newer, () => {
+    if (!gone && seen < 0 && tries < 12) timer = setTimeout(() => first(tries + 1), 250 + tries * 150);
+  });
+  first(0);
+  return () => { gone = true; clearTimeout(timer); stop(); };
 };
