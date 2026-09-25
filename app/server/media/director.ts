@@ -11,7 +11,7 @@ import type { Wanted } from './voice.ts';
 import { criticiseVisuals, repairVisuals, visualsOf, visualsPrompt, type Visual } from './visuals.ts';
 import { LENSES, motionMoves, SIZES, stillMoves } from './moves.ts';
 import { briefWants, closeLineOf } from './close.ts';
-import { lengthFit, readingOf } from './length.ts';
+import { lengthFit, rateOf, readingOf } from './length.ts';
 
 // The director. Not a form to fill in — a person who reads the brief, works out what is being asked for, decides on
 // an angle and a look, writes the beats, and only then writes the storyboard. Every one of those is a separate pass,
@@ -628,11 +628,17 @@ export function onCamera(scenes: Scene[], understanding: Understanding, bible: s
 
 // The storyboard held to the length asked for. Short, the director is asked once for as many more lines as fill it,
 // set before the close and read by the critic like everything else; long, scenes come out of the middle acts.
+//
+// `measured` is the narrator's real reading of the storyboard, in seconds, when the studio has read it once: that is
+// the length the film will run, and the words it asks for and the budget the critic holds the new lines to are at
+// the narrator's own pace rather than the estimate.
 export async function fitLength(spec: Spec, want: Want, understanding: Understanding, material: Material, think: Think,
-  report: (line: string) => void): Promise<Spec> {
-  const fit = lengthFit(spec, understanding.seconds, understanding.pace);
+  report: (line: string) => void, measured?: number): Promise<Spec> {
+  const fit = lengthFit(spec, understanding.seconds, understanding.pace, measured);
   if (!fit) return spec;
-  const reads = Math.round(readingOf(spec, understanding.pace));
+  const reads = Math.round(measured ?? readingOf(spec, understanding.pace));
+  const rate = measured ? rateOf(spec, understanding.pace, measured) : undefined;
+  want = rate ? { ...want, rate } : want;
   if ('drop' in fit) {
     report(`the storyboard read at about ${reads} seconds against ${understanding.seconds}, so ${fit.drop.length === 1 ? 'a scene comes' : `${fit.drop.length} scenes come`} out of the middle`);
     return { ...spec, scenes: spec.scenes.filter((_one, at) => !fit.drop.includes(at)) };
@@ -646,7 +652,7 @@ export async function fitLength(spec: Spec, want: Want, understanding: Understan
   const closes = ['cta', 'outro', 'logo'].includes(spec.scenes.at(-1)?.layout ?? '');
   const scenes = closes ? [...spec.scenes.slice(0, -1), ...added, spec.scenes.at(-1)!] : [...spec.scenes, ...added];
   const { spec: filled } = repair({ ...spec, scenes: scenes.slice(0, MAX_SCENES) }, want);
-  const now = Math.round(readingOf(filled, understanding.pace));
+  const now = Math.round(rate ? saidWords(filled) / rate + filled.scenes.length * 0.45 : readingOf(filled, understanding.pace));
   if (now < understanding.seconds * 0.85) report(`it still reads at about ${now} seconds, so the film runs ${now} rather than holding still for the rest`);
   return filled;
 }

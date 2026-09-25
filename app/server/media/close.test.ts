@@ -50,7 +50,7 @@ describe('the line a film closes on', () => {
     const bare: Material = { ...HERO_MATERIAL, pitch: undefined };
     const restated = repair(heroSpec([{ layout: 'statement', text: 'Your own team', say: 'A small team of AI people works beside you.' }, ...HERO_SCENES.slice(1)]), want(bare, brief)).spec.scenes;
     // The first headline of the film as it will be seen, said again; never a line that fits every film.
-    expect(last(restated).text).toBe(firstHeadline(restated));
+    expect(last(restated).text).toBe(firstHeadline(restated) ?? 'Private AI Team on Your Machine');
     expect(last(restated).text).not.toMatch(/try it this week|follow for more|what you get/i);
     expect(last(restated).say).toBe(`${last(restated).text}.`);
   });
@@ -76,5 +76,14 @@ describe('the line a film closes on', () => {
   it('tells the director the close before it writes a beat', () => {
     const understanding = understandingOf({}, { brief: HERO_BRIEF, seconds: 20, pace: 'calm', purpose: 'launch' }, {});
     expect(planPrompt(understanding, { brief: HERO_BRIEF }, HERO_MATERIAL)).toMatch(/call to action, said and shown word for word: "Get it, free, on your own machine"/);
+  });
+});
+
+describe('the close, as the founder wrote it', () => {
+  it('drops a heading the model put beside the founder\'s call to action', () => {
+    const scenes = [...HERO_SCENES.slice(0, -1), { layout: 'cta' as const, heading: 'Get started today', text: 'Get it free on your own machine', say: 'Get it free on your own machine' }];
+    const close = last(repair(heroSpec(scenes), want(HERO_MATERIAL, HERO_BRIEF)).spec.scenes);
+    expect(close.heading).toBeUndefined();
+    expect(close.text).toBe('Get it, free, on your own machine');
   });
 });

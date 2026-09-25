@@ -73,12 +73,21 @@ export function readingOf(spec: Spec, pace: Pace): number {
   return saidWords(spec) / WORDS_A_SECOND + spec.scenes.length * BEAT[pace];
 }
 
+// The narrator's own words a second, out of one real reading of the script: the pauses between scenes come off
+// first, because they are the same whoever reads.
+export function rateOf(spec: Spec, pace: Pace, measured: number): number {
+  const talking = measured - spec.scenes.length * BEAT[pace];
+  return talking > 1 ? saidWords(spec) / talking : WORDS_A_SECOND;
+}
+
 export type LengthFit = { more: number; words: number } | { drop: number[] } | null;
-export function lengthFit(spec: Spec, seconds: number, pace: Pace): LengthFit {
+// `measured` is how long the narrator really took to read it, when it has been read; the estimate otherwise.
+export function lengthFit(spec: Spec, seconds: number, pace: Pace, measured?: number): LengthFit {
   if (!seconds || !spec.scenes.length) return null;
-  const reads = readingOf(spec, pace);
+  const reads = measured ?? readingOf(spec, pace);
+  const rate = measured ? rateOf(spec, pace, measured) : WORDS_A_SECOND;
   if (reads < seconds * SHORT_OF) {
-    const words = Math.round((seconds - reads) * WORDS_A_SECOND - BEAT[pace] * WORDS_A_SECOND);
+    const words = Math.round((seconds - reads) * rate - BEAT[pace] * rate);
     const more = Math.max(1, Math.round(words / WORDS_A_LINE));
     return { more, words: Math.max(words, more * 4) };
   }
@@ -93,7 +102,7 @@ export function lengthFit(spec: Spec, seconds: number, pace: Pace): LengthFit {
     for (const at of middle) {
       if (left <= seconds || spec.scenes.length - drop.length <= 3) break;
       drop.push(at);
-      left -= countWords(spec.scenes[at].say) / WORDS_A_SECOND + BEAT[pace];
+      left -= countWords(spec.scenes[at].say) / rate + BEAT[pace];
     }
     return drop.length ? { drop: drop.sort((a, b) => a - b) } : null;
   }

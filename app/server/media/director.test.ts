@@ -173,7 +173,8 @@ describe('the whole direction, end to end', () => {
     expect(made.spec.scenes.every((one) => one.bg_prompt || one.image_prompt || one.asset)).toBe(true);
     for (const scene of made.spec.scenes) expect(countWords(scene.text)).toBeLessThanOrEqual(12);
     // Fifteen seconds of narration, not the thirty the model wrote.
-    expect(saidWords(made.spec)).toBeLessThanOrEqual(36);
+    // Cut by whole sentences and clauses only (`trimWhole`), so a few words over rather than a line cut mid-thought.
+    expect(saidWords(made.spec)).toBeLessThanOrEqual(40);
     // Every decision is on the card, in words a founder reads rather than a log line.
     expect(said[0]).toContain('reading the brief: a 15-second vertical influencer-style reel');
     expect(said.some((line) => line.startsWith('the angle:'))).toBe(true);

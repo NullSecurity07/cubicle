@@ -73,3 +73,34 @@ describe('the length a storyboard reads at', () => {
     expect(readingOf(trimmed, 'calm')).toBeLessThanOrEqual(20 * 1.15);
   });
 });
+
+describe('the length, from the narrator\'s own reading', () => {
+  // The hero film's second take: 39 words, budgeted at eighteen seconds, read by Kokoro in fifteen.
+  const hero: Spec = { title: 'Hero', scenes: [
+    { layout: 'hook', text: 'Your AI teammates sit right beside you', say: 'Your AI teammates sit right beside you.' },
+    { layout: 'device', say: 'A canvas where a small team of AI people works beside you.', asset: 'screen-repo-1', frame: 'browser', source: 'A canvas where a small team of AI people works beside you.' },
+    { layout: 'statement', text: 'Wires are access', say: 'Wire them to what they may read, and they draft, research.', source: 'Wire them to what they may read, and they draft, research, film and follow up.' },
+    { layout: 'picture', say: 'You decide, and nothing leaves your computer that you did not wire.', image_prompt: 'a closed computer on a table', source: 'You decide, and nothing leaves your computer that you did not wire.' },
+    { layout: 'cta', text: 'Get it, free, on your own machine', say: 'Get it, free, on your own machine.' },
+  ] };
+
+  it('asks for more when the measured reading is short, even where the estimate said it was long enough', async () => {
+    expect(readingOf(hero, 'calm')).toBeGreaterThanOrEqual(20 * 0.85);
+    expect(lengthFit(hero, 20, 'calm')).toBeNull();
+    const fit = lengthFit(hero, 20, 'calm', 15);
+    expect(fit && 'more' in fit && fit.more).toBeGreaterThanOrEqual(1);
+    const asked: string[] = [];
+    const filled = await fitLength(hero, want, understanding, HERO_MATERIAL, async (prompt) => { asked.push(prompt); return more; }, () => {}, 15);
+    expect(asked).toHaveLength(1);
+    expect(filled.scenes.length).toBeGreaterThan(hero.scenes.length);
+    // Filled at the narrator's own pace, the critic does not cut the new lines back out, or cut the promise short.
+    expect(filled.scenes.map((one) => one.say)).toContain('You decide, and nothing leaves your computer that you did not wire.');
+    expect(filled.scenes.map((one) => one.say)).toContain('Rooms hold people, and wires carry context between the cards on the canvas.');
+  });
+
+  it('leaves a film alone whose reading measured right', async () => {
+    let calls = 0;
+    expect(await fitLength(hero, want, understanding, HERO_MATERIAL, async () => { calls += 1; return more; }, () => {}, 18.5)).toBe(hero);
+    expect(calls).toBe(0);
+  });
+});
