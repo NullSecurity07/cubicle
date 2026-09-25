@@ -1,0 +1,22 @@
+/* The Deck card: the slide on show at the card's width, a strip of every slide under it, then the studio's own rows
+   (the PDF, the versions, notes, the brief). A slide is its own 1280×720 page drawn in a frame and scaled to fit, so
+   what the card shows is exactly what prints. */
+
+.deck__stage { position: relative; flex: none; display: flex; align-items: center; justify-content: center; aspect-ratio: 16 / 9; margin: 8px 10px 0; border-radius: 10px; overflow: hidden; background: rgba(0, 0, 0, 0.25); box-shadow: inset 0 0 0 1px var(--card-border); }
+.deck__stage .chat__empty { max-width: 280px; margin: 0; padding: 14px; }
+.deck__stage > .deck__slide { animation: deck-in 0.28s ease both; }
+.deck__lines { position: absolute; inset: 0; margin: 0; padding: 12px 14px; overflow-y: auto; }
+
+.deck__slide { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; }
+.deck__slide iframe { position: absolute; top: 0; left: 0; width: 1280px; height: 720px; border: 0; transform-origin: 0 0; pointer-events: none; background: transparent; }
+
+.deck__strip { flex: none; display: flex; gap: 6px; margin: 8px 10px 0; padding-bottom: 4px; overflow-x: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
+.deck__strip button { position: relative; flex: none; width: 92px; padding: 0; border: 1.5px solid transparent; border-radius: 7px; overflow: hidden; background: rgba(0, 0, 0, 0.25); cursor: pointer; opacity: 0.78; transition: opacity 0.15s, border-color 0.15s; }
+.deck__strip button:hover { opacity: 1; }
+.deck__strip button.is-shown { opacity: 1; border-color: rgba(78, 140, 255, 0.85); }
+.deck__strip small { position: absolute; left: 4px; bottom: 3px; padding: 0 4px; border-radius: 4px; font-size: 10px; font-variant-numeric: tabular-nums; color: #fff; background: rgba(0, 0, 0, 0.55); }
+
+.deck__speaker { max-height: 3.9em; overflow-y: auto; white-space: pre-line; user-select: text; }
+
+@keyframes deck-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .deck__stage > .deck__slide { animation: none; } }

@@ -34,6 +34,8 @@ export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean; 
   | { kind: 'source'; url: string; about: string; title?: string }
   // The founder's leads, a light CRM. The leads themselves live in `<workspace>/leads/<id>.json`, owned by the server.
   | { kind: 'leads' }
+  // A deck made from a brief and what is wired to it. The slides and every version live in `<workspace>/decks/<id>.json`.
+  | { kind: 'deck'; brief?: string; purpose?: 'pitch' | 'update' | 'sales' | 'demo-day'; look?: 'clean' | 'editorial' | 'brand' }
   // Studios: the founder, or a wired person, says what they want and the server makes it. Only what was asked for lives
   // on the card; what came out lives in a sidecar the server owns.
   | { kind: 'imagegen'; prompt?: string; shape?: Shape }
