@@ -1,8 +1,9 @@
-import type { Decision, Hit } from '../../shared/model.ts';
+import type { Decision } from '../../shared/model.ts';
 import { shortDay } from '../clock.ts';
 import type { Decisions } from '../decisions.ts';
 import type { createMemory } from '../memory.ts';
 import { mayRecall, type createRecall } from '../recall.ts';
+import { WHERE } from './recall.ts';
 import { text, type Tool } from './registry.ts';
 
 // Reflect: what is known about one thing, laid out in the order it became known, so a price that went from 15 to 19
@@ -13,7 +14,6 @@ export type Entry = { at?: number; where: string; text: string };
 
 const CAP = 2500;
 const LINE = 240;
-const WHERE: Record<Hit['kind'], string> = { doc: 'Doc', chat: 'Conversation', memory: 'Your memory', decision: 'Decision', file: 'Shared file', link: 'Web page', skill: 'Playbook skill', library: "The founder's notes" };
 const SMALL = new Set('the a an and or but of to in on at for with by from as is are was were be been it its this that these those we you they he she i our your their my me us them has have had do does did will would can could should not no so if then than there here what which who when where how about into over just also very really know known change changed changes time times over did does'.split(' '));
 const MONTHS = /^(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)/i;
 // A word cut back to its stem, so "prices" and "price" are one subject.
@@ -37,7 +37,7 @@ export function memoryEntries(notes: string, keys: string[]): Entry[] {
   });
 }
 
-export const decisionEntry = (decision: Decision): Entry => ({
+const decisionEntry = (decision: Decision): Entry => ({
   at: decision.decidedAt ?? decision.at, where: WHERE.decision,
   text: clip(decision.status === 'decided' ? `${decision.title}: ${decision.chosen ?? ''}` : `${decision.title} (proposed, not decided yet)`),
 });

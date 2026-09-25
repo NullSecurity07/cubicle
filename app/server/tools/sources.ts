@@ -2,7 +2,7 @@ import type { Card } from '../../shared/model.ts';
 import { findSource, safeHost, sourceCards } from '../../shared/sources.ts';
 import { webUrl, type Browser } from '../browser.ts';
 import type { Sources } from '../sources.ts';
-import { text, type Tool } from './registry.ts';
+import { speaker, text, type Tool } from './registry.ts';
 import { browserSession, howFar, list, MAX_EACH, RECENT, SNIPPETS, UNTRUSTED } from './web.ts';
 
 export { findSource, hostOf } from '../../shared/sources.ts';
@@ -14,7 +14,7 @@ const sourceName = (card: Card & { kind: 'source' }) => card.title?.trim() || sa
 
 // A search engine does not always honour site:, so every result whose address is on another host is dropped and the
 // rest are numbered again. Returns the blocks and whether any result was left at all.
-export function onHost(found: string, host: string): { text: string; any: boolean } {
+function onHost(found: string, host: string): { text: string; any: boolean } {
   let any = false;
   const blocks = found.split(/\n\n(?=## )/).map((block) => {
     const lines = block.split('\n');
@@ -45,7 +45,7 @@ const wordsOf = (text: string) => new Set(text.toLowerCase().split(/[^\p{L}\p{N}
 
 // When the engine finds nothing inside the site, the site's own home page still links to what it holds: the links
 // whose words meet a query's words are the next best thing to a search result.
-export function homeLinks(home: string, host: string, queries: string[]): string {
+function homeLinks(home: string, host: string, queries: string[]): string {
   const links = new Map<string, string>();
   for (const match of home.matchAll(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g)) if (!links.has(match[2])) links.set(match[2], match[1].trim());
   for (const match of home.matchAll(/(?<![(\w])https?:\/\/[^\s)\]]+/g)) if (!links.has(match[0])) links.set(match[0], new URL(match[0]).pathname.replace(/[/_-]+/g, ' ').trim());
@@ -111,7 +111,7 @@ export function sourceTools(browser: Pick<Browser, 'search' | 'read'>, sources: 
         const url = webUrl(typeof args.url === 'string' ? args.url.trim() : '');
         const about = text(args, 'about', 160).trim().replace(/\s+/g, ' ');
         const why = text(args, 'why', 400).trim().replace(/\s+/g, ' ');
-        const by = context.stage.rooms.find((room) => room.id === context.roomId)?.name || 'A person';
+        const by = speaker(context)?.name || 'A person';
         const existing = sourceCards(context.stage.cards).map((card) => safeHost(card.url)).filter(Boolean);
         const made = await sources.propose({ url, about, why, by }, existing);
         return { text: `Proposed ${safeHost(made.url)}. It waits for the founder in Needs you.` };

@@ -3,9 +3,10 @@ import OpenAI from 'openai';
 import type { Usage } from '../shared/model.ts';
 import models from './models.json' with { type: 'json' };
 import { discoverLocal } from './opencode/config.ts';
+import { headerWait } from './breaker.ts';
 import type { ModelMessage } from './prompt.ts';
 
-export type Limits = { rpm?: number; rpd?: number; tpm?: number; tpd?: number };
+type Limits = { rpm?: number; rpd?: number; tpm?: number; tpd?: number };
 export type ToolSpec = { name: string; description: string; parameters: Record<string, unknown> };
 // `args` is the raw JSON text the model wrote. `extra` is whatever else the provider attached to the call;
 // it goes back unchanged on the next step, because some providers reject a call they cannot recognise.
@@ -13,7 +14,7 @@ export type ToolCall = { id: string; name: string; args: string; extra?: unknown
 export type Quota = { remainingRequests?: number; limitRequests?: number; remainingTokens?: number; limitTokens?: number };
 // `cut`: the provider stopped the reply at its length limit, mid-thought.
 export type ModelTurn = { text: string; calls: ToolCall[]; usage?: Usage; quota?: Quota; cut?: boolean };
-export type StepOptions = { tools?: ToolSpec[]; signal?: AbortSignal; onToken: (token: string) => void };
+type StepOptions = { tools?: ToolSpec[]; signal?: AbortSignal; onToken: (token: string) => void };
 
 export type ModelClient = {
   name: string;
@@ -59,10 +60,7 @@ const sleep = (milliseconds: number, signal?: AbortSignal) => new Promise<void>(
 
 // Milliseconds a provider asked us to wait after a 429, if it said.
 export function retryAfter(error: unknown): number | undefined {
-  const { status, headers } = error as { status?: number; headers?: Headers };
-  if (status !== 429) return undefined;
-  const seconds = Number(headers?.get?.('retry-after'));
-  return seconds > 0 ? seconds * 1000 : undefined;
+  return (error as { status?: number }).status === 429 ? headerWait(error) : undefined;
 }
 
 // Tries each client in order. Moves on when one throws before saying anything, answers with nothing,
@@ -214,7 +212,7 @@ function clientOf(name: string, entry: Shape, api: OpenAI): ModelClient {
 
 // The model on this machine that answers for the people when the hosted ones cannot: where it is spoken to and which
 // one. The address is the founder's bridge (a 16k window, tidy tool calls) when it is up, Ollama itself otherwise.
-export type LocalModel = { baseURL: string; model: string };
+type LocalModel = { baseURL: string; model: string };
 // Models known to call tools properly through Ollama's own chat template, best first. Others found on the machine
 // are not guessed at: a model that answers with a tool call written out as prose is worse than no model at all.
 const PREFERRED_LOCAL = ['qwen2.5:7b', 'qwen2.5:14b', 'qwen2.5:3b', 'llama3.1:8b', 'mistral:7b', 'mistral-nemo:12b'];
@@ -233,7 +231,7 @@ export async function findLocal(env: NodeJS.ProcessEnv = process.env, discover =
 
 // A local model is patient work: a 7B on this machine takes half a minute over a prompt the hosted ones answer in two
 // seconds, and the 16k window is the bridge's. No key, no limits: what it costs is time.
-export function localClient(local: LocalModel): ModelClient {
+function localClient(local: LocalModel): ModelClient {
   const api = new OpenAI({ apiKey: 'ollama', baseURL: local.baseURL, timeout: 180_000, maxRetries: 0 });
   return clientOf('ollama', { model: local.model, maxPromptChars: 40_000, maxTokens: 2048, tools: true, limits: {}, local: true }, api);
 }

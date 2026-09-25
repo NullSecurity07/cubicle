@@ -1,12 +1,12 @@
-import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Attention, Decision } from '../shared/model.ts';
-import { shortDay } from './clock.ts';
+import { localDay, shortDay, trashStamp } from './clock.ts';
+import { folderCache, freshId, safeId, slugOf, writeAtomic } from './fsx.ts';
 
 export type Decisions = ReturnType<typeof createDecisions>;
-const safe = (id: string) => { if (!/^[a-z0-9][a-z0-9-]{0,99}$/.test(id)) throw new Error(`bad id: ${id}`); return id; };
-const slug = (title: string) => title.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'decision';
-const dayOf = (at: number) => { const d = new Date(at); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const safe = (id: string) => safeId(id, 100);
+const dayOf = localDay;
 const isDay = (text: string) => /^\d{4}-\d{2}-\d{2}$/.test(text) && !Number.isNaN(new Date(`${text}T00:00:00`).getTime());
 const SECTIONS = ['Context', 'Options', 'Chosen', 'Why', 'Expected effect', 'Review date'] as const;
 
@@ -52,7 +52,7 @@ export function createDecisions(dir: string, now: () => number = Date.now) {
   const listeners = new Set<() => void>();
   const path = (id: string) => join(folder, `${safe(id)}.md`);
 
-  async function list(): Promise<Decision[]> {
+  async function read(): Promise<Decision[]> {
     const names = await readdir(folder).catch(() => [] as string[]);
     const found: Decision[] = [];
     for (const name of names.filter((one) => one.endsWith('.md'))) {
@@ -60,18 +60,16 @@ export function createDecisions(dir: string, now: () => number = Date.now) {
     }
     return found.sort((a, b) => (b.decidedAt ?? b.at) - (a.decidedAt ?? a.at) || b.id.localeCompare(a.id));
   }
+  // Every person's prompt reads the decisions, so they are read off the disk only when something changed.
+  const cache = folderCache(folder, read);
+  const list = () => cache.get();
   async function save(decision: Decision) {
-    await mkdir(folder, { recursive: true });
-    await writeFile(`${path(decision.id)}.tmp`, writeDecision(decision));
-    await rename(`${path(decision.id)}.tmp`, path(decision.id));
+    await writeAtomic(path(decision.id), writeDecision(decision), { mkdir: true });
+    cache.drop();
     for (const tell of listeners) tell();
     return decision;
   }
-  async function freshId(title: string) {
-    const taken = new Set((await readdir(folder).catch(() => [] as string[])).map((name) => name.replace(/\.md$/, '')));
-    const base = `${dayOf(now())}-${slug(title)}`;
-    for (let count = 1; ; count += 1) { const id = count === 1 ? base : `${base}-${count}`; if (!taken.has(id)) return id; }
-  }
+  const newId = (title: string) => freshId(folder, `${dayOf(now())}-${slugOf(title, 'decision')}`, '.md');
   const checked = (input: Record<string, unknown>) => {
     const title = words(input.title, 160);
     if (!title) throw new Error('a decision needs a title');
@@ -89,16 +87,15 @@ export function createDecisions(dir: string, now: () => number = Date.now) {
 
   return {
     list,
-    get: async (id: string) => (await list()).find((one) => one.id === id),
     onChange(tell: () => void) { listeners.add(tell); return () => { listeners.delete(tell); }; },
     async propose(input: Record<string, unknown>): Promise<Decision> {
       const base = checked(input);
       if (base.options.length < 2) throw new Error('a proposal needs at least two options for the founder to choose between');
-      return save(tidy({ id: await freshId(base.title), status: 'proposed', at: now(), proposedBy: words(input.proposedBy, 80), ...base, recommendation: words(input.recommendation, 600) }));
+      return save(tidy({ id: await newId(base.title), status: 'proposed', at: now(), proposedBy: words(input.proposedBy, 80), ...base, recommendation: words(input.recommendation, 600) }));
     },
     async record(input: Record<string, unknown>): Promise<Decision> {
       const base = checked(input);
-      return save(tidy({ id: await freshId(base.title), status: 'decided', at: now(), decidedAt: now(), ...base, ...verdict(input) }));
+      return save(tidy({ id: await newId(base.title), status: 'decided', at: now(), decidedAt: now(), ...base, ...verdict(input) }));
     },
     async decide(id: string, input: Record<string, unknown>): Promise<Decision> {
       const held = (await list()).find((one) => one.id === id);
@@ -107,7 +104,8 @@ export function createDecisions(dir: string, now: () => number = Date.now) {
     },
     async remove(id: string) {
       await mkdir(join(dir, 'trash'), { recursive: true });
-      await rename(path(id), join(dir, 'trash', `${new Date(now()).toISOString().replace(/[:.]/g, '-')}-${id}.md`));
+      await rename(path(id), join(dir, 'trash', `${trashStamp(now())}-${id}.md`));
+      cache.drop();
       for (const tell of listeners) tell();
     },
   };

@@ -1,10 +1,10 @@
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { seedStage } from '../shared/model.ts';
 import type { Browser } from './browser.ts';
-import { SIDE_TTL, WEB_TTL, webCache } from './cache.ts';
+import { diskCache, readFailed, SIDE_TTL, WEB_TTL, webCache, worthKeeping } from './cache.ts';
 import type { ModelMessage } from './prompt.ts';
 import { complete, type ModelClient } from './providers.ts';
 import { route } from './router.ts';
@@ -138,5 +138,31 @@ describe('the web cache', () => {
   it('splits a search answer back into one block a query, or says it cannot', () => {
     expect(splitSearch('## a\n1. x\n\n## b\n1. y', ['a', 'b'])).toEqual(['## a\n1. x', '## b\n1. y']);
     expect(splitSearch('## b\n1. y', ['a', 'b'])).toBeNull();
+  });
+});
+
+describe('sweeping a cache folder', () => {
+  it('sweeps a folder once an hour however many caches are made on it', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'cache-sweep-'));
+    let now = Date.now();
+    await diskCache<number>(dir, 1000, () => now).put('one', 1);
+    // Out of date now, but a new cache on the same folder does not sweep again within the hour.
+    now += 5000;
+    await diskCache<number>(dir, 1000, () => now).put('two', 2);
+    expect((await readdir(dir)).sort()).toEqual(['one.json', 'two.json']);
+    now += 3600_000 + 1;
+    await diskCache<number>(dir, 1000, () => now).put('three', 3);
+    expect(await readdir(dir)).not.toContain('one.json');
+  });
+});
+
+describe('what counts as a failed read', () => {
+  it('tells a failure from a short real page', () => {
+    expect(readFailed('## https://x.test\nFailed: the page did not load')).toBe(true);
+    expect(readFailed('(could not be read: timeout)')).toBe(true);
+    expect(readFailed('   ')).toBe(true);
+    expect(readFailed('We make shoes for runners.')).toBe(false);
+    // Short pages are real but not worth a web cache entry; a link card still keeps them.
+    expect(worthKeeping('We make shoes for runners.')).toBe(false);
   });
 });

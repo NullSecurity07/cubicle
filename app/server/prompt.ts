@@ -1,5 +1,5 @@
 import { playbookOf } from '../shared/apps.ts';
-import { STANCE, type ChatMessage, type Stage } from '../shared/model.ts';
+import { STANCE, type Card, type ChatMessage, type Stage } from '../shared/model.ts';
 import { safeHost, sourceCards } from '../shared/sources.ts';
 import { dayKey, fullDay, shortDay, weekDay, zoneName } from './clock.ts';
 import { recent, type Memory } from './memory.ts';
@@ -24,6 +24,12 @@ export function wired(stage: Stage, roomId: string, ids: string[]): string[] {
     if (wire.to === roomId && wanted.has(wire.from)) found.add(wire.from);
   }
   return [...found];
+}
+
+// The cards wired to this room, in the order their wires were drawn; only those of one kind when a kind is named.
+export function wiredCards(stage: Stage, roomId: string, kind?: Card['kind']): Card[] {
+  const cards = (stage.cards ?? []).filter((card) => !kind || card.kind === kind);
+  return wired(stage, roomId, cards.map((card) => card.id)).map((id) => cards.find((card) => card.id === id)!);
 }
 
 // A wire between a room and a doc lets that person read and write the doc.
@@ -115,8 +121,7 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
     return `- ${other.name}, ${other.role}. ${other.brief}${recent.length ? `\n  Lately in ${other.name}'s room:\n${recent.join('\n')}` : ''}`;
   });
   // A person only uses what it knows it has: say which cards are wired to the room, and what each is for.
-  const cards = stage.cards ?? [];
-  const mineCards = wired(stage, roomId, cards.map((card) => card.id)).map((id) => cards.find((card) => card.id === id)!);
+  const mineCards = wiredCards(stage, roomId);
   const notes = mineCards.flatMap((card) => (card.kind === 'note' && card.text.trim() ? [`- ${card.text.trim().replace(/\n+/g, '\n  ')}`] : []));
   const links = mineCards.flatMap((card) => (card.kind === 'link' && card.url ? [`## Page: ${pages[card.id]?.title || card.url}\n${card.url}\n${pages[card.id]?.text ?? '(the page could not be read yet)'}`] : []));
   const reach = mineCards.filter((card) => card.kind === 'project' || card.kind === 'board' || card.kind === 'browser' || card.kind === 'imagegen' || card.kind === 'voicegen' || card.kind === 'videogen').map((card) => (card.kind === 'project'
@@ -136,7 +141,9 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
     : '- A browser card the founder watches live. Use browse for anything that needs clicking, typing or being signed in.'));
   // Of the things a room can be given, the ones nobody gave this one: worked out from the tools really offered, so
   // it stays true whoever narrowed the list. Nothing is said to somebody who was offered no tools at all.
-  const cannot = toolNames.length ? CONNECT.filter(([name]) => !toolNames.includes(name)).map(([, what]) => what) : [];
+  // Writing documents is offered to anybody who may make one; the founder still has to wire one to them before
+  // they can change the company's own.
+  const cannot = toolNames.length ? CONNECT.filter(([name]) => !toolNames.includes(name) || (name === 'write_doc' && !mine.length)).map(([, what]) => what) : [];
   // What never changes goes first and what changes every turn goes last, because a provider's prefix cache keeps
   // whatever it recognises from the start of the prompt: who this person is, then the rules, then the documents,
   // then the cards, and only at the end the decisions, the memory and what colleagues said lately. The playbook
@@ -148,9 +155,11 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
     'Reply in short markdown: brief paragraphs, lists where they help, a table only for real comparisons.',
     toolNames.length
       ? `You can act with these tools: ${toolNames.join(', ')}. Use one when the founder asks for the work itself, not for advice about it. `
-        + (toolNames.includes('write_doc')
-          ? `You may change only the documents connected to your room${mine.length ? ` (${mine.map((id) => `"${stage.docs.find((doc) => doc.id === id)!.title}"`).join(', ')})` : ''}, with write_doc or append_doc, naming the document by its title. `
+        + (toolNames.includes('write_doc') && mine.length
+          ? `You may change only the documents connected to your room (${mine.map((id) => `"${stage.docs.find((doc) => doc.id === id)!.title}"`).join(', ')}), with write_doc or append_doc, naming the document by its title. `
             + 'Their text is already below: never look for a document with read_file or list_files, which only see the separate shared files folder. '
+          // Nothing wired, but a document made in this turn is theirs to go on writing.
+          : toolNames.includes('write_doc') && toolNames.includes('create_doc') ? 'A document you make with create_doc is yours to go on writing in this turn, with write_doc or append_doc, naming it by its title. '
           : '')
         + 'For anything on the web, search and read with all your queries or addresses in one call. Say where a fact came from. '
         + 'The founder sees a receipt for every tool call, and work without a receipt did not happen: never write that you saved, created or changed '

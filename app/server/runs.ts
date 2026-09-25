@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import type { Stage, ToolEvent } from '../shared/model.ts';
-import type { createApprovals } from './approvals.ts';
+import { askFounder, type createApprovals } from './approvals.ts';
 import type { AttentionBook } from './attention.ts';
 import { automation } from './automation/run.ts';
 import type { Boards } from './boards.ts';
@@ -23,6 +23,8 @@ export const desktopNotify: Notify = (title, body) => {
   else if (process.platform === 'darwin') execFile('osascript', ['-e', `display notification ${JSON.stringify(body)} with title ${JSON.stringify(title)}`], () => {});
 };
 
+// A runner built without a "Needs you" list (a check script) still waits for its answer; there is just nowhere to show it.
+const NOBODY = { raise: async () => {}, clear: async () => {} };
 const line = (event: ToolEvent) => `${event.ok ? '✓' : '✗'} ${event.name} ${String(event.args.doc ?? event.args.title ?? event.args.path ?? event.args.to ?? event.args.name ?? event.args.action ?? (Array.isArray(event.args.queries) ? event.args.queries.join(' | ') : '')).slice(0, 80)}${event.ok ? '' : ` · ${(event.result ?? '').slice(0, 140)}`}`.trim();
 
 // Background work on a task: the same turn a chat runs, started by the founder (the Run button or a repeat the founder set),
@@ -31,7 +33,7 @@ const line = (event: ToolEvent) => `${event.ok ? '✓' : '✗'} ${event.name} ${
 // narrow. Without it a person is offered the lot, which is what this was before any of them existed.
 // Who set a piece of work going. A person told "the founder started this" about a task that started itself at nine
 // in the morning has been told something untrue, and answers as if somebody were sitting there waiting for it.
-export type StartedBy = 'founder' | 'schedule' | 'chain' | 'call';
+type StartedBy = 'founder' | 'schedule' | 'chain' | 'call';
 const STARTED: Record<StartedBy, string> = {
   founder: 'The founder started this task from the board.',
   schedule: 'This task started by itself, on the schedule the founder set for it. Nobody is watching it run.',
@@ -106,8 +108,7 @@ export function createRuns(deps: {
           approve: async (event, signal) => {
             await boards.update(boardId, taskId, (one) => { one.run!.state = 'waiting'; one.run!.approval = event; });
             notify(`${room.name} needs your OK`, `${task.title}: ${event.question ?? event.name.replace(/_/g, ' ')}`);
-            await attention?.raise({ id: `approval:${event.id}`, kind: 'run-approval', title: event.question ?? event.name.replace(/_/g, ' '), detail: task.title, at: Date.now(), roomId: room.id, who: room.name, cardId: boardId, taskId, event });
-            const answer = await approvals.ask(event.id, signal).finally(() => attention?.clear(`approval:${event.id}`));
+            const answer = await askFounder(attention ?? NOBODY, approvals, { id: `approval:${event.id}`, kind: 'run-approval', title: event.question ?? event.name.replace(/_/g, ' '), detail: task.title, at: Date.now(), roomId: room.id, who: room.name, cardId: boardId, taskId, event }, signal);
             await boards.update(boardId, taskId, (one) => { one.run!.state = 'running'; one.run!.approval = undefined; });
             return answer;
           },
