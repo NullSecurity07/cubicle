@@ -111,9 +111,12 @@ type Box = { x: number; y: number; w: number; h: number };
 const overlap = (one: Box, other: Box) => one.x < other.x + other.w && other.x < one.x + one.w && one.y < other.y + other.h && other.y < one.y + one.h;
 
 // The teams on the shelf, in folder order. A folder added without being named here is a team nobody decided to ship.
-const SHIPPED = ['customer-discovery', 'due-diligence', 'investor-update', 'launch-team', 'linkedin-content-system', 'pitch-practice', 'pmf-engine', 'pre-mortem', 'seed-round-prep', 'startup-evaluation', 'weekly-metrics'];
+const SHIPPED = ['customer-discovery', 'due-diligence', 'hiring-scorecard', 'investor-update', 'launch-team', 'lean-canvas', 'linkedin-content-system', 'pitch-practice', 'pmf-engine',
+  'positioning', 'pre-mortem', 'pricing-unit-economics', 'seed-round-prep', 'startup-evaluation', 'traction-bullseye', 'weekly-metrics', 'working-backwards'];
 // The teams written after the eval runner stopped offering tools, held to the same rule as the three that lean on them.
-const NO_TOOL_CASES = ['launch-team', 'pitch-practice', 'due-diligence', 'linkedin-content-system', 'weekly-metrics', 'customer-discovery', 'investor-update', 'pmf-engine', 'seed-round-prep', 'pre-mortem'];
+// The one-page plan is left out only of the one-case-per-person count: two people and at least three cases cannot be both.
+const NO_TOOL_CASES = ['launch-team', 'pitch-practice', 'due-diligence', 'linkedin-content-system', 'weekly-metrics', 'customer-discovery', 'investor-update', 'pmf-engine', 'seed-round-prep', 'pre-mortem',
+  'pricing-unit-economics', 'traction-bullseye', 'hiring-scorecard', 'positioning', 'working-backwards'];
 
 describe('every built-in framework', () => {
   it('ships every team on the shelf', async () => {
@@ -364,7 +367,7 @@ describe('the LinkedIn content system', () => {
   });
 });
 
-// The six teams from the 2026-09-25 research, each built from one note of its own. For each: who is in it, in order;
+// The twelve teams from the 2026-09-25 research, each built from one note of its own. For each: who is in it, in order;
 // the line the panel shows; the doc they share; and, per person, the sections of the note their brief names, which
 // must be headings in that note, and the words their brief must not lose.
 type Team = { note: string; roles: string[]; size: string; doc: string; headings: string[]; sections: string[][]; words: string[][] };
@@ -404,6 +407,42 @@ const TEAMS: Record<string, Team> = {
     size: '3 people · 1 doc · 1 sticky note · 1 note · 1 task board', doc: 'Premortem', headings: ['## Failure stories', '## Register', '## Review dates'],
     sections: [['It already failed', 'Everyone writes alone'], ['Evidence, not worry'], ['From stories to a register', 'Early warnings']],
     words: [['Past tense', 'No "might"', 'ask_founder'], ['no evidence found', 'INSIDE', 'OUTSIDE', 'watch_page'], ['No more than five', 'fatal', 'propose_task']],
+  },
+  'pricing-unit-economics': {
+    note: 'Pricing from buyers, checked by the numbers', roles: ['Price listener', 'Unit economist', 'Price proposer'],
+    size: '3 people · 1 doc · 1 sticky note · 1 note', doc: 'Pricing', headings: ['## Price range', '## Unit economics', '## Proposal'],
+    sections: [['Four price questions', 'Who to ask about price', 'Reading the answers'], ['Gross margin', 'CAC, the honest kind', 'LTV as profit', 'Payback'], ['Payback', 'Deciding']],
+    words: [['"too few"', 'Never invent an answer', 'never as the answer'], ['Never use revenue as LTV', '"missing"', 'Referral fees'], ['fix margin first', 'propose_decision', 'never change a live price']],
+  },
+  'traction-bullseye': {
+    note: 'Finding the channel that works', roles: ['Channel scout', 'Ring ranker', 'Test judge'],
+    size: '3 people · 1 doc · 1 sticky note · 1 note · 1 task board', doc: 'Channels', headings: ['## Brainstorm', '## Rings', '## Tests', '## Focus'],
+    sections: [['The nineteen channels', 'One idea per channel'], ['Three rings', 'Cut to three', 'Designing a cheap test'], ['Reading a test', 'Focus']],
+    words: [['19 channels', 'crawl_site', 'marked as guesses'], ['Never more than three', 'pass line', 'propose_task'], ['PASS', 'FAIL', '"incomplete"', 'one focus channel']],
+  },
+  'hiring-scorecard': {
+    note: 'Hiring against a scorecard', roles: ['Scorecard writer', 'Sourcer', 'Interview guide'],
+    size: '3 people · 1 doc · 1 sticky note · 1 note · 1 browser', doc: 'Hire', headings: ['## Scorecard', '## Candidates', '## Interviews', '## Decision'],
+    sections: [['Mission', 'Outcomes, not duties', 'Competencies'], ['Sourcing starts with people you know'], ['The screening call', 'The career walk-through', 'References that tell the truth', 'Rating against the scorecard']],
+    words: [['never activities', 'propose_decision', 'No sourcing until the scorecard is confirmed'], ['Never a person\'s private life', 'evidence-outreach', 'You never send'], ['HIRE', 'NO HIRE', 'MORE EVIDENCE', 'Never rate on likeability']],
+  },
+  positioning: {
+    note: 'Positioning from the alternatives up', roles: ['Best-customer reader', 'Difference finder', 'Market framer'],
+    size: '3 people · 1 doc · 1 sticky note · 1 note', doc: 'Positioning', headings: ['## Customers', '## Alternatives', '## Attributes', '## Value', '## Best-fit customers', '## Market category', '## Trend', '## Statement'],
+    sections: [['Start from happy customers', 'What they would do instead'], ['Unique attributes, with proof', 'Value, in the customer\'s words'], ['Who cares most', 'A frame that makes the value obvious', 'A trend, carefully', 'Writing it down']],
+    words: [['positioning is premature', 'not the founder\'s list of competitors'], ['No attribute without proof', 'ours, not theirs', 'watch-a-competitor'], ['propose_decision', 'traces back']],
+  },
+  'working-backwards': {
+    note: 'Writing the launch first', roles: ['Press release writer', 'FAQ writer', 'Reader'],
+    size: '3 people · 1 doc · 1 sticky note · 1 note', doc: 'PR/FAQ', headings: ['## Press release', '## External FAQ', '## Internal FAQ', '## Review'],
+    sections: [['The press release, part by part', 'Plain words'], ['External questions', 'Internal questions'], ['Reading it together']],
+    words: [['Under one page', '[hypothetical]', 'no superlative without a number'], ['top three reasons this will fail', '"unknown"'], ['BUILD', 'REVISE', 'DROP', 'two revision rounds']],
+  },
+  'lean-canvas': {
+    note: 'The business on one page', roles: ['Canvas drafter', 'Riskiest-guess finder'],
+    size: '2 people · 1 doc · 1 sticky note · 1 note · 1 task board', doc: 'Plan', headings: ['## Canvas', '## Riskiest guesses', '## This week\'s test', '## History'],
+    sections: [['Nine boxes', 'Twenty minutes', 'The sub-boxes', 'Unfair advantage'], ['Riskiest first', 'A test a week']],
+    words: [['KNOWN', 'GUESS', '"none yet"'], ['One test at a time', 'written before the result', 'propose_task', 'Customer discovery']],
   },
 };
 
