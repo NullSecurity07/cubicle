@@ -6,7 +6,8 @@ import { createTrace } from '../trace.ts';
 
 // One screen, once a day. The founder should be able to read this on a pavement and know whether the company needs
 // them. Everything in it is already written down somewhere; none of it is worked out by asking a model.
-export type Digest = { done: string[]; waiting: string[]; today: string[]; learned: string[]; cost?: string };
+// `five` is Today's five, the same ranked list the dashboard opens on, and it comes first when there is one.
+export type Digest = { done: string[]; waiting: string[]; today: string[]; learned: string[]; cost?: string; five?: string[] };
 // Any list longer than this is a wall, and a wall is not read at all.
 const FEW = 5;
 const DAY = 86_400_000;
@@ -22,6 +23,7 @@ const some = (lines: string[]) => (lines.length <= FEW ? lines : [...lines.slice
 export function digestText(at: number, parts: Digest): string {
   const blocks: string[] = [`**Today** · ${weekDay(at)}`];
   const part = (title: string, lines: string[]) => { if (lines.length) blocks.push([`**${title}**`, ...some(lines).map((line) => `• ${line}`)].join('\n')); };
+  part('Five for today', parts.five ?? []);
   part('Done', parts.done);
   part('Waiting for you', parts.waiting);
   part('Coming up today', parts.today);
@@ -32,7 +34,7 @@ export function digestText(at: number, parts: Digest): string {
 }
 
 // Everything the note is made of, gathered from where it already lives.
-export function createDigest(deps: { boards: Boards; stage: () => Promise<Stage>; skills: Skills; attention: () => Promise<Attention[]>; workspace: string; now?: () => number }) {
+export function createDigest(deps: { boards: Boards; stage: () => Promise<Stage>; skills: Skills; attention: () => Promise<Attention[]>; workspace: string; now?: () => number; five?: () => Promise<string[]> }) {
   const now = deps.now ?? Date.now;
   const trace = createTrace(deps.workspace, now);
 
@@ -61,7 +63,8 @@ export function createDigest(deps: { boards: Boards; stage: () => Promise<Stage>
     const spent = summary && summary.turns
       ? `${summary.turns} turn${summary.turns === 1 ? '' : 's'}, ${thousands(Object.values(summary.people).reduce((sum, one) => sum + one.input, 0))} in and ${thousands(Object.values(summary.people).reduce((sum, one) => sum + one.output, 0))} out. All of it on free allowances.`
       : undefined;
-    return digestText(at, { done, waiting, today: today.sort(), learned, ...(spent ? { cost: spent } : {}) });
+    const five = await deps.five?.().catch(() => [] as string[]) ?? [];
+    return digestText(at, { done, waiting, today: today.sort(), learned, ...(spent ? { cost: spent } : {}), ...(five.length ? { five } : {}) });
   };
 }
 
