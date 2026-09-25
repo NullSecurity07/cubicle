@@ -1,26 +1,15 @@
-import { useReactFlow } from '@xyflow/react';
-import { useState } from 'react';
+import { useJumpTo } from '../flow';
 import type { Lapsed } from '../../shared/lapsed';
-import type { Attention } from '../../shared/model';
 import { useAddCard } from '../addCard';
 import { changeTask, dismissAttention, dropSource, removeTask } from '../api';
 import { emit } from '../bus';
 import { Approval, asked } from '../nodes/Approval';
 import { CoderAsk } from '../nodes/CoderAsk';
-import { useAttention } from './attention';
+import { ago, since, useAttention, WHAT } from './attention';
 import { PanelShell } from './PanelShell';
 import { overlay, showDecision } from './store';
+import { useAttempt } from '../attempt';
 
-const WHAT: Record<Attention['kind'], string> = {
-  approval: 'needs your OK', 'run-approval': 'needs your OK on a task', 'proposed-task': 'suggests a task', 'proposed-decision': 'asks for a decision',
-  'run-failed': 'could not finish', missed: 'missed a repeat', 'review-due': 'Decision to look at again', 'proposed-source': 'suggests a website', 'page-changed': 'saw a watched page change',
-};
-export const ago = (at: number, now = Date.now()) => {
-  const minutes = Math.max(0, Math.round((now - at) / 60_000));
-  return minutes < 1 ? 'now' : minutes < 60 ? `${minutes} min` : minutes < 1440 ? `${Math.round(minutes / 60)} h` : `${Math.round(minutes / 1440)} d`;
-};
-// How long ago, said in a sentence the way the clock beside it says it.
-const since = (at: number) => (ago(at) === 'now' ? 'just now' : `${ago(at)} ago`);
 // What the founder says to start it over. It asks for the work, never for the step: the person still has to come back
 // for the OK through the usual door, and pressing this has never said yes to anything.
 const again = (title: string) => `Go ahead with what you asked me about: "${title}". Ask me again when you need my OK.`;
@@ -28,16 +17,14 @@ const again = (title: string) => `Go ahead with what you asked me about: "${titl
 // Everything that waits for the founder, in one place. Answer here, or go to where it lives.
 export function NeedsPanel() {
   const list = useAttention() as Lapsed[];
-  const { fitView, setNodes } = useReactFlow();
   const addCard = useAddCard();
-  const [problem, setProblem] = useState('');
-  const attempt = (work: Promise<unknown>) => { setProblem(''); work.catch((error: Error) => setProblem(error.message)); };
+  const jumpTo = useJumpTo();
+  const { problem, attempt } = useAttempt();
 
   function show(id?: string) {
     if (!id) return;
     overlay.close({ kind: 'panel', name: 'needs' });
-    setNodes((nodes) => nodes.map((node) => ({ ...node, selected: node.id === id })));
-    void fitView({ nodes: [{ id }], duration: 450, maxZoom: 1, padding: 0.35 });
+    jumpTo(id);
   }
 
   // The founder in front of the person again, with the ask already typed: the same road the command bar takes.

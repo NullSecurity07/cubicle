@@ -3,4 +3,4 @@
    the one line that says what a schedule could not be read as, in the same red as everything else that went wrong. */
 .automation { display: contents; }
 .automation__code { min-height: 92px; font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace; font-size: 11.5px; line-height: 1.5; resize: vertical; }
-.taskview__hint.automation__problem { color: #f0968e; }
+.taskview__hint.automation__problem { color: var(--problem); }

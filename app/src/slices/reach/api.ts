@@ -1,12 +1,8 @@
 import type { ReachState, ReachUpdates } from '../../../shared/reach';
+import { request, send as sent } from '../../api';
 
-// This slice's own way of asking the server, kept beside the screens that use it.
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init);
-  if (!response.ok) throw new Error((await response.json().catch(() => null) as { error?: string } | null)?.error ?? `${response.status} ${path}`);
-  return response.json() as Promise<T>;
-}
-const send = (body: unknown, method = 'POST'): RequestInit => ({ method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+// This slice's own paths, kept beside the screens that use them.
+const send = (body: unknown, method = 'POST') => sent(method, body);
 
 export type Made = { id: string; secret: string; url: string };
 

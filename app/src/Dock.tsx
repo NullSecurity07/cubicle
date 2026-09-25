@@ -1,26 +1,19 @@
 import { Panel } from '@xyflow/react';
 import { useEffect, useState } from 'react';
 import { preset, type AppKey } from '../shared/apps';
-import type { ModelInfo } from '../shared/model';
-import { getModels } from './api';
-import { listen } from './bus';
 import { useAttention } from './overlay/attention';
 import { overlay } from './overlay/store';
 import { useAddCard, type CardKind } from './addCard';
 import { openFrameworks } from './frameworks';
 import { openLibrary } from './library';
 import { BlocksIcon } from './nodes/FrameworksPanel';
-import { pressed } from './keys';
+import { keyHint, pressed } from './keys';
+import { useModels } from './models';
 
 // One ring per model provider: how much of today's free quota is left. Amber under a fifth, red when gone.
 function Quota() {
-  const [models, setModels] = useState<ModelInfo[]>([]);
+  const models = useModels() ?? [];
   const [open, setOpen] = useState(false);
-  useEffect(() => {
-    const load = () => { getModels().then(setModels).catch(() => {}); };
-    load();
-    return listen('usage', load);
-  }, []);
   if (!models.length) return null;
   const tone = (left: number) => (left <= 0.05 ? 'out' : left < 0.2 ? 'low' : 'fine');
   return (
@@ -145,10 +138,10 @@ export function Dock() {
         <BlocksIcon />
       </button>
       <span className="dock__gap" aria-hidden="true" />
-      <button type="button" aria-label="Dashboard" title="Dashboard: your day, tokens, teams and what was made (Ctrl D)" onClick={() => overlay.open({ kind: 'panel', name: 'dashboard' })}>
+      <button type="button" aria-label="Dashboard" title={`Dashboard: your day, tokens, teams and what was made (${keyHint('dashboard')})`} onClick={() => overlay.open({ kind: 'panel', name: 'dashboard' })}>
         <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3.500" y="3.500" width="5.500" height="7" rx="1.500" /><rect x="11" y="3.500" width="5.500" height="4" rx="1.500" /><rect x="11" y="9.500" width="5.500" height="7" rx="1.500" /><rect x="3.500" y="12.500" width="5.500" height="4" rx="1.500" /></svg>
       </button>
-      <button type="button" aria-label="Command bar" title="Find or do anything (Ctrl K)" onClick={() => overlay.open({ kind: 'panel', name: 'command' })}>
+      <button type="button" aria-label="Command bar" title={`Find or do anything (${keyHint('command-bar')})`} onClick={() => overlay.open({ kind: 'panel', name: 'command' })}>
         <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.200" /><path d="M13 13l3.800 3.800" /></svg>
       </button>
       <button type="button" aria-label="Messages" title="Messages" onClick={() => overlay.open({ kind: 'panel', name: 'messages' })}>

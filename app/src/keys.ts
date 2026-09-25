@@ -25,7 +25,7 @@ export const SHORTCUTS: Shortcut[] = [
   { id: 'messages', keys: ['M'], when: 'stage', does: 'Open Messages: every conversation' },
   { id: 'decisions', keys: ['D'], when: 'stage', does: 'Open Decisions: what you decided, and why' },
   { id: 'focus-card', keys: ['F'], when: 'stage', does: 'Focus the selected card, so it fills the window' },
-  { id: 'delete-cards', keys: ['Backspace'], when: 'stage', does: 'Remove the selected cards and wires' },
+  { id: 'delete-cards', keys: ['Backspace'], when: 'stage', does: 'Remove the selected wires; a card is removed with its own Remove button' },
   { id: 'pick-several', keys: ['Mod'], with: 'click', when: 'stage', does: 'Pick several cards; two or more can be saved as a framework' },
   { id: 'select-area', keys: ['Shift'], with: 'drag', when: 'stage', does: 'Pick every card inside the area you drag across' },
 
@@ -194,3 +194,7 @@ export function capsOf(text: string, mac = isMac()): string[] {
   if (!chord) return [text];
   return [...chord.mods, ...(chord.key ? [chord.key] : [])].map((part) => (mac ? MAC_CAP[part] : undefined) ?? CAP[part] ?? part);
 }
+
+// A row's first key as a short hint beside a button, "Ctrl K" or "⌘ K": read from the table, so a key the founder moved
+// in keys.json is the key the hint names.
+export const keyHint = (id: string) => capsOf(keysOf(id)[0] ?? '').join(' ');

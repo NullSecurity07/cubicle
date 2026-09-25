@@ -1,4 +1,4 @@
-import { useReactFlow } from '@xyflow/react';
+import { useJumpTo } from '../flow';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { DashMedia, DashNeed, DashTask, DashTeam, Dashboard as Board } from '../../shared/dashboard';
 import { LEAD_STAGES, STAGE_NAMES } from '../../shared/leads';
@@ -6,9 +6,11 @@ import { fileUrl, getDashboard, watchDashboard } from '../api';
 import { emit } from '../bus';
 import { openFrameworks, useFrameworks, usePlaceFramework } from '../frameworks';
 import { BlocksIcon } from '../nodes/FrameworksPanel';
-import { ago } from './NeedsPanel';
+import { since, WHAT } from './attention';
+import { compact } from '../numbers';
 import { overlay, showDecision, showPlaybook } from './store';
 import './dashboard.css';
+import { PanelShell } from './PanelShell';
 
 // The founder's one screen: what today holds, what the work has cost, how the teams are doing and what was made.
 // Nothing here is kept by the dashboard. Every row is a door to the place it came from, and going through one closes
@@ -22,15 +24,8 @@ const SECTIONS = [
 ] as const;
 type SectionId = (typeof SECTIONS)[number]['id'];
 
-// Numbers the way a person says them: 940, 12.4k, 1.3M.
-export const compact = (value: number) => (value < 1000 ? String(Math.round(value)) : value < 1_000_000 ? `${(value / 1000).toFixed(value < 10_000 ? 1 : 0).replace(/\.0$/, '')}k` : `${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`);
-const since = (at: number) => (ago(at) === 'now' ? 'just now' : `${ago(at)} ago`);
 const until = (at: number) => new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 const plural = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
-const WHAT: Record<DashNeed['kind'], string> = {
-  approval: 'needs your OK', 'run-approval': 'needs your OK on a task', 'proposed-task': 'suggests a task', 'proposed-decision': 'asks for a decision',
-  'run-failed': 'could not finish', missed: 'missed a repeat', 'review-due': 'Decision to look at again', 'proposed-source': 'suggests a website', 'page-changed': 'saw a watched page change',
-};
 const KIND_WORD: Record<DashMedia['kind'], string> = { picture: 'Picture', voice: 'Voice', film: 'Film' };
 
 const Chevron = () => <svg className="dash__chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M4.500 2.500L8 6l-3.500 3.500" /></svg>;
@@ -123,7 +118,6 @@ export function Dashboard() {
   const [shown, setShown] = useState<SectionId>('today');
   const [busy, setBusy] = useState('');
   const scroller = useRef<HTMLDivElement>(null);
-  const { setNodes, fitView } = useReactFlow();
   const frameworks = useFrameworks();
   const place = usePlaceFramework();
 
@@ -155,7 +149,8 @@ export function Dashboard() {
   }, [board]);
 
   const close = () => overlay.close({ kind: 'panel', name: 'dashboard' });
-  const jump = (id: string) => { close(); setNodes((nodes) => nodes.map((node) => ({ ...node, selected: node.id === id }))); void fitView({ nodes: [{ id }], duration: 450, maxZoom: 1, padding: 0.35 }); };
+  const jumpTo = useJumpTo();
+  const jump = (id: string) => { close(); jumpTo(id); };
   const room = (id: string) => { close(); overlay.open({ kind: 'focus', id }); };
   const panel = (name: string) => { close(); overlay.open({ kind: 'panel', name }); };
   const decision = (id: string) => { close(); showDecision(id); overlay.open({ kind: 'panel', name: 'decisions' }); };
@@ -187,14 +182,7 @@ export function Dashboard() {
   };
 
   return (
-    <section className="panel dash" role="dialog" aria-modal="true" aria-label="Dashboard">
-      <header className="panel__header">
-        <h2>Dashboard</h2>
-        <span>{today}</span>
-        <button type="button" aria-label="Close" title="Close (Esc)" onClick={close}>
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
-        </button>
-      </header>
+    <PanelShell name="dashboard" title="Dashboard" note={today} className="dash" onClose={close}>
       <div className="dash__frame">
         <nav className="dash__rail" aria-label="Sections">
           {SECTIONS.map((section) => (
@@ -367,6 +355,6 @@ export function Dashboard() {
           </>}
         </div>
       </div>
-    </section>
+    </PanelShell>
   );
 }

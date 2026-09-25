@@ -34,6 +34,20 @@ describe('command bar', () => {
     expect(first('add a voice studio').action).toEqual({ do: 'add', kind: 'voicegen' });
     expect(first('add text to speech').action).toEqual({ do: 'add', kind: 'voicegen' });
     expect(first('add a video studio').action).toEqual({ do: 'add', kind: 'videogen' });
+    expect(first('add leads').action).toEqual({ do: 'add', kind: 'leads' });
+  });
+
+  it('adds a source website, and never hires a person called "Source"', () => {
+    for (const typed of ['add source', 'add a source', 'add website', 'add a web site', 'new site', 'add a source website']) {
+      expect(first(typed).action).toEqual({ do: 'add', kind: 'source' });
+      expect(actions(typed)).not.toContainEqual(expect.objectContaining({ kind: 'room' }));
+    }
+  });
+
+  it('adds a note from the library by opening the notes to pick one', () => {
+    for (const typed of ['add a note from the library', 'add note from library', 'add library note', 'add library']) expect(first(typed).action).toEqual({ do: 'panel', name: 'library' });
+    expect(first('add a note').action).toEqual({ do: 'add', kind: 'note' });
+    expect(commandWords().some((word) => word.say.includes('add a source'))).toBe(true);
   });
 
   it('asks a person by name, in the ways a founder would type it', () => {

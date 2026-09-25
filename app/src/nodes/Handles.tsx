@@ -7,6 +7,7 @@ const SIDES = [
   ['t', Position.Top],
   ['b', Position.Bottom],
 ] as const;
+export const HANDLE_IDS = SIDES.map(([id]) => id);
 
 export function Handles() {
   return (

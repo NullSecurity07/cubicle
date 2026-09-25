@@ -4,8 +4,12 @@ import { NONCOMMERCIAL, OMNI_PICKER_LINE, PERMISSION_LINE, SHAPES, type MediaAss
 import { afforded, makingWords, shotsIn } from '../../shared/film-time';
 import { useAddCard } from '../addCard';
 import { addAsset, fileUrl, getVoices, removeAsset, stopMedia } from '../api';
-import { useElapsed, useMedia } from '../media';
-import type { ImageGenNodeType, VideoGenNodeType, VoiceGenNodeType } from '../stage';
+import { useElapsed, useMedia, usePictureCounts } from '../media';
+import { useFlowPick } from '../flow';
+import { usePages } from '../where';
+import { useNotes } from '../library';
+import { docsFor, filmSays, sourcesFor } from '../../shared/wiring';
+import { fromFlow, type ImageGenNodeType, type VideoGenNodeType, type VoiceGenNodeType } from '../stage';
 import { CardActions, Frame } from './Frame';
 import { pressed } from '../keys';
 
@@ -281,7 +285,7 @@ function AssetTray({ id, assets, onChange, accept = MEDIA_FILE }: { id: string; 
 // the film here on this machine; a wired person builds one scene by scene with generate_video. A render takes minutes,
 // so every step the renderer takes shows on the card as it happens.
 export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>) {
-  const { updateNodeData, getNodes, getEdges } = useReactFlow();
+  const { updateNodeData } = useReactFlow();
   const { media, hint, drawnHere, making, problem, make, reload } = useMedia(id);
   const elapsed = useElapsed(making);
   const voices = useVoices();
@@ -317,26 +321,22 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
 
   useEffect(() => { log.current?.scrollTo({ top: log.current.scrollHeight }); }, [media.log]);
 
-  // What this film will be made of, in the founder's words, so nothing about it is a surprise.
-  const using = (() => {
-    const joined = getEdges().filter((edge) => edge.source === id || edge.target === id).map((edge) => (edge.source === id ? edge.target : edge.source));
-    const nodes = getNodes().filter((node) => joined.includes(node.id));
-    const said: string[] = [];
-    for (const node of nodes) {
-      if (node.type === 'project') said.push(`${String((node.data as { path?: string }).path ?? '').split('/').filter(Boolean).at(-1) ?? 'a'} project`);
-      else if (node.type === 'link') said.push(String((node.data as { title?: string; url?: string }).title || (node.data as { url?: string }).url || 'a page'));
-      else if (node.type === 'browser') said.push('a browser card');
-      else if (node.type === 'doc') said.push(String((node.data as { title?: string }).title ?? 'a document'));
-      else if (node.type === 'note') said.push('a note');
-      else if (node.type === 'image') said.push('a picture');
-    }
-    if (data.address?.trim()) said.unshift(data.address.trim());
-    const clips = assets.filter((one) => one.kind === 'video').length;
-    if (clips) said.push(`${clips} of your clip${clips === 1 ? '' : 's'}`);
-    const track = assets.find((one) => one.kind === 'audio');
-    if (track && data.music !== 'none') said.push('your music');
-    return said;
-  })();
+  // What this film will be made of, in the founder's words, so nothing about it is a surprise. It is read from the
+  // live canvas, so a wire drawn or taken away shows at once, and by the same rules the server gathers with.
+  const found = useFlowPick(({ nodes, edges }) => {
+    const stage = fromFlow(nodes, edges);
+    const docs = new Set(docsFor(stage, id));
+    // Where the cards sit is left out, so dragging one does not draw this card again.
+    return { cards: sourcesFor(stage, id).map((card) => ({ ...card, x: 0, y: 0, w: 0, h: 0 })), docs: stage.docs.filter((doc) => docs.has(doc.id)).map((doc) => doc.title) };
+  });
+  const pages = usePages();
+  const drawn = usePictureCounts(found.cards.filter((card) => card.kind === 'imagegen').map((card) => card.id));
+  const library = useNotes();
+  const using = filmSays(found.cards, found.docs, { where: (cardId) => pages[cardId] ?? '', drawn: (cardId) => drawn[cardId] ?? 0, noteTitle: (noteId) => library.find((note) => note.id === noteId)?.title ?? '' });
+  if (data.address?.trim()) using.unshift(data.address.trim());
+  const clips = assets.filter((one) => one.kind === 'video').length;
+  if (clips) using.push(`${clips} of your clip${clips === 1 ? '' : 's'}`);
+  if (assets.some((one) => one.kind === 'audio') && data.music !== 'none') using.push('your music');
 
   return (
     <Frame selected={!!selected} minWidth={340} minHeight={420}>

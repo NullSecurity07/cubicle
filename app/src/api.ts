@@ -9,9 +9,11 @@ import { leadsChannel, TWENTY_CHANNEL, type Lead, type LeadsEvent, type LeadStag
 import { MEMORY_CHANNEL } from '../shared/model';
 import { feed, snapshot } from './feed';
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+// The one way the page asks the server. A refusal carries the server's own words; `fallback` is what is said when it
+// sent none. The slices ask through this too, so every corner of the page reports a failure the same way.
+export async function request<T>(path: string, init?: RequestInit, fallback?: string): Promise<T> {
   const response = await fetch(path, init);
-  if (!response.ok) throw new Error((await response.json().catch(() => null))?.error ?? `${response.status} ${path}`);
+  if (!response.ok) throw new Error((await response.json().catch(() => null) as { error?: string } | null)?.error ?? fallback ?? `${response.status} ${path}`);
   return response.json() as Promise<T>;
 }
 const put = (body: unknown): RequestInit => ({ method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -52,7 +54,7 @@ export async function sendChat(roomId: string, text: string, onEvent: (event: Ch
   }
 }
 
-const send = (method: string, body?: unknown): RequestInit => ({ method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+export const send = (method: string, body?: unknown): RequestInit => ({ method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
 export const addTask = (boardId: string, title: string) => request<Task>(`/api/boards/${boardId}/tasks`, send('POST', { title }));
 export const changeTask = (boardId: string, taskId: string, patch: Partial<Pick<Task, 'title' | 'detail' | 'column' | 'assignee'>> & { repeat?: Task['repeat'] | null }) => request<Task>(`/api/boards/${boardId}/tasks/${taskId}`, send('PATCH', patch));
 export const removeTask = (boardId: string, taskId: string) => request(`/api/boards/${boardId}/tasks/${taskId}`, send('DELETE'));

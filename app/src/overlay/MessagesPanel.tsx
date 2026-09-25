@@ -3,7 +3,7 @@ import type { Thread } from '../../shared/model';
 import { getThreads } from '../api';
 import { listen } from '../bus';
 import { Message } from '../nodes/Message';
-import { ago } from './NeedsPanel';
+import { ago } from './attention';
 import { PanelShell } from './PanelShell';
 import { setHostElement, showThread, useThread } from './store';
 

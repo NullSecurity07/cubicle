@@ -17,7 +17,9 @@ import { held, pressed } from '../keys';
 import { overlay, setHostElement, useLayers } from './store';
 
 // The founder's views, by layer name.
-const PANELS: Record<string, () => React.JSX.Element> = { needs: NeedsPanel, messages: MessagesPanel, decisions: DecisionsPanel, playbook: PlaybookPanel, library: LibraryPanel, note: NotePanel, frameworks: FrameworksPanel, command: CommandBar, keys: Cheatsheet, dashboard: Dashboard };
+const PANELS: Record<string, React.ComponentType> = { needs: NeedsPanel, messages: MessagesPanel, decisions: DecisionsPanel, playbook: PlaybookPanel, library: LibraryPanel, note: NotePanel, frameworks: FrameworksPanel, command: CommandBar, keys: Cheatsheet, dashboard: Dashboard };
+// The window's own views win a name both claim; a slice cannot take "needs" away from the founder.
+const SLICE_PANELS: Record<string, React.ComponentType> = Object.assign({}, ...SLICES.map((slice) => slice.panels ?? {}));
 // Keys that open a view, when nothing is open and nobody is typing, and the view each one opens.
 const opens = (event: KeyboardEvent) => (pressed(event, 'needs') ? 'needs' : pressed(event, 'messages') ? 'messages' : pressed(event, 'decisions') ? 'decisions'
   : pressed(event, 'command-bar-slash') ? 'command' : pressed(event, 'cheatsheet') ? 'keys' : null);
@@ -36,7 +38,7 @@ export function Overlay() {
   const top = useRef<HTMLDivElement>(null);
   const focused = layers.some((layer) => layer.kind === 'focus');
   const panel = layers.at(-1)?.kind === 'panel' ? (layers.at(-1) as { name: string }).name : null;
-  const View = panel ? PANELS[panel] : null;
+  const View = panel ? PANELS[panel] ?? SLICE_PANELS[panel] ?? null : null;
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {

@@ -1,6 +1,7 @@
 import type { ChatMessage, ToolEvent } from '../../shared/model';
 import { safeHost } from '../../shared/sources';
 import { fileUrl } from '../api';
+import { compact } from '../numbers';
 import { SLICES } from '../slices';
 import { Approval } from './Approval';
 import { Words } from './Rich';
@@ -19,16 +20,18 @@ const VERBS: Record<string, [doing: string, done: string]> = {
   add_lead: ['Adding lead', 'Added lead'], score_lead: ['Scoring', 'Scored'], note_lead: ['Noting on', 'Noted on'], move_lead: ['Moving', 'Moved'],
   list_leads: ['Reading', 'Read'], find_leads: ['Finding', 'Found'],
   read_youtube: ['Reading the video', 'Read the video'], read_feed: ['Reading the feed of', 'Read the feed of'], read_reddit: ['Reading Reddit:', 'Read Reddit:'],
+  use_skill: ['Reading the skill', 'Read the skill'], note_founder: ['Noting about you:', 'Noted about you:'], ask_founder: ['Asking you:', 'Asked you:'],
   crawl_site: ['Reading the site', 'Read the site'], watch_page: ['Watching', 'Watching'], list_watches: ['Listing', 'Listed'], stop_watching: ['Stopping the watch on', 'Stopped watching'],
 };
-const compact = (count: number) => (count < 1000 ? String(count) : `${(count / 1000).toFixed(1)}k`);
 // Where the founder was when they said it, when they were not at the stage.
 const VIA: Record<NonNullable<ChatMessage['via']>, string> = { phone: 'from your phone', call: 'from another program' };
 
-// One tool call: what the person did, in a line. Opens to show exactly what was sent and what came back.
-function Chip({ tool }: { tool: ToolEvent }) {
-  if (tool.waiting) return <Approval tool={tool} />;
-  const state = tool.ok === undefined ? 'run' : tool.ok ? 'ok' : 'fail';
+// A tool from an outside (MCP) server is named `mcp_<server>_<tool>`; the receipt says it in words.
+const outside = (name: string) => name.replace(/^mcp_/, '').replace(/_/g, ' ');
+
+// What a receipt says about one tool call: the verb while it runs, the verb once it is done, and what it was about.
+export function receiptOf(tool: Pick<ToolEvent, 'name' | 'args' | 'question'>): { doing: string; done: string; subject: string } {
+  if (tool.name.startsWith('mcp_')) return { doing: 'Using', done: 'Used', subject: outside(tool.name) };
   const [doing, done] = VERBS[tool.name] ?? [tool.name, tool.name];
   const many = (tool.args.queries ?? tool.args.urls) as unknown;
   // A search inside a source names the site before its queries, so the founder sees where a person looked.
@@ -43,6 +46,9 @@ function Chip({ tool }: { tool: ToolEvent }) {
     : tool.name === 'note_lead' ? String(tool.args.lead ?? '').slice(0, 60) : tool.name === 'list_leads' ? 'the leads'
     : tool.name === 'find_leads' ? `${String(tool.args.count ?? '')} leads with OpenOutreach${tool.args.emails === true ? ', with emails' : ''}`
     : tool.name === 'ask_person' ? String(tool.args.name ?? '') : tool.name === 'recall' ? String(tool.args.query ?? '').slice(0, 60) : tool.name === 'reflect' ? String(tool.args.about ?? '').slice(0, 60)
+    : tool.name === 'use_skill' ? String(tool.args.name ?? '').slice(0, 60)
+    : tool.name === 'note_founder' ? String(tool.args.fact ?? '').replace(/\s+/g, ' ').slice(0, 60)
+    : tool.name === 'ask_founder' ? String(tool.question ?? tool.args.question ?? '').replace(/\s+/g, ' ').slice(0, 60)
     : tool.name === 'code_task' ? String(tool.args.brief ?? '').replace(/\s+/g, ' ').slice(0, 60)
     : tool.name === 'ask_graph' ? String(tool.args.question ?? '').replace(/\s+/g, ' ').slice(0, 60)
     : tool.name === 'affected_by' ? String(tool.args.name ?? '').slice(0, 60)
@@ -58,6 +64,14 @@ function Chip({ tool }: { tool: ToolEvent }) {
     : tool.name === 'read_feed' ? safeHost(String(tool.args.url ?? '')) || String(tool.args.url ?? '').slice(0, 60)
     : tool.name === 'read_reddit' ? String(tool.args.query ?? tool.args.url ?? (tool.args.subreddit ? `r/${tool.args.subreddit}` : '')).slice(0, 60)
     : String(tool.args.to ?? tool.args.doc ?? tool.args.title ?? tool.args.path ?? (tool.name === 'list_files' ? 'the shared files' : ''));
+  return { doing, done, subject };
+}
+
+// One tool call: what the person did, in a line. Opens to show exactly what was sent and what came back.
+function Chip({ tool }: { tool: ToolEvent }) {
+  if (tool.waiting) return <Approval tool={tool} />;
+  const state = tool.ok === undefined ? 'run' : tool.ok ? 'ok' : 'fail';
+  const { doing, done, subject } = receiptOf(tool);
   return (
     <details className={`chip chip--${state}`}>
       <summary><span className="chip__mark" aria-hidden="true" />{state === 'fail' ? `Could not: ${doing.toLowerCase()}` : state === 'run' ? doing : done} {subject}</summary>

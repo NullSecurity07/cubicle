@@ -1,10 +1,12 @@
-import { useEdges, useNodes } from '@xyflow/react';
 import { useEffect, useState } from 'react';
 import { builtFrom, casesFor } from '../../shared/evals';
 import type { ChatMessage, Room } from '../../shared/model';
+import { safeHost } from '../../shared/sources';
 import { getChat, getMemory, watchMemory } from '../api';
 import { listen } from '../bus';
+import { useFlowPick, useWired } from '../flow';
 import { useFrameworks } from '../frameworks';
+import { compact } from '../numbers';
 import { useNotes } from '../library';
 import { SLICES } from '../slices';
 import type { StageNode } from '../stage';
@@ -25,10 +27,14 @@ export function labelOf(node: StageNode, notes: { id: string; title: string }[] 
   if (node.type === 'imagegen') return 'Image studio';
   if (node.type === 'voicegen') return 'Voice studio';
   if (node.type === 'videogen') return 'Video studio';
-  return node.type === 'browser' ? 'Browser' : 'Board';
+  if (node.type === 'leads') return 'Leads';
+  // A source is named the way people name it when they search it: its title, else its site.
+  if (node.type === 'source') return node.data.title?.trim() || safeHost(node.data.url ?? '') || 'Source';
+  // A browser signed in to an app is that app to the founder: "LinkedIn", not "Browser".
+  if (node.type === 'browser') return node.data.app?.name || 'Browser';
+  return 'Board';
 }
-const KIND: Record<string, string> = { room: 'can ask', doc: 'reads and writes', browser: 'drives', project: 'gives coding work to', board: 'proposes tasks on', leads: 'keeps leads on', note: 'reads', image: 'sees', link: 'reads', imagegen: 'makes pictures in', voicegen: 'speaks in', videogen: 'makes films in', library: 'reads' };
-const compact = (count: number) => (count >= 1000 ? `${(count / 1000).toFixed(count >= 10_000 ? 0 : 1)}k` : String(count));
+const KIND: Record<string, string> = { room: 'can ask', doc: 'reads and writes', browser: 'drives', project: 'gives coding work to', board: 'proposes tasks on', leads: 'keeps leads on', note: 'reads', image: 'sees', link: 'reads', source: 'searches', imagegen: 'makes pictures in', voicegen: 'speaks in', videogen: 'makes films in', library: 'reads' };
 
 // Where a person came from, when they came from a saved team: which of the founder's notes they were written out of,
 // and what they scored on the founder's own test cases the last time anybody asked. Nothing is said at all about a
@@ -54,8 +60,6 @@ function BuiltFrom({ stamp }: { stamp?: Room['framework'] }) {
 // Beside a focused person: where they came from, what they are wired to, what they remember, and what this
 // conversation has cost.
 export function RoomSide({ id, name, status, onEditMemory }: { id: string; name: string; status: Status; onEditMemory: () => void }) {
-  const nodes = useNodes<StageNode>();
-  const edges = useEdges();
   const notes = useNotes();
   const [memory, setMemory] = useState<{ notes: string; summary: string } | null>(null);
   // Null until the conversation has been read: a view that could not read it said "Replies 0", which is a lie about
@@ -71,19 +75,18 @@ export function RoomSide({ id, name, status, onEditMemory }: { id: string; name:
   useEffect(() => listen('effect', (effect) => { if (effect.kind === 'memory-changed' && effect.id === id) getMemory(id).then(setMemory).catch(() => {}); }), [id]);
   useEffect(() => watchMemory(id, () => { getMemory(id).then(setMemory).catch(() => {}); }), [id]);
 
-  const me = nodes.find((node) => node.id === id);
-  const wired = edges.filter((edge) => edge.source === id || edge.target === id)
-    .map((edge) => nodes.find((node) => node.id === (edge.source === id ? edge.target : edge.source)))
-    .filter((node): node is StageNode => !!node);
+  // What this panel reads of the canvas, and nothing else: a card dragged elsewhere does not draw it again.
+  const me = useFlowPick(({ nodes }) => { const node = nodes.find((one) => one.id === id); return node?.type === 'room' ? node.data : null; });
+  const wired = useWired(id) as unknown as StageNode[];
   const replies = (chat ?? []).filter((message) => message.role === 'assistant');
   const used = replies.reduce((sum, message) => ({ input: sum.input + (message.usage?.input ?? 0), output: sum.output + (message.usage?.output ?? 0) }), { input: 0, output: 0 });
   const last = replies.at(-1);
 
   return (
     <aside className="side nowheel" aria-label={`About ${name}`}>
-      {me?.type === 'room' && <BuiltFrom stamp={me.data.framework} />}
+      {me && <BuiltFrom stamp={me.framework} />}
       {/* What a slice knows about this person that the stage does not: the voice they answer in. */}
-      {me?.type === 'room' && SLICES.map((slice) => (slice.person ? <slice.person key={slice.name} roomId={id} room={me.data} /> : null))}
+      {me && SLICES.map((slice) => (slice.person ? <slice.person key={slice.name} roomId={id} room={me} /> : null))}
       <section>
         <h3>Wired to</h3>
         {wired.length ? <ul>{wired.map((node) => <li key={node.id}><span>{labelOf(node, notes)}</span><em>{KIND[node.type ?? ''] ?? ''}</em></li>)}</ul>

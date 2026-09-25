@@ -1,11 +1,6 @@
 /* This slice's own look. It borrows the panel, the little acts and the dots from what is already here, and adds
    nothing of its own: no colour, no font, no icon set. Everything below is only arrangement. */
 
-/* The views sit above the shade the window puts up. The shade keeps its click, so clicking beside a panel still
-   closes it — only the panel itself takes the pointer. */
-.openends { position: fixed; inset: 0; z-index: 41; pointer-events: none; }
-.openends > .panel { pointer-events: auto; }
-
 .health, .insights { display: flex; flex-direction: column; gap: 22px; }
 .health__part, .insights__part { display: flex; flex-direction: column; }
 .health h3, .insights h3 { display: flex; align-items: baseline; gap: 8px; margin: 0 0 7px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
@@ -54,7 +49,7 @@
 .insights__fill { display: block; height: 100%; border-radius: 4px; background: var(--accent); transition: width 0.25s cubic-bezier(0.2, 0.8, 0.2, 1); }
 /* The dock's rings already say amber under a fifth and red when it is gone; these bars say it the same way. */
 .insights__today .insights__fill.ring--low { background: #f0b35a; }
-.insights__today .insights__fill.ring--out { background: #e5645a; }
+.insights__today .insights__fill.ring--out { background: var(--danger); }
 .insights__numbers { flex: none; width: 108px; text-align: right; font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .insights__numbers small { display: block; font-size: 11px; color: var(--muted); white-space: nowrap; }
 

@@ -48,6 +48,11 @@ test('the founder adds a lead and moves it, and a wired person reads and adds to
   await expect(card.locator('section[aria-label="New"] .lead')).toHaveText(/Ada Lovelace.*Engines Ltd/);
   // An empty stage is a slim strip with its count.
   await expect(card.locator('section[aria-label="Fit: none"]')).toContainText('0');
+  // The whole list, ready to paste into a sheet.
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await card.getByRole('button', { name: 'Copy as CSV' }).click();
+  await expect(card.getByRole('button', { name: 'Copied' })).toBeVisible();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toMatch(/Ada Lovelace.*Engines Ltd/);
 
   await card.locator('.lead', { hasText: 'Ada Lovelace' }).click();
   const detail = card.getByRole('dialog', { name: 'Ada Lovelace' });

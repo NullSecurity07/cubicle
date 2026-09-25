@@ -8,9 +8,9 @@
   --dash-line: rgba(255, 255, 255, 0.08);
   --dash-bar: rgba(255, 255, 255, 0.2);
   --dash-bar-hover: rgba(255, 255, 255, 0.34);
-  --dash-good: #6fcf97;
+  --dash-good: var(--ok);
   --dash-low: #f0b35a;
-  --dash-bad: #e5645a;
+  --dash-bad: var(--danger);
   top: 24px; bottom: 24px; max-height: none;
   width: min(1080px, calc(100% - 48px));
 }
@@ -35,6 +35,8 @@
 }
 :root[data-theme="light"] .panel.dash .panel__header button:hover { background: rgba(0, 0, 0, 0.06); }
 
+/* The shared shell's body is only a holder here: the rail and the scroller below arrange the sheet themselves. */
+.panel.dash > .panel__body { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
 .dash__frame { flex: 1; min-height: 0; display: grid; grid-template-columns: 184px minmax(0, 1fr); }
 
 /* The rail: four places, the one being read marked, a count where something waits. */

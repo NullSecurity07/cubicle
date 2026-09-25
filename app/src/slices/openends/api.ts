@@ -1,13 +1,9 @@
 import type { Skill } from '../../../shared/model';
 import type { Backups, Check, Insights, Outside } from '../../../shared/openends';
+import { request as ask, send } from '../../api';
 
-// This slice's own way to the server. It asks for nothing the panels do not show.
-async function ask<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init);
-  if (!response.ok) throw new Error((await response.json().catch(() => null))?.error ?? `${response.status} ${path}`);
-  return response.json() as Promise<T>;
-}
-const post = (body?: unknown): RequestInit => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+// This slice's own paths. It asks for nothing the panels do not show.
+const post = (body?: unknown) => send('POST', body);
 
 export const getHealth = () => ask<{ checks: Check[] }>('/api/health').then((held) => held.checks);
 export const getBackups = () => ask<Backups>('/api/backups');

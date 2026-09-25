@@ -3,9 +3,11 @@ import type { Framework } from '../../shared/frameworks';
 import type { ForgeJob, ForgeMode, Person, Proposal } from '../../shared/forge';
 import { callsLine, FORGE_STEPS } from '../../shared/forge';
 import type { Case } from '../../shared/frameworks';
-import { forgeBuild, forgePropose, getForge, getModels, stopForge } from '../api';
+import { forgeBuild, forgePropose, getForge, stopForge } from '../api';
 import { refreshFrameworks } from '../frameworks';
 import { useNotes } from '../library';
+import { usePoll } from '../poll';
+import { useModels } from '../models';
 
 // The forge, inside the Frameworks panel: the founder picks the notes they learned from, says in a line what they
 // want a team for, and watches one get written. The middle of it is the preview — nothing is built until they have
@@ -107,39 +109,22 @@ export function ForgeView({ onPlace, onBack }: { onPlace: (framework: Framework)
   // Bumped whenever there is something new to watch: the job goes quiet between the preview and Build, and the
   // window stops asking until the founder sets it going again.
   const [watch, setWatch] = useState(0);
-  const [quota, setQuota] = useState<string>('');
+  const models = useModels();
+  const quota = !models ? '' : models.length ? `${Math.round(Math.max(0, ...models.map((model) => model.left)) * 100)}% of today's free models left` : 'no models are set up yet';
   // The last step reached, so a failure is shown where it happened rather than throwing the list away.
   const reached = useRef(0);
   const lines = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    getModels().then((models) => {
-      const left = Math.max(0, ...models.map((model) => model.left));
-      setQuota(models.length ? `${Math.round(left * 100)}% of today's free models left` : 'no models are set up yet');
-    }).catch(() => setQuota(''));
-  }, []);
 
   // Watching one job. The panel asks rather than listens: a forge job says something every few seconds at most, and
   // one question every second and a half costs less than a place in the window's one live connection.
-  useEffect(() => {
-    if (!jobId) return;
-    let gone = false;
-    let timer: ReturnType<typeof setInterval> | undefined;
-    const look = async () => {
-      try {
-        const held = await getForge(jobId);
-        if (gone) return;
-        setJob(held);
-        if (held.state === 'previewing') setDraft((was) => was ?? held.proposal ?? null);
-        if (held.state === 'done') { setDraft(held.proposal ?? null); void refreshFrameworks(); }
-        // Nothing moves on its own once the job is waiting for the founder or finished, so nothing is asked either.
-        if (!WORKING.includes(held.state)) clearInterval(timer);
-      } catch (error) { if (!gone) setProblem((error as Error).message); }
-    };
-    void look();
-    timer = setInterval(() => { void look(); }, HOW_OFTEN);
-    return () => { gone = true; clearInterval(timer); };
-  }, [jobId, watch]);
+  usePoll(jobId ? () => getForge(jobId) : null, HOW_OFTEN, (held) => {
+    setJob(held);
+    if (held.state === 'previewing') setDraft((was) => was ?? held.proposal ?? null);
+    if (held.state === 'done') { setDraft(held.proposal ?? null); void refreshFrameworks(); }
+    // Nothing moves on its own once the job is waiting for the founder or finished, so nothing is asked either.
+    return WORKING.includes(held.state);
+  }, (error) => setProblem(error.message), [jobId, watch]);
 
   useEffect(() => { lines.current?.scrollTo({ top: lines.current.scrollHeight }); }, [job?.lines.length]);
 

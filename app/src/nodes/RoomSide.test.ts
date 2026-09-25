@@ -21,4 +21,14 @@ describe('labelOf', () => {
     expect(labelOf(node('project', { path: '/home/me/code/shop/' }))).toBe('shop');
     expect(labelOf(node('note', { text: '  Ship on Friday\nnot before' }))).toBe('Ship on Friday');
   });
+
+  it('names leads, sources and app browsers as the founder knows them, never as a board', () => {
+    expect(labelOf(node('leads', {}))).toBe('Leads');
+    expect(labelOf(node('source', { url: 'https://www.startups.rip/list', about: 'dead startups', title: 'Startups.rip' }))).toBe('Startups.rip');
+    expect(labelOf(node('source', { url: 'https://www.startups.rip/list', about: 'dead startups' }))).toBe('startups.rip');
+    expect(labelOf(node('source', {}))).toBe('Source');
+    expect(labelOf(node('browser', { app: { key: 'linkedin', name: 'LinkedIn', home: 'https://www.linkedin.com/feed/' } }))).toBe('LinkedIn');
+    expect(labelOf(node('browser', {}))).toBe('Browser');
+    expect(labelOf(node('board', {}))).toBe('Board');
+  });
 });

@@ -1,11 +1,6 @@
 /* The safety extra's own styles. Nothing new is invented here: the panel, the buttons and the colours are the ones
    the rest of the window already uses. */
 
-/* A slice's view is mounted beside the shade rather than inside it, so it brings its own frame to sit in — the same
-   box the built-in panels are placed in, and clicks anywhere else still reach the shade behind. */
-.safety-layer { position: fixed; inset: 0; z-index: 41; pointer-events: none; }
-.safety-layer .panel { pointer-events: auto; }
-
 .allowed { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .allowed__item { display: flex; align-items: center; gap: 12px; padding: 11px 13px; border-radius: 12px; border: 1px solid var(--card-border); background: rgba(255, 255, 255, 0.035); }
 .allowed__what { flex: 1; min-width: 0; font-size: 13px; line-height: 1.45; }

@@ -1,14 +1,16 @@
-import { useReactFlow, type NodeProps } from '@xyflow/react';
+import type { NodeProps } from '@xyflow/react';
 import { useEffect, useState } from 'react';
 import { draftAsk, LEAD_STAGES, leadsCsv, STAGE_NAMES, type Lead, type LeadStage, type TwentyStatus } from '../../shared/leads';
 import { addLead, moveLead, noteLead, removeLead, watchLeads, watchTwenty } from '../api';
 import { emit } from '../bus';
 import { overlay } from '../overlay/store';
-import type { LeadsNodeType, StageNode } from '../stage';
+import type { LeadsNodeType } from '../stage';
+import { useWired } from '../flow';
 import { useFlushStage } from '../sync';
 import { CardActions, Frame } from './Frame';
 import './leads.css';
 import { pressed } from '../keys';
+import { useAttempt } from '../attempt';
 
 const day = (at: number) => new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 const SOURCE: Record<Lead['source'], string> = { founder: 'added by you', person: 'added by a person', openoutreach: 'found by OpenOutreach', twenty: 'added in Twenty' };
@@ -21,11 +23,10 @@ export function LeadsNode({ id, selected }: NodeProps<LeadsNodeType>) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [draft, setDraft] = useState({ name: '', company: '', line: '' });
   const [note, setNote] = useState('');
-  const [problem, setProblem] = useState('');
+  const { problem, setProblem, attempt: act } = useAttempt();
   const [copied, setCopied] = useState(false);
   const [drafter, setDrafter] = useState('');
   const [twenty, setTwenty] = useState<TwentyStatus | null>(null);
-  const { getNodes, getEdges } = useReactFlow<StageNode>();
   const flushStage = useFlushStage();
 
   useEffect(() => {
@@ -40,12 +41,8 @@ export function LeadsNode({ id, selected }: NodeProps<LeadsNodeType>) {
   useEffect(() => watchTwenty(setTwenty), []);
 
   // People wired to this card, whichever way the wire was drawn: who can draft a message.
-  const people = () => {
-    const linked = new Set(getEdges().flatMap((edge) => (edge.source === id ? [edge.target] : edge.target === id ? [edge.source] : [])));
-    return getNodes().filter((node) => node.type === 'room' && linked.has(node.id) && (node.data as { name?: string }).name)
-      .map((node) => ({ id: node.id, name: (node.data as { name: string }).name }));
-  };
-  const act = (job: Promise<unknown>) => { setProblem(''); job.catch((error: Error) => setProblem(error.message)); };
+  const wired = useWired(id, 'room');
+  const people = () => wired.filter((node) => node.data.name).map((node) => ({ id: node.id, name: String(node.data.name) }));
   const open = leads.find((lead) => lead.id === openId);
   const empty = leads.length === 0;
 

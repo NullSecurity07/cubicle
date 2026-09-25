@@ -1,9 +1,11 @@
-import { useReactFlow, useStore, type NodeProps } from '@xyflow/react';
+import { useReactFlow, type NodeProps } from '@xyflow/react';
 import { useEffect, useRef, useState, type DragEvent } from 'react';
 import { fileUrl, refreshLink, uploadFile } from '../api';
 import { useMedia } from '../media';
 import { safeHost } from '../../shared/sources';
-import type { ImageNodeType, LinkNodeType, NoteNodeType, SourceNodeType } from '../stage';
+import { studioBehind } from '../../shared/model';
+import { useFlowPick, useGrowOnce } from '../flow';
+import { fromFlow, type ImageNodeType, type LinkNodeType, type NoteNodeType, type SourceNodeType } from '../stage';
 import { useFlushStage } from '../sync';
 import { CardActions, Frame } from './Frame';
 import { LivePicture, OpenLarge } from './LivePicture';
@@ -36,15 +38,8 @@ export function ImageNode({ id, data, selected }: NodeProps<ImageNodeType>) {
   // An empty picture card wired to an image studio shows what that studio has drawn. The founder who joins the two
   // up has said "show me what that makes"; before this they said it and got an empty box. The wire is read out of
   // the live graph rather than a snapshot, so the picture arrives the moment the wire is drawn.
-  const behind = useStore((flow) => {
-    if (data.path) return '';
-    const ends = new Set<string>();
-    for (const wire of flow.edges) {
-      if (wire.source === id) ends.add(wire.target);
-      if (wire.target === id) ends.add(wire.source);
-    }
-    return [...flow.nodeLookup.values()].find((node) => ends.has(node.id) && node.type === 'imagegen')?.id ?? '';
-  });
+  // The rule itself is `studioBehind`, the one the server shows people and films with.
+  const behind = useFlowPick(({ nodes, edges }) => (data.path ? '' : studioBehind(fromFlow(nodes, edges), id) ?? ''));
   const studio = useMedia(behind);
   const drawn = behind ? studio.media.results[0] : undefined;
   async function take(file?: File) {
@@ -89,6 +84,13 @@ export function LinkNode({ id, data, selected }: NodeProps<LinkNodeType>) {
       setState({ preview: page.preview });
     } catch (error) { setState({ problem: (error as Error).message }); }
   }
+  // A web address dropped on the stage arrives asking to be read.
+  useEffect(() => {
+    if (!data.read) return;
+    updateNodeData(id, { read: undefined });
+    void read(data.url);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.read]);
   return (
     <Frame selected={!!selected} minWidth={240} minHeight={120}>
       <header className="card__header card__header--doc">
@@ -108,15 +110,9 @@ export function LinkNode({ id, data, selected }: NodeProps<LinkNodeType>) {
 // A website the founder trusts. Nobody has to be wired to it: every person may search inside it when the founder's
 // line about it fits their question, and the founder watches that search live under the two fields.
 export function SourceNode({ id, data, selected }: NodeProps<SourceNodeType>) {
-  const { updateNodeData, updateNode } = useReactFlow();
+  const { updateNodeData } = useReactFlow();
   // A card saved before it had a live picture was too short to show one, so it grows once to the new size.
-  useEffect(() => {
-    updateNode(id, (node) => {
-      const [width, height] = [node.width ?? node.measured?.width ?? 0, node.height ?? node.measured?.height ?? 0];
-      if (height >= 300 && width >= 360) return {};
-      return { width: Math.max(width, 360), height: height < 300 ? 320 : height };
-    });
-  }, [id, updateNode]);
+  useGrowOnce(id, { width: 360, height: 300 }, { width: 360, height: 320 });
   const flushStage = useFlushStage();
   const [draft, setDraft] = useState(data.url);
   const [state, setState] = useState<{ reading?: boolean; problem?: string }>({});

@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type Synt
 import { createPortal } from 'react-dom';
 import { overlay, useFocused, useHostElement } from '../overlay/store';
 import { Handles } from './Handles';
+import { keyHint } from '../keys';
 
 const halt = (event: SyntheticEvent) => event.stopPropagation();
 
@@ -52,7 +53,7 @@ export function CardActions({ id, what, onEdit }: { id: string; what: string; on
   return (
     <>
       <div className="card__actions nodrag">
-        <button type="button" aria-label={focused ? 'Back to the stage' : 'Focus'} title={focused ? 'Back to the stage (Esc)' : 'Focus (F)'} onClick={() => (focused ? overlay.close({ kind: 'focus', id }) : overlay.open({ kind: 'focus', id }))}>
+        <button type="button" aria-label={focused ? 'Back to the stage' : 'Focus'} title={focused ? `Back to the stage (${keyHint('back')})` : `Focus (${keyHint('focus-card')})`} onClick={() => (focused ? overlay.close({ kind: 'focus', id }) : overlay.open({ kind: 'focus', id }))}>
           <svg viewBox="0 0 16 16" aria-hidden="true">{focused ? <path d="M6 2.500v3.500h-3.500M10 13.500v-3.500h3.500M10 2.500v3.500h3.500M6 13.500v-3.500h-3.500" /> : <path d="M2.500 6v-3.500h3.500M13.500 10v3.500h-3.500M13.500 6v-3.500h-3.500M2.500 10v3.500h3.500" />}</svg>
         </button>
         {onEdit && (

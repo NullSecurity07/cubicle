@@ -1,5 +1,5 @@
 import { Children, memo, useEffect, useId, useState, type ReactNode } from 'react';
-import Markdown from 'react-markdown';
+import Markdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 const VIDEO = /\.(mp4|webm|mov)(\?.*)?$/i;
@@ -55,29 +55,27 @@ function Code({ className, children }: { className?: string; children?: ReactNod
   return <code className={className}>{children}</code>;
 }
 
+// react-markdown uses each of these functions as an element type, so they must keep one identity: built inside the
+// render, every streamed token would unmount and remount every link, picture, diagram and preview in the reply.
+const PLUGINS = [remarkGfm];
+const COMPONENTS: Components = {
+  a: ({ node: _node, href, children, ...props }) => (href && VIDEO.test(href) ? <video className="md__media" src={href} controls preload="metadata" />
+    : href && AUDIO.test(href) ? <audio className="md__media md__media--sound" src={href} controls preload="metadata" />
+    : <a {...props} href={href} target="_blank" rel="noreferrer">{children}</a>),
+  img: ({ node: _node, src, alt }) => (typeof src === 'string' && VIDEO.test(src) ? <video className="md__media" src={src} controls preload="metadata" />
+    : typeof src === 'string' && AUDIO.test(src) ? <audio className="md__media md__media--sound" src={src} controls preload="metadata" />
+    : <img className="md__media" src={typeof src === 'string' ? src : undefined} alt={alt ?? ''} loading="lazy" />),
+  code: ({ node: _node, className, children }) => <Code className={className}>{children}</Code>,
+  td: ({ node: _node, children, ...props }) => <td {...props}>{broken(children)}</td>,
+  th: ({ node: _node, children, ...props }) => <th {...props}>{broken(children)}</th>,
+  pre: ({ node: _node, children }) => {
+    const only = Array.isArray(children) ? children[0] : children;
+    const language = /language-(mermaid|html)/.exec((only as { props?: { className?: string } })?.props?.className ?? '');
+    return language ? <>{children}</> : <pre>{children}</pre>;
+  },
+};
+
 // Markdown as people write it: tables, links that open outside, pictures, video, diagrams and live HTML previews.
 export const Words = memo(function Words({ text }: { text: string }) {
-  return (
-    <Markdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        a: ({ node: _node, href, children, ...props }) => (href && VIDEO.test(href) ? <video className="md__media" src={href} controls preload="metadata" />
-          : href && AUDIO.test(href) ? <audio className="md__media md__media--sound" src={href} controls preload="metadata" />
-          : <a {...props} href={href} target="_blank" rel="noreferrer">{children}</a>),
-        img: ({ node: _node, src, alt }) => (typeof src === 'string' && VIDEO.test(src) ? <video className="md__media" src={src} controls preload="metadata" />
-          : typeof src === 'string' && AUDIO.test(src) ? <audio className="md__media md__media--sound" src={src} controls preload="metadata" />
-          : <img className="md__media" src={typeof src === 'string' ? src : undefined} alt={alt ?? ''} loading="lazy" />),
-        code: ({ node: _node, className, children }) => <Code className={className}>{children}</Code>,
-        td: ({ node: _node, children, ...props }) => <td {...props}>{broken(children)}</td>,
-        th: ({ node: _node, children, ...props }) => <th {...props}>{broken(children)}</th>,
-        pre: ({ node: _node, children }) => {
-          const only = Array.isArray(children) ? children[0] : children;
-          const language = /language-(mermaid|html)/.exec((only as { props?: { className?: string } })?.props?.className ?? '');
-          return language ? <>{children}</> : <pre>{children}</pre>;
-        },
-      }}
-    >
-      {text}
-    </Markdown>
-  );
+  return <Markdown remarkPlugins={PLUGINS} components={COMPONENTS}>{text}</Markdown>;
 });
