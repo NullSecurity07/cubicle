@@ -2,6 +2,7 @@ import { dirname, join } from 'node:path';
 import type { Maker, Piece } from './jobs.ts';
 import { OMNI_ENGINE, omniVoices } from './omnivoice.ts';
 import { gradeRank } from '../../shared/voices.ts';
+import { wavHeader } from './wav.ts';
 
 const RATE = 24_000;
 const GEMINI = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -55,7 +56,6 @@ export const VOICES: Voice[] = [
 ];
 export const DEFAULT_VOICE = VOICES[0].id;
 export const isVoice = (id: unknown): id is string => typeof id === 'string' && VOICES.some((voice) => voice.id === id);
-export const voiceOf = (id: string): Voice | undefined => VOICES.find((one) => one.id === id);
 // The picker's order: best first, and within a grade the women before the men only because that is how the grades
 // already fall. Nothing here hides a voice — a founder who wants the low-graded British man can still pick him.
 export const byGrade = (voices: Voice[] = VOICES): Voice[] =>
@@ -97,35 +97,11 @@ export function mergeVoices(said: Record<string, VoiceRow> | undefined, known: V
 export function wavOf(samples: Float32Array, rate = RATE): Buffer {
   const body = Buffer.alloc(samples.length * 2);
   for (let at = 0; at < samples.length; at += 1) body.writeInt16LE(Math.round(Math.max(-1, Math.min(1, samples[at])) * 32767), at * 2);
-  const header = Buffer.alloc(44);
-  header.write('RIFF', 0);
-  header.writeUInt32LE(36 + body.length, 4);
-  header.write('WAVEfmt ', 8);
-  header.writeUInt32LE(16, 16);
-  header.writeUInt16LE(1, 20);
-  header.writeUInt16LE(1, 22);
-  header.writeUInt32LE(rate, 24);
-  header.writeUInt32LE(rate * 2, 28);
-  header.writeUInt16LE(2, 32);
-  header.writeUInt16LE(16, 34);
-  header.write('data', 36);
-  header.writeUInt32LE(body.length, 40);
-  return Buffer.concat([header, body]);
+  return Buffer.concat([wavHeader(body.length, rate, 1), body]);
 }
 
-// How long a WAV plays, read out of the file itself. A video's scenes are as long as the line spoken over them.
-export function wavSeconds(bytes: Buffer): number {
-  if (bytes.length < 44 || bytes.toString('ascii', 0, 4) !== 'RIFF') return 0;
-  const rate = bytes.readUInt32LE(24);
-  const perSample = (bytes.readUInt16LE(22) * bytes.readUInt16LE(34)) / 8;
-  // The samples are not always the first chunk after the format: walk the chunks until 'data'.
-  for (let at = 12; at + 8 <= bytes.length;) {
-    const size = bytes.readUInt32LE(at + 4);
-    if (bytes.toString('ascii', at, at + 4) === 'data') return rate && perSample ? Math.min(size, bytes.length - at - 8) / (rate * perSample) : 0;
-    at += 8 + size + (size % 2);
-  }
-  return 0;
-}
+// How long a WAV plays: `wav.ts`, beside the header every studio writes.
+export { wavSeconds } from './wav.ts';
 
 // Kokoro, a small voice model that runs on this machine's processor in about half the time it speaks. It is fetched
 // once (310 MB) into `cacheDir` and used offline from then on; a load that fails is tried again the next time.

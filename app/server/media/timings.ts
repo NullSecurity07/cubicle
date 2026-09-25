@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { runLines } from './proc.ts';
 import { readFile, rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import type { Part, Word } from './templates/captions.ts';
@@ -204,17 +204,5 @@ export async function timeWords(bin: string | null, wav: string | null, parts: P
   return { words: from ? aligned.map((one) => ({ ...one, at: Math.round((one.at + from) * 1000) / 1000 })) : aligned, how: 'heard' };
 }
 
-type Ran = { code: number; out: string };
-function run(command: string, args: string[], at: string, signal?: AbortSignal): Promise<Ran> {
-  return new Promise((done, fail) => {
-    const child = spawn(command, args, { cwd: at, env: { ...process.env, NO_COLOR: '1' } });
-    let out = '';
-    const read = (chunk: Buffer) => { out += chunk.toString('utf8'); };
-    child.stdout.on('data', read);
-    child.stderr.on('data', read);
-    const stop = () => child.kill('SIGTERM');
-    signal?.addEventListener('abort', stop, { once: true });
-    child.on('error', fail);
-    child.on('close', (code) => { signal?.removeEventListener('abort', stop); done({ code: code ?? 1, out }); });
-  });
-}
+const run = (command: string, args: string[], at: string, signal?: AbortSignal) =>
+  runLines(command, args, { cwd: at, env: { ...process.env, NO_COLOR: '1' }, signal });

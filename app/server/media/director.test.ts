@@ -5,12 +5,12 @@ import { describe, expect, it } from 'vitest';
 import { seedStage, type Stage } from '../../shared/model.ts';
 import { criticise, drawnWord, photographic } from './critic.ts';
 import {
-  bibleFor, direct, faceIn, narratorWanted, onCamera, showsSomebody, layoutsFor, planOf, readBrief, secondsIn, specFromPlan, tellOf, understandingOf,
+  bibleFor, direct, photograph, faceIn, narratorWanted, onCamera, showsSomebody, layoutsFor, planOf, readBrief, secondsIn, specFromPlan, tellOf, understandingOf,
   type Material, type Plan, type Understanding,
 } from './director.ts';
 import { countWords, saidWords, type Scene, type Spec } from './spec.ts';
 import { sourcesOf } from './grounding.ts';
-import { gather, type VideoDeps } from './video.ts';
+import { gather, type VideoDeps } from './gather.ts';
 
 const nothing: Material = { lines: [], assets: [], using: [] };
 
@@ -247,6 +247,94 @@ describe('what the card is wired to, used without being asked', () => {
     expect([...files.keys()]).toHaveLength(2);
   });
 
+  it('reads every kind of card the way the founder means it', async () => {
+    const at = await mkdtemp(join(tmpdir(), 'gather-'));
+    await mkdir(join(at, 'assets'), { recursive: true });
+    await mkdir(join(at, 'vendor'), { recursive: true });
+    // A project folder with a README, and a library note on disk where the library keeps them.
+    const product = join(at, 'relay');
+    await mkdir(product, { recursive: true });
+    await writeFile(join(product, 'README.md'), '# Relay\n\nRelay hands a task between teammates without a meeting.\n');
+    await mkdir(join(at, 'library'), { recursive: true });
+    await writeFile(join(at, 'library', 'pricing.md'), 'We charge nine dollars a seat.');
+    await writeFile(join(at, 'library', 'index.json'), JSON.stringify({ notes: [{ id: 'pricing', title: 'Pricing notes' }] }));
+    const box = { x: 0, y: 0, w: 1, h: 1 };
+    const stage: Stage = {
+      ...seedStage,
+      docs: [...seedStage.docs, { id: 'wired-doc', title: 'Wired doc', ...box }, { id: 'pinned-doc', title: 'Pinned doc', pinned: true, ...box }, { id: 'stray-doc', title: 'Stray doc', ...box }],
+      cards: [
+        { id: 'studio-3', kind: 'videogen', ...box },
+        { id: 'project-1', kind: 'project', path: product, ...box },
+        { id: 'link-1', kind: 'link', url: 'https://relay.example/', ...box },
+        { id: 'source-1', kind: 'source', url: 'https://docs.relay.example/', about: 'the docs', title: 'Relay docs', ...box },
+        { id: 'browser-1', kind: 'browser', ...box },
+        { id: 'note-1', kind: 'note', text: 'Ship on Fridays.', ...box },
+        { id: 'library-1', kind: 'library', noteId: 'pricing', ...box },
+        { id: 'image-1', kind: 'image', path: 'media/face.png', ...box },
+        { id: 'pics-1', kind: 'imagegen', ...box },
+      ],
+      wires: ['project-1', 'link-1', 'source-1', 'note-1', 'library-1', 'image-1', 'pics-1', 'wired-doc']
+        .map((id, index) => ({ id: `w${index}`, from: id, fromHandle: 'r', to: 'studio-3', toHandle: 'l' }))
+        // A browser wired to whoever asks is theirs to put in a film.
+        .concat([{ id: 'wb', from: 'marketing', fromHandle: 'r', to: 'browser-1', toHandle: 'l' }]),
+    };
+    const photographed: string[] = [];
+    const docs: Record<string, string> = { 'wired-doc': 'The wired words.', 'pinned-doc': 'The pinned words.', 'stray-doc': 'Nobody pointed here.', 'doc-new': 'Written this turn.' };
+    const deps = {
+      dir: at, think: async () => '', stage: async () => stage, forbidden: [],
+      pictures: async (cardId: string) => (cardId === 'pics-1' ? [{ path: 'media/drawn.png', prompt: 'a desk at dawn' }] : []),
+      readFile: async () => Buffer.from('89504e470d0a1a0a', 'hex'),
+      readDoc: async (id: string) => docs[id] ?? '',
+      assets: async () => [],
+      browser: {
+        where: async (session: string) => (session === 'card-browser-1' ? 'https://app.relay.example/board' : null),
+        shots: async (raw: string) => { photographed.push(raw); return []; },
+      },
+    } as unknown as VideoDeps;
+    const { material } = await gather(deps, { prompt: 'a film', cardId: 'studio-3', roomId: 'marketing', granted: [{ id: 'doc-new', title: 'Just written' }] }, at, () => {});
+    const lines = material.lines.join('\n');
+    // project: its README's words.
+    expect(lines).toContain('Relay hands a task between teammates');
+    // note and library note: their words.
+    expect(lines).toContain('Ship on Fridays.');
+    expect(lines).toContain('Pricing notes:\nWe charge nine dollars a seat.');
+    // docs: wired, pinned and written this turn, never one nobody pointed at.
+    expect(lines).toContain('Wired doc:\nThe wired words.');
+    expect(lines).toContain('Pinned doc:\nThe pinned words.');
+    expect(lines).toContain('Just written:\nWritten this turn.');
+    expect(lines).not.toContain('Nobody pointed here');
+    // image and image studio: pictures the film may use.
+    expect(material.assets.filter((one) => one.kind === 'image').map((one) => one.what).join(' ')).toMatch(/put on the stage[\s\S]*a desk at dawn|a desk at dawn[\s\S]*put on the stage/);
+    // link and source: pages to photograph, each at every screen size, two pages at most, so the browser's page
+    // found after them waits (the next test photographs it).
+    expect([...new Set(photographed)]).toEqual(['https://relay.example/', 'https://docs.relay.example/']);
+  });
+
+  it('photographs a source and a browser when they are the only pages', async () => {
+    const at = await mkdtemp(join(tmpdir(), 'gather-'));
+    await mkdir(join(at, 'assets'), { recursive: true });
+    const box = { x: 0, y: 0, w: 1, h: 1 };
+    const stage: Stage = {
+      ...seedStage,
+      cards: [
+        { id: 'studio-3', kind: 'videogen', ...box },
+        { id: 'source-1', kind: 'source', url: 'https://docs.relay.example/', about: 'the docs', ...box },
+        { id: 'browser-1', kind: 'browser', ...box },
+      ],
+      wires: [
+        { id: 'w1', from: 'source-1', fromHandle: 'r', to: 'studio-3', toHandle: 'l' },
+        { id: 'w2', from: 'marketing', fromHandle: 'r', to: 'browser-1', toHandle: 'l' },
+      ],
+    };
+    const photographed = new Set<string>();
+    const deps = {
+      dir: at, think: async () => '', stage: async () => stage, assets: async () => [],
+      browser: { where: async () => 'https://app.relay.example/board', shots: async (raw: string) => { photographed.add(raw); return []; } },
+    } as unknown as VideoDeps;
+    await gather(deps, { prompt: 'a film', cardId: 'studio-3', roomId: 'marketing' }, at, () => {});
+    expect([...photographed]).toEqual(['https://docs.relay.example/', 'https://app.relay.example/board']);
+  });
+
   it('never offers a layout the film could not fill', () => {
     expect(layoutsFor({ ai: false, material: nothing })).not.toContain('clip');
     expect(layoutsFor({ ai: false, material: nothing })).not.toContain('footage');
@@ -376,5 +464,24 @@ describe('a picture the film was handed', () => {
     const holding = made.find((one) => one.asset === 'drawn-1');
     expect(holding?.layout).toBe('picture');
     expect(holding?.bg_prompt).toBeUndefined();
+  });
+});
+
+describe('a film stopped while it is being thought about', () => {
+  it('asks the model nothing more once the film is stopped, and says stopped rather than falling back', async () => {
+    const stop = new AbortController();
+    let asked = 0;
+    const think = async () => { asked += 1; stop.abort(); return '{}'; };
+    await expect(direct({ brief: 'a 20 second calm piece about slowing down' }, nothing, think, { report: () => {}, signal: stop.signal })).rejects.toThrow('stopped');
+    expect(asked).toBe(1);
+  });
+
+  it('writes no pictures for a film stopped before they were asked for', async () => {
+    const stop = new AbortController();
+    stop.abort();
+    let asked = 0;
+    const slots = [{ at: 0, scene: 0, take: 0, line: 'We ship on Fridays.', subject: '', kind: 'place' as const, room: 'full' as const }];
+    await expect(photograph(slots as never, 'a calm bible', 'the angle', async () => { asked += 1; return '[]'; }, { report: () => {}, signal: stop.signal })).rejects.toThrow('stopped');
+    expect(asked).toBe(0);
   });
 });

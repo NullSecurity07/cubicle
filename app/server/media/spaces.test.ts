@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { wavSeconds } from './wav.ts';
 import {
-  type App, type Space, clipUrlOf, createClips, fakeClips, plainly, QUOTA, SETUP_HINT, spaces, speechSeconds, waitingLine,
+  type App, type Space, clipUrlOf, createClips, fakeClips, plainly, QUOTA, SETUP_HINT, spaces, waitingLine,
 } from './spaces.ts';
 
 const keys = { HF_TOKEN: 'hf_secret' };
@@ -213,8 +214,8 @@ describe('reading the answers back', () => {
   });
 
   it('reads how long a spoken line lasts out of the WAV itself', () => {
-    expect(speechSeconds(wavOf(2))).toBeCloseTo(2, 2);
-    expect(speechSeconds(Buffer.from('not a wav'))).toBe(0);
+    expect(wavSeconds(wavOf(2))).toBeCloseTo(2, 2);
+    expect(wavSeconds(Buffer.from('not a wav'))).toBe(0);
   });
 });
 

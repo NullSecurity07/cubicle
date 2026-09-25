@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { createStore } from '../store.ts';
 import { createMedia } from './jobs.ts';
 import { colourOf, framesOf, mltOf, xml, type EditFilm } from './mlt.ts';
-import { fakeVideos } from './video.ts';
+import { fakeVideos } from './fake-video.ts';
 
 // A small finished film with one of everything the studio makes: a moved still, a clip started part of the way in, a
 // scene that never got its picture, one narration, a bed, two sounds and three caption lines, one of them hostile.

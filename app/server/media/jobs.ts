@@ -45,6 +45,13 @@ export type Maker = {
 export type Makers = Partial<Record<MediaKind, Maker[]>>;
 
 const KEEP = 12;
+// A job's log as the card keeps it: its last few hundred lines. A render says where it is once a second for minutes,
+// and the whole card file used to be rewritten and fsynced for every one of those lines.
+export const LOG_MOST = 300;
+// How long a line waits before it is written to disk. The card hears every line at once over the live feed; the
+// file on disk is only what a reload reads back, so it may be half a second behind.
+export const LOG_WAIT = 500;
+const lastOf = (log: string[]) => (log.length > LOG_MOST ? log.slice(-LOG_MOST) : log);
 const EMPTY: Media = { state: 'idle', log: [], results: [] };
 const safe = (id: string) => { if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(id)) throw new Error(`bad id: ${id}`); return id; };
 // A name the founder can read back in a file browser: when it was made, and the first words of what was asked for.
@@ -91,7 +98,10 @@ export function createMedia(deps: { dir: string; store: Store; makers: Makers; n
     cache.set(cardId, media);
     return media;
   }
+  const soon = new Map<string, ReturnType<typeof setTimeout>>();
   function write(cardId: string, media: Media) {
+    const waiting = soon.get(cardId);
+    if (waiting) { clearTimeout(waiting); soon.delete(cardId); }
     cache.set(cardId, media);
     const text = JSON.stringify(media, null, 2);
     queue = queue.then(async () => {
@@ -99,6 +109,14 @@ export function createMedia(deps: { dir: string; store: Store; makers: Makers; n
       await writeFile(`${path(cardId)}.tmp`, text);
       await rename(`${path(cardId)}.tmp`, path(cardId));
     }).catch(() => {});
+  }
+  // A line of a running job: in memory at once, so a read tells the truth, and on disk within LOG_WAIT.
+  function writeSoon(cardId: string, media: Media) {
+    cache.set(cardId, media);
+    if (soon.has(cardId)) return;
+    const timer = setTimeout(() => { soon.delete(cardId); write(cardId, cache.get(cardId) ?? media); }, LOG_WAIT);
+    timer.unref?.();
+    soon.set(cardId, timer);
   }
   // A whole change (a job started, finished or failed) is a nudge to read the card again; a line travels on its own.
   function save(cardId: string, media: Media) {
@@ -125,7 +143,11 @@ export function createMedia(deps: { dir: string; store: Store; makers: Makers; n
 
   return {
     read,
-    settled: () => queue,
+    // Everything written that is going to be, including lines still waiting their half second.
+    settled: () => {
+      for (const cardId of [...soon.keys()]) write(cardId, cache.get(cardId)!);
+      return queue;
+    },
     // What the founder dropped on a card. The file is already in the shared files; this is the card remembering it.
     async addAsset(cardId: string, asset: Omit<MediaAsset, 'name' | 'at'> & { file: string }): Promise<MediaAsset> {
       const media = await read(cardId);
@@ -158,13 +180,19 @@ export function createMedia(deps: { dir: string; store: Store; makers: Makers; n
       if (!makers.length) throw new Error('nothing is set up to make this yet');
       if (running.has(card.id)) throw new Error('this card is already making something');
       const stop = new AbortController();
-      help.signal?.addEventListener('abort', () => stop.abort(), { once: true });
+      // A caller already stopped before the job began stops it at once; otherwise the stop is passed on when it
+      // comes, and let go of when the job ends.
+      const passOn = () => stop.abort();
+      if (help.signal?.aborted) stop.abort();
+      else help.signal?.addEventListener('abort', passOn, { once: true });
       running.set(card.id, stop);
       const before = await read(card.id);
       const log: string[] = [];
       const line = (text: string) => {
         log.push(text);
-        write(card.id, { ...before, state: 'making', problem: undefined, log: [...log] });
+        if (log.length > LOG_MOST) log.splice(0, log.length - LOG_MOST);
+        // Onto the card as it is now, not as it was when the job began: a file dropped on it meanwhile stays.
+        writeSoon(card.id, { ...(cache.get(card.id) ?? before), state: 'making', problem: undefined, log: [...log] });
         for (const tell of watchers) tell({ id: card.id, line: text });
         help.report?.(text);
       };
@@ -207,7 +235,7 @@ export function createMedia(deps: { dir: string; store: Store; makers: Makers; n
             }
             // What the founder dropped on the card while it was working is still theirs: read the card again, not `before`.
             const latest = await read(card.id);
-            save(card.id, { ...latest, state: 'idle', problem: undefined, log: [...log, `done · ${maker.name}`], results: [made, ...before.results].slice(0, KEEP) });
+            save(card.id, { ...latest, state: 'idle', problem: undefined, log: lastOf([...log, `done · ${maker.name}`]), results: [made, ...before.results].slice(0, KEEP) });
             return made;
           } catch (error) {
             if (stop.signal.aborted) throw new Error('stopped');
@@ -217,9 +245,10 @@ export function createMedia(deps: { dir: string; store: Store; makers: Makers; n
         throw new Error(failures.join('; '));
       } catch (error) {
         const problem = (error as Error).message;
-        save(card.id, { ...(await read(card.id)), state: 'failed', problem, log: [...log, `failed: ${problem}`] });
+        save(card.id, { ...(await read(card.id)), state: 'failed', problem, log: lastOf([...log, `failed: ${problem}`]) });
         throw error;
       } finally {
+        help.signal?.removeEventListener('abort', passOn);
         running.delete(card.id);
       }
     },

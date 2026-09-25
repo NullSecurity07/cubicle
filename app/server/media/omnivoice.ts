@@ -381,7 +381,7 @@ export function omniVoices(cacheDir: string, env: NodeJS.ProcessEnv = process.en
           setting = null;
           if (warm) rest();
         }
-      });
+      }, signal);
     },
   };
 }

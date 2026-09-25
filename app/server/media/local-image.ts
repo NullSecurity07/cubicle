@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { runLines } from './proc.ts';
 import { readFile, mkdir, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -173,7 +173,7 @@ export function localImages(deps: LocalImageDeps = {}): Maker {
         } finally {
           await rm(work, { recursive: true, force: true }).catch(() => {});
         }
-      });
+      }, help.signal);
     },
   };
 }
@@ -191,32 +191,9 @@ export function seedOf(ask: { seed?: unknown; prompt?: unknown }): number {
   return Math.abs(hash) % 2_000_000_000;
 }
 
-type Runner = (command: string, args: string[], at: string, onLine: (line: string) => void, signal?: AbortSignal) => Promise<number>;
-const run: Runner = (command, args, at, onLine, signal) => new Promise((done, fail) => {
-  const child = spawn(command, args, { cwd: at, env: { ...process.env, LD_LIBRARY_PATH: `${join(at, 'bin')}:${process.env.LD_LIBRARY_PATH ?? ''}` } });
-  let rest = '';
-  const read = (chunk: Buffer) => {
-    rest += chunk.toString('utf8');
-    // The renderer draws its progress bar with carriage returns, so a step is a line only if those count as one.
-    const lines = rest.split(/[\n\r]/);
-    rest = lines.pop() ?? '';
-    for (const line of lines) onLine(line.trim());
-  };
-  child.stdout.on('data', read);
-  child.stderr.on('data', read);
-  const stop = () => child.kill('SIGTERM');
-  signal?.addEventListener('abort', stop, { once: true });
-  child.on('error', fail);
-  child.on('close', (code) => { signal?.removeEventListener('abort', stop); done(code ?? 1); });
-});
-
-// A picture that costs nothing and needs no machine, for the checks and the fake-model runs.
-const PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
-export const fakeLocalImages: Maker = {
-  name: 'this computer',
-  ready: () => null,
-  async make(_ask, { report }) {
-    report('drawing it on this computer — about 55 seconds');
-    return { ext: 'png', bytes: Buffer.from(PIXEL, 'base64') };
-  },
-};
+// The renderer draws its progress bar with carriage returns, so a step is a line only if those count as one.
+const run = (command: string, args: string[], at: string, onLine: (line: string) => void, signal?: AbortSignal): Promise<number> =>
+  runLines(command, args, {
+    cwd: at, env: { ...process.env, LD_LIBRARY_PATH: `${join(at, 'bin')}:${process.env.LD_LIBRARY_PATH ?? ''}` },
+    split: /[\n\r]/, onLine: (line) => onLine(line.trim()), signal,
+  }).then((ran) => ran.code);

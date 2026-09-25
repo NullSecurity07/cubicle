@@ -1,200 +1,57 @@
-import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { copyFile, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { copyFile, readFile, writeFile } from 'node:fs/promises';
 import { extname, join, resolve } from 'node:path';
-import type { Card, MediaAsset, Shape, Stage } from '../../shared/model.ts';
+import type { Shape } from '../../shared/model.ts';
 import { CHROMES } from '../browser.ts';
 import { projectDir } from '../folder.ts';
-import { musicBed, MOODS, SFX, SFX_DIR, sfxFile, type Mood } from './audio.ts';
-import { fakeMusic, type Credit, type Music, type Mood as MusicMood } from './music.ts';
-import { noClips, type Clips } from './clips.ts';
+import { createLibrary } from '../library/notes.ts';
+import { musicBed, MOODS, SFX_DIR, sfxFile, type Mood } from './audio.ts';
+import { type Credit, type Mood as MusicMood } from './music.ts';
+import { noClips } from './clips.ts';
 import { headlineOf, mendShots, repair, trimTo, type Want } from './critic.ts';
 import { lensPhrase } from './moves.ts';
-import { liftFor, lighten, meanLight, scrimFor } from './contrast.ts';
-import { facesLens, fault, isLettered, type Sight } from './sight.ts';
+import { finishPicture, looking } from './finish.ts';
+import { hands } from './turns.ts';
+import type { Sight } from './sight.ts';
 import {
   bibleFor, direct, faceIn, layoutsFor, narratorWanted, onCamera, photograph, readBrief, tellOf, understandingOf,
-  type Asked, type Material, type Understanding,
+  type Asked, type Understanding,
 } from './director.ts';
 import { checkCut, cuttingFor, editFilm, type Edit, type Shot as Cut, type Take } from './editor.ts';
 import { ff, ffReady, FFMPEG } from './ff.ts';
 import { fitStill, normalise } from './footage.ts';
-import { cachedImages, DRAWN_BEFORE, mayDrawHere, outOfPictures } from './image.ts';
+import { DRAWN_BEFORE, mayDrawHere, outOfPictures } from './image.ts';
 import type { Maker, Piece } from './jobs.ts';
-import { availableRam, availableSwap, MINUTES_EACH, needsRam, roomToFilm as room } from './local-clips.ts';
+import { availableRam, availableSwap, needsRam, roomToFilm as room } from './local-clips.ts';
 import {
-  AI_LAYOUTS, content, isPurpose, MAX_AI, MAX_LOCAL_AI, PURPOSE, PURPOSES,
-  crowdsCaptions, fallbackOf, saysWhatItShows, withinCaps, type Spec,
+  AI_LAYOUTS, content, countWords, MAX_AI, MAX_LOCAL_AI, PURPOSES,
+  fallbackOf, withinCaps, type Spec,
 } from './spec.ts';
-import { broll, type Stock } from './stock.ts';
+import { broll, creditOf, photoCredits } from './stock.ts';
 import {
-  afforded, drawnAs, lineUnder, redrawnFor, shareOut, shotKey, slotsFor, type Slot, type Visual,
+  afforded, drawnAs, lineUnder, shareOut, shotKey, slotsFor, type Slot, type Visual,
 } from './visuals.ts';
 import { isDraft, makingWords, secondsEach } from '../../shared/film-time.ts';
 import { filmMemory, storyboardKey, subjectKey, type KeptSubject } from './remembered.ts';
 import { pictureHash, type FilmRecord, type RecordPicture } from './edits.ts';
-import { partName, recordOf } from './film-record.ts';
+import { recordOf } from './film-record.ts';
 import { sourcesOf } from './grounding.ts';
-import { readProject, VIEWPORTS } from './sources.ts';
 import {
-  captionLines, composition, FORMATS, isPack, PACE, PACK, PACKS, PACES, paintOf, projectFile, sceneSeconds, snapToBeats,
+  FORMATS, isPack, PACE, PACKS, PACES, paintOf, quietOf, sceneSeconds, snapToBeats, startsOf,
   type Film, type Pace, type Pack, type Shot,
 } from './templates/index.ts';
 import { camOf } from './templates/layouts.ts';
-import { FPS, type EditPlan, type EditShot, type EditSound } from './mlt.ts';
 import { timeWords, type Part, type Word } from './timings.ts';
+import { gather, type VideoAsk, type VideoDeps } from './gather.ts';
+import { carryExtras, chromePath, drawingFor, editPlan, renderProject, stageVendor, withJobDir } from './render.ts';
 import { castLine, castVoice, engineOf, isVoice, VOICES, wavSeconds } from './voice.ts';
 import { creditsOf, designOf, NONCOMMERCIAL, OMNI_ENGINE } from './omnivoice.ts';
-
-// The spec vocabulary lives in `spec.ts` now, so the director and the critic can share it without importing the
-// whole renderer. Everything that used to be here is still here, by the same names.
-export {
-  LAYOUTS, AI_LAYOUTS, MAX_SCENES, MAX_IMAGES, MAX_AI, MAX_LOCAL_AI, MAX_BACKGROUNDS, LENGTHS, PURPOSES, PURPOSE,
-  isPurpose, parseSpec, scenesFor, wordsFor, withinCaps, withinLength, fallbackOf, WORDS_A_SECOND, budgetOf,
-  type Layout, type Scene, type Spec, type Purpose,
-} from './spec.ts';
-export { FRAMES } from './templates/index.ts';
-export type { Material, Understanding } from './director.ts';
 
 export const SETUP_HINT = 'No video renderer is set up. The founder installs Chrome and ffmpeg — both are free — and restarts the app.';
 
 // The bed under a film is written by `media/music.ts`, which is asked for a mood and a length and hands back a
 // finished loop at −23 LUFS with its own beats and its own credit. Nothing about it is decided here.
-export type { Credit, Music } from './music.ts';
 
-// Where Chrome is on this machine. The renderer takes it by name in the environment, not as a flag.
-export const chromePath = (): string | null => CHROMES.find((path) => existsSync(path)) ?? null;
-
-type Ran = { code: number; out: string };
-function run(command: string, args: string[], at: string, onLine: (line: string) => void, signal?: AbortSignal): Promise<Ran> {
-  return new Promise((done, fail) => {
-    const child = spawn(command, args, { cwd: at, env: { ...process.env, HYPERFRAMES_BROWSER_PATH: chromePath() ?? '', NO_COLOR: '1' } });
-    let out = '';
-    let rest = '';
-    const read = (chunk: Buffer) => {
-      const text = chunk.toString('utf8');
-      out += text;
-      rest += text;
-      const lines = rest.split('\n');
-      rest = lines.pop() ?? '';
-      for (const line of lines) onLine(line.replace(/\[[0-9;]*m/g, '').trim());
-    };
-    child.stdout.on('data', read);
-    child.stderr.on('data', read);
-    const stop = () => child.kill('SIGTERM');
-    signal?.addEventListener('abort', stop, { once: true });
-    child.on('error', fail);
-    child.on('close', (code) => { signal?.removeEventListener('abort', stop); done({ code: code ?? 1, out: out.replace(/\[[0-9;]*m/g, '') }); });
-  });
-}
-
-// A handful of slow things at a time rather than all of them: a dozen pictures asked for at once is a dozen refusals.
-export async function pool<T>(jobs: (() => Promise<T>)[], most = 3): Promise<T[]> {
-  const out: T[] = new Array(jobs.length);
-  let next = 0;
-  const hands = Array.from({ length: Math.min(most, jobs.length) }, async () => {
-    for (let mine = next++; mine < jobs.length; mine = next++) out[mine] = await jobs[mine]();
-  });
-  await Promise.all(hands);
-  return out;
-}
-
-// What a video studio was asked for: the brief in `prompt`, everything the founder set on the card — where 'auto' and
-// nothing at all both mean "you decide" — and for a person who wrote one, the storyboard itself.
-export type VideoAsk = {
-  prompt: string; format?: string; look?: string; narrate?: boolean; spec?: Spec; cardId?: string;
-  purpose?: string; length?: number | string; pace?: string; music?: string; sfx?: boolean; captions?: boolean;
-  ai?: boolean | string; address?: string; voice?: string; person?: boolean;
-  // The voice engine, set by the founder by hand or not at all, and for OmniVoice the few words its voice is designed from.
-  engine?: string; design?: string;
-  // How long the founder is willing to wait: 'draft' is the film to look at before the film, 'full' and nothing are the film.
-  speed?: string;
-  // Who asked for the film. A person's own wires are the founder pointing at things just as much as the studio's
-  // are, so what is joined to them is joined to the film.
-  roomId?: string;
-  // Pictures the caller named outright — paths a person got back from drawing one, or the word "latest".
-  images?: string[];
-  // Notes on a finished film: the film's path in the shared files, and the record kept beside it. The notes
-  // themselves are `prompt`.
-  edit?: string; record?: FilmRecord;
-};
-
-// The other half of the studio: what it can read, what it can photograph, what it can film with.
-export type VideoDeps = {
-  dir: string; images?: Maker; voices?: Maker; think: (prompt: string) => Promise<string>;
-  // Where drawn pictures are kept between runs, beside the voice model and the music. Without one they are kept in
-  // the workspace, which still saves a second render of the same film.
-  cacheDir?: string;
-  // `clips` is every moving-picture backend as one; `local` is the one that runs here, which is what decides how many
-  // such scenes a film may have and whether a person's call needs the founder's yes. `lipsync` is the narrower
-  // thing: the backend that can move a real mouth to a real recording. Without one this studio shows no talking
-  // person at all, so it is asked for by name rather than inferred from `clips`.
-  clips?: Clips; local?: Clips; lipsync?: Clips; music?: Music; forbidden?: string[];
-  // Real photographs somebody took, when a free key is set. Nothing breaks without one; the film draws instead.
-  stock?: Stock;
-  // Something that can look at a picture once it is drawn: whether anybody in it is staring down the lens, whether
-  // it came back with writing on it, and how far away each part of it is. Without one a film is made from
-  // pictures nobody looked at, which is what every film was until a proof came back with two strangers in it.
-  sight?: Sight;
-  stage?: () => Promise<Stage>;
-  assets?: (cardId: string) => Promise<MediaAsset[]>;
-  // The pictures another studio card has already made, newest first: a wired image studio's work is the film's.
-  // The words each was drawn from come with it, because they are the only description of the picture anybody has.
-  pictures?: (cardId: string) => Promise<{ path: string; prompt: string }[]>;
-  fileOf?: (path: string) => string;
-  readDoc?: (id: string) => Promise<string>;
-  readFile?: (path: string) => Promise<Buffer | null>;
-  browser?: {
-    shots(raw: string, want: { width: number; height: number; at: number[]; own?: boolean; file: (index: number) => string }, signal?: AbortSignal): Promise<string[]>;
-    where(session: string): Promise<string | null>;
-  };
-};
-
-// Which cards the founder joined to this one, in either direction: a wire has a head and a tail, but material flows
-// both ways down it.
-export const wiredTo = (stage: Stage, cardId: string): Card[] => {
-  const ends = new Set((stage.wires ?? []).flatMap((wire) => (wire.from === cardId ? [wire.to] : wire.to === cardId ? [wire.from] : [])));
-  return (stage.cards ?? []).filter((card) => ends.has(card.id));
-};
-
-// What kinds of card a person carries into a film they are asked to make. A founder who wires an image studio to
-// Sam and then asks Sam for a film has already said which pictures to use; making them wire it a second time, to
-// the video card as well, is a rule they have to learn rather than a thing that works.
-const THEIRS = new Set<Card['kind']>(['imagegen', 'image', 'note', 'link', 'project']);
-
-// Everything a film may draw on, found the way a founder would point at it rather than the way a graph is stored.
-// Three reaches, in the order they matter: what is wired to the studio; what is wired to *that* — a picture card on
-// a stage is usually fed by the studio that drew the picture, and the founder who joined them up meant the film to
-// have it; and everything of that kind wired to whoever is making the film.
-//
-// This is the whole of what went wrong in a real run: an image studio fed a picture card, the picture card fed the
-// video studio, and the film gathered nothing, because only the first reach existed.
-export function sourcesFor(stage: Stage, cardId?: string, roomId?: string): Card[] {
-  const found = new Map<string, Card>();
-  const keep = (card: Card) => { if (card.id !== cardId && !found.has(card.id)) found.set(card.id, card); };
-  const direct = cardId ? wiredTo(stage, cardId) : [];
-  for (const card of direct) keep(card);
-  // One hop behind a picture card: the studio that feeds it.
-  for (const card of direct) {
-    if (card.kind !== 'image') continue;
-    for (const behind of wiredTo(stage, card.id)) if (behind.kind === 'imagegen') keep(behind);
-  }
-  if (roomId) for (const card of wiredTo(stage, roomId)) if (THEIRS.has(card.kind)) keep(card);
-  return [...found.values()];
-}
-
-// The documents a film may read: the ones wired to the studio, and the ones wired to whoever is making it.
-export const docsFor = (stage: Stage, cardId?: string, roomId?: string): string[] => {
-  const ends = new Set((stage.wires ?? []).flatMap((wire) => {
-    if (wire.from === cardId || wire.from === roomId) return [wire.to];
-    if (wire.to === cardId || wire.to === roomId) return [wire.from];
-    return [];
-  }));
-  return (stage.docs ?? []).filter((doc) => ends.has(doc.id)).map((doc) => doc.id);
-};
-
-// Where each of a page's shots is taken from: the top, then what is under it, on a desktop and on a phone.
-const SCROLLS = { desktop: [0, 780, 1700], mobile: [0, 900] };
 
 // A picker the founder left on Auto is nothing at all; anything else is their decision and is obeyed.
 const chose = <T extends string>(value: unknown, allowed: readonly T[]): T | undefined =>
@@ -204,167 +61,6 @@ const chose = <T extends string>(value: unknown, allowed: readonly T[]): T | und
 // phrase being spoken under it. What used to be here — a subject cut out of a scene's headline, the nouns that
 // summon lettering struck out of it, and a texture wherever a frame was already full of type — is all in there,
 // with a critic over it that no single function could have.
-
-// About how long this is going to take, said before it starts rather than found out. Nothing here is precise; it is
-// honest, which is what a founder watching a spinner actually needs.
-export function estimate(ask: { scenes: number; seconds: number; pictures: number; clips: number; narrate: boolean; here?: boolean; draft?: boolean }): string {
-  // The sum itself is in `shared/film-time.ts`, so the card says the same minutes before Make is pressed.
-  return makingWords(ask);
-}
-
-// A few slow things at a time, for work that turns up as it is found rather than as one list. The pictures of a
-// film start being drawn while its narration is still being listened back to, and a few more may be asked for
-// once the cut is measured; both lots go through the same pair of hands.
-export function hands(most: number): <T>(job: () => Promise<T>) => Promise<T> {
-  let busy = 0;
-  const waiting: (() => void)[] = [];
-  return async (job) => {
-    // A place is handed straight to whoever is waiting rather than given up and taken again, so nobody who
-    // arrives in between can slip into it.
-    if (busy >= most) await new Promise<void>((go) => waiting.push(go));
-    else busy += 1;
-    try { return await job(); } finally {
-      const next = waiting.shift();
-      if (next) next(); else busy -= 1;
-    }
-  };
-}
-
-// The renderer: our own scenes written as one HTML page, which headless Chrome steps through frame by frame and ffmpeg
-// turns into an MP4. Nothing leaves this machine except what the founder wired to the card, and the same storyboard
-// always renders the same film.
-// What a named asset really is, and where. `where` says whether the file already sits in this job's own assets
-// folder (a screenshot we just took, a picture copied off a wired card) or out in the shared files.
-export type Held = { file: string; kind: 'screen' | 'video' | 'image' | 'audio'; where: 'job' | 'files'; seconds?: number };
-
-// Everything wired to the card, read once: the product's own words and colours, its screens as pictures, the
-// founder's own files, the pictures a wired image studio has already drawn, and whatever a note or a doc beside it
-// says. A wire is the founder saying "use this", so none of it has to be asked for.
-export async function gather(deps: VideoDeps, asked: VideoAsk, at: string, report: (line: string) => void, signal?: AbortSignal) {
-    const material: Material = { lines: [], assets: [], using: [] };
-    // What the storyboard may name in `asset`. `where` says whether the file already sits in this job's own assets
-    // folder (a screenshot we just took) or in the shared files (something the founder dropped).
-    const files = new Map<string, Held>();
-    const stage = await deps.stage?.().catch(() => undefined);
-    const cards = stage ? sourcesFor(stage, asked.cardId, asked.roomId) : [];
-    const addresses: { url: string; own: boolean; label: string }[] = [];
-    if (asked.address?.trim()) addresses.push({ url: asked.address.trim(), own: true, label: asked.address.trim() });
-
-    for (const card of cards) {
-      try {
-        if (card.kind === 'project' && card.path) {
-          const product = await readProject(projectDir(card.path, deps.forbidden ?? []));
-          if (product.words) material.lines.push(product.words);
-          if (product.pitch) material.pitch = product.pitch;
-          if (product.brand.colours.length || product.brand.font) material.brand = product.brand;
-          material.using.push(`${product.name ?? 'the'} project`);
-          if (product.font) await writeFile(join(at, 'vendor', product.font.name), product.font.bytes);
-          if (product.logo && /\.(png|jpe?g|webp)$/i.test(product.logo.name)) {
-            await writeFile(join(at, 'assets', `logo-${product.logo.name}`), product.logo.bytes);
-            files.set('logo', { file: `logo-${product.logo.name}`, kind: 'image', where: 'job' });
-          }
-          // A project with nobody's browser wired to it still has pictures of itself in it — the ones its README
-          // shows off with. They are screens, so a device scene may hold one, and a film about a product gets to
-          // show the product rather than an abstract picture of one.
-          for (const screen of product.screens) {
-            const name = `screen-repo-${material.assets.filter((one) => one.kind === 'screen').length + 1}`;
-            const file = `${name}${extname(screen.name).toLowerCase() || '.png'}`;
-            await writeFile(join(at, 'assets', file), screen.bytes);
-            files.set(name, { file, kind: 'screen', where: 'job' });
-            material.assets.push({ name, kind: 'screen', what: screen.what });
-          }
-          if (product.screens.length) material.using.push(`${product.screens.length} screenshot${product.screens.length === 1 ? '' : 's'} out of the project`);
-        } else if (card.kind === 'link' && card.url) addresses.push({ url: card.url, own: false, label: card.url });
-        else if (card.kind === 'browser') {
-          const where = await deps.browser?.where(`card-${card.id}`).catch(() => null);
-          if (where && !/^about:/.test(where)) addresses.push({ url: where, own: false, label: where });
-        } else if (card.kind === 'note' && card.text?.trim()) { material.lines.push(`A note on the stage:\n${card.text.slice(0, 1600)}`); material.using.push('a note'); }
-        else if (card.kind === 'image' && card.path) {
-          const bytes = await deps.readFile?.(card.path).catch(() => null);
-          if (bytes) { const name = `picture-${files.size + 1}`; await writeFile(join(at, 'assets', `${name}.png`), bytes); files.set(name, { file: `${name}.png`, kind: 'image', where: 'job' }); material.assets.push({ name, kind: 'image', what: 'a picture the founder put on the stage — use it as a scene' }); }
-        } else if (card.kind === 'imagegen') {
-          // A picture studio wired to a video studio is a picture studio whose pictures belong in the film. The
-          // founder does not have to say so: they drew a wire, and a wire is the saying.
-          const drawn = await latestPictures(card.id);
-          for (const [index, one] of drawn.entries()) {
-            const name = `drawn-${files.size + 1}`;
-            await writeFile(join(at, 'assets', `${name}.png`), one.bytes);
-            files.set(name, { file: `${name}.png`, kind: 'image', where: 'job' });
-            // The words it was drawn from are the only description of it anybody has, and they are what says
-            // whether there is a person in it.
-            material.assets.push({ name, kind: 'image', prompt: one.prompt, what: `a picture drawn in the image studio${index ? ' (an earlier one)' : ' (the latest)'}: ${one.prompt || 'no words were kept'}` });
-          }
-          if (drawn.length) material.using.push(`${drawn.length} picture${drawn.length === 1 ? '' : 's'} from the image studio`);
-        }
-      } catch (error) { report(`could not read ${card.kind === 'project' ? card.path : card.kind}: ${(error as Error).message}`); }
-    }
-    // Documents wired to the card are words, the same as a note is — and so are the ones wired to whoever asked.
-    const readable = stage ? new Set(docsFor(stage, asked.cardId, asked.roomId)) : new Set<string>();
-    for (const doc of stage?.docs ?? []) {
-      if (!readable.has(doc.id)) continue;
-      const text = await deps.readDoc?.(doc.id).catch(() => '');
-      if (text?.trim()) { material.lines.push(`${doc.title}:\n${text.slice(0, 2400)}`); material.using.push(doc.title); }
-    }
-
-    // The product's own screens. Two addresses at most, and a handful of shots each: this is the slow part.
-    for (const [index, address] of addresses.slice(0, 2).entries()) {
-      if (!deps.browser) break;
-      report(`photographing ${address.label}…`);
-      for (const [size, box] of Object.entries(VIEWPORTS)) {
-        const scrolls = SCROLLS[size as keyof typeof SCROLLS];
-        const taken = await deps.browser.shots(address.url, {
-          ...box, own: address.own, at: scrolls,
-          file: (one) => join(at, 'assets', `screen-${index}-${size}-${one}.png`),
-        }, signal).catch((error: Error) => { report(`${address.label} could not be photographed: ${error.message}`); return [] as string[]; });
-        taken.forEach((file, one) => {
-          const name = `screen-${index}-${size}-${one}`;
-          files.set(name, { file: `${name}.png`, kind: 'screen', where: 'job' });
-          material.assets.push({ name, kind: 'screen', what: `${size === 'mobile' ? 'the phone view' : 'the desktop view'} of ${address.label}${scrolls[one] ? `, ${scrolls[one]}px down the page` : ', at the top'}` });
-        });
-      }
-      if (material.assets.some((one) => one.kind === 'screen')) material.using.push(address.label);
-    }
-
-    // Pictures the caller named outright: a person who has just drawn one hands back the path it got, and a film
-    // asked for that picture gets that picture. "latest" is the newest thing the wired image studio has drawn,
-    // which is what somebody means when they say "use the one you just made".
-    for (const named of asked.images ?? []) {
-      const want = named.trim();
-      if (!want || want.toLowerCase() === 'latest') continue;
-      if (material.assets.some((one) => one.what.includes(want))) continue;
-      const bytes = await deps.readFile?.(want).catch(() => null);
-      if (!bytes) { report(`there is no picture at ${want}, so the film was made without it`); continue; }
-      const name = `given-${files.size + 1}`;
-      await writeFile(join(at, 'assets', `${name}.png`), bytes);
-      files.set(name, { file: `${name}.png`, kind: 'image', where: 'job' });
-      material.assets.push({ name, kind: 'image', what: `a picture you were given to use: ${want}` });
-      material.using.push('a picture you were handed');
-    }
-
-    // The founder's own footage, already on the card, normalised into the film's own frame when it is used.
-    const dropped = asked.cardId ? await deps.assets?.(asked.cardId).catch(() => []) ?? [] : [];
-    for (const asset of dropped) {
-      files.set(asset.name, { file: asset.path, kind: asset.kind, where: 'files', seconds: asset.seconds });
-      if (asset.kind === 'audio') continue;
-      material.assets.push({ name: asset.name, kind: asset.kind, what: asset.kind === 'video' ? `${Math.round(asset.seconds ?? 0)} seconds of the founder's own footage` : "a picture the founder dropped on the card" });
-    }
-    const clipCount = dropped.filter((one) => one.kind === 'video').length;
-    if (clipCount) material.using.push(`${clipCount} of your clip${clipCount === 1 ? '' : 's'}`);
-    const bed = dropped.find((one) => one.kind === 'audio');
-    return { material, files, bed };
-
-    // The pictures a wired image studio has made, newest first. Its results live in the same sidecar every studio
-    // card keeps, which is `assets` on the card for dropped files and `results` for made ones.
-    async function latestPictures(cardId: string): Promise<{ bytes: Buffer; prompt: string }[]> {
-      const made = (await deps.pictures?.(cardId).catch(() => [])) ?? [];
-      const found: { bytes: Buffer; prompt: string }[] = [];
-      for (const one of made.slice(0, 3)) {
-        const bytes = await deps.readFile?.(one.path).catch(() => null);
-        if (bytes) found.push({ bytes, prompt: one.prompt ?? '' });
-      }
-      return found;
-    }
-}
 
 export function hyperframesVideos(deps: VideoDeps): Maker {
   const bin = resolve(import.meta.dirname, '../../node_modules/.bin/hyperframes');
@@ -381,10 +77,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         const { remakeVideo } = await import('./remake.ts');
         return remakeVideo(deps, { film: asked.edit.trim(), notes: asked.prompt, record: asked.record }, { report, signal }, { bin, vendor });
       }
-      const at = join(deps.dir, '.video', Date.now().toString(36));
-      try {
-        await mkdir(join(at, 'assets'), { recursive: true });
-        await mkdir(join(at, 'vendor'), { recursive: true });
+      return withJobDir(deps.dir, Date.now().toString(36), report, async (at) => {
 
         // Everything the founder decided, and nothing they did not. What is still open the director reads out of the
         // brief itself, one pass at a time, saying each decision on the card as it makes it.
@@ -397,7 +90,8 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           pack: chose(asked.look, PACKS),
           music: chose(asked.music, MOODS),
           captions: asked.captions,
-          person: asked.person,
+          // Nothing asks for somebody on camera by a switch: the card has a `person` field, but neither the card nor
+          // a person's call ever sets it, so whether a film wants a face is read out of the brief alone.
         };
         // The founder's AI-clips switch: on, off, or theirs to work out.
         const wantsAi = asked.ai === true || asked.ai === 'on';
@@ -409,6 +103,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         const memory = filmMemory(deps.cacheDir ? join(deps.cacheDir, 'films') : undefined);
 
         const { material, files, bed } = await gather(deps, asked, at, report, signal);
+        if (signal?.aborted) throw new Error('stopped');
         if (material.using.length) report(`using: ${material.using.join(', ')}`);
 
         // A person who wrote the whole storyboard is not overruled about what is in it, only about how it is set —
@@ -458,7 +153,8 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           const key = storyboardKey({ brief: asked.prompt, told, lines: material.lines, assets: material.assets.map((one) => one.name) });
           const watched = await memory.storyboard<Awaited<ReturnType<typeof direct>>>(asked.cardId, key, draft ? 'draft' : 'full');
           if (watched) report('this is the draft you watched, now made in full: the same storyboard, every shot its own picture');
-          const directed = watched ?? await direct(told, material, deps.think, { report, ai: mayUseAi, lipsync });
+          const directed = watched ?? await direct(told, material, deps.think, { report, ai: mayUseAi, lipsync, signal });
+          if (signal?.aborted) throw new Error('stopped');
           if (watched) report(tellOf(directed.understanding));
           else await memory.keepStoryboard(asked.cardId, { key, speed: draft ? 'draft' : 'full', directed });
           understanding = directed.understanding;
@@ -492,7 +188,6 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // Memory and swap together, because a machine leaning on swap makes the clip slowly rather than not at all —
         // and a founder refused at 21 GB when 22 was wanted has been told no for a gigabyte.
         const filming = here && able ? room({ ram: spare, swap: await availableSwap(), needs: needsRam() }) : { answer: 'no' as const, line: '' };
-        const roomToFilm = here && able && filming.answer !== 'no';
         if (understanding.person && here && able && filming.line) report(filming.line);
         // A real picture of a real person, already on the card, is who the film puts on camera. Nothing is drawn and
         // nothing is filmed for a face the founder has already made.
@@ -523,9 +218,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
 
         // Every drawn picture is filed under what was asked for, so the same film rendered twice draws nothing the
         // second time and a founder's daily quota lasts the week.
-        const drawing = deps.images && !deps.images.ready()
-          ? cachedImages(deps.images, deps.cacheDir ? join(deps.cacheDir, 'pictures') : join(deps.dir, '.cache', 'pictures'))
-          : null;
+        const drawing = drawingFor(deps);
         const reader = omni ? borrowed : deps.voices;
         const saying = reader && !reader.ready(omni ? borrowAsk : undefined) && asked.narrate !== false ? reader : null;
         // What the narration's own licence says, when it says anything. It travels with the film.
@@ -546,7 +239,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // guess until the film has been read aloud and cut — a scene is one shot or it is three — so it is said
         // again, exactly, the moment the shot list exists and before anything slow has happened.
         const guessed = drawing ? afforded(Math.round(spec.scenes.length * 1.6), drawnHere, 8, draft) : 0;
-        report(`${draft ? 'a draft, ' : ''}${spec.scenes.length} scenes, ${estimate({ scenes: spec.scenes.length, seconds, pictures: guessed, clips: here ? wantsClips : 0, narrate: !!saying, here: drawnHere, draft })}`);
+        report(`${draft ? 'a draft, ' : ''}${spec.scenes.length} scenes, ${makingWords({ seconds, pictures: guessed, clips: here ? wantsClips : 0, narrate: !!saying, here: drawnHere, draft })}`);
         report('cutting what you gave it and recording the narration…');
         const shots: Shot[] = spec.scenes.map((scene) => ({ scene, seconds: 0 }));
         const said = (index: number, line: string) => report(`scene ${index + 1}: ${line}`);
@@ -684,7 +377,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         const spans: { from: number; to: number }[] = [];
         let counted = 0;
         for (const line of lines) {
-          const count = line ? line.split(/\s+/).filter(Boolean).length : 0;
+          const count = countWords(line);
           spans.push({ from: counted, to: counted + count });
           counted += count;
         }
@@ -783,9 +476,8 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // the rest of the makers' chatter, so a film quietly took eight minutes after promising two. Said once,
         // with the new wait beside it.
         const switched = new Set<string>();
-        // What looking at the pictures found, said once a kind rather than once a picture.
-        const looked = new Set<string>();
-        let redrawn = 0;
+        // What looking at the pictures found, said once a kind rather than once a picture, and how many were drawn again.
+        const lookingAt = looking();
         // What made every picture in the film, so a note on it later knows which ones it can keep.
         const madeFrom = new Map<string, RecordPicture>();
         deps.sight?.warm();
@@ -809,6 +501,9 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           const scene = spec.scenes[visual.scene];
           const name = `${visual.scene}-${visual.take}`;
           let file = '';
+          // Who took a photograph, said the way a credit is said. The licence does not ask for it; knowing where a
+          // picture in a finished film came from is still worth a line beside the film.
+          let credit: string | undefined;
           try {
               // A real photograph of a real thing, from somebody who took one. People in stock are b-roll and
               // nothing else: never the film's own speaker, and never beside a claim about a named product.
@@ -821,8 +516,9 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
                   const piece = await deps.stock.get(found[0], stop);
                   file = `stock-${name}.${piece.ext}`;
                   await writeFile(join(at, 'assets', file), piece.bytes);
+                  credit = creditOf(found[0]);
                 }
-              } catch { file = ''; }
+              } catch { file = ''; credit = undefined; }
             }
             if (!file) {
               const piece = await drawing.make({ prompt: drawnAs(visual, bible), shape, ...(draft ? { size: 'draft' } : {}) }, { report: fromMaker, signal: stop });
@@ -830,49 +526,24 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
               file = `frame-${name}.${piece.ext}`;
               await writeFile(join(at, 'assets', file), piece.bytes);
             }
-              // The picture is looked at before it is used. Every rule this studio has about a picture — nobody
-              // staring down the lens, no writing — was only ever applied to the sentence the picture was asked
-              // for with, and a picture model does what it likes: a proof film came back with two strangers
-              // looking straight at the viewer and a sheet of handwriting. One that breaks a rule is drawn once
-              // more, as a place rather than a person and from further off, and the better of the two is kept.
-            const seen = await deps.sight?.look(join(at, 'assets', file)).catch(() => null);
-            // Twice a film at most: a redraw here is most of a minute, and a studio that doubts every picture it
-            // draws is a studio that takes twice as long to make the same film.
-            if (fault(seen) > 0 && !stop.aborted && redrawn < 2) {
-              redrawn += 1;
-              const why = facesLens(seen) ? 'somebody looking straight at the camera' : 'writing on it';
-              const again = redrawnFor(visual, { face: facesLens(seen) });
-              try {
+            // Looked at, drawn again once if it broke a rule, lifted, cut into planes and measured for its scrim:
+            // the same steps a remade film's pictures go through, in `finish.ts`.
+            const done = await finishPicture({
+              dir: join(at, 'assets'), file, visual, scene, pack, paint, sight: deps.sight, state: lookingAt, stop, report,
+              redraw: async (again) => {
                 const piece = await drawing.make({ prompt: drawnAs(again, bible), shape, ...(draft ? { size: 'draft' } : {}) }, { report: fromMaker, signal: stop });
                 const second = `frame-${name}-b.${piece.ext}`;
                 await writeFile(join(at, 'assets', second), piece.bytes);
-                const better = fault(await deps.sight?.look(join(at, 'assets', second)).catch(() => null)) < fault(seen);
-                if (better) file = second;
-                if (!looked.has(why)) { looked.add(why); report(`a picture came back with ${why}, so it was drawn again${isLettered(seen) && facesLens(seen) ? ' without either' : ''}`); }
-              } catch { /* the first picture stands: a film with a face in it beats a film with a hole in it */ }
-            }
-              // And now the one thing nobody was doing: looking at the picture that came back. How hard it has to
-              // be held down for the words on it to be read is measured off the picture itself, where the words
-              // really sit — so a white wall gets a wash and a dark doorway gets almost nothing. A graded pack
-              // that has come back too dark to see a subject in is lifted rather than ungraded.
-            madeFrom.set(file, file.startsWith('stock-')
-              ? { kind: 'stock', hash: pictureHash(visual.subject, '', shape), subject: visual.subject }
-              : { kind: 'drawn', hash: pictureHash(visual.subject, bible, shape), subject: visual.subject });
-            const path = join(at, 'assets', file);
-            // A graded look over a picture that came back dark is how "dim and murky" happens. The shadows are
-            // raised in the file itself, before anything measures it, so the scrim is solved against the picture
-            // a viewer will really see; the gain in the page is only for a machine that could not rewrite it.
-            const raised = PACK[pack].format?.grade ? await lighten(path).catch(() => null) : null;
-            // …and where the look moves through its stills, the still is cut into the planes it moves.
-            const plies = PACK[pack].parallax ? await deps.sight?.plies(path).catch(() => null) : null;
-            const big = scene.layout === 'hook' || scene.layout === 'stat' || scene.layout === 'title';
-            // The scrim is solved for the *weakest* colour on the frame rather than the strongest. A line of
-            // support copy is set in the quiet tone, and a wash that clears the headline leaves that line
-            // floating — which is what "grey list text" was.
-            const hold = await scrimFor(path, visual.room === 'top' ? 'top' : 'foot', paint.quiet, paint.ground,
-              { big, floor: PACK[pack].scrim * 0.35 }).catch(() => null);
-            const light = PACK[pack].format?.grade && !raised ? await meanLight(path).catch(() => null) : null;
-            return { file, hold: hold ?? undefined, lift: light === null ? undefined : liftFor(light), plies: plies ?? undefined };
+                return second;
+              },
+            });
+            // What made the picture that was kept: the redrawn subject when the second drawing won, so a remake in a
+            // new look draws from the words that did not summon the stranger.
+            const subject = done.visual.subject;
+            madeFrom.set(done.file, done.file.startsWith('stock-')
+              ? { kind: 'stock', hash: pictureHash(subject, '', shape), subject, ...(credit ? { credit } : {}) }
+              : { kind: 'drawn', hash: pictureHash(subject, bible, shape), subject });
+            return { file: done.file, hold: done.hold, lift: done.lift, plies: done.plies };
           } catch (error) {
             // A picture nobody is waiting for any more was stopped on purpose, and is not a thing that went wrong.
             if (!stop.aborted) gone(error as Error, visual.scene);
@@ -896,7 +567,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           const fresh = [...new Set(owners)].filter((which) => !have.has(which));
           if (tell) {
             const drawn = new Set(owners).size;
-            report(`${drawn} picture${drawn === 1 ? '' : 's'} for ${cut.length} shots — ${estimate({ scenes: spec.scenes.length, seconds, pictures: drawn, clips: 0, narrate: false, here: drawsHere(), draft })}`);
+            report(`${drawn} picture${drawn === 1 ? '' : 's'} for ${cut.length} shots — ${makingWords({ seconds, pictures: drawn, clips: 0, narrate: false, here: drawsHere(), draft })}`);
           }
           if (!fresh.length) return { needing, owners };
           const slots: Slot[] = cut.map((one) => ({
@@ -916,7 +587,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           const keys = new Map(wanted.map((one) => [one.at, subjectKey(one, bible)]));
           const known = await memory.subjects([...keys.values()]);
           const unknown = wanted.filter((one) => !known.has(keys.get(one.at)!));
-          const written = unknown.length ? await photograph(unknown, bible, angle, deps.think, { report }) : [];
+          const written = unknown.length ? await photograph(unknown, bible, angle, deps.think, { report, signal }) : [];
           await memory.keepSubjects(written.filter((one) => one.subject.trim())
             .map((one): [string, KeptSubject] => [keys.get(one.at)!, { subject: one.subject, metaphor: one.metaphor }]));
           for (const slot of wanted) {
@@ -1093,9 +764,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           report('nobody is speaking, so the cuts are pulled onto the beat');
         }
 
-        const starts: number[] = [];
-        let clock = 0;
-        for (const shot of cut) { starts.push(clock); clock = Math.round((clock + shot.seconds) * 100) / 100; }
+        const { starts, total: clock } = startsOf(cut);
         total = clock;
 
         // The sounds the film is cut with: the editor's, capped at five and each on a cut frame, rather than one
@@ -1121,9 +790,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // Where the caption track must stay quiet: a scene that already writes out what is being said, and a scene
         // whose own type grows down into the band the captions live in. Two systems of type in one part of the
         // frame is not a caption track, it is a collision — a real reel put the word "AWAY." on top of a checklist.
-        const quiet = cut.map((shot, index) => (saysWhatItShows(shot.scene) || crowdsCaptions(shot.scene)
-          ? { at: starts[index], seconds: shot.seconds } : null))
-          .filter(Boolean) as { at: number; seconds: number }[];
+        const quiet = quietOf(cut, starts);
         // A film whose scenes nearly all write their own words has almost no caption track left, and a founder who
         // switched captions on deserves to hear that from the card rather than to notice it in the film.
         const hushed = quiet.reduce((sum, one) => sum + one.seconds, 0);
@@ -1138,10 +805,14 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         const { bytes, poster } = await renderProject(bin, at, film, { draft, report, signal });
         // A film read in a non-commercial voice says so beside itself, with the music's credit, so the terms go
         // wherever the file goes.
-        const terms = voiceTerms ? [
+        const nc = voiceTerms ? [
           'The narration in this film was made with OmniVoice. The film is not for commercial use.',
           '', voiceTerms.trim(), ...(credit && music ? ['', `Music: ${credit.title} by ${credit.by} · ${credit.licence} · ${credit.source}`] : []), '',
         ].join('\n') : '';
+        // Who took the photographs on screen. Pexels does not ask for a credit, but a film that carries somebody's
+        // photograph should be able to say whose it is wherever the file goes.
+        const photos = photoCredits(cut.flatMap((one) => [one.image, one.bg]).map((file) => (file ? madeFrom.get(file)?.credit : undefined)));
+        const terms = nc || photos ? [nc.trimEnd(), photos].filter(Boolean).join('\n\n') + '\n' : '';
         // A finished film goes out with the same film laid out as tracks, for a founder who wants to move one cut by
         // hand. A draft does not: it is a film to look at, not one to finish.
         const handEdit = draft ? undefined : await editPlan(film, at).catch(() => undefined);
@@ -1164,202 +835,18 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           });
           // What the record names and the hand-editable export does not carry: the planes a still was cut into, and
           // the bed before it was ducked under this narration.
-          const carried = new Set(handEdit.files.map((one) => one.name));
-          const extra = [...cut.flatMap((one) => (one.plies ? [one.plies.back, one.plies.mid, one.plies.fore] : [])), ...(voice ? [voice.file] : [])];
-          for (const name of extra) {
-            const safe = partName(name);
-            if (!safe || carried.has(safe)) continue;
-            const read = await readFile(join(at, 'assets', name)).catch(() => null);
-            if (read) { handEdit.files.push({ name: safe, bytes: read }); carried.add(safe); }
-          }
+          await carryExtras(handEdit, at, [...cut.flatMap((one) => (one.plies ? [one.plies.back, one.plies.mid, one.plies.fore] : [])), ...(voice ? [voice.file] : [])]);
           if (bedSource) {
             const read = await readFile(bedFile).catch(() => null);
             if (read) handEdit.files.push({ name: bedSource, bytes: read }); else record.bed = undefined;
           }
         }
-        return { ext: 'mp4', bytes, poster, credit, ...(terms ? { noncommercial: true, credits: terms } : {}), ...(handEdit ? { edit: handEdit } : {}), ...(record ? { record } : {}) };
-      } finally {
-        // The project a film was rendered from is thrown away, because it is a copy of everything the founder
-        // wired plus a few megabytes of pictures. When something is wrong with a finished film the only way to
-        // see why is that project — which scene silenced its own captions, what the picture prompt really said —
-        // so there is one switch that keeps it, and it is off unless somebody debugging turns it on.
-        if (process.env.STAGE_KEEP_PROJECT === '1') report(`the project this was rendered from is at ${at}`);
-        else await rm(at, { recursive: true, force: true }).catch(() => {});
-      }
+        return { ext: 'mp4', bytes, poster, credit, ...(nc ? { noncommercial: true } : {}), ...(terms ? { credits: terms } : {}), ...(handEdit ? { edit: handEdit } : {}), ...(record ? { record } : {}) };
+      });
     },
   };
 }
 
-// The fonts a look sets its words in, the animation library, and rough.js when the look draws by hand.
-export async function stageVendor(vendor: string, at: string, pack: Pack): Promise<void> {
-  for (const file of [...new Set(PACK[pack].fonts.map((one) => one.file))]) await copyFile(join(vendor, file), join(at, 'vendor', file));
-  await copyFile(join(vendor, 'gsap.min.js'), join(at, 'vendor', 'gsap.min.js'));
-  if (pack === 'sketch') await copyFile(join(vendor, 'rough.js'), join(at, 'vendor', 'rough.js'));
-}
-
-// The composition written, checked, rendered and photographed for its poster. The same for a film and for a film
-// remade from notes, because the page is the cheap part: it is the pictures and the voice that cost.
-export async function renderProject(bin: string, at: string, film: Film, help: { draft?: boolean; report: (line: string) => void; signal?: AbortSignal }): Promise<{ bytes: Buffer; poster?: Piece['poster'] }> {
-  const { report, signal, draft } = help;
-  await writeFile(join(at, 'index.html'), composition(film));
-  await writeFile(join(at, 'hyperframes.json'), projectFile);
-
-  // A finding here is worth saying out loud, but it is not worth withholding the film over: render either way.
-  report('checking the composition…');
-  const checked = await run(bin, ['check', '.'], at, () => {}, signal);
-  // Say what it disliked, not how many things it disliked: the lint's own line names the element and the reason.
-  if (checked.code !== 0) {
-    const found = checked.out.split('\n').map((line) => line.trim()).find((line) => line.startsWith('✗'))
-      ?? checked.out.match(/^.*(error|warning|finding).*$/im)?.[0]?.trim() ?? 'see the render';
-    report(`the check was not happy: ${found.replace(/^✗\s*/, '').slice(0, 200)}`);
-  }
-
-  const total = film.shots.reduce((sum, one) => sum + one.seconds, 0);
-  report(`rendering ${Math.round(total)} seconds…`);
-  let last = 0;
-  const rendered = await run(bin, ['render', '.', '--no-browser-gpu', '--quiet', ...(draft ? ['--quality', 'draft'] : []), '-o', 'out.mp4'], at, (line) => {
-    // The renderer talks a lot; a line a second is enough for the founder to see it moving.
-    if (!line || Date.now() - last < 1000) return;
-    last = Date.now();
-    report(`rendering · ${line.slice(0, 120)}`);
-  }, signal);
-  if (signal?.aborted) throw new Error('stopped');
-  if (rendered.code !== 0) throw new Error(`the render stopped: ${(rendered.out.trim().split('\n').filter(Boolean).at(-1) ?? 'no reason given').slice(0, 200)}`);
-  const bytes = await readFile(join(at, 'out.mp4'));
-
-  // One frame out of the opening scene stands in for the film wherever it cannot be played.
-  report('taking the poster frame…');
-  let poster: Piece['poster'];
-  await run(bin, ['snapshot', '.', '--at', ((film.shots[0]?.seconds ?? 1) * 0.6).toFixed(2), '--no-end', '--describe=false', '-o', 'poster'], at, () => {}, signal);
-  const shot = (await readdir(join(at, 'poster')).catch(() => [])).find((name) => name.endsWith('.png'));
-  if (shot) poster = { ext: 'png', bytes: await readFile(join(at, 'poster', shot)) };
-  return { bytes, poster };
-}
-
-// The film as an editor would lay it out, and the files it needs beside it: every picture and moving picture a shot
-// shows, the narration, the bed and the sounds, read out of the project before it is thrown away. A file that
-// cannot be read is left out, and its shot becomes the look's own colour rather than a hole in the timeline.
-export async function editPlan(film: Film, at: string): Promise<EditPlan> {
-  const { height, scale, caps, width } = FORMATS[film.shape];
-  const paint = paintOf(film.look, film.brand);
-  const files = new Map<string, Buffer>();
-  const take = async (name: string | undefined): Promise<string | undefined> => {
-    if (!name) return undefined;
-    // Only a plain file name out of the project's own assets: the parts folder is flat.
-    const safe = (name.split(/[\\/]/).pop() ?? '').replace(/[^\w.-]+/g, '-');
-    if (!safe || safe.startsWith('.')) return undefined;
-    if (files.has(safe)) return safe;
-    const bytes = await readFile(join(at, 'assets', name)).catch(() => null);
-    if (!bytes) return undefined;
-    files.set(safe, bytes);
-    return safe;
-  };
-  const shots: EditShot[] = [];
-  for (const shot of film.shots) {
-    const video = await take(shot.video);
-    const image = video ? undefined : await take(shot.image ?? shot.bg);
-    const words = [shot.scene.heading, shot.scene.text].filter(Boolean).join(' — ') || shot.scene.say || undefined;
-    shots.push({
-      seconds: shot.seconds, ground: paint.ground, ...(words ? { words } : {}),
-      ...(video ? { video, from: typeof shot.scene.start === 'number' ? shot.scene.start : 0 } : {}),
-      ...(image ? { image } : {}),
-      ...(image && camOf(shot) ? { move: String(shot.scene.move ?? 'a slow move') } : {}),
-    });
-  }
-  const starts: number[] = [];
-  let clock = 0;
-  for (const shot of film.shots) { starts.push(clock); clock = Math.round((clock + shot.seconds) * 100) / 100; }
-  const narration: EditSound[] = [];
-  if (film.voice) {
-    const file = await take(film.voice.file);
-    if (file) narration.push({ file, at: 0, seconds: film.voice.seconds });
-  } else {
-    for (const [index, shot] of film.shots.entries()) {
-      const file = shot.voice ? await take(shot.voice.file) : undefined;
-      if (file && shot.voice) narration.push({ file, at: starts[index] + PACE[film.pace ?? 'calm'].lead, seconds: shot.voice.seconds });
-    }
-  }
-  // The bed was mixed to its level, ducked and faded before the film was rendered, so it plays at full gain here too.
-  const bedFile = film.bed ? await take(film.bed.file) : undefined;
-  const sounds: EditSound[] = [];
-  for (const cue of film.cues ?? []) {
-    const file = await take(SFX[cue.sound].file);
-    if (file) sounds.push({ file, at: Math.max(0, cue.at), seconds: 1, gain: cue.gain ?? SFX[cue.sound].gain });
-  }
-  const captions = captionLines(film).map((line) => ({ text: line.words.map((one) => one.word).join(' '), at: line.at, seconds: line.seconds }));
-  return {
-    film: {
-      title: film.title, width, height, fps: FPS, shots, narration, sounds, captions,
-      ...(film.bed && bedFile ? { bed: { file: bedFile, at: 0, seconds: film.bed.seconds, gain: 1 } } : {}),
-      ink: paint.ink, capSize: Math.round(height * 0.108) * scale, capFoot: caps,
-    },
-    files: [...files].map(([name, bytes]) => ({ name, bytes })),
-  };
-}
-
-// A second of one flat colour, so the checks and the fake-model mode never need Chrome.
-const CLIP = 'AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAOwbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAA+gAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAtt0cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAA+gAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAABAAAAAQAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAAPoAAAIAAABAAAAAAJTbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAAAoAAAAKABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAAB/m1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAb5zdGJsAAAAvnN0c2QAAAAAAAAAAQAAAK5hdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAABAAEABIAAAASAAAAAAAAAABFExhdmM2My4xLjEwMSBsaWJ4MjY0AAAAAAAAAAAAAAAAGP//AAAANGF2Y0MBZAAK/+EAF2dkAAqs2V7ARAAAAwAEAAADAFA8SJZYAQAGaOvjyyLA/fj4AAAAABBwYXNwAAAAAQAAAAEAAAAUYnRydAAAAAAAABoYAAAAAAAAABhzdHRzAAAAAAAAAAEAAAAKAAAEAAAAABRzdHNzAAAAAAAAAAEAAAABAAAAYGN0dHMAAAAAAAAACgAAAAEAAAgAAAAAAQAAFAAAAAABAAAIAAAAAAEAAAAAAAAAAQAABAAAAAABAAAUAAAAAAEAAAgAAAAAAQAAAAAAAAABAAAEAAAAAAEAAAgAAAAAHHN0c2MAAAAAAAAAAQAAAAEAAAAKAAAAAQAAADxzdHN6AAAAAAAAAAAAAAAKAAACyQAAAAwAAAAMAAAADAAAAAwAAAASAAAADgAAAAwAAAAMAAAAEgAAABRzdGNvAAAAAAAAAAEAAAPgAAAAYXVkdGEAAABZbWV0YQAAAAAAAAAhaGRscgAAAAAAAAAAbWRpcmFwcGwAAAAAAAAAAAAAAAAsaWxzdAAAACSpdG9vAAAAHGRhdGEAAAABAAAAAExhdmY2My4xLjEwMQAAAAhmcmVlAAADS21kYXQAAAKuBgX//6rcRem95tlIt5Ys2CDZI+7veDI2NCAtIGNvcmUgMTY1IHIzMjIyIGIzNTYwNWEgLSBILjI2NC9NUEVHLTQgQVZDIGNvZGVjIC0gQ29weWxlZnQgMjAwMy0yMDI1IC0gaHR0cDovL3d3dy52aWRlb2xhbi5vcmcveDI2NC5odG1sIC0gb3B0aW9uczogY2FiYWM9MSByZWY9MyBkZWJsb2NrPTE6MDowIGFuYWx5c2U9MHgzOjB4MTEzIG1lPWhleCBzdWJtZT03IHBzeT0xIHBzeV9yZD0xLjAwOjAuMDAgbWl4ZWRfcmVmPTEgbWVfcmFuZ2U9MTYgY2hyb21hX21lPTEgdHJlbGxpcz0xIDh4OGRjdD0xIGNxbT0wIGRlYWR6b25lPTIxLDExIGZhc3RfcHNraXA9MSBjaHJvbWFfcXBfb2Zmc2V0PS0yIHRocmVhZHM9MSBsb29rYWhlYWRfdGhyZWFkcz0xIHNsaWNlZF90aHJlYWRzPTAgbnI9MCBkZWNpbWF0ZT0xIGludGVybGFjZWQ9MCBibHVyYXlfY29tcGF0PTAgY29uc3RyYWluZWRfaW50cmE9MCBiZnJhbWVzPTMgYl9weXJhbWlkPTIgYl9hZGFwdD0xIGJfYmlhcz0wIGRpcmVjdD0xIHdlaWdodGI9MSBvcGVuX2dvcD0wIHdlaWdodHA9MiBrZXlpbnQ9MjUwIGtleWludF9taW49MTAgc2NlbmVjdXQ9NDAgaW50cmFfcmVmcmVzaD0wIHJjX2xvb2thaGVhZD00MCByYz1jcmYgbWJ0cmVlPTEgY3JmPTIzLjAgcWNvbXA9MC42MCBxcG1pbj0wIHFwbWF4PTY5IHFwc3RlcD00IGlwX3JhdGlvPTEuNDAgYXE9MToxLjAwAIAAAAATZYiEABH//ufj/AptY+nCoYzc8QAAAAhBmiRsQQ/+4AAAAAhBnkJ4h3+3gQAAAAgBnmF0Q3+6gAAAAAgBnmNqQ3+6gQAAAA5BmmhJqEFomUwId//+4QAAAApBnoZFESw7/7eBAAAACAGepXRDf7qBAAAACAGep2pDf7qAAAAADkGaqUmoQWyZTAhv//7g';
-const POSTER = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
-export const fakeVideos: Maker = {
-  name: 'fake',
-  ready: () => null,
-  async make(ask, { report }) {
-    const asked = ask as VideoAsk;
-    // Notes on a fake film are read and applied for real; only the second of colour stands in for the render.
-    if (typeof asked.edit === 'string' && asked.record) {
-      const { fakeRemake } = await import('./remake.ts');
-      const remade = await fakeRemake({ film: asked.edit, notes: asked.prompt, record: asked.record }, report);
-      const title = remade.record?.title ?? 'A film';
-      return {
-        ext: 'mp4', bytes: Buffer.from(CLIP, 'base64'), poster: { ext: 'png', bytes: Buffer.from(POSTER, 'base64') }, ...remade,
-        edit: { film: { title, width: 1280, height: 720, fps: FPS, shots: [{ seconds: 1, ground: PACK.clean.paint.ground, words: title }] }, files: [] },
-      };
-    }
-    const title = asked.prompt.slice(0, 60);
-    // Three scenes, so a note can drop one and leave a film.
-    const spec = asked.spec ?? { title, scenes: [
-      { layout: 'title' as const, heading: title, say: `This is ${title}.` },
-      { layout: 'statement' as const, text: 'What it does', say: 'Here is what it does for you.' },
-      { layout: 'outro' as const, text: 'Thanks for watching', say: 'Thanks for watching.' },
-    ] };
-    report(`reading the brief: ${asked.prompt.slice(0, 60)}`);
-    // What it was handed, said the way the real one says it, so a run without models still shows the founder that
-    // the picture they drew reached the film.
-    if (asked.images?.length) report(`using: ${asked.images.length} picture${asked.images.length === 1 ? '' : 's'} you were handed — ${asked.images.join(', ')}`);
-    report(`${spec.scenes.length} scenes: ${spec.title}`);
-    report('rendering 6 seconds…');
-    // The second of colour laid out the way a real film is, so the card and the tool show the project in fake mode too.
-    const edit: EditPlan | undefined = isDraft(asked.speed) ? undefined : {
-      film: { title: spec.title, width: 1280, height: 720, fps: FPS, shots: [{ seconds: 1, ground: PACK.clean.paint.ground, words: spec.title }] },
-      files: [],
-    };
-    return { ext: 'mp4', bytes: Buffer.from(CLIP, 'base64'), poster: { ext: 'png', bytes: Buffer.from(POSTER, 'base64') }, ...(edit ? { edit, record: fakeRecord(spec, asked.narrate !== false) } : {}) };
-  },
-};
-
-// What a fake film remembers: two seconds a scene, a picture a scene, and the lines said one word a third of a
-// second, so notes on it are read and counted exactly as the real studio would read and count them.
-function fakeRecord(spec: Spec, narrate: boolean): FilmRecord {
-  const words: Word[] = [];
-  let clock = 0;
-  const shots = spec.scenes.map((scene, index) => {
-    const said = (scene.say ?? '').split(/\s+/).filter(Boolean);
-    const seconds = Math.max(2, said.length * 0.34 + 0.6);
-    if (narrate) said.forEach((word, at) => words.push({ word, at: Math.round((clock + 0.3 + at * 0.34) * 1000) / 1000, seconds: 0.3 }));
-    clock += seconds;
-    return { scene: index, take: 0, seconds, bg: `frame-${index}-0.png` };
-  });
-  const bible = bibleFor({ pack: 'clean' } as Understanding);
-  return recordOf({
-    title: spec.title, spec, shape: 'wide', look: 'clean', pace: 'calm', captions: false, sfx: true, music: 'none', bible, shots,
-    narrator: narrate && words.length ? { voice: 'af_heart', file: 'say.wav', seconds: clock } : undefined, words,
-    pictures: Object.fromEntries(shots.map((one) => [one.bg, { kind: 'drawn' as const, hash: pictureHash(spec.scenes[one.scene].say ?? '', bible, 'wide'), subject: spec.scenes[one.scene].say ?? '' }])),
-  });
-}
-
-// The bed the tests and the fake-model runs get: the real synthesiser, four seconds of it.
-export const fakeMusicBed: Music = fakeMusic;
-
-// The rules the critic holds a film to, exported for whatever wants to check one without rendering it.
-export type { Want } from './critic.ts';
-export { criticise, repair } from './critic.ts';
+// The studio's other halves, by the names the app has always imported them under.
+export { fakeVideos } from './fake-video.ts';
+export type { VideoAsk, VideoDeps } from './gather.ts';

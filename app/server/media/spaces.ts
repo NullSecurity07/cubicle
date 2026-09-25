@@ -2,7 +2,9 @@
 // keep the server from starting.
 const gradio = () => import('@gradio/client');
 import listed from './spaces.json' with { type: 'json' };
-import type { Clip, ClipAsk, Clips, Help, PresenterAsk } from './clips.ts';
+import type { Clip, Clips, Help } from './clips.ts';
+import { connectWithin } from './turns.ts';
+import { wavSeconds } from './wav.ts';
 
 // Real moving footage — a few seconds of a scene that was never filmed, and a portrait that speaks the words it was
 // given. No free API sells either. What is free is other people's public demos on Hugging Face: a Space marked
@@ -61,18 +63,6 @@ const clamp = (seconds: number, { least, most }: { least: number; most: number }
 // The Spaces want a file with a name and a type, not a bag of bytes: some of them pick their loader by the ending.
 const fileOf = async (bytes: Buffer, name: string, type: string) => (await gradio()).handle_file(new File([new Uint8Array(bytes)], name, { type }));
 
-// How long a WAV plays, read out of the file itself, so a talking head is asked for exactly the line it must say.
-export function speechSeconds(bytes: Buffer): number {
-  if (bytes.length < 44 || bytes.toString('ascii', 0, 4) !== 'RIFF') return 0;
-  const rate = bytes.readUInt32LE(24);
-  const perSample = (bytes.readUInt16LE(22) * bytes.readUInt16LE(34)) / 8;
-  for (let at = 12; at + 8 <= bytes.length;) {
-    const size = bytes.readUInt32LE(at + 4);
-    if (bytes.toString('ascii', at, at + 4) === 'data') return rate && perSample ? Math.min(size, bytes.length - at - 8) / (rate * perSample) : 0;
-    at += 8 + size + (size % 2);
-  }
-  return 0;
-}
 
 // Whatever a Space said went wrong, in words the founder can act on. The one that matters is the daily quota, which
 // every Space shares and which nothing in the app can raise.
@@ -148,11 +138,7 @@ export function createClips(env: NodeJS.ProcessEnv = process.env, connect: Conne
   async function once(spot: Space, have: Filling, help: Help, key: `hf_${string}`): Promise<Buffer> {
     if (help.signal?.aborted) throw new Error('stopped');
     help.report(`asking ${spot.name} on Hugging Face…`);
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const app = await Promise.race([
-      connect(spot.space, { token: key }),
-      new Promise<never>((_, fail) => { timer = setTimeout(() => fail(new Error('the Space did not answer')), CONNECT_TIMEOUT); }),
-    ]).finally(() => clearTimeout(timer));
+    const app = await connectWithin(connect(spot.space, { token: key }), CONNECT_TIMEOUT);
     try {
       const args: Record<string, unknown> = {};
       for (const [name, value] of Object.entries(spot.params)) {
@@ -218,7 +204,7 @@ export function createClips(env: NodeJS.ProcessEnv = process.env, connect: Conne
     presenter: async (ask, help) => run(spaces.presenter, {
       portrait: await fileOf(ask.portrait, 'portrait.png', 'image/png'),
       speech: await fileOf(ask.speech, 'speech.wav', 'audio/wav'),
-      seconds: clamp(speechSeconds(ask.speech) + 1, PRESENTER_SECONDS),
+      seconds: clamp(wavSeconds(ask.speech) + 1, PRESENTER_SECONDS),
     }, help),
   };
 }
@@ -232,7 +218,7 @@ export const fakeClips: Clips = {
     return { ext: 'mp4', bytes: Buffer.from(CLIP, 'base64') };
   },
   async presenter(ask, { report }) {
-    report(`asking for ${speechSeconds(ask.speech).toFixed(1)} seconds of talking…`);
+    report(`asking for ${wavSeconds(ask.speech).toFixed(1)} seconds of talking…`);
     return { ext: 'mp4', bytes: Buffer.from(CLIP, 'base64') };
   },
 };

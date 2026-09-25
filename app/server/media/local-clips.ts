@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { runLines } from './proc.ts';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import type { Clip, ClipAsk, Clips, Help } from './clips.ts';
 import { ff, FFMPEG } from './ff.ts';
 import { makeRoom, NEEDS_MB, plainLine, whatWentWrong, WRONG } from './gpu-room.ts';
-import { fetchModels, inTurn, modelsDir, REAL_DISK, SETUP_DIR, vulkanHere, type Model } from './on-this-machine.ts';
+import { fetchModels, inTurn, modelsDir, REAL_DISK, vulkanHere, type Model } from './on-this-machine.ts';
 import { moveOf } from './moves.ts';
 import { CAPS } from './spec.ts';
 
@@ -128,25 +128,11 @@ export function roomToFilm(
   };
 }
 
-export const SLOW_HINT = `Making a clip on this computer takes about ${MINUTES_EACH} minutes and needs ${NEEDS_RAM_GB} GB of memory and swap together.`;
-
-type Runner = (command: string, args: string[], at: string, onLine: (line: string) => void, signal?: AbortSignal) => Promise<number>;
-const run: Runner = (command, args, at, onLine, signal) => new Promise((done, fail) => {
-  const child = spawn(command, args, { cwd: at, env: { ...process.env, LD_LIBRARY_PATH: `${join(at, 'bin')}:${process.env.LD_LIBRARY_PATH ?? ''}` } });
-  let rest = '';
-  const read = (chunk: Buffer) => {
-    rest += chunk.toString('utf8');
-    const lines = rest.split('\n');
-    rest = lines.pop() ?? '';
-    for (const line of lines) onLine(line.trim());
-  };
-  child.stdout.on('data', read);
-  child.stderr.on('data', read);
-  const stop = () => child.kill('SIGTERM');
-  signal?.addEventListener('abort', stop, { once: true });
-  child.on('error', fail);
-  child.on('close', (code) => { signal?.removeEventListener('abort', stop); done(code ?? 1); });
-});
+const run = (command: string, args: string[], at: string, onLine: (line: string) => void, signal?: AbortSignal): Promise<number> =>
+  runLines(command, args, {
+    cwd: at, env: { ...process.env, LD_LIBRARY_PATH: `${join(at, 'bin')}:${process.env.LD_LIBRARY_PATH ?? ''}` },
+    onLine: (line) => onLine(line.trim()), signal,
+  }).then((ran) => ran.code);
 
 // A number of steps in the renderer's own chatter, so the card can say how far along it is rather than going quiet
 // for three minutes.
@@ -240,7 +226,7 @@ export function localClips(deps: LocalDeps = {}): Clips {
         } finally {
           await rm(work, { recursive: true, force: true }).catch(() => {});
         }
-      });
+      }, help.signal);
     },
     async presenter(): Promise<Clip> {
       // The local route for this is Wav2Lip, whose licence forbids commercial use, and a founder's marketing film is

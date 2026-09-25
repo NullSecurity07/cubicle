@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { hashOf } from './hash.ts';
 import type { Shape } from '../../shared/model.ts';
 import { MOODS, type Mood } from './audio.ts';
 import { CAPS, type Scene, type Spec } from './spec.ts';
@@ -27,7 +27,8 @@ export type RecordShot = {
 };
 // A picture in the parts folder and what made it. `hash` is the inputs it was made from, so a note that leaves those
 // alone leaves the picture alone. `subject` is the prompt without the look's own style line in front of it.
-export type RecordPicture = { hash: string; kind: 'drawn' | 'stock' | 'given' | 'video'; subject?: string };
+// `credit` is who took a stock photograph and where it lives, carried into every version's credits.
+export type RecordPicture = { hash: string; kind: 'drawn' | 'stock' | 'given' | 'video'; subject?: string; credit?: string };
 // Where a scene's line sits in the film's one reading, and every word of it on that segment's own clock.
 export type RecordLine = { from: number; to: number; words: Word[]; hash: string };
 export type RecordScene = { shots: RecordShot[]; line?: RecordLine };
@@ -47,7 +48,7 @@ export type FilmRecord = {
   bed?: { source: string; mood: Mood; own?: boolean; credit?: { title: string; by: string; licence: string; source: string } };
 };
 
-const hash = (...parts: unknown[]): string => createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, 16);
+const hash = (...parts: unknown[]): string => hashOf(16, ...parts);
 // What decides a drawn picture: the words it was drawn from, the look they were drawn in, and the frame.
 export const pictureHash = (subject: string, bible: string, shape: string): string => hash('picture', subject.trim(), bible, shape);
 // What decides a spoken line: the words, the voice, and whatever reads it.

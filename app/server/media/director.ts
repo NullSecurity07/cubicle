@@ -1,6 +1,6 @@
 import type { Shape } from '../../shared/model.ts';
 import { MOODS, type Mood } from './audio.ts';
-import { contrasty, criticise, drawnWord, figureIn, hasNumber, headlineOf, keywords, listy, photographic, mendShots, repair, trimTo, type Want } from './critic.ts';
+import { contrasty, criticise, drawnWord, figureIn, headlineOf, keywords, listy, photographic, mendShots, repair, trimTo, type Want } from './critic.ts';
 import {
   AI_LAYOUTS, budgetOf, CAPS, HEADING_WORDS, isPurpose, LAYOUTS, MAX_SCENES, parseSpec, PURPOSE, PURPOSES,
   saidWords, scenesFor, TEXT_WORDS, type Layout, type Purpose, type Scene, type Spec,
@@ -390,13 +390,19 @@ export type Directed = { understanding: Understanding; plan: Plan; spec: Spec; b
 
 // Four passes and a reading. The model is asked to fix its own work twice, because its writing is better than ours;
 // after that the rules do it themselves, and the film is made either way.
-export async function direct(asked: Asked, material: Material, think: Think, help: { report: (line: string) => void; ai?: boolean; lipsync?: boolean }): Promise<Directed> {
+export async function direct(asked: Asked, material: Material, think: Think,
+  help: { report: (line: string) => void; ai?: boolean; lipsync?: boolean; signal?: AbortSignal }): Promise<Directed> {
+  // A film stopped while the director is thinking asks the model nothing more. Each pass swallows its own failure
+  // and falls back, so the stop is looked at before each one rather than left to a failure nobody hears.
+  const halt = () => { if (help.signal?.aborted) throw new Error('stopped'); };
+  halt();
   const read = readBrief(asked.brief);
   const raw = await askJson(think, understandPrompt(asked, material)).catch(() => ({}));
   const understanding = understandingOf(raw, asked, read);
   help.report(understanding.said);
 
   const layouts = layoutsFor({ ai: help.ai === true, lipsync: help.lipsync === true, material });
+  halt();
   const plan = planOf(await askJson(think, planPrompt(understanding, asked, material)).catch(() => ({})), understanding, asked);
   if (plan.beats.length) help.report(`the angle: ${plan.angle.slice(0, 120)}`);
   else help.report('the plan came back empty, so the storyboard is written straight from the brief');
@@ -421,6 +427,7 @@ export async function direct(asked: Asked, material: Material, think: Think, hel
   let wrong = '';
   const brief = specPrompt(plan, understanding, material, layouts);
   for (let attempt = 0; attempt < 2 && !spec; attempt += 1) {
+    halt();
     try {
       spec = parseSpec(await askJson(think, `${brief}${wrong ? `\n\nYour last storyboard could not be used: ${wrong}\nAnswer again, the whole object, JSON only.` : ''}`, 1));
     } catch (error) { wrong = (error as Error).message; }
@@ -434,6 +441,7 @@ export async function direct(asked: Asked, material: Material, think: Think, hel
   for (let round = 0; round < 2; round += 1) {
     const found = criticise(spec, want);
     if (!found.length) break;
+    halt();
     help.report(round === 0 ? `the first storyboard did not hold up (${found[0].says}), tightening it` : 'still not right, one more pass');
     try {
       const fixed = parseSpec(await askJson(think, fixPrompt(spec, found, understanding, layouts), 1));
@@ -473,7 +481,6 @@ export async function direct(asked: Asked, material: Material, think: Think, hel
 // recording, makes the actual mouth match it. When none is ready the film does not fake it — it becomes the
 // faceless edit, which the same research says performs no worse for informational content, and the card says what
 // would be needed to get a real one instead.
-export const MOST_FACES = 2;
 // The shapes an opening can take and still be somebody talking. A wordmark or a title card is the one thing a
 // person cannot be put inside.
 const OPENS = new Set<Layout>(['hook', 'statement', 'picture', 'quote', 'outro', 'cta', 'stat']);
@@ -625,7 +632,9 @@ export function fixPrompt(spec: Spec, found: { says: string }[], understanding: 
 // work, because a model's own repair is better writing than ours, and then the rules do it and the film is made
 // either way.
 export async function photograph(slots: Visual[], bible: string, angle: string, think: Think,
-  help: { report: (line: string) => void }): Promise<Visual[]> {
+  help: { report: (line: string) => void; signal?: AbortSignal }): Promise<Visual[]> {
+  const halt = () => { if (help.signal?.aborted) throw new Error('stopped'); };
+  halt();
   let visuals = slots;
   try {
     visuals = visualsOf(await askJson(think, visualsPrompt(slots, bible, angle), 1), slots);
@@ -634,6 +643,7 @@ export async function photograph(slots: Visual[], bible: string, angle: string, 
   for (let round = 0; round < 2; round += 1) {
     const found = criticiseVisuals(visuals);
     if (!found.length) break;
+    halt();
     help.report(round === 0
       ? `the pictures did not hold up (${found[0].says}), so they are being written again`
       : 'the pictures are still repeating themselves, one more pass');

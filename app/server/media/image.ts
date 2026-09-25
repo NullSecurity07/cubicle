@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto';
+import { digestOf } from './hash.ts';
+import { connectWithin } from './turns.ts';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -127,11 +128,7 @@ export function huggingFaceImages(
     if (help.signal?.aborted) throw new Error('stopped');
     help.report(`drawing it on ${spot.name}…`);
     const key = token();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const app = await Promise.race([
-      connect(spot.space, key ? { token: key } : {}),
-      new Promise<never>((_, fail) => { timer = setTimeout(() => fail(new Error('the Space did not answer')), CONNECT_TIMEOUT); }),
-    ]).finally(() => clearTimeout(timer));
+    const app = await connectWithin(connect(spot.space, key ? { token: key } : {}), CONNECT_TIMEOUT);
     try {
       const args: Record<string, unknown> = {};
       for (const [name, value] of Object.entries(spot.params)) {
@@ -227,7 +224,12 @@ export const imageMakers = (env: NodeJS.ProcessEnv = process.env, http: typeof f
 // A draft is drawn smaller, so it is filed apart from the full-size picture of the same words. The size joins the
 // name only when one was asked for, which leaves every picture already in the cache exactly where it was.
 export const askedFor = (name: string, prompt: string, shape: unknown, size?: unknown): string =>
-  createHash('sha256').update(`${name}|${String(shape ?? '')}|${prompt}${typeof size === 'string' && size ? `|${size}` : ''}`).digest('hex').slice(0, 32);
+  digestOf(`${name}|${String(shape ?? '')}|${prompt}${typeof size === 'string' && size ? `|${size}` : ''}`, 32);
+// The same, without who was asked to draw it. The maker's name is every backend set up today joined together, so a
+// key added or a model fetched filed every picture anew and drew it again; a picture is what was asked for, not who
+// happened to be asked. Pictures filed under the old key are still found there, and copied under the new one.
+export const pictureKey = (prompt: string, shape: unknown, size?: unknown): string =>
+  digestOf(`picture|${String(shape ?? '')}|${prompt}${typeof size === 'string' && size ? `|${size}` : ''}`, 32);
 // Who drew a picture that nobody had to draw: said in `by`, so a film can count what its second run cost it.
 export const DRAWN_BEFORE = 'drawn before';
 
@@ -237,8 +239,14 @@ export function cachedImages(maker: Maker, dir: string): Maker {
     ready: maker.ready,
     next: maker.next ? () => maker.next!() : undefined,
     async make(ask, help): Promise<Piece> {
-      const file = join(dir, `${askedFor(maker.name, String(ask.prompt ?? ''), ask.shape, ask.size)}.img`);
-      const held = await readFile(file).catch(() => null);
+      const prompt = String(ask.prompt ?? '');
+      // The stand-in pixel of the fake mode is filed apart, so it can never be handed to a real film.
+      const file = join(dir, `${maker.name === fakeImages.name ? askedFor(maker.name, prompt, ask.shape, ask.size) : pictureKey(prompt, ask.shape, ask.size)}.img`);
+      let held = await readFile(file).catch(() => null);
+      if (!held?.length) {
+        held = await readFile(join(dir, `${askedFor(maker.name, prompt, ask.shape, ask.size)}.img`)).catch(() => null);
+        if (held?.length) await writeFile(file, held).catch(() => {});
+      }
       if (held?.length) { help.report('drawn before, so it costs nothing'); return { ext: held[0] === 0x89 ? 'png' : 'jpg', bytes: held, by: DRAWN_BEFORE }; }
       const piece = await maker.make(ask, help);
       await mkdir(dir, { recursive: true }).then(() => writeFile(file, piece.bytes)).catch(() => { /* a cache is a kindness, not a requirement */ });
@@ -263,15 +271,6 @@ export const fakeImages: Maker = {
   },
 };
 
-// Several ways of drawing as one, tried in the order given. This exists because a free day ends: Cloudflare's ten
-// thousand neurons go at some point in the afternoon and, until this, that was the end of pictures for the day.
-//
-// The one thing worth remembering between scenes is which backend has already said "nothing left today". A film is
-// thirty scenes; being told the same thing thirty times, a minute apart, is the difference between a film that
-// finishes and one that does not. So a backend that says it is spent is skipped for the rest of the day without
-// being asked again, and the founder hears about it once, in a line that says what happens next.
-export const firstImages = (...makers: Maker[]): Maker => firstOf(makers);
-
 // Where "spent today" is kept between one run of the app and the next. A service finds out it is empty by being
 // asked, and the app is restarted many times a day — so without this the first film after every restart told the
 // founder "about two minutes" and then spent eight drawing on this computer. It is read once and written on the
@@ -282,6 +281,13 @@ export const spentFile = (file: string): SpentKept => ({
   write(all) { try { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, JSON.stringify(all)); } catch { /* remembered for this run only */ } },
 });
 
+// Several ways of drawing as one, tried in the order given. This exists because a free day ends: Cloudflare's ten
+// thousand neurons go at some point in the afternoon and, until this, that was the end of pictures for the day.
+//
+// The one thing worth remembering between scenes is which backend has already said "nothing left today". A film is
+// thirty scenes; being told the same thing thirty times, a minute apart, is the difference between a film that
+// finishes and one that does not. So a backend that says it is spent is skipped for the rest of the day without
+// being asked again, and the founder hears about it once, in a line that says what happens next.
 export function firstOf(makers: Maker[], kept?: SpentKept): Maker {
   // Which backends have gone quiet, and on which day they did, so tomorrow starts clean without anyone restarting
   // anything. The day is the plain calendar-ish one a free quota resets on; near enough for "come back tomorrow".

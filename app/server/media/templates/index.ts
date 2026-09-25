@@ -1,10 +1,10 @@
 import type { Shape } from '../../../shared/model.ts';
 import { SFX, type Cue } from '../audio.ts';
-import { crowdsCaptions, saysWhatItShows } from '../spec.ts';
-import { capHtml, capLines, capSteps, wordTimes, type CapLine, type Word } from './captions.ts';
+import { countWords, crowdsCaptions, saysWhatItShows } from '../spec.ts';
+import { capHtml, capLines, capSteps, type CapLine, type Word } from './captions.ts';
 import { breakMove, captionPiece, type BreakMove } from '../registry/index.ts';
 import { actBreaks, cutSteps } from './cuts.ts';
-import { dataGraphic, groundHtml, MOVING, onscreen, sceneHtml, sceneSteps, type Shot } from './layouts.ts';
+import { dataGraphic, groundHtml, onscreen, sceneHtml, sceneSteps, type Shot } from './layouts.ts';
 import { cutAt, FORMATS, PACE, PACK, paintOf, styleSheet, type Brand, type Pace, type Pack } from './looks.ts';
 
 export { FORMATS, SAFE_1080, safeArea, LOOKS, PACKS, PACES, PACK, PACE, paintOf, lightOf, cutAt, isPack, type Brand, type Look, type Pack, type Pace, type Paint } from './looks.ts';
@@ -17,7 +17,7 @@ export { actBreaks, snapToBeats } from './cuts.ts';
 // punchy film reads faster and holds less: the floor, the ceiling and the reading speed all move with the pace.
 export function sceneSeconds(words: string, spoken: number, pace: Pace = 'calm'): number {
   const beat = PACE[pace];
-  const count = words.trim().split(/\s+/).filter(Boolean).length;
+  const count = countWords(words);
   const readable = Math.min(beat.ceiling, Math.max(beat.floor, count / beat.read + (pace === 'punchy' ? 0.9 : 1.6)));
   return Math.round(Math.max(readable, spoken ? spoken + beat.lead + beat.tail : 0) * 100) / 100;
 }
@@ -110,13 +110,24 @@ const capWordsOf = (pack: Pack): number => Math.min(4, Math.max(1, Math.round(PA
 // A stretch of narration whose scene already writes out what is being said gets none of it: a hook is the spoken
 // line set large, and a word-by-word caption under it is the same sentence twice on one frame, which is exactly
 // what a founder was handed.
-export function captionLines(film: Film): CapLine[] {
-  if (!film.captions || !film.words?.length) return [];
+// Where each shot starts on the film's clock, to the hundredth of a second, and where the last one ends. The film,
+// its captions, its remake and its hand-editable export all count the same way, so they can never disagree.
+export function startsOf(shots: { seconds: number }[]): { starts: number[]; total: number } {
   const starts: number[] = [];
   let at = 0;
-  for (const shot of film.shots) { starts.push(Math.round(at * 100) / 100); at = Math.round((at + shot.seconds) * 100) / 100; }
-  const quiet = film.quiet ?? film.shots.map((shot, index) => (saysWhatItShows(shot.scene) || crowdsCaptions(shot.scene)
-    ? { at: starts[index], seconds: shot.seconds } : null)).filter(Boolean) as { at: number; seconds: number }[];
+  for (const shot of shots) { starts.push(at); at = Math.round((at + shot.seconds) * 100) / 100; }
+  return { starts, total: at };
+}
+
+// Where the caption track must stay quiet: a shot whose scene already writes out what is being said, and one whose
+// own type grows down into the band the captions live in.
+export function quietOf(shots: Shot[], starts: number[]): { at: number; seconds: number }[] {
+  return shots.flatMap((shot, index) => (saysWhatItShows(shot.scene) || crowdsCaptions(shot.scene) ? [{ at: starts[index], seconds: shot.seconds }] : []));
+}
+
+export function captionLines(film: Film): CapLine[] {
+  if (!film.captions || !film.words?.length) return [];
+  const quiet = film.quiet ?? quietOf(film.shots, startsOf(film.shots).starts);
   const spoken = film.words.filter((word) => !quiet.some((gap) => word.at >= gap.at - 0.01 && word.at < gap.at + gap.seconds));
   if (!spoken.length) return [];
   const { capChars } = FORMATS[film.shape];
@@ -126,15 +137,12 @@ export function captionLines(film: Film): CapLine[] {
 // The whole video as one HTML file: the scenes in order with their timing on them, the narration and the music beside
 // them, and one paused timeline the renderer steps through frame by frame.
 export function composition(film: Film): string {
-  const { width, height, scale, capChars, margin, safeRight, caps } = FORMATS[film.shape];
+  const { width, height, scale, margin, safeRight, caps } = FORMATS[film.shape];
   const pack: Pack = film.look;
   const style = PACK[pack];
   const sketch = pack === 'sketch';
   const pace: Pace = film.pace ?? 'calm';
-  const starts: number[] = [];
-  let at = 0;
-  for (const shot of film.shots) { starts.push(Math.round(at * 100) / 100); at = Math.round((at + shot.seconds) * 100) / 100; }
-  const total = at;
+  const { starts, total } = startsOf(film.shots);
   const last = film.shots.length - 1;
   const paint = paintOf(pack, film.brand);
   const fonts = film.brand?.fontFile && paint.font

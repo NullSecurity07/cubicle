@@ -37,7 +37,7 @@ export const MAX_SCENES = 24;
 // Every drawn still costs a call to a free picture service with a day's quota, and every AI clip costs far more.
 // A picture in front of the words and a picture behind them cost the same, so the two caps are near enough the same.
 export const MAX_IMAGES = 10;
-// What used to cap how many pictures stood behind the words of a whole film, and how many scenes shared one.
+// There used to be a cap on how many pictures stood behind the words of a whole film, and how many scenes shared one.
 //
 // These were four and three, then six and one, and the reasoning was sound and the result was not. Six frames of
 // one film should look like six frames of one film — but what three-scenes-to-a-picture produced was one
@@ -47,10 +47,7 @@ export const MAX_IMAGES = 10;
 //
 // So a picture belongs to a shot now, and how many a film can have is decided in `media/visuals.ts` by what the
 // waiting really costs — four seconds each away from this machine, most of a minute on it — rather than by a
-// number written down here. These two are kept because the tool still reports them to whoever asks what a film's
-// limits are, and because a storyboard written by hand is still held to the first of them.
-export const MAX_BACKGROUNDS = 6;
-export const SCENES_A_BACKGROUND = 1;
+// number written down here.
 // A clip from the free Spaces spends somebody else's daily minutes, so a film makes at most two. A clip made on this
 // machine spends nothing but time, so a film may have twice as many — the founder is told what that time costs.
 export const MAX_AI = 2;

@@ -2,7 +2,8 @@ import { SHAPES, type Card } from '../../shared/model.ts';
 import { MOODS } from '../media/audio.ts';
 import type { MediaJobs } from '../media/jobs.ts';
 import { MOVE_NAMES, SIZES } from '../media/moves.ts';
-import { AI_LAYOUTS, FRAMES, LAYOUTS, parseSpec, PURPOSES, type Layout } from '../media/video.ts';
+import { AI_LAYOUTS, LAYOUTS, parseSpec, PURPOSES, type Layout } from '../media/spec.ts';
+import { FRAMES } from '../media/templates/index.ts';
 import { DEFAULT_VOICE, isVoice, VOICES } from '../media/voice.ts';
 import { NONCOMMERCIAL, NONVERBAL, OMNI_ENGINE, omniSwitchedOn } from '../media/omnivoice.ts';
 import { LOOKS, PACES } from '../media/templates/index.ts';
@@ -29,6 +30,9 @@ export const spendingScenes = (scenes: unknown, localReady = false): Layout[] =>
   (Array.isArray(scenes) ? scenes : []).map((one) => (one as { layout?: unknown })?.layout)
     .filter((layout): layout is Layout => typeof layout === 'string' && AI_LAYOUTS.has(layout as Layout))
     .filter((layout) => layout === 'presenter' || !localReady);
+
+// A switch on the card as the film reads it: on, off, or left to the director.
+const switchOf = (value: 'on' | 'off' | undefined): boolean | undefined => (value === 'on' ? true : value === 'off' ? false : undefined);
 
 // Pictures and spoken words, made in the studio cards the founder connected to this person. Free and local to this
 // machine's account, so nothing waits for the founder's yes; the per-turn caps are what keep a person from making all day.
@@ -179,7 +183,7 @@ export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = ()
         purpose: { type: 'string', enum: [...PURPOSES], description: 'What the film is for; the director reads it from the brief when it is left out' },
         length: { type: 'number', description: 'How many seconds the film should run' },
         pace: { type: 'string', enum: [...PACES], description: 'calm holds each scene, punchy cuts fast for a reel' },
-        music: { type: 'string', enum: [...MOODS], description: "The mood of the bed under it, or none. It plays only if the founder dropped a music file on the card" },
+        music: { type: 'string', enum: [...MOODS], description: 'The mood of the bed under it, or none. A music file the founder dropped on the card is used first; otherwise the studio finds or writes free music in that mood' },
         captions: { type: 'boolean', description: 'Whether the spoken words are captioned on screen, word by word' },
         narrate: { type: 'boolean', description: 'Whether the spoken lines are recorded; true when left out' },
         sfx: { type: 'boolean', description: 'Whether the cuts and the entrances carry sound; true when left out' },
@@ -225,14 +229,19 @@ export function mediaTools(media: MediaJobs, localClipsReady: () => boolean = ()
         format: args.format ?? settings?.format, look: args.look ?? settings?.look,
         purpose: args.purpose ?? settings?.purpose, length: typeof args.length === 'number' ? args.length : settings?.length,
         pace: spec?.pace ?? args.pace ?? settings?.pace, music: spec?.music ?? args.music ?? settings?.music,
-        captions: spec?.captions ?? (typeof args.captions === 'boolean' ? args.captions : undefined),
-        sfx: spec?.sfx ?? (typeof args.sfx === 'boolean' ? args.sfx : undefined), narrate: args.narrate !== false,
+        // What the person left out falls back to the card's own switches, exactly as the card's Make button reads
+        // them: a founder who turned captions or sound off, or the narration, gets the same film whoever asks.
+        captions: spec?.captions ?? (typeof args.captions === 'boolean' ? args.captions : switchOf(settings?.captions)),
+        sfx: spec?.sfx ?? (typeof args.sfx === 'boolean' ? args.sfx : switchOf(settings?.sfx)),
+        narrate: typeof args.narrate === 'boolean' ? args.narrate : !settings?.silent,
         // The switch on the card is the founder's, not the person's: a film only spends the quota when it is on.
         ai: settings?.ai ?? 'auto', address: settings?.address, voice: settings?.voice, speed: settings?.speed,
         // The narrator's engine is the founder's alone to set: a person never reads a film in a non-commercial voice.
         engine: settings?.engine, design: settings?.design,
         // Who asked, so the film can reach the things wired to them, and whatever pictures they are holding.
         roomId: context.roomId, ...(images.length ? { images: [...new Set(images)] } : {}),
+        // Docs this person wrote this turn: no wire covers them yet, but they are theirs to put in a film.
+        ...(context.granted?.size ? { granted: [...context.granted].map(([id, title]) => ({ id, title })) } : {}),
       }, { signal: context.signal });
       // A finished film is also a project an editor opens, and the founder hears where it is in the same breath.
       const project = made.mlt ? ` It is also at ${made.mlt} as tracks for Shotcut or Kdenlive, with its pictures and sound beside it.` : '';

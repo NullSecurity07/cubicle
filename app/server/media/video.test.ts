@@ -5,11 +5,15 @@ import { describe, expect, it } from 'vitest';
 import { seedStage, type Stage } from '../../shared/model.ts';
 import { createStore } from '../store.ts';
 import { mediaTools } from '../tools/media.ts';
-import { createMedia } from './jobs.ts';
+import { createMedia, type Maker } from './jobs.ts';
 import { crowdsCaptions } from './spec.ts';
-import { composition, FORMATS, PACKS, SAFE_1080, safeArea, sceneSeconds, type Shot } from './templates/index.ts';
+import { composition, FORMATS, PACKS, quietOf, SAFE_1080, safeArea, sceneSeconds, startsOf, type Shot } from './templates/index.ts';
 import { meansAPicture, spendingScenes } from '../tools/media.ts';
-import { docsFor, estimate, fakeVideos, hands, LENGTHS, MAX_AI, MAX_IMAGES, MAX_LOCAL_AI, parseSpec, PURPOSE, PURPOSES, scenesFor, sourcesFor, withinCaps, withinLength, wordsFor, type Scene, type Spec } from './video.ts';
+import { docsFor, sourcesFor, type VideoAsk } from './gather.ts';
+import { fakeVideos } from './fake-video.ts';
+import { LENGTHS, MAX_AI, MAX_IMAGES, MAX_LOCAL_AI, parseSpec, PURPOSE, PURPOSES, scenesFor, withinCaps, withinLength, wordsFor, type Scene, type Spec } from './spec.ts';
+import { hands } from './turns.ts';
+import { makingWords as estimate } from '../../shared/film-time.ts';
 import { bibleFor, jsonIn, layoutsFor, planPrompt, specPrompt, understandingOf, type Material, type Plan } from './director.ts';
 import { budgetOf } from './spec.ts';
 
@@ -259,6 +263,27 @@ describe('generate_video', () => {
     await expect(tool.run(film as unknown as Record<string, unknown>, { ...context, roomId: 'build' })).rejects.toThrow(/no video studio is connected/);
     const { tool: alone, context: nowhere } = await turn({ ...wired, wires: seedStage.wires });
     await expect(alone.run(film as unknown as Record<string, unknown>, nowhere)).rejects.toThrow(/no video studio is connected to your room/);
+  });
+
+  it('falls back to the switches the founder set on the card for whatever the person left out', async () => {
+    const asks: VideoAsk[] = [];
+    const spy: Maker = { ...fakeVideos, make: (ask, help) => { asks.push(ask as VideoAsk); return fakeVideos.make(ask, help); } };
+    const dir = await mkdtemp(join(tmpdir(), 'videotool-'));
+    const store = createStore(dir);
+    const media = createMedia({ dir, store, makers: { videogen: [spy] } });
+    const tool = mediaTools(media).find((one) => one.name === 'generate_video')!;
+    const off: Stage = { ...wired, cards: [{ id: 'studio-3', kind: 'videogen', x: 0, y: 0, w: 1, h: 1, captions: 'off', sfx: 'off', silent: true }] };
+    const context = { stage: off, roomId: 'marketing', store, granted: new Map<string, string>() };
+    await tool.run({ ...film }, context);
+    expect(asks[0]).toMatchObject({ captions: false, sfx: false, narrate: false });
+    // What the person says outright still wins over the card.
+    await tool.run({ ...film, narrate: true, sfx: true }, context);
+    expect(asks[1]).toMatchObject({ captions: false, sfx: true, narrate: true });
+    // A card left on Auto leaves captions to the director, and sound and narration on.
+    const auto: Stage = { ...wired, cards: [{ id: 'studio-3', kind: 'videogen', x: 0, y: 0, w: 1, h: 1, captions: 'on' }] };
+    await tool.run({ ...film }, { ...context, stage: auto });
+    expect(asks[2]).toMatchObject({ captions: true, narrate: true });
+    expect(asks[2].sfx).toBeUndefined();
   });
 
   it('keeps its parameters flat and simple, the way every provider accepts them', async () => {
@@ -685,9 +710,9 @@ describe('what a film is allowed to draw on', () => {
 
   it('carries what is wired to whoever is making the film', () => {
     const found = sourcesFor(stage, 'video', 'sam').map((one) => one.id).sort();
-    expect(found).toEqual(['note', 'picture', 'studio']);
-    // A browser card of theirs is not material for a film, and a studio wired to nobody is nobody's.
-    expect(found).not.toContain('browser');
+    // A browser card of theirs is the page they were pointed at, so the film photographs it too; a studio wired
+    // to nobody is nobody's.
+    expect(found).toEqual(['browser', 'note', 'picture', 'studio']);
     expect(found).not.toContain('elsewhere');
   });
 
@@ -701,6 +726,12 @@ describe('what a film is allowed to draw on', () => {
   it('reads the documents wired to the studio and to whoever asked', () => {
     expect(docsFor(stage, 'video')).toEqual([]);
     expect(docsFor(stage, 'video', 'sam')).toEqual(['brief-doc']);
+  });
+
+  it('reads every pinned doc, wired or not, and the docs that person wrote this turn', () => {
+    const pinned = { ...stage, docs: [...stage.docs, { id: 'company', title: 'Company', pinned: true, x: 0, y: 0, w: 1, h: 1 }] };
+    expect(docsFor(pinned, 'video')).toEqual(['company']);
+    expect(docsFor(pinned, 'video', 'sam', ['doc-new', 'company'])).toEqual(['brief-doc', 'company', 'doc-new']);
   });
 });
 
@@ -827,5 +858,17 @@ describe('pictures that start before the cut is measured', () => {
     const minutes = (said: string) => Number(/about (\d+) minute/.exec(said)?.[1]);
     expect(minutes(estimate({ ...film, pictures: 3, draft: true }))).toBeLessThanOrEqual(3);
     expect(minutes(estimate({ ...film, pictures: 7 }))).toBeGreaterThanOrEqual(6);
+  });
+});
+
+describe('the film clock', () => {
+  it('starts each shot where the last ended, to the hundredth, and quiets captions only where a scene writes its line out', () => {
+    const cut = shots([{ layout: 'hook', text: 'Ship on Fridays.', say: 'Ship on Fridays.' }, { layout: 'statement', text: 'Quiet', say: 'Something else entirely is said here.' }]);
+    cut[0].seconds = 1.333;
+    cut[1].seconds = 2.004;
+    const { starts, total } = startsOf(cut);
+    expect(starts).toEqual([0, 1.33]);
+    expect(total).toBe(3.33);
+    expect(quietOf(cut, starts)).toEqual([{ at: 0, seconds: 1.333 }]);
   });
 });

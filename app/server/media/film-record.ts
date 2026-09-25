@@ -1,7 +1,7 @@
 import type { Shape } from '../../shared/model.ts';
 import type { Mood } from './audio.ts';
 import { lineHash, type FilmRecord, type RecordLine, type RecordPicture, type RecordScene, type RecordShot } from './edits.ts';
-import type { Scene, Spec } from './spec.ts';
+import { countWords, type Scene, type Spec } from './spec.ts';
 import type { Pack, Pace } from './templates/looks.ts';
 import type { Word } from './timings.ts';
 import { wavOf } from './voice.ts';
@@ -53,7 +53,7 @@ export function recordOf(film: {
   // be said again is a silence, and has none.
   counts?: number[];
 }): FilmRecord {
-  const counts = film.counts ?? film.spec.scenes.map((scene) => (scene.say ?? '').trim().split(/\s+/).filter(Boolean).length);
+  const counts = film.counts ?? film.spec.scenes.map((scene) => countWords(scene.say));
   const segments = film.narrator && film.words?.length ? lineSegments(film.words, counts, film.narrator.seconds) : [];
   const name = (file?: string) => (file ? partName(file) || undefined : undefined);
   const scenes: RecordScene[] = film.spec.scenes.map((scene: Scene, at): RecordScene => {
