@@ -135,6 +135,9 @@ const groupsOf = (lines: CapLine[]): string => {
 };
 // How long the last caption line stays after its last word: one beat to finish reading it, and no more.
 export const LAST_HOLD = 0.6;
+// How big the pill's type is against the studio's own caption size. The line measure scales with it: a caption set
+// smaller fits more letters, and holding it to the full-size measure is what cut "and nothing leaves" in two.
+export const PILL_TYPE = 0.74;
 
 export function captionPiece(style: RegistryCaps, lines: CapLine[], total: number, band: Band, theme: CapTheme, mostWords = 3): Piece {
   if (!lines.length) return { css: '', html: '', script: '', steps: [] };
@@ -148,7 +151,7 @@ export function captionPiece(style: RegistryCaps, lines: CapLine[], total: numbe
     // studio's caption size: two lines on a plate are read as a block, and a block at full size covers the picture.
     const name: Item = 'caption-pill-karaoke';
     const high = 220;
-    const box = fitted(band, 72, band.size * 0.74, high, '');
+    const box = fitted(band, 72, band.size * PILL_TYPE, high, '');
     const file = new Surgery(name, itemSource(name))
       .swap(/var TRANSCRIPT = \[[\s\S]*?\n {6}\];/, `var TRANSCRIPT = ${words};`, 'the sample transcript')
       .swap('var DURATION = 8;', `var DURATION = ${until};`, 'the duration')
@@ -178,7 +181,7 @@ export function captionPiece(style: RegistryCaps, lines: CapLine[], total: numbe
       // Ours, over theirs: the item floats its pill in the middle of a safe zone two lines high, which in a film
       // lifts a one-line pill off the line every other caption sits on and into the scene's own type above it.
       + '\n.regcaps .safe-zone, .regcaps .caption-group { align-items: flex-end; }';
-    html = fitted(band, 72, band.size * 0.74, high, parts.markup).html;
+    html = fitted(band, 72, band.size * PILL_TYPE, high, parts.markup).html;
     body = parts.body;
   } else if (style === 'highlight') {
     // The line in capitals with a block of the accent colour sweeping in behind the word being said.

@@ -2,7 +2,7 @@ import type { Shape } from '../../../shared/model.ts';
 import { SFX, type Cue } from '../audio.ts';
 import { countWords, crowdsCaptions, saysWhatItShows } from '../spec.ts';
 import { capHtml, capLines, capSteps, type CapLine, type Word } from './captions.ts';
-import { breakMove, captionPiece, type BreakMove } from '../registry/index.ts';
+import { breakMove, captionPiece, PILL_TYPE, type BreakMove } from '../registry/index.ts';
 import { actBreaks, cutSteps } from './cuts.ts';
 import { dataGraphic, groundHtml, onscreen, sceneHtml, sceneSteps, type Shot } from './layouts.ts';
 import { cutAt, FORMATS, PACE, PACK, paintOf, styleSheet, type Brand, type Pace, type Pack } from './looks.ts';
@@ -131,7 +131,11 @@ export function captionLines(film: Film): CapLine[] {
   const spoken = film.words.filter((word) => !quiet.some((gap) => word.at >= gap.at - 0.01 && word.at < gap.at + gap.seconds));
   if (!spoken.length) return [];
   const { capChars } = FORMATS[film.shape];
-  return capLines(spoken, Math.round(capChars * PACK[film.look].capScale), capWordsOf(film.look), film.keywords ?? []);
+  // The pill sets its type smaller and holds up to two lines, so it takes one more word and a longer measure; its
+  // own item is already told the same (`captionPiece`), and the two now agree on what a line is.
+  const pill = PACK[film.look].captions === 'pill';
+  const most = pill ? Math.min(4, capWordsOf(film.look) + 1) : capWordsOf(film.look);
+  return capLines(spoken, Math.round((capChars * PACK[film.look].capScale) / (pill ? PILL_TYPE : 1)), most, film.keywords ?? []);
 }
 
 // The whole video as one HTML file: the scenes in order with their timing on them, the narration and the music beside

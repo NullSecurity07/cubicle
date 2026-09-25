@@ -78,6 +78,15 @@ describe('caption lines', () => {
     expect(shown.join(' ')).toBe('Your own AI team works beside you.');
   });
 
+  it('would rather set one more line than end one on a word that leads into the next', () => {
+    const said = (text: string) => text.split(' ').map((word, index) => at(word, index * 0.3));
+    // The third hero film, at the full-size caption width: "leaves your" and "A canvas where" were both on screen.
+    for (const text of ['and nothing leaves your computer that you did not wire.', 'A canvas where a founder works with a small workforce of people.']) {
+      const shown = capLines(said(text), 18, 3).map((line) => line.words.map((one) => one.word).join(' '));
+      for (const line of shown.slice(0, -1)) expect(line).not.toMatch(/\b(your|where|a|of|the)$/i);
+    }
+  });
+
   it('carries every word once and only once, whatever the budget', () => {
     const words = 'one two three four five six seven eight'.split(' ').map((word, index) => at(word, index * 0.3));
     for (const budget of [6, 12, 20, 40]) {

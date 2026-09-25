@@ -68,7 +68,9 @@ const bare = (word: string) => word.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ''
 const WEAK = new Set(['a', 'an', 'the', 'and', 'or', 'but', 'so', 'if', 'to', 'of', 'in', 'on', 'at', 'for', 'with',
   'from', 'by', 'as', 'into', 'onto', 'beside', 'about', 'across', 'through', 'between', 'without', 'under', 'over',
   'than', 'that', 'who', 'which', 'what', 'where', 'when', 'each', 'every', 'only', 'just', 'very', 'is', 'are', 'was',
-  'were', 'be', 'can', 'will', 'would', 'should', 'your', 'our', 'their', 'my', 'its', 'his', 'her', 'no', 'not']);
+  'were', 'be', 'can', 'will', 'would', 'should', 'your', 'our', 'their', 'my', 'its', 'his', 'her', 'no', 'not',
+  // …and the words that nearly always stand in front of a noun: "with a small" is the start of "small workforce".
+  'small', 'big', 'new', 'own', 'whole', 'real', 'private', 'local', 'single', 'other', 'same', 'few', 'many']);
 const ENDS_CLAUSE = /[.!?,;:\u2014]$/;
 
 export function capLines(words: Word[], perLine: number, mostWords = 3, keywords: string[] = []): CapLine[] {
@@ -116,7 +118,7 @@ function shareOutPhrase(phrase: Word[], perLine: number, most: number): Word[][]
     if (size > most || (size > 1 && width(from, to) > perLine)) return Infinity;
     const end = bare(phrase[to - 1].word);
     return 100
-      + (to < n && WEAK.has(end) ? 30 : 0)
+      + (to < n && WEAK.has(end) ? 150 : 0)
       + (size === 1 && n > 1 ? 20 : 0)
       + (most - size) ** 2 * 2;
   };
