@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { newMessageId, type Attention } from '../../shared/model.ts';
 import { dnsResolve, publicUrl, unwrapRedirect, webUrl, type Resolve } from '../browser.ts';
@@ -322,13 +322,26 @@ const sameUrl = (one: string, other: string) => { try { return keyOf(webUrl(one)
 export function createWatches(dir: string) {
   const keyOf = (roomId: string) => roomId.replace(/[^\w-]/g, '_');
   const fileOf = (key: string) => join(dir, `${key}.json`);
-  // Every watch, read from disk once and then kept here: the half-minute tick and the "needs you" list both ask for
-  // all of them, and only this ever writes them. Callers are handed copies, so nothing changes the table but `change`.
-  let table: Promise<Map<string, Watch[]>> | null = null;
-  const load = () => (table ??= (async () => {
-    const files = (await readdir(dir).catch(() => [] as string[])).filter((one) => one.endsWith('.json'));
-    const read = await Promise.all(files.map(async (one) => [one.slice(0, -5), await readFile(join(dir, one), 'utf8').then((body) => JSON.parse(body) as Watch[], () => [])] as const));
-    return new Map(read);
+  // Every watch, kept here once read: the half-minute tick and the "needs you" list both ask for all of them. A file
+  // is read again only when its modification time moved, so a watch written by another writer (a check, an e2e journey,
+  // the founder by hand) is seen on the next read, and a quiet folder costs one stat a file, never a parse.
+  const table = new Map<string, Watch[]>();
+  const stamps = new Map<string, number>();
+  let loading: Promise<Map<string, Watch[]>> | null = null;
+  const load = () => (loading ??= (async () => {
+    try {
+      const files = (await readdir(dir).catch(() => [] as string[])).filter((one) => one.endsWith('.json'));
+      const keys = new Set(files.map((one) => one.slice(0, -5)));
+      for (const key of [...table.keys()]) if (!keys.has(key)) { table.delete(key); stamps.delete(key); }
+      await Promise.all(files.map(async (one) => {
+        const key = one.slice(0, -5);
+        const at = await stat(join(dir, one)).then((info) => info.mtimeMs, () => 0);
+        if (stamps.get(key) === at && table.has(key)) return;
+        table.set(key, await readFile(join(dir, one), 'utf8').then((body) => JSON.parse(body) as Watch[], () => []));
+        stamps.set(key, at);
+      }));
+      return table;
+    } finally { loading = null; }
   })());
   const copy = (list: Watch[]) => list.map((one) => ({ ...one }));
   const read = async (roomId: string): Promise<Watch[]> => copy((await load()).get(keyOf(roomId)) ?? []);
@@ -341,7 +354,8 @@ export function createWatches(dir: string) {
       const list = await read(roomId);
       const out = await edit(list);
       await write(key, list);
-      (await load()).set(key, copy(list));
+      table.set(key, copy(list));
+      stamps.set(key, await stat(fileOf(key)).then((info) => info.mtimeMs, () => 0));
       return out;
     });
     queue = job.catch(() => {});
