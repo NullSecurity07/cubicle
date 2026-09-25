@@ -156,7 +156,57 @@ export const localEars = (root: string) => firstOf([
   transformersWhisper(resolve(root, 'app/.cache/speech')),
 ]);
 
-// The checks never start ffmpeg either: a wav is measured from its header, anything else counts as a minute.
+// A WebM's length, read from its blocks. The browser's recorder writes the file as a live stream, so there is no
+// Duration in its header: the length is where the last block starts (its cluster's time plus its own offset), plus
+// a frame. A Duration, when a file has one, wins. Null when it is not a WebM or holds no block.
+const EBML = 0x1a45dfa3, SEGMENT = 0x18538067, INFO = 0x1549a966, CLUSTER = 0x1f43b675, GROUP = 0xa0;
+const SCALE = 0x2ad7b1, DURATION = 0x4489, TIMECODE = 0xe7, SIMPLE = 0xa3, BLOCK = 0xa1;
+const FRAME = 0.02;
+export function webmSeconds(file: Buffer): number | null {
+  const vint = (at: number, keepMarker: boolean) => {
+    const first = file[at];
+    if (first === undefined || first === 0) return null;
+    const length = Math.clz32(first) - 23;
+    if (at + length > file.length) return null;
+    let value = keepMarker ? first : first & (0xff >> length);
+    let allOnes = value === (0xff >> length);
+    for (let i = 1; i < length; i += 1) { value = value * 256 + file[at + i]; if (file[at + i] !== 0xff) allOnes = false; }
+    return { value, length, unknown: !keepMarker && allOnes };
+  };
+  const uint = (at: number, size: number) => { let value = 0; for (let i = 0; i < size; i += 1) value = value * 256 + file[at + i]; return value; };
+  if (vint(0, true)?.value !== EBML) return null;
+  let scale = 1e6;
+  let duration: number | null = null;
+  let cluster = 0;
+  let last: number | null = null;
+  let at = 0;
+  while (at < file.length) {
+    const id = vint(at, true);
+    const size = id && vint(at + id.length, false);
+    if (!id || !size) break;
+    const body = at + id.length + size.length;
+    // Containers are walked into, so an element of unknown size (a live stream's segment and clusters) needs no end.
+    if (id.value === SEGMENT || id.value === INFO || id.value === CLUSTER || id.value === GROUP) { at = body; continue; }
+    if (size.unknown || body + size.value > file.length) break;
+    if (id.value === SCALE) scale = uint(body, size.value);
+    else if (id.value === DURATION) duration = size.value === 4 ? file.readFloatBE(body) : size.value === 8 ? file.readDoubleBE(body) : null;
+    else if (id.value === TIMECODE) cluster = uint(body, size.value);
+    else if (id.value === SIMPLE || id.value === BLOCK) {
+      const track = vint(body, false);
+      if (track && body + track.length + 2 <= file.length) {
+        const start = cluster + file.readInt16BE(body + track.length);
+        last = Math.max(last ?? start, start);
+      }
+    }
+    at = body + size.value;
+  }
+  if (duration !== null && duration > 0) return (duration * scale) / 1e9;
+  return last === null ? null : (last * scale) / 1e9 + FRAME;
+}
+
+// The checks never start ffmpeg either: a wav is measured from its header, a WebM (what the browser's recorder
+// writes) from its blocks, anything else counts as a minute.
 export async function fakeConvert(input: string): Promise<number> {
-  return wavSeconds(await readFile(input).then((all) => all.subarray(0, 4096)).catch(() => Buffer.alloc(0))) ?? 60;
+  const file = await readFile(input).catch(() => Buffer.alloc(0));
+  return wavSeconds(file.subarray(0, 4096)) ?? webmSeconds(file) ?? 60;
 }

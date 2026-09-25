@@ -117,7 +117,9 @@ Everything here works today, one line each:
   the card reads one line about it each turn and the transcript only with `read_interview`, which can also look for
   one subject. **Write insights** asks that person, with the `story-interview` skill, for the pains, the workaround,
   quotes with their times and any sign they would pay, in a doc the card makes beside itself; wire the Customer
-  discovery team's Interviews doc to the card and the insights go there instead.
+  discovery team's Interviews doc to the card and the insights go there instead. The browser checks press the red
+  button for real, with Chromium's stand-in microphone playing a tone, and the checks' fake transcriber measures the
+  WebM the browser recorded from its own blocks, so a recording that came out empty or cut short fails the check.
 - **Survey** (2026-09-25): the Sean Ellis question ("how would you feel if you could no longer use it?") is the
   quickest honest read on product-market fit, and a founder should not need a survey tool's dashboard to score it.
   The card starts from PMF (the four Sean Ellis questions), NPS or a blank, and the questions edit in place. The app
