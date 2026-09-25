@@ -5,6 +5,7 @@ import {
   readBank, readMonth, runwayCsv, todayOf, type Candidate, type Category, type Flow, type Projection, type Runway, type RunwayAlert, type RunwayProposal, type Scenario,
 } from '../../shared/runway';
 import { getModels } from '../api';
+import { pressed } from '../keys';
 import { useFlushStage } from '../sync';
 import { CardActions, Frame } from './Frame';
 import { acceptProposal, declineProposal, putRunway, seenAlert, watchRunway } from './runwayApi';
@@ -41,7 +42,7 @@ function Field({ value, label, onCommit, className, placeholder, type = 'text', 
   return (
     <input key={shown} type={type} className={className} aria-label={label} placeholder={placeholder} defaultValue={shown} style={width ? { width } : undefined}
       onBlur={(event) => { const text = event.currentTarget.value.trim(); if (text === shown) return; if (onCommit(text) === false) event.currentTarget.value = shown; }}
-      onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { event.currentTarget.value = shown; event.currentTarget.blur(); } }} />
+      onKeyDown={(event) => { if (pressed(event, 'send')) event.currentTarget.blur(); if (pressed(event, 'cancel')) { event.currentTarget.value = shown; event.currentTarget.blur(); } }} />
   );
 }
 
@@ -264,7 +265,7 @@ export function RunwayNode({ id, data, selected }: NodeProps<RunwayNodeType>) {
             ))}
             {naming !== null
               ? <input autoFocus className="runway__naming" aria-label="Scenario name" placeholder="Hire in January" value={naming} onChange={(event) => setNaming(event.target.value)}
-                  onBlur={() => addScenario(naming)} onKeyDown={(event) => { if (event.key === 'Enter') addScenario(naming); if (event.key === 'Escape') setNaming(null); }} />
+                  onBlur={() => addScenario(naming)} onKeyDown={(event) => { if (pressed(event, 'send')) addScenario(naming); if (pressed(event, 'cancel')) setNaming(null); }} />
               : scenarios.length < MAX_SCENARIOS && <button type="button" className="runway__plus" aria-label="Add scenario" title="A what-if plan beside Base" onClick={() => setNaming('')}>+ Scenario</button>}
           </nav>
 
@@ -358,7 +359,7 @@ function AddRow({ month, onAdd }: { month: string; onAdd: (flow: Flow) => void }
     const label = draft.label.trim().slice(0, 80);
     onAdd({ id: newRunwayId('flow'), label, monthly: amount, from, ...(to ? { to } : {}), ...(Number.isFinite(grows) && grows ? { grows } : {}), category: guessCategory(label, amount) });
   }
-  const enter = (event: KeyboardEvent) => { if (event.key === 'Enter') { event.preventDefault(); add(); } };
+  const enter = (event: KeyboardEvent) => { if (pressed(event, 'send')) { event.preventDefault(); add(); } };
   return (
     <tr className="runway__add">
       <td><input aria-label="New flow label" placeholder="Rent, salaries, revenue…" value={draft.label} onChange={(event) => setDraft({ ...draft, label: event.target.value })} onKeyDown={enter} /></td>
