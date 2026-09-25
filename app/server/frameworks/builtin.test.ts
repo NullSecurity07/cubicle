@@ -174,6 +174,7 @@ describe('every built-in framework', () => {
         const ends = framework.wires.flatMap((wire) => (wire.from === room.key ? [wire.to] : wire.to === room.key ? [wire.from] : []));
         const reaches = (kind: string) => ends.some((key) => kindOf.get(key) === kind);
         if (/propose_task|list_tasks/.test(room.brief)) expect(reaches('board'), `${dir}: ${room.key} board`).toBe(true);
+        if (/read_survey/.test(room.brief)) expect(reaches('survey'), `${dir}: ${room.key} survey`).toBe(true);
         if (/add_lead|note_lead/.test(room.brief)) expect(reaches('leads'), `${dir}: ${room.key} leads`).toBe(true);
         if (/\bbrows(e|ing) the\b/.test(room.brief)) expect(reaches('browser'), `${dir}: ${room.key} browser`).toBe(true);
         if (/ask_person/.test(room.brief)) expect(ends.some((key) => rooms.has(key)), `${dir}: ${room.key} colleague`).toBe(true);
@@ -392,7 +393,7 @@ const TEAMS: Record<string, Team> = {
   },
   'pmf-engine': {
     note: 'Measuring product-market fit', roles: ['Survey runner', 'Segment reader', 'Roadmap splitter'],
-    size: '3 people · 1 doc · 1 sticky note · 1 note · 1 task board', doc: 'PMF', headings: ['## Survey', '## Segments', '## Roadmap'],
+    size: '3 people · 1 doc · 1 sticky note · 1 note · 1 survey · 1 task board', doc: 'PMF', headings: ['## Survey', '## Segments', '## Roadmap'],
     sections: [['The four questions', 'Who to ask'], ['Segment before you judge', 'The customer who expects the most'], ['Half and half', 'Reading it with retention']],
     words: [['too few to trust', 'Never round up', 'at least twice in the last two weeks'], ['at least ten answers', 'never yours in quote marks'], ['Double down', 'Unblock', 'Nothing from the not-disappointed']],
   },

@@ -67,6 +67,7 @@ const CARD_NAMES: Record<string, string> = {
   browser: 'browser', project: 'project folder', board: 'task board', note: 'sticky note', image: 'picture',
   link: 'link', library: 'note', imagegen: 'image studio', voicegen: 'voice studio', videogen: 'video studio',
   leads: 'lead list',
+  survey: 'survey',
 };
 const count = (many: number, one: string, more = `${one}s`) => `${many} ${many === 1 ? one : more}`;
 
