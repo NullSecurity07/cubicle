@@ -1,5 +1,6 @@
 import type { Box, Stage } from '../../shared/model.ts';
 import { wiredDocIds } from '../prompt.ts';
+import { replaceSection, rewriteLoss } from './sections.ts';
 import { text, type Tool, type ToolContext } from './registry.ts';
 
 // A new doc card's size, and the gap kept round it: the same the window uses when it places one.
@@ -61,13 +62,47 @@ export const docTools: Tool[] = [
   },
   {
     name: 'write_doc',
-    description: 'Replace the whole text of a connected document. The old version is kept in the trash.',
-    parameters: { type: 'object', properties: { doc, text: { type: 'string', description: 'The full new markdown text' } }, required: ['doc', 'text'] },
+    description: 'Replace the whole text of a connected document. The old version is kept in the trash. To change one section, use replace_section; to add, use append_doc.',
+    parameters: {
+      type: 'object',
+      properties: {
+        doc, text: { type: 'string', description: 'The full new markdown text' },
+        replace: { type: 'boolean', description: 'True only when the founder asked for the whole document to be rewritten' },
+      },
+      required: ['doc', 'text'],
+    },
     async run(args, context) {
       const id = find(context, text(args, 'doc'));
       const body = text(args, 'text');
+      // A rewrite that would lose most of what is there is refused, because a person asked to change one section
+      // has been seen to write back only that section. A document they made in this turn is theirs to rewrite.
+      if (args.replace !== true && !context.granted.has(id)) {
+        const loss = rewriteLoss(await context.store.readDoc(id), body);
+        if (loss) throw new Error(`not written: this would replace the whole document, and ${loss}. Change one section with replace_section, or add with append_doc; the rest is a colleague's or the founder's work.`);
+      }
       await context.store.replaceDoc(id, body);
       return { text: `Wrote ${body.length} characters.`, effect: { kind: 'doc-changed', id } };
+    },
+  },
+  {
+    name: 'replace_section',
+    description: 'Replace the text under one markdown heading of a connected document, up to the next heading of the same or higher level. Every other section stays as it is.',
+    parameters: {
+      type: 'object',
+      properties: {
+        doc,
+        heading: { type: 'string', description: 'The heading of the section, as written in the document, without the #' },
+        text: { type: 'string', description: 'The new markdown under that heading, without the heading itself' },
+      },
+      required: ['doc', 'heading', 'text'],
+    },
+    async run(args, context) {
+      const id = find(context, text(args, 'doc'));
+      const heading = text(args, 'heading', 200);
+      const swapped = replaceSection(await context.store.readDoc(id), heading, text(args, 'text'));
+      if ('error' in swapped) throw new Error(swapped.error);
+      await context.store.replaceDoc(id, swapped.text);
+      return { text: `Replaced the section "${heading.replace(/^#+\s*/, '').trim()}".`, effect: { kind: 'doc-changed', id } };
     },
   },
   {

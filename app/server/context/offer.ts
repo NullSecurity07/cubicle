@@ -43,6 +43,7 @@ const NEEDS: Record<string, (reach: Reach, tool: Tool) => boolean> = {
   read_doc: (reach) => reach.docs,
   write_doc: (reach) => reach.docs,
   append_doc: (reach) => reach.docs,
+  replace_section: (reach) => reach.docs,
   // A source is searched whether or not it is wired to anybody; with none on the stage the call can only fail.
   search_source: (reach) => reach.sources,
   // Mail is the one that is not on the stage: a tool that already knows it cannot work is not worth a schema either.

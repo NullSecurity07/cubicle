@@ -12,6 +12,10 @@ Everything here works today, one line each:
 - **Rooms**: a chat with each person, who works with tools and answers from what their wires let them read.
 - **Docs and files**: shared documents on the stage, pinned ones everybody reads, and a files folder people read and
   write.
+- **Two model habits caught by the loop**: small models were seen rewriting a whole shared document to change one
+  section, and ending a turn with tool calls and no words. So a person changes one section with `replace_section`, a
+  rewrite that would drop most of a document's sections or text is refused (unless it asks to replace the whole), and a
+  silent turn is asked once more for two or three sentences, then answered from its tool receipts.
 - **Tools**: web search and reading, a browser card (signed in to your own accounts if you like), email, sandboxed
   code, consults between people, and whole pieces of work handed to a colleague.
 - **Studios**: an Image, a Voice and a Video studio that draw, speak and cut a film from a brief, on this machine
