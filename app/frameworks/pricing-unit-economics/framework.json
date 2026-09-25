@@ -2,6 +2,7 @@
   "id": "pricing-unit-economics",
   "name": "Pricing and unit economics",
   "intent": "Find an acceptable price range from buyers' own answers, then check that a customer at that price pays back what it cost to win them, with margin.",
+  "stage": "Build and sell",
   "version": 1,
   "builtAt": 1790294400000,
   "notes": [

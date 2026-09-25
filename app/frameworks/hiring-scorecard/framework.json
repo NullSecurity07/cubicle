@@ -2,6 +2,7 @@
   "id": "hiring-scorecard",
   "name": "Hiring scorecard",
   "intent": "Write what success in a role looks like before looking for anyone, then interview and check references against it.",
+  "stage": "Build and sell",
   "version": 1,
   "builtAt": 1790294400000,
   "notes": [

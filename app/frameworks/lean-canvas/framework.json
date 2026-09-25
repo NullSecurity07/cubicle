@@ -2,6 +2,7 @@
   "id": "lean-canvas",
   "name": "One-page plan",
   "intent": "Put the business on one page in under 20 minutes, mark which boxes are guesses, and turn the riskiest guess into this week's test.",
+  "stage": "Find out",
   "version": 1,
   "builtAt": 1790294400000,
   "notes": [

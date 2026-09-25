@@ -121,6 +121,12 @@ export async function copyBuiltIns(from: string, frameworks: Frameworks, library
     // A file broken by hand is the founder's to mend; writing over it would lose whatever they were in the middle of.
     if (held === undefined) continue;
     if (held) {
+      // A copy made before there were shelves is put on today's shelf. The shelf is where the panel shows a team and
+      // nothing any person reads, so it is not part of what the hash compares, and this is not an edit of anybody's.
+      if (!held.stage && framework.stage) {
+        held.stage = framework.stage;
+        await frameworks.save({ ...(held as unknown as Framework), id: one.name });
+      }
       const hash = contentHash(held);
       if (hash === today) {
         // The same team, from before copies were stamped: stamped now, so a later edit of theirs is told apart.

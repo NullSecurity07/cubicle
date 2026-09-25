@@ -2,6 +2,7 @@
   "id": "working-backwards",
   "name": "Working backwards",
   "intent": "Before building a product or feature, write the press release announcing it and the questions customers and the team would ask, then decide from the document whether it is worth building.",
+  "stage": "Find out",
   "version": 1,
   "builtAt": 1790294400000,
   "notes": [

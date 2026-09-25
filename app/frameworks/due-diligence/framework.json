@@ -2,6 +2,7 @@
   "id": "due-diligence",
   "name": "Due diligence",
   "intent": "Know who you are about to take money from, sell to or compete with before the meeting, from public sources, with every claim linked.",
+  "stage": "Raise",
   "version": 1,
   "builtAt": 1790208000000,
   "notes": [

@@ -2,6 +2,7 @@
   "id": "pmf-engine",
   "name": "Product-market fit engine",
   "intent": "Measure product-market fit with the Sean Ellis question, find who loves the product most, and split next quarter's roadmap between what they love and what holds the others back.",
+  "stage": "Find out",
   "version": 1,
   "builtAt": 1790294400000,
   "notes": [

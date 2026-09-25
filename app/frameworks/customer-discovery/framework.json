@@ -2,6 +2,7 @@
   "id": "customer-discovery",
   "name": "Customer discovery",
   "intent": "Learn whether the problem is real and who has it badly, from conversations about people's past behaviour, not their opinions of your idea.",
+  "stage": "Find out",
   "version": 1,
   "builtAt": 1790294400000,
   "notes": [

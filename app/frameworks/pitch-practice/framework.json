@@ -2,6 +2,7 @@
   "id": "pitch-practice",
   "name": "Pitch practice",
   "intent": "Rehearse a pitch against four investors who ask what real ones ask, before a real meeting.",
+  "stage": "Raise",
   "version": 1,
   "builtAt": 1790208000000,
   "notes": [
