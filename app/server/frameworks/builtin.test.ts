@@ -110,9 +110,9 @@ type Box = { x: number; y: number; w: number; h: number };
 const overlap = (one: Box, other: Box) => one.x < other.x + other.w && other.x < one.x + one.w && one.y < other.y + other.h && other.y < one.y + one.h;
 
 // The teams on the shelf, in folder order. A folder added without being named here is a team nobody decided to ship.
-const SHIPPED = ['due-diligence', 'launch-team', 'linkedin-content-system', 'pitch-practice', 'startup-evaluation'];
+const SHIPPED = ['customer-discovery', 'due-diligence', 'investor-update', 'launch-team', 'linkedin-content-system', 'pitch-practice', 'pmf-engine', 'pre-mortem', 'seed-round-prep', 'startup-evaluation', 'weekly-metrics'];
 // The teams written after the eval runner stopped offering tools, held to the same rule as the three that lean on them.
-const NO_TOOL_CASES = ['launch-team', 'pitch-practice', 'due-diligence', 'linkedin-content-system'];
+const NO_TOOL_CASES = ['launch-team', 'pitch-practice', 'due-diligence', 'linkedin-content-system', 'weekly-metrics', 'customer-discovery', 'investor-update', 'pmf-engine', 'seed-round-prep', 'pre-mortem'];
 
 describe('every built-in framework', () => {
   it('ships every team on the shelf', async () => {
@@ -148,6 +148,24 @@ describe('every built-in framework', () => {
       const docs = new Set(framework.docs.map((doc) => doc.key));
       for (const room of framework.rooms) expect(framework.wires.some((wire) => (wire.from === room.key && docs.has(wire.to)) || (wire.to === room.key && docs.has(wire.from)))).toBe(true);
       for (const card of framework.cards) if (card.kind === 'source') { expect(card.url).toMatch(/^https:\/\//); expect(card.about.trim()).not.toBe(''); }
+    }
+  });
+
+  // A tool is only offered when what it works on is wired to the person: a brief that sends somebody to the board, the
+  // leads or a colleague is a brief that fails on its first turn unless the framework wires them there.
+  it('wires everybody to what their brief sends them to', async () => {
+    for (const dir of await builtIns()) {
+      const framework = await loadOne(dir);
+      const kindOf = new Map(framework.cards.map((card) => [card.key, card.kind]));
+      const rooms = new Set(framework.rooms.map((room) => room.key));
+      for (const room of framework.rooms) {
+        const ends = framework.wires.flatMap((wire) => (wire.from === room.key ? [wire.to] : wire.to === room.key ? [wire.from] : []));
+        const reaches = (kind: string) => ends.some((key) => kindOf.get(key) === kind);
+        if (/propose_task|list_tasks/.test(room.brief)) expect(reaches('board'), `${dir}: ${room.key} board`).toBe(true);
+        if (/add_lead|note_lead/.test(room.brief)) expect(reaches('leads'), `${dir}: ${room.key} leads`).toBe(true);
+        if (/\bbrows(e|ing) the\b/.test(room.brief)) expect(reaches('browser'), `${dir}: ${room.key} browser`).toBe(true);
+        if (/ask_person/.test(room.brief)) expect(ends.some((key) => rooms.has(key)), `${dir}: ${room.key} colleague`).toBe(true);
+      }
     }
   });
 
@@ -334,5 +352,86 @@ describe('the LinkedIn content system', () => {
     const words = await readFile(resolve(shelf, 'linkedin-content-system', 'notes', 'linkedin-content-system.md'), 'utf8');
     expect(titleOfNote('linkedin-content-system.md', words)).toBe(NOTE);
     for (const heading of ['## 1. Buyer research', '## 3. Writing a post — the CPIO framework', '## 4. Pre-publishing checklist', '## 7. Warm outbound', '## 10. Weekly operating rhythm']) expect(words).toContain(heading);
+  });
+});
+
+// The six teams from the 2026-09-25 research, each built from one note of its own. For each: who is in it, in order;
+// the line the panel shows; the doc they share; and, per person, the sections of the note their brief names, which
+// must be headings in that note, and the words their brief must not lose.
+type Team = { note: string; roles: string[]; size: string; doc: string; headings: string[]; sections: string[][]; words: string[][] };
+const TEAMS: Record<string, Team> = {
+  'weekly-metrics': {
+    note: 'Weekly metrics that tell the truth', roles: ['Metric definer', 'Weekly counter', 'Weekly reviewer'],
+    size: '3 people · 1 doc · 1 sticky note · 1 note · 1 task board', doc: 'Metrics', headings: ['## Definitions', '## This week', '## Retention by cohort (monthly)', '## Review'],
+    sections: [['Four or five, written down', 'Vanity numbers', 'One primary KPI', 'A North Star before revenue'], ['The weekly row', 'Retention, stacked'], ['The weekly goal', 'The biggest blocker', 'Benchmarks, with their years']],
+    words: [['propose_decision', 'remember', 'never change a confirmed definition'], ['recall', '"missing", never estimated', 'cumulative'], ['HIT', 'MISSED', 'One blocker', 'propose_task']],
+  },
+  'customer-discovery': {
+    note: 'Talking to customers without leading them', roles: ['Interview planner', 'Notes reader', 'Pattern writer'],
+    size: '3 people · 1 doc · 1 sticky note · 1 note', doc: 'Interviews', headings: ['## Plan', '## Conversations', '## Findings'],
+    sections: [['The three rules', 'Three big questions', 'Who to talk to first', 'The five questions'], ['Bad data and how to catch it', 'Signals that count'], ['Reading the pattern']],
+    words: [['No question mentions the product', '"Would you"', 'ask_founder', 'icp-fit'], ['FACT', 'PAIN', 'WORKAROUND', 'COMMITMENT', 'BAD DATA', 'no advance'], ['YES', 'NO', 'UNCLEAR', 'one-off', 'zombies']],
+  },
+  'investor-update': {
+    note: 'The monthly update', roles: ['Numbers keeper', 'Asks writer', 'Update writer'],
+    size: '3 people · 1 doc · 1 sticky note · 1 note', doc: 'Update', headings: ['## Numbers', '## Asks', '## Recap', '## Thank you'],
+    sections: [['Same numbers, same order', 'Honest numbers'], ['Asks that can be answered'], ['Short recap', 'Shape of the email']],
+    words: [['Never drop a metric because it fell', 'not reported this month'], ['at most three asks', 'No asks this month', 'recall'], ['Under 400 words', 'humanize-draft', 'You never send']],
+  },
+  'pmf-engine': {
+    note: 'Measuring product-market fit', roles: ['Survey runner', 'Segment reader', 'Roadmap splitter'],
+    size: '3 people · 1 doc · 1 sticky note · 1 note · 1 task board', doc: 'PMF', headings: ['## Survey', '## Segments', '## Roadmap'],
+    sections: [['The four questions', 'Who to ask'], ['Segment before you judge', 'The customer who expects the most'], ['Half and half', 'Reading it with retention']],
+    words: [['too few to trust', 'Never round up', 'at least twice in the last two weeks'], ['at least ten answers', 'never yours in quote marks'], ['Double down', 'Unblock', 'Nothing from the not-disappointed']],
+  },
+  'seed-round-prep': {
+    note: 'Raising a seed round', roles: ['Round planner', 'Investor lister', 'Data room keeper', 'Process keeper'],
+    size: '4 people · 1 doc · 1 sticky note · 1 note · 1 browser · 1 task board', doc: 'Round', headings: ['## Plan', '## Investors', '## One-pager', '## Data room', '## Questions they will ask', '## Pipeline'],
+    sections: [['When to raise', 'How much', 'Safe, cap and dilution'], ['Who to meet', 'Warm first'], ['The one-pager', 'The data room', 'Questions they will ask'], ['Every meeting ends with a next step', 'Close fast']],
+    words: [['post-money', 'working', 'lawyer', 'propose_decision'], ['"not found"', 'Due diligence', 'evidence-outreach', 'You never send'], ['HAVE, MISSING or N/A', 'IP assignment'], ['no next step', 'You never negotiate']],
+  },
+  'pre-mortem': {
+    note: 'Imagining the failure first', roles: ['Failure imaginer', 'Evidence checker', 'Risk registrar'],
+    size: '3 people · 1 doc · 1 sticky note · 1 note · 1 task board', doc: 'Premortem', headings: ['## Failure stories', '## Register', '## Review dates'],
+    sections: [['It already failed', 'Everyone writes alone'], ['Evidence, not worry'], ['From stories to a register', 'Early warnings']],
+    words: [['Past tense', 'No "might"', 'ask_founder'], ['no evidence found', 'INSIDE', 'OUTSIDE', 'watch_page'], ['No more than five', 'fatal', 'propose_task']],
+  },
+};
+
+describe.each(Object.entries(TEAMS))('the %s team', (dir, team) => {
+  it('is its people in order, left to right, and says so in one line', async () => {
+    const framework = await loadOne(dir);
+    expect(framework.rooms.map((room) => room.role)).toEqual(team.roles);
+    expect(sizeLine(framework)).toBe(team.size);
+    const across = framework.rooms.map((room) => framework.layout[room.key].x);
+    expect([...across].sort((one, two) => one - two)).toEqual(across);
+    expect(framework.docs.map((doc) => doc.title)).toEqual([team.doc]);
+    for (const heading of team.headings) expect(framework.docs[0].text).toContain(heading);
+  });
+
+  it('gives each person the sections of the note they work from, by the note\'s own headings', async () => {
+    const framework = await loadOne(dir);
+    const [file] = await readdir(resolve(shelf, dir, 'notes'));
+    const words = await readFile(resolve(shelf, dir, 'notes', file), 'utf8');
+    expect(titleOfNote(file, words)).toBe(team.note);
+    framework.rooms.forEach((room, at) => {
+      expect(room.brief).toContain(`"${team.note}"`);
+      for (const section of team.sections[at]) { expect(words, `${dir} note: ${section}`).toContain(`## ${section}\n`); expect(room.brief, `${room.key}: ${section}`).toContain(section); }
+      for (const said of team.words[at]) expect(room.brief, `${room.key}: ${said}`).toContain(said);
+    });
+    // The last person writes from what the others made, so they open with the rule that stops them writing from nothing.
+    expect(framework.rooms.at(-1)!.brief.startsWith('Before anything else')).toBe(true);
+    // Every source the note is written from is a link a founder can open.
+    expect(words).toMatch(/https:\/\//);
+  });
+
+  it('wires the card and the note to everybody, everybody to the doc, and the last person to the others', async () => {
+    const framework = await loadOne(dir);
+    const wired = wiresOf(framework);
+    const [card, doc] = [framework.cards.find((one) => one.kind === 'note')!.key, framework.docs[0].key];
+    const people = framework.rooms.map((room) => room.key);
+    for (const key of people) for (const pair of [`${card}>${key}`, `reading>${key}`, `${key}>${doc}`]) expect(wired.has(pair), pair).toBe(true);
+    const last = people.at(-1)!;
+    for (const key of people.slice(0, -1)) expect(wired.has(`${last}>${key}`), `${last}>${key}`).toBe(true);
   });
 });
