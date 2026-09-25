@@ -1,10 +1,11 @@
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Framework } from '../../shared/frameworks.ts';
 import { createLibrary } from '../library/notes.ts';
-import { copyBuiltIns, createFrameworks } from './store.ts';
+import { copyBuiltIns, createFrameworks, takeUpdate, updatesOf } from './store.ts';
+import { contentHash } from './shipped.ts';
 
 const NOTE = '# Evaluating an idea\n\nStep one: find the core assumption, written as a falsifiable sentence.\n';
 const team = (extra: Partial<Framework> = {}): Framework => ({
@@ -110,5 +111,83 @@ describe('the built-in frameworks', () => {
     const { frameworks, library } = await setup();
     expect(await copyBuiltIns(join(tmpdir(), 'not-a-folder-at-all'), frameworks, library)).toEqual([]);
     expect(await frameworks.list()).toEqual([]);
+  });
+});
+
+// A built-in team that has moved on since the workspace copied it: the ledger remembers the old version's content, and
+// the folder holds today's. The old one is the same team with an older brief, the way the live-teams run left them.
+const OLD = team({ rooms: [{ ...team().rooms[0], brief: 'Find the belief. (old brief)' }] });
+const NEW_BRIEF = 'Find the one belief. Never invent a number.';
+async function movedOn(): Promise<string> {
+  const dir = await builtIns();
+  const today = team({ rooms: [{ ...team().rooms[0], brief: NEW_BRIEF }] });
+  await writeFile(join(dir, 'pressure-test', 'framework.json'), JSON.stringify(today, null, 2));
+  const hashOf = (one: Framework) => contentHash(one as unknown as Record<string, unknown>);
+  await writeFile(join(dir, 'shipped.json'), JSON.stringify({ 'pressure-test': [hashOf(OLD), hashOf(today)] }));
+  return dir;
+}
+const trashed = async (workspace: string) => (await readdir(join(workspace, 'trash')).catch(() => [] as string[])).filter((name) => name.endsWith('-framework-pressure-test.json'));
+const briefOf = async (frameworks: ReturnType<typeof createFrameworks>) => (await frameworks.read('pressure-test'))?.rooms[0].brief;
+
+describe('a built-in team that changed since the workspace copied it', () => {
+  it('replaces a copy nobody touched with today\'s team, and keeps the old one in trash', async () => {
+    const { workspace, frameworks, library } = await setup();
+    await frameworks.save(OLD);
+    // Promoting a run bumps the version and writes a scorecard: the app's bookkeeping, never the founder's edit.
+    await frameworks.save({ ...OLD, version: 3, scorecard: { mean: 0.8, byPerson: {}, cases: 1, at: 1, models: [] } });
+    expect(await copyBuiltIns(await movedOn(), frameworks, library)).toEqual(['pressure-test']);
+    expect(await briefOf(frameworks)).toBe(NEW_BRIEF);
+    expect((await frameworks.read('pressure-test'))?.shippedHash).toMatch(/^[0-9a-f]{16}$/);
+    expect(await trashed(workspace)).toHaveLength(1);
+    expect(await updatesOf(await movedOn(), frameworks)).toEqual(new Set());
+  });
+
+  it('keeps a copy the founder edited and marks it as having an update', async () => {
+    const { frameworks, library } = await setup();
+    const from = await movedOn();
+    await frameworks.save({ ...OLD, intent: 'Changed by the founder.' });
+    expect(await copyBuiltIns(from, frameworks, library)).toEqual([]);
+    expect((await frameworks.read('pressure-test'))?.intent).toBe('Changed by the founder.');
+    expect(await updatesOf(from, frameworks)).toEqual(new Set(['pressure-test']));
+  });
+
+  it('takes the update on the founder\'s press: today\'s team in place, their copy in trash', async () => {
+    const { workspace, frameworks, library } = await setup();
+    const from = await movedOn();
+    await frameworks.save({ ...OLD, intent: 'Changed by the founder.' });
+    await copyBuiltIns(from, frameworks, library);
+    const taken = await takeUpdate(from, 'pressure-test', frameworks, library);
+    expect(taken?.rooms[0].brief).toBe(NEW_BRIEF);
+    expect(taken?.intent).toBe('Pressure-test an idea.');
+    expect(await trashed(workspace)).toHaveLength(1);
+    expect(JSON.parse(await readFile(join(workspace, 'trash', (await trashed(workspace))[0]), 'utf8')).intent).toBe('Changed by the founder.');
+    expect(await updatesOf(from, frameworks)).toEqual(new Set());
+    expect(await takeUpdate(from, 'no-such-team', frameworks, library)).toBeNull();
+  });
+
+  it('stamps a copy from before stamping whose content is today\'s team, and leaves every word of it', async () => {
+    const { workspace, frameworks, library } = await setup();
+    const from = await movedOn();
+    const today = JSON.parse(await readFile(join(from, 'pressure-test', 'framework.json'), 'utf8')) as Framework;
+    await frameworks.save(today);
+    expect((await frameworks.read('pressure-test'))?.shippedHash).toBeUndefined();
+    expect(await copyBuiltIns(from, frameworks, library)).toEqual([]);
+    const held = await frameworks.read('pressure-test');
+    expect(held?.shippedHash).toBe(contentHash(today as unknown as Record<string, unknown>));
+    expect(held?.rooms[0].brief).toBe(NEW_BRIEF);
+    expect(await trashed(workspace)).toHaveLength(0);
+    // Edited after stamping, with nothing newer shipped: simply the founder's, and no update is offered.
+    await frameworks.save({ ...held!, intent: 'Mine now.' });
+    expect(await updatesOf(from, frameworks)).toEqual(new Set());
+  });
+
+  it('never writes over a copy broken by hand, and never saves the list\'s update mark', async () => {
+    const { workspace, frameworks, library } = await setup();
+    await mkdir(join(workspace, 'frameworks', 'pressure-test'), { recursive: true });
+    await writeFile(join(workspace, 'frameworks', 'pressure-test', 'framework.json'), '{ half');
+    expect(await copyBuiltIns(await movedOn(), frameworks, library)).toEqual([]);
+    expect(await readFile(join(workspace, 'frameworks', 'pressure-test', 'framework.json'), 'utf8')).toBe('{ half');
+    await frameworks.save({ ...team(), update: true });
+    expect(JSON.parse(await readFile(join(workspace, 'frameworks', 'pressure-test', 'framework.json'), 'utf8')).update).toBeUndefined();
   });
 });
