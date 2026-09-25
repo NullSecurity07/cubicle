@@ -345,7 +345,10 @@ The api listens on 127.0.0.1 only and answers only the app's own page: Host, Ori
 
 The earlier product, CUBICLE v2, is archived at tag `v2-final`, branch
 `archive/v2`, with its documents under `docs/archive/v2/`. The product's website is a plain static page in `site/`,
-with its pictures taken from the app by `app/scripts/site-shots.ts`; `site/README.md` says how to serve and refresh it.
+with its pictures taken from the app by `app/scripts/site-shots.ts` (`pnpm site:shots`). The film at the top of it is
+made by the app's own Video studio, from a project card holding the site and this README, by
+`app/scripts/site-film.ts` (`pnpm site:film`, real keys). `site/publish.sh` puts it on Cloudflare Pages. `site/README.md`
+says how to serve, refresh and publish it.
 
 ## Known gaps
 
