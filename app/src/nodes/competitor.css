@@ -1,0 +1,60 @@
+/* The Competitor card: the rival's site, a quiet status line, the pages watched, then the changes as a timeline.
+   A stale read is the one thing in amber, so a quiet card is never mistaken for a quiet competitor. */
+
+.rival { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 10px 12px 14px; cursor: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
+.rival h3 { display: flex; align-items: baseline; gap: 8px; margin: 0 0 6px; font-size: 11px; font-weight: 650; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+.rival h3 span { font-weight: 450; letter-spacing: 0.02em; text-transform: none; opacity: 0.8; }
+.rival__gap { flex: 1; }
+.rival__host { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--muted); text-decoration: none; }
+.rival__host:hover { color: var(--accent-soft); }
+
+.rival input { width: 100%; box-sizing: border-box; border: 1px solid var(--card-border); border-radius: 8px; padding: 6px 9px; outline: 0; background: rgba(255, 255, 255, 0.05); color: var(--text); font: inherit; font-size: 12.5px; transition: border-color 0.15s; }
+.rival input:focus { border-color: var(--focus); }
+
+.rival__status { display: flex; align-items: center; gap: 10px; min-height: 26px; font-size: 12px; color: var(--muted); }
+.rival__read { flex: none; }
+.rival__read.is-overdue { color: var(--needs); }
+.rival__read.is-overdue::before { content: ''; display: inline-block; width: 6px; height: 6px; margin: 0 6px 1px 0; border-radius: 50%; background: var(--needs); }
+.rival__crawl-file { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); text-decoration: none; }
+.rival__crawl-file:hover { color: var(--accent-soft); text-decoration: underline; }
+.rival__crawl { flex: none; margin-left: auto; border: 0; border-radius: 7px; padding: 4px 11px; font: inherit; font-size: 11.5px; font-weight: 550; color: var(--text); background: rgba(255, 255, 255, 0.09); cursor: pointer; transition: background 0.15s, opacity 0.15s; }
+.rival__crawl:hover { background: rgba(255, 255, 255, 0.15); }
+.rival__crawl:disabled { opacity: 0.55; cursor: default; }
+
+.rival__pages ul { display: flex; flex-direction: column; gap: 2px; margin: 0 0 6px; padding: 0; list-style: none; }
+.rival__page { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 8px; min-height: 30px; padding: 3px 4px 3px 9px; border-radius: 8px; background: rgba(0, 0, 0, 0.18); animation: rival-in 0.2s ease both; }
+.rival__page.is-suggested { background: transparent; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06); }
+.rival__label { font-size: 12.5px; font-weight: 550; }
+.rival__page.is-suggested .rival__label { font-weight: 450; color: var(--muted); }
+.rival__path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--muted); opacity: 0.75; }
+.rival__seen { grid-column: 3; font-size: 11px; color: var(--muted); }
+.rival__seen.is-failing { color: var(--problem); }
+.rival__watch { grid-column: 3 / 5; justify-self: end; border: 0; border-radius: 7px; padding: 3px 11px; font: inherit; font-size: 11.5px; font-weight: 600; color: #fff; background: var(--accent); cursor: pointer; transition: opacity 0.15s; }
+.rival__watch:disabled { opacity: 0.5; cursor: default; }
+.rival__stop { grid-column: 4; width: 22px; height: 22px; padding: 5px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; opacity: 0; transition: opacity 0.15s, background 0.15s; }
+.rival__page:hover .rival__stop, .rival__stop:focus-visible { opacity: 1; }
+.rival__stop:hover { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+.rival__stop svg { display: block; width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
+.rival__add input { font-size: 12px; padding: 5px 9px; background: transparent; }
+
+.rival__timeline { position: relative; display: flex; flex-direction: column; gap: 12px; margin: 0; padding: 0 0 0 14px; list-style: none; }
+.rival__timeline::before { content: ''; position: absolute; left: 3px; top: 6px; bottom: 6px; width: 1px; background: rgba(255, 255, 255, 0.1); }
+.rival__change { position: relative; display: flex; flex-direction: column; gap: 3px; animation: rival-in 0.24s ease both; }
+.rival__change::before { content: ''; position: absolute; left: -14px; top: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px rgba(16, 17, 20, 0.9); }
+.rival__when { display: flex; gap: 6px; font-size: 11px; color: var(--muted); }
+.rival__when span { font-weight: 600; color: var(--text); opacity: 0.85; }
+.rival__phrase { margin: 0; font-size: 13px; font-weight: 550; line-height: 1.4; overflow-wrap: anywhere; user-select: text; }
+.rival__lines { margin: 2px 0 0; padding: 6px 8px; border-radius: 8px; list-style: none; background: rgba(0, 0, 0, 0.22); font: 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; user-select: text; }
+.rival__lines .is-added { color: var(--ok); }
+.rival__lines .is-gone { color: var(--muted); text-decoration: line-through; text-decoration-color: rgba(154, 161, 176, 0.5); }
+.rival__lines .is-more { color: var(--muted); font-style: italic; }
+.rival__note { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; margin: 2px 0 0; font-size: 12px; line-height: 1.45; white-space: pre-line; color: var(--text); opacity: 0.9; user-select: text; }
+.rival__note b { margin-right: 6px; font-weight: 650; color: var(--accent-soft); }
+.rival__note.is-waiting { color: var(--muted); font-style: italic; }
+
+.rival__quiet { margin: 0; font-size: 12px; line-height: 1.5; color: var(--muted); }
+.rival__teach { flex: 1; display: flex; align-items: center; margin: 0; padding: 0 12px; text-align: center; font-size: 12.5px; line-height: 1.55; color: var(--muted); }
+.rival__problem { margin: 0; padding: 6px 10px; border-radius: 8px; font-size: 12px; color: #ffd9d5; background: rgba(120, 30, 24, 0.85); }
+
+@keyframes rival-in { from { opacity: 0; transform: translateY(3px); } }
+@media (prefers-reduced-motion: reduce) { .rival__page, .rival__change { animation: none; } }
