@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { ToolEvent } from '../shared/model.ts';
-import { runTurn } from './loop.ts';
+import { runTurn, SAY_SOMETHING } from './loop.ts';
 import type { ModelMessage } from './prompt.ts';
 import type { ModelClient, ModelTurn } from './providers.ts';
 import { createSeams, type Payloads, type Seams } from './seams.ts';
@@ -44,8 +44,8 @@ async function setup() {
 describe('runTurn', () => {
   it('runs a tool, hands the result back and ends in words', async () => {
     const { dir, store, events, run } = await setup();
-    const result = await run(scripted([[{ name: 'write_doc', args: { doc: 'Brand doc', text: '# New brand' } }], 'Rewrote the brand doc.']));
-    expect(await store.readDoc('brand-doc')).toBe('# New brand');
+    const result = await run(scripted([[{ name: 'write_doc', args: { doc: 'Brand doc', text: '# Brand\n\nWhat we are building: calm tools' } }], 'Rewrote the brand doc.']));
+    expect(await store.readDoc('brand-doc')).toBe('# Brand\n\nWhat we are building: calm tools');
     expect(result.text).toBe('Rewrote the brand doc.');
     expect(result.tools).toMatchObject([{ name: 'write_doc', ok: true, effect: { kind: 'doc-changed', id: 'brand-doc' } }]);
     expect(events.map((event) => event.ok)).toEqual([undefined, true]);
@@ -278,5 +278,73 @@ describe('runTurn with seams', () => {
     expect(reply.tools[0]).toMatchObject({ ok: false });
     expect(reply.tools[0].result).toMatch(/said no to this/);
     expect(reply.text).toBe('I could not.');
+  });
+
+  describe('a turn that runs tools and then says nothing', () => {
+    // A model that records what it was asked, and plays back a script where '' is an empty answer.
+    const recording = (steps: (string | { name: string; args: unknown }[] | Error)[]) => {
+      const asked: { tools: number; last: string }[] = [];
+      const client: ModelClient = {
+        name: 'script', model: 's-1', maxPromptChars: Infinity, tools: true, limits: {},
+        async step(messages, { onToken, tools }): Promise<ModelTurn> {
+          asked.push({ tools: tools?.length ?? 0, last: String(messages.at(-1)?.content ?? '') });
+          const next = steps.shift() ?? '';
+          if (next instanceof Error) throw next;
+          if (typeof next === 'string') { onToken(next); return { text: '', calls: [], usage: { input: 1, output: 1 } }; }
+          return { text: '', calls: next.map((call, index) => ({ id: `c${asked.length}-${index}`, name: call.name, args: JSON.stringify(call.args) })), usage: { input: 1, output: 1 } };
+        },
+      };
+      return { client, asked };
+    };
+    const listed = [{ name: 'list_files', args: {} }];
+
+    it('asks once more with no tools, and the answer to that is the reply', async () => {
+      const { run, said } = await setup();
+      const { client, asked } = recording([listed, '', 'I found no files and need the founder to add the pricing sheet.']);
+      const result = await run(client);
+      expect(result.text).toBe('I found no files and need the founder to add the pricing sheet.');
+      expect(said()).toBe(result.text);
+      expect(asked.at(-1)).toEqual({ tools: 0, last: SAY_SOMETHING });
+      expect(asked).toHaveLength(3);
+    });
+
+    it('builds the reply from the receipts when the second ask is empty too', async () => {
+      const { run, said } = await setup();
+      const { client, asked } = recording([[{ name: 'write_file', args: { path: 'notes/a.md', text: 'hello' } }, { name: 'read_file', args: { path: 'nope.md' } }], '', '']);
+      const result = await run(client);
+      expect(asked.filter((one) => one.last === SAY_SOMETHING)).toHaveLength(1);
+      expect(result.text).toMatch(/^I ran these steps but gave no answer, so here is what they said:/);
+      expect(result.text).toContain('- write file: worked. ');
+      expect(result.text).toMatch(/- read file: failed\. Failed: /);
+      expect(said()).toBe(result.text);
+      expect(result.tools).toHaveLength(2);
+    });
+
+    it('goes straight to the receipts when no model can answer at all, and says why', async () => {
+      const store = createStore(await mkdtemp(join(tmpdir(), 'loop-')));
+      const notices: string[] = [];
+      const { client, asked } = recording([listed, Object.assign(new Error('Too Many Requests'), { status: 413 })]);
+      const result = await runTurn({
+        messages: [{ role: 'user', content: 'go' }], tools: [...fileTools], clients: [client], usage: createUsage(null),
+        context: { stage: await store.loadStage(), roomId: 'build', store, granted: new Map() },
+        events: { token: () => {}, tool: () => {}, notice: (text) => notices.push(text) },
+      });
+      expect(asked).toHaveLength(2);
+      expect(result.text).toMatch(/^No model could answer after these steps, so here is what they said:\n\n- list files: worked/);
+      expect(notices.at(-1)).toMatch(/No model could answer after the tools ran \(no provider answered/);
+    });
+
+    it('still fails a turn that no model answered before any tool ran', async () => {
+      const { run } = await setup();
+      const { client } = recording(['']);
+      await expect(run(client)).rejects.toThrow(/empty reply/);
+    });
+
+    it('leaves a turn that ended in words alone', async () => {
+      const { run } = await setup();
+      const { client, asked } = recording([listed, 'No files yet.']);
+      expect((await run(client)).text).toBe('No files yet.');
+      expect(asked.some((one) => one.last === SAY_SOMETHING)).toBe(false);
+    });
   });
 });

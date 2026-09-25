@@ -32,6 +32,19 @@ const bounded = (messages: ModelMessage[], cap: number) => messages.some((messag
   ? messages.map((message) => (message.role === 'tool' && message.content.length > cap ? { ...message, content: cutKeepingEnd(message.content, cap) } : message))
   : messages;
 
+// Said to a model that ran tools and then answered with nothing: once, with no tools, so it can only answer in words.
+export const SAY_SOMETHING = 'You called tools and said nothing. In two or three sentences tell the founder what you found, what you could not do, and what you need.';
+
+// The reply of last resort, built from the receipts alone when the model still says nothing: which tool ran, whether
+// it worked, and the first line of what it said. The founder is never left with an empty bubble under the chips.
+export function receiptSummary(done: ToolEvent[], why?: string): string {
+  const lines = done.map((event) => {
+    const first = (event.result ?? '').split('\n').map((line) => line.trim()).find(Boolean) ?? '';
+    return `- ${event.name.replace(/_/g, ' ')}: ${event.ok ? 'worked' : 'failed'}${first ? `. ${first.slice(0, 200)}` : ''}`;
+  });
+  return `${why ?? 'I ran these steps but gave no answer'}, so here is what they said:\n\n${lines.join('\n')}`;
+}
+
 type TurnEvents = { token(token: string): void; tool(event: ToolEvent): void; notice?(text: string): void };
 export type TurnResult = { text: string; tools: ToolEvent[]; provider: string; model: string; usage: Usage; stopped: boolean };
 
@@ -56,6 +69,7 @@ export async function runTurn(input: {
   let text = '';
   let answered: ModelClient | undefined;
   const failed: string[] = [];
+  let unanswered = '';
 
   // When the model that should have answered could not, the founder hears which one stepped in and why.
   const onFailure = ({ client, error }: Failure) => {
@@ -81,12 +95,21 @@ export async function runTurn(input: {
     }, clients, onFailure, (client) => usage.admit(client.name));
     // A step every model refused — usually because the prompt outgrew them — gets one more chance: whatever listens
     // here shortens it and says so, and we ask again with what it left.
-    const turn = seams ? await ask().catch(async (error: Error) => {
+    const asked = seams ? ask().catch(async (error: Error) => {
       const again = await seams.run('step:error', { roomId, step, messages, error: error.message });
       if (!again.retry) throw error;
       messages = again.messages;
       return ask();
-    }) : await ask();
+    }) : ask();
+    // Once tools have run, a step no model could answer (every one empty, limited or down) no longer ends the turn in
+    // an error that loses the receipts: the founder is told, and the reply is built from what the tools said.
+    const turn = await asked.catch((error: Error) => {
+      if (!done.length || signal?.aborted) throw error;
+      // Models that answered with nothing at all are asked once more below; models that could not answer are not.
+      if (!/empty reply/.test(error.message)) unanswered = error.message;
+      return null;
+    });
+    if (!turn) break;
 
     if (failed.length) events.notice?.(`${failed.splice(0).join('; ')}, so ${turn.client.name} answers.`);
     // Words already shown stay; the founder is told they stop short. (A cut reply with no words moved to the next model already.)
@@ -146,6 +169,29 @@ export async function runTurn(input: {
       messages.push({ role: 'tool', tool_call_id: call.id, content: full });
     }
   }
+
+  // Tools ran and nothing was said: asked once more with no tools, then, if still nothing, the receipts speak.
+  if (done.length && !text.trim() && !signal?.aborted) {
+    if (!unanswered) {
+      messages.push({ role: 'user', content: SAY_SOMETHING });
+      const said = await complete(messages, { tools: [], signal, onToken: (token) => { text += token; events.token(token); } }, clients, onFailure, (client) => usage.admit(client.name))
+        .catch((error: Error) => { if (!/empty reply/.test(error.message)) unanswered = error.message; return null; });
+      if (said) {
+        if (failed.length) events.notice?.(`${failed.join('; ')}, so ${said.client.name} answers.`);
+        usage.record(said.client.name, said.usage, said.quota);
+        total.input += said.usage?.input ?? 0;
+        total.output += said.usage?.output ?? 0;
+        answered = said.client;
+      }
+      failed.splice(0);
+    }
+    if (!text.trim() && !signal?.aborted) {
+      if (unanswered) events.notice?.(`No model could answer after the tools ran (${unanswered.slice(0, 160)}), so this reply is made from their receipts.`);
+      const summary = receiptSummary(done, unanswered ? 'No model could answer after these steps' : undefined);
+      text = summary;
+      events.token(summary);
+    }
+  } else if (unanswered && !signal?.aborted) events.notice?.(`No model could go on after the tools ran (${unanswered.slice(0, 160)}), so this reply stops here.`);
 
   const reply: TurnResult = { text, tools: done, provider: answered?.name ?? '', model: answered?.model ?? '', usage: total, stopped: !!signal?.aborted };
   // Whatever watches a finished turn watches it afterwards: the founder waits for nothing here.
