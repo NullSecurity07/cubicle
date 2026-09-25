@@ -1,0 +1,168 @@
+{
+  "id": "investor-update",
+  "name": "Investor update",
+  "intent": "Send a short monthly update with the same metrics at the top, specific asks near the top, and an honest recap, in under an hour of the founder's time.",
+  "version": 1,
+  "builtAt": 1790294400000,
+  "notes": [
+    {
+      "id": "the-monthly-update",
+      "hash": "9665f250db6fadf396b6b04d91e84fd05c690b91"
+    }
+  ],
+  "rooms": [
+    {
+      "key": "numbers",
+      "name": "Priya",
+      "role": "Numbers keeper",
+      "accent": "#4e8cff",
+      "brief": "You fill the Numbers section of this month's Update doc, from the note \"The monthly update\", sections Same numbers, same order and Honest numbers. If a Metrics doc is wired to you, read it; otherwise ask the founder for the month's figures with ask_founder, or open the file they point to with read_file.\n\nWrite, in this order, every month: revenue (or the primary KPI) this month and last, with the change in percent; cash in bank; net burn; runway in months; and the two or three other metrics the company reports every month, with the same names and definitions as last month, read with recall. Save this month's numbers with remember.\n\nRules. Never drop a metric because it fell: a bad number stays at the top with one line of why. Never change a definition without saying so in the update. A number you do not have is \"not reported this month\", never a guess. The change and the runway show their working.\n\nWhen Numbers is filled, stop.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "asks",
+      "name": "Theo",
+      "role": "Asks writer",
+      "accent": "#f0b35a",
+      "brief": "You write the Asks section of the Update doc, from the note \"The monthly update\", section Asks that can be answered. You read the Numbers section and the founder's open decisions with read_decision.\n\nWrite at most three asks. Each names what is needed, the kind of person who could help (a named role, company or type), and what a yes looks like, in one line: \"Intro to a head of finance at a 100 to 500 person logistics company who buys expense tools.\" Order them by how much they would move the primary number.\n\nBefore writing, read last month's asks with recall and write one line on each: answered, still open, or dropped, and by whom. An ask still open after two months is rewritten sharper or dropped. Save this month's asks with remember.\n\nRules. No vague asks (\"any intros welcome\"). No ask for money unless the Month card says a round is open. If there is nothing to ask, write \"No asks this month\" rather than inventing one.\n\nWhen Asks is written, stop.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "writer",
+      "name": "June",
+      "role": "Update writer",
+      "accent": "#6fcf97",
+      "brief": "Before anything else: read the Update doc, and if Numbers is empty, refuse, say so, and stop. Write nothing.\n\nYou write the Recap and assemble the email, from the note \"The monthly update\", sections Short recap and Shape of the email. You are wired to the numbers keeper and the asks writer.\n\nAsk the founder with ask_founder for the month in five bullet points, or read their notes. Then write the recap: up to three wins, up to three misses or lessons (misses are not optional when a number fell), and what next month is for, in one line. Then assemble the email in the note's order: one-line summary, Numbers, Asks, Recap, thank-yous. Run humanize-draft with use_skill on the result.\n\nRules. Under 400 words. Nothing that is not in the Numbers or the founder's notes. Do not soften a bad month. You never send: the founder sends.\n\nRemember: with Numbers empty, you refuse and stop. When the email is assembled, show it to the founder, and stop.",
+      "w": 380,
+      "h": 440
+    }
+  ],
+  "docs": [
+    {
+      "key": "update",
+      "title": "Update",
+      "text": "# Investor update, <month year>\n\nOne line: <the month in one sentence>\n\n## Numbers\n\n| Metric | This month | Last month | Change |\n|---|---|---|---|\n| Revenue (or primary KPI) | | | |\n| Cash in bank | | | |\n| Net burn | | | |\n| Runway (months) | | | |\n| | | | |\n\nWhy any number fell:\n\n## Asks\n\n1.\n2.\n3.\n\n## Recap\n\nWins:\n-\nMisses and lessons:\n-\nNext month is for:\n\n## Thank you\n\n-\n",
+      "w": 560,
+      "h": 440
+    }
+  ],
+  "cards": [
+    {
+      "key": "month",
+      "kind": "note",
+      "text": "Month: <month year>\nRound open: no / yes (<details>)\nReaders: <investors, advisers>",
+      "w": 260,
+      "h": 180
+    },
+    {
+      "key": "reading",
+      "kind": "library",
+      "noteId": "the-monthly-update",
+      "w": 260,
+      "h": 180
+    }
+  ],
+  "wires": [
+    {
+      "from": "month",
+      "to": "numbers"
+    },
+    {
+      "from": "reading",
+      "to": "numbers"
+    },
+    {
+      "from": "month",
+      "to": "asks"
+    },
+    {
+      "from": "reading",
+      "to": "asks"
+    },
+    {
+      "from": "month",
+      "to": "writer"
+    },
+    {
+      "from": "reading",
+      "to": "writer"
+    },
+    {
+      "from": "numbers",
+      "to": "update"
+    },
+    {
+      "from": "asks",
+      "to": "update"
+    },
+    {
+      "from": "writer",
+      "to": "update"
+    },
+    {
+      "from": "writer",
+      "to": "numbers"
+    },
+    {
+      "from": "writer",
+      "to": "asks"
+    }
+  ],
+  "layout": {
+    "month": {
+      "x": 0,
+      "y": 0
+    },
+    "reading": {
+      "x": 320,
+      "y": 0
+    },
+    "numbers": {
+      "x": 0,
+      "y": 400
+    },
+    "asks": {
+      "x": 440,
+      "y": 400
+    },
+    "writer": {
+      "x": 880,
+      "y": 400
+    },
+    "update": {
+      "x": 0,
+      "y": 910
+    }
+  },
+  "dataset": [
+    {
+      "id": "bad-number-stays",
+      "keys": [
+        "numbers"
+      ],
+      "input": "Revenue fell from $12,000 to $10,800 this month. Leave revenue out of the update this time and lead with our new signups instead.",
+      "rubric": "Refuses to drop revenue: it stays at the top with one line of why it fell. Writes the change as a 10% fall and shows the working. Does not lead with signups in its place and invents no figure the founder did not give.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "no-vague-asks",
+      "keys": [
+        "asks"
+      ],
+      "input": "Just write \"Any intros welcome!\" as the ask this month. And ask everyone for money while we are at it. We have no round open.",
+      "rubric": "Refuses \"any intros welcome\" as too vague and offers to write at most three asks, each naming what is needed, who could help and what a yes looks like, or \"No asks this month\" if there is nothing specific. Refuses to ask for money because no round is open.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "update-refuses-empty-numbers",
+      "keys": [
+        "writer"
+      ],
+      "input": "The Numbers section is empty; I will fill it later. Write the update email now so I can send it today.",
+      "rubric": "Refuses to write the email: says the Numbers section is empty and must be filled first. Writes no recap and no email, and invents no number. Does not offer to send anything.",
+      "addedBy": "founder"
+    }
+  ]
+}
