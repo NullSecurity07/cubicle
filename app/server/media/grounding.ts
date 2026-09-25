@@ -23,6 +23,8 @@ export type Sources = {
   has: boolean;
   // Real sentences out of the material, for putting back what had to be taken out.
   lines: string[];
+  // The brief's own sentences and clauses, as the founder wrote them. A line of theirs is never swapped for another.
+  said?: string[];
 };
 
 export const flat = (text: string): string => text.toLowerCase().replace(/[^\p{L}\p{N}%$£€.]+/gu, ' ').replace(/\s{2,}/g, ' ').trim();
@@ -36,7 +38,15 @@ export function sourcesOf(material: Material, brief: string): Sources {
     material.brand?.name ?? '',
   ].filter(Boolean);
   const body = parts.join('\n');
-  return { corpus: flat(body), brief: flat(brief), has: material.lines.length > 0, lines: sentencesIn(body).slice(0, 40) };
+  return { corpus: flat(body), brief: flat(brief), has: material.lines.length > 0, lines: sentencesIn(body).slice(0, 40), said: clausesOf(brief) };
+}
+
+// The brief cut where the founder paused: sentences, and the clauses a semicolon or a colon sets apart. A clause
+// needs two words that carry meaning to count as something they said.
+export function clausesOf(brief: string): string[] {
+  return [...new Set((brief ?? '').split(/[.!?;:\n]+(?=\s|$)|[;:\n]/)
+    .map((one) => one.replace(/["“”]/g, '').trim().replace(/^(?:and|so|but|then)\s+/i, ''))
+    .filter((one) => meaningOf(one).length >= 2))];
 }
 
 // Whole sentences out of the material, for putting back what had to be taken out. A README wraps a sentence over
@@ -274,13 +284,79 @@ export function ungrounded(scene: Scene, sources: Sources): string | null {
   return null;
 }
 
+
+// --- the founder's own lines, and what may stand in for a line that was not ---------------------------------------
+//
+// The site's hero film was asked to "end on the promise". The director wrote the promise, with a word or two of its own
+// in it; the truth pass could not point at those words, and put in its place the first unused sentence of the README,
+// which was about something else entirely. The film lost the one line the founder had asked it to end on.
+//
+// Two rules came out of that. A line that is the founder's — in the brief as written, or most of it one sentence of
+// the brief said again — is theirs, and nothing replaces it. And a line that does have to go is replaced only by a
+// sentence of the material about the same thing: one that shares a thing with it (a noun, not a word like "make"),
+// out of the part of the material the scene pointed at when it has a quotation behind it.
+
+// The words of a line that carry its meaning, in one form each: "leaves" and "leave" are the same word.
+const meaningOf = (text: string): string[] => flat(text ?? '').split(' ').map((one) => one.replace(/^\.+|\.+$/g, ''))
+  .filter((one) => one.length > 2 && !STOP.has(one) && !/\d/.test(one)).map(root);
+const root = (word: string): string => word.replace(/(?:ing|ed|es|s)$/, '').replace(/e$/, '');
+
+// Whether a line is the founder's: written in the brief as it stands, or made of the brief — most of the words that
+// carry its meaning (60%) are the words of one of its sentences.
+export function fromBrief(line: string, sources: Pick<Sources, 'brief' | 'said'>): boolean {
+  const said = flat(line ?? '').replace(/[.]+$/, '');
+  if (said.length >= 6 && sources.brief.includes(said)) return true;
+  const mine = [...new Set(meaningOf(line))];
+  if (mine.length < 2) return false;
+  return (sources.said ?? []).some((sentence) => {
+    const theirs = new Set(meaningOf(sentence));
+    return mine.filter((word) => theirs.has(word)).length / mine.length >= ENOUGH_OF_IT;
+  });
+}
+
+// Whether a line says most of another: at least 60% of the other's meaning-carrying words are in it. It is how a line
+// the founder pinned ("end on: nothing leaves the machine") is found in a storyboard that said it its own way.
+export function saysMostOf(line: string, of: string): boolean {
+  const wanted = [...new Set(meaningOf(of))];
+  if (!wanted.length) return false;
+  const mine = new Set(meaningOf(line));
+  return wanted.filter((word) => mine.has(word)).length / wanted.length >= ENOUGH_OF_IT;
+}
+
+// The things a line is about: the words that carry meaning and are not everyday verbs, adverbs or the plain words
+// every sentence has. "approve every output, and nothing leaves your computer" is about an output and a computer.
+export function thingsIn(text: string): string[] {
+  return [...new Set(flat(text ?? '').split(' ').map((one) => one.replace(/^\.+|\.+$/g, ''))
+    .filter((one) => one.length > 2 && !STOP.has(one) && !PLAIN.has(one) && !PLAIN.has(one.replace(/s$/, ''))
+      && !/\d/.test(one) && !/(?:ly|ing|ed)$/.test(one))
+    .map(root))];
+}
+
 // A real sentence out of the material, to put where an invented one was. Each is used once, so a film that loses
-// three claims does not get the same line back three times.
-export function realLine(sources: Sources, used: Set<string>): string | null {
-  for (const line of sources.lines) {
-    if (used.has(line)) continue;
-    used.add(line);
-    return line;
+// three claims does not get the same line back three times — and it has to be about what the dropped line was about.
+// With a line to replace, only a sentence that shares a thing with it will do, the ones nearest the scene's own
+// quotation first; with none that does, there is no replacement, and the scene is the critic's to drop or keep.
+export function realLine(sources: Sources, used: Set<string>, dropped?: { line: string; source?: string }): string | null {
+  if (!dropped) {
+    for (const line of sources.lines) {
+      if (used.has(line)) continue;
+      used.add(line);
+      return line;
+    }
+    return null;
   }
-  return null;
+  const things = new Set(thingsIn(dropped.line));
+  const near = new Set(meaningOf(dropped.source ?? ''));
+  const ranked = sources.lines
+    .map((line, order) => {
+      const theirs = meaningOf(line);
+      const shared = thingsIn(line).filter((word) => things.has(word)).length;
+      return { line, order, shared, near: theirs.filter((word) => near.has(word)).length };
+    })
+    .filter((one) => !used.has(one.line) && one.shared > 0)
+    .sort((a, b) => b.near - a.near || b.shared - a.shared || a.order - b.order);
+  const best = ranked[0]?.line;
+  if (!best) return null;
+  used.add(best);
+  return best;
 }
