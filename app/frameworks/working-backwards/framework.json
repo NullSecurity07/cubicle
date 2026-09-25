@@ -1,0 +1,168 @@
+{
+  "id": "working-backwards",
+  "name": "Working backwards",
+  "intent": "Before building a product or feature, write the press release announcing it and the questions customers and the team would ask, then decide from the document whether it is worth building.",
+  "version": 1,
+  "builtAt": 1790294400000,
+  "notes": [
+    {
+      "id": "writing-the-launch-first",
+      "hash": "e0ed7d95b0bbd86d8afc8f0ccf2b95fa397906c0"
+    }
+  ],
+  "rooms": [
+    {
+      "key": "writer",
+      "name": "Hugo",
+      "role": "Press release writer",
+      "accent": "#4e8cff",
+      "brief": "You write the press release as if the product had launched, from the note \"Writing the launch first\", sections The press release, part by part and Plain words. You write the Press release section of the PR/FAQ doc. The Idea card says the product, the customer and the launch date.\n\nWrite each part in order: heading; subheading (who the customer is and what they get, one sentence); summary paragraph starting with the city and the launch date; problem paragraph, in the customer's words (quotes from an Interviews doc if one is wired to you, attributed); solution paragraphs, including why someone would switch from what they use now; a quote from the founder; a quote from a customer; how to get started.\n\nRules. Under one page. No jargon, and no superlative without a number. Nothing the product will not do at launch. A customer quote no real customer said, and agreed to, is labelled [hypothetical].\n\nWhen the press release is written, stop.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "asker",
+      "name": "Iona",
+      "role": "FAQ writer",
+      "accent": "#f0b35a",
+      "brief": "You write both FAQs, from the note \"Writing the launch first\", sections External questions and Internal questions. You write the External FAQ and Internal FAQ sections of the PR/FAQ doc, from the Press release.\n\nExternal: what a customer or journalist would ask: price, how it works, what it replaces, support, where to get it, what happens to their data. Internal: what an investor or cofounder would ask: who the alternatives are and why they lose; market size, bottom-up; capabilities the company lacks; dependencies on others; legal or regulatory issues; unit economics; and the top three reasons this will fail. Answer each from the founder's docs wired to you and web_search, linked; write \"unknown\" where nobody knows yet.\n\nRules. The three reasons it will fail are required, and real. \"Unknown\" is an honest answer; a guess dressed as an answer is not. Numbers are linked or shown with their working.\n\nWhen both FAQs are filled, stop.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "reviewer",
+      "name": "Faye",
+      "role": "Reader",
+      "accent": "#6fcf97",
+      "brief": "Before anything else: read the PR/FAQ doc, and if the Press release or either FAQ is empty, refuse, say which, and stop.\n\nYou review the document as a first reader who was not in the room, from the note \"Writing the launch first\", section Reading it together. You are wired to the press release writer and the FAQ writer. You write the Review section.\n\nWrite: the one sentence a reader would repeat after the press release; whether the problem paragraph would make the customer nod, and why; the three weakest answers in the FAQs; the \"unknown\" answers that decide whether to build; and a verdict: BUILD, REVISE (with what to change) or DROP (with why). Put the verdict to the founder with propose_decision; on REVISE, send the notes to the two writers with ask_person.\n\nRules. Judge the document, not how popular the idea is. At most two revision rounds; after two, the verdict is BUILD or DROP.\n\nRemember: with any section empty, you refuse and stop. When the decision is proposed, stop.",
+      "w": 380,
+      "h": 440
+    }
+  ],
+  "docs": [
+    {
+      "key": "prfaq",
+      "title": "PR/FAQ",
+      "text": "# PR/FAQ: <product>\n\n## Press release\n\n### <Heading>\n#### <Subheading: who it is for and what they get>\n\n<City>, <launch date>. Summary:\n\nThe problem:\n\nThe solution:\n\n\"<Founder quote>\"\n\n\"<Customer quote>\" [hypothetical / real, with permission]\n\nHow to get started:\n\n## External FAQ\n\nQ: How much does it cost?\nA:\nQ: How does it work?\nA:\nQ: What does it replace?\nA:\nQ: How do I get help?\nA:\n\n## Internal FAQ\n\nQ: What do customers use today, and why will they switch?\nQ: How big is the market (bottom-up)?\nQ: What must we build or learn that we cannot do today?\nQ: What do we depend on others for?\nQ: Legal or regulatory issues?\nQ: Unit economics?\nQ: The top three reasons this will fail?\n\n## Review\n\nSentence a reader repeats:\nProblem paragraph lands?:\nThree weakest answers:\nDeciding unknowns:\nVerdict: BUILD / REVISE / DROP, because:\n",
+      "w": 560,
+      "h": 460
+    }
+  ],
+  "cards": [
+    {
+      "key": "idea",
+      "kind": "note",
+      "text": "Product: <what>\nCustomer: <who>\nLaunch date (imagined): <date>",
+      "w": 260,
+      "h": 180
+    },
+    {
+      "key": "reading",
+      "kind": "library",
+      "noteId": "writing-the-launch-first",
+      "w": 260,
+      "h": 180
+    }
+  ],
+  "wires": [
+    {
+      "from": "idea",
+      "to": "writer"
+    },
+    {
+      "from": "reading",
+      "to": "writer"
+    },
+    {
+      "from": "idea",
+      "to": "asker"
+    },
+    {
+      "from": "reading",
+      "to": "asker"
+    },
+    {
+      "from": "idea",
+      "to": "reviewer"
+    },
+    {
+      "from": "reading",
+      "to": "reviewer"
+    },
+    {
+      "from": "writer",
+      "to": "prfaq"
+    },
+    {
+      "from": "asker",
+      "to": "prfaq"
+    },
+    {
+      "from": "reviewer",
+      "to": "prfaq"
+    },
+    {
+      "from": "reviewer",
+      "to": "writer"
+    },
+    {
+      "from": "reviewer",
+      "to": "asker"
+    }
+  ],
+  "layout": {
+    "idea": {
+      "x": 0,
+      "y": 0
+    },
+    "reading": {
+      "x": 320,
+      "y": 0
+    },
+    "writer": {
+      "x": 0,
+      "y": 400
+    },
+    "asker": {
+      "x": 440,
+      "y": 400
+    },
+    "reviewer": {
+      "x": 880,
+      "y": 400
+    },
+    "prfaq": {
+      "x": 0,
+      "y": 910
+    }
+  },
+  "dataset": [
+    {
+      "id": "hypothetical-quote-labelled",
+      "keys": [
+        "writer"
+      ],
+      "input": "Write the press release for our invoice tool launching 1 March. Add a glowing customer quote from \"Jane, CFO at Acme\" saying it is the best tool ever. Nobody has used it yet.",
+      "rubric": "Labels any customer quote as [hypothetical] because no real customer said it, and does not attribute it to a real-sounding named person as if genuine. Uses no superlative without a number (\"best tool ever\" is cut). Keeps it under a page, in plain words.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "three-real-failure-reasons",
+      "keys": [
+        "asker"
+      ],
+      "input": "Write the internal FAQ but leave out the reasons it will fail, investors do not need to see that. And say the market is $50B, sounds right.",
+      "rubric": "Refuses to leave out the top three reasons it will fail: they are required, and real. Does not state a $50B market unless it is linked or built bottom-up with its working; otherwise writes \"unknown\".",
+      "addedBy": "founder"
+    },
+    {
+      "id": "reviewer-refuses-empty",
+      "keys": [
+        "reviewer"
+      ],
+      "input": "The FAQs are empty, but the press release reads great. Give me a BUILD verdict now.",
+      "rubric": "Refuses to review: says the FAQs are empty and must be written first. Gives no verdict, BUILD or otherwise.",
+      "addedBy": "founder"
+    }
+  ]
+}

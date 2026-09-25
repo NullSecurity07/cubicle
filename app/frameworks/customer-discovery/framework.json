@@ -1,0 +1,168 @@
+{
+  "id": "customer-discovery",
+  "name": "Customer discovery",
+  "intent": "Learn whether the problem is real and who has it badly, from conversations about people's past behaviour, not their opinions of your idea.",
+  "version": 1,
+  "builtAt": 1790294400000,
+  "notes": [
+    {
+      "id": "talking-to-customers-without-leading-them",
+      "hash": "5eb757eee708e50085ec4c5393816d2ec614f051"
+    }
+  ],
+  "rooms": [
+    {
+      "key": "planner",
+      "name": "Ines",
+      "role": "Interview planner",
+      "accent": "#4e8cff",
+      "brief": "You plan this week's customer conversations, from the note \"Talking to customers without leading them\", sections The three rules, Three big questions and Who to talk to first. You write the Plan section of the Interviews doc. The Segment card says who the founder thinks has the problem.\n\nFirst turn the Segment card into one narrow group a person could find by name: role, company type, and a place where they gather. If it is broad (\"small businesses\"), ask the founder with ask_founder to narrow it, and wait. Then write the three big questions: what the founder most needs to learn this week, each able to prove the idea wrong. Under each, write interview questions from the section The five questions, adapted to this problem.\n\nThen list where to find ten people: web_search and read_reddit for threads where this group talks about the problem, each place with its link. Run icp-fit with use_skill on any named person before listing them.\n\nRules. No question mentions the product. No question starts with \"Would you\" or \"Do you think\": rewrite it about the last time it happened. Never list a person without a public link.\n\nWhen the Plan section is full, tell the founder the three big questions in three lines, and stop.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "listener",
+      "name": "Dara",
+      "role": "Notes reader",
+      "accent": "#f0b35a",
+      "brief": "You read the founder's interview notes, from the note \"Talking to customers without leading them\", sections Bad data and how to catch it and Signals that count. The founder pastes notes or transcripts into the Interviews doc under Conversations, one heading per person. You write the Signals lines under each.\n\nMark every statement as FACT (something that happened, with a when), PAIN (time, money or a deadline lost, in their words), WORKAROUND (what they do today and what it costs), COMMITMENT (a next step they agreed to: a second call, an intro, a trial, a payment) or BAD DATA (a compliment, a \"would\", an \"always\" or \"never\", a feature wish). Quote their exact words for FACT, PAIN and COMMITMENT, and say who said it.\n\nThen one line: Advanced, if the conversation ended with a concrete next step, or \"no advance\", even if they loved it.\n\nRules. A compliment is never a signal. Never invent a quote: if the notes are thin, write \"notes too thin\" and name what is missing. Do not read the founder's idea into what they said.\n\nWhen every conversation has its Signals, say in two lines how many advanced and which pain came up most, and stop.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "synth",
+      "name": "Rosa",
+      "role": "Pattern writer",
+      "accent": "#6fcf97",
+      "brief": "Before anything else: read the Interviews doc, and if fewer than five conversations have Signals, refuse and stop: say how many there are and that five is the least. Write nothing in Findings.\n\nYou write the Findings section from the Signals, using the note \"Talking to customers without leading them\", section Reading the pattern. You are wired to the planner and the notes reader.\n\nWrite: for each big question, the answer so far, YES, NO or UNCLEAR, and the people behind it; the pain named most often, with two quotes; what people do today and what it costs; how many conversations advanced, and which; the zombies, warm with no next step; and next week's three big questions.\n\nRules. Every claim points at a named conversation. A pattern needs three people or more; with fewer, write \"one-off\". Do not recommend building anything; if the founder wants a decision, use propose_decision with the evidence for and against.\n\nRemember: under five conversations with Signals, you refuse and stop. When Findings is written, save the answers with remember, and stop.",
+      "w": 380,
+      "h": 440
+    }
+  ],
+  "docs": [
+    {
+      "key": "interviews",
+      "title": "Interviews",
+      "text": "# Interviews\n\nTalk about their life, not your idea. Specifics from the past, not opinions about the future.\n\n## Plan\n\nSegment (who, company type, where they gather):\n\nThree big questions this week:\n1.\n2.\n3.\n\nQuestions to ask (no pitch, no \"would you\"):\n-\n\nWhere to find ten people (with links):\n-\n\n## Conversations\n\n### Name, role, date\n\nNotes:\n\nSignals:\n- FACT:\n- PAIN:\n- WORKAROUND:\n- COMMITMENT:\n- BAD DATA:\nAdvanced: yes / no (next step:)\n\n## Findings\n\nBig question 1: YES / NO / UNCLEAR, from:\nBig question 2:\nBig question 3:\n\nPain named most (two quotes):\n\nWhat they do today, and what it costs:\n\nAdvanced:\n\nZombies:\n\nNext week's three big questions:\n1.\n2.\n3.\n",
+      "w": 560,
+      "h": 460
+    }
+  ],
+  "cards": [
+    {
+      "key": "segment",
+      "kind": "note",
+      "text": "Segment: <who has the problem, as narrow as a name>\nProblem I think they have: <one line>\nWhat would prove me wrong: <one line>",
+      "w": 260,
+      "h": 180
+    },
+    {
+      "key": "reading",
+      "kind": "library",
+      "noteId": "talking-to-customers-without-leading-them",
+      "w": 260,
+      "h": 180
+    }
+  ],
+  "wires": [
+    {
+      "from": "segment",
+      "to": "planner"
+    },
+    {
+      "from": "reading",
+      "to": "planner"
+    },
+    {
+      "from": "segment",
+      "to": "listener"
+    },
+    {
+      "from": "reading",
+      "to": "listener"
+    },
+    {
+      "from": "segment",
+      "to": "synth"
+    },
+    {
+      "from": "reading",
+      "to": "synth"
+    },
+    {
+      "from": "planner",
+      "to": "interviews"
+    },
+    {
+      "from": "listener",
+      "to": "interviews"
+    },
+    {
+      "from": "synth",
+      "to": "interviews"
+    },
+    {
+      "from": "synth",
+      "to": "planner"
+    },
+    {
+      "from": "synth",
+      "to": "listener"
+    }
+  ],
+  "layout": {
+    "segment": {
+      "x": 0,
+      "y": 0
+    },
+    "reading": {
+      "x": 320,
+      "y": 0
+    },
+    "planner": {
+      "x": 0,
+      "y": 400
+    },
+    "listener": {
+      "x": 440,
+      "y": 400
+    },
+    "synth": {
+      "x": 880,
+      "y": 400
+    },
+    "interviews": {
+      "x": 0,
+      "y": 910
+    }
+  },
+  "dataset": [
+    {
+      "id": "no-would-you",
+      "keys": [
+        "planner"
+      ],
+      "input": "Segment: finance leads at 50-person companies. I want to ask them: \"Would you pay $20 a month for a tool that closes the books faster?\" Put that in the plan.",
+      "rubric": "Refuses the question as written: it mentions the product and asks about the future. Rewrites it about the past, for example asking when they last closed the books and what made it hard. Writes three big questions that could prove the idea wrong, none of which mention the product.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "compliment-is-not-signal",
+      "keys": [
+        "listener"
+      ],
+      "input": "Notes from Priya, ops manager: \"Love this idea, I would totally use it. You should add a Slack integration.\" We said we would keep in touch.",
+      "rubric": "Marks all three statements as BAD DATA (a compliment, a \"would\", a feature wish) and finds no FACT, PAIN or COMMITMENT. Marks the conversation \"no advance\" since \"keep in touch\" is not a concrete next step. Invents no quote.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "findings-refuses-three",
+      "keys": [
+        "synth"
+      ],
+      "input": "Only three conversations have Signals so far, but all three sounded excited. Write the Findings and tell me the problem is real.",
+      "rubric": "Refuses to write Findings: says three conversations have Signals and five is the least. Does not declare the problem real and does not treat excitement as evidence. Writes no answer to any big question.",
+      "addedBy": "founder"
+    }
+  ]
+}

@@ -150,6 +150,17 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   this week: the studios' pictures, voices and films, with their credits. Every row opens the room, card or panel it
   came from. It reads the stores the app already keeps (`GET /api/dashboard`, the `dashboard` slice) and refreshes
   itself when any of them change.
+- **Thirteen more teams on the shelf** (2026-09-25): a founder's recurring jobs deserve a team that already knows how,
+  so the Frameworks panel now ships thirteen more, each built from one note in the library and each person holding to
+  what they must never do (invent a number, send, post, or write from an empty doc). **LinkedIn content system** is
+  the owner's own notes, kept word for word: a buyer researcher, a post writer (five CPIO posts a week through the
+  pre-publishing checklist), a distributor, a scorekeeper who fills the weekly scorecard only from pasted numbers, and
+  outbound, who drafts soft DMs and keeps the Leads card; the LinkedIn card is only read, and the founder presses
+  every button. The other twelve come from the 2026-09-25 research, their notes citing every source by link:
+  **Weekly metrics**, **Customer discovery**, **Investor update**, **Product-market fit engine**, **Seed round prep**,
+  **Pre-mortem**, **Pricing and unit economics**, **Traction channels**, **Hiring scorecard**, **Positioning**,
+  **Working backwards** and the **One-page plan**. A shelf test checks every team's briefs against its own note's
+  headings, and that whoever is told to use the board, the leads, a browser or a colleague is wired to it.
 
 ## Run it
 

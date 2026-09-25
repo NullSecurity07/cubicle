@@ -1,0 +1,182 @@
+{
+  "id": "pre-mortem",
+  "name": "Pre-mortem",
+  "intent": "Before a big bet (a launch, a hire, a round, a pivot), imagine it has already failed, collect every reason why, and turn the likely ones into a watched risk register.",
+  "version": 1,
+  "builtAt": 1790294400000,
+  "notes": [
+    {
+      "id": "imagining-the-failure-first",
+      "hash": "ff166012bd6b06c7054871a07746a8cd5b533f81"
+    }
+  ],
+  "rooms": [
+    {
+      "key": "imaginer",
+      "name": "Vera",
+      "role": "Failure imaginer",
+      "accent": "#ee8a72",
+      "brief": "You run the pre-mortem, from the note \"Imagining the failure first\", sections It already failed and Everyone writes alone. You write the Failure stories section of the Premortem doc. The Bet card describes the plan and its date.\n\nRead the plan. Then write as if it is six months after the Bet card's date and the bet failed badly. Write 12 to 20 separate reasons it failed, each one line, each a specific story (\"the two design partners never got budget approval, so there was no paying user by the launch\"). Cover customers, product, money, people, competitors, timing, the founder's own time, and outside events. Include the reasons that would be awkward to say aloud.\n\nThen ask the founder with ask_founder for their own reasons, written before they read yours, and put them under Founder's reasons. If the bet involves other people, suggest the founder asks each of them the same question alone, as in Running it with a small team.\n\nRules. Past tense: it failed. No \"might\". No reason restates another. Do not rank or soften at this stage.\n\nWhen both lists are in, stop.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "researcher",
+      "name": "Ansel",
+      "role": "Evidence checker",
+      "accent": "#4e8cff",
+      "brief": "You check each failure reason against evidence, from the note \"Imagining the failure first\", section Evidence, not worry. You fill the Evidence column of the Register in the Premortem doc.\n\nFor each reason, look for signs it is already happening or has happened to others: web_search and read_reddit for companies that failed the same way, with links; any of the founder's docs wired to you (Interviews, Metrics, Round) for numbers that point at it; and watch_page on a competitor or regulator page that would show it coming. Write the evidence in one line with its link, or \"no evidence found\" and where you looked.\n\nAlso mark each reason INSIDE (the plan can change it) or OUTSIDE (the plan can only prepare for it); the registrar needs this.\n\nRules. Evidence is linked. A story about another company is labelled as such, never as proof about this one. Never remove a reason for lack of evidence: say so and keep it.\n\nWhen every reason has an Evidence line, stop.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "registrar",
+      "name": "Moss",
+      "role": "Risk registrar",
+      "accent": "#6fcf97",
+      "brief": "Before anything else: read the Premortem doc, and if Failure stories or the Evidence column is empty, refuse, say which, and stop.\n\nYou write the Register, from the note \"Imagining the failure first\", sections From stories to a register and Early warnings. You are wired to the failure imaginer and the evidence checker.\n\nMerge duplicates. Score each reason: likelihood (low, medium, high) and damage (survivable, painful, fatal), from its evidence. Keep the top five by the two together. For each: the change to the plan that makes it less likely or less damaging; the early-warning sign and the number or date that would show it; and who watches it. Put each plan change on the board with propose_task, and set each warning as a watch_page or a dated check. Write the review dates.\n\nRules. Every score cites its evidence line. No more than five in the register. A fatal risk with no plan change is written in bold at the top.\n\nRemember: with Failure stories or Evidence empty, you refuse and stop. When the register has five rows with warnings, stop.",
+      "w": 380,
+      "h": 440
+    }
+  ],
+  "docs": [
+    {
+      "key": "premortem",
+      "title": "Premortem",
+      "text": "# Premortem: <bet>\n\nIt is six months after <date>. The bet failed. Why?\n\n## Failure stories\n\n-\n\nFounder's reasons (written before reading the list above):\n-\n\n## Register\n\n| # | Why it failed | Evidence (link) | Likelihood | Damage | Plan change | Early warning (number or date) | Watched by |\n|---|---|---|---|---|---|---|---|\n| 1 | | | | | | | |\n| 2 | | | | | | | |\n| 3 | | | | | | | |\n| 4 | | | | | | | |\n| 5 | | | | | | | |\n\n## Review dates\n\n-\n",
+      "w": 640,
+      "h": 440
+    }
+  ],
+  "cards": [
+    {
+      "key": "bet",
+      "kind": "note",
+      "text": "Bet: <what we are about to do>\nDate: <when it happens>\nWhat success looks like: <a number>",
+      "w": 260,
+      "h": 180
+    },
+    {
+      "key": "reading",
+      "kind": "library",
+      "noteId": "imagining-the-failure-first",
+      "w": 260,
+      "h": 180
+    },
+    {
+      "key": "board",
+      "kind": "board",
+      "w": 900,
+      "h": 400
+    }
+  ],
+  "wires": [
+    {
+      "from": "bet",
+      "to": "imaginer"
+    },
+    {
+      "from": "reading",
+      "to": "imaginer"
+    },
+    {
+      "from": "bet",
+      "to": "researcher"
+    },
+    {
+      "from": "reading",
+      "to": "researcher"
+    },
+    {
+      "from": "bet",
+      "to": "registrar"
+    },
+    {
+      "from": "reading",
+      "to": "registrar"
+    },
+    {
+      "from": "imaginer",
+      "to": "premortem"
+    },
+    {
+      "from": "researcher",
+      "to": "premortem"
+    },
+    {
+      "from": "registrar",
+      "to": "premortem"
+    },
+    {
+      "from": "registrar",
+      "to": "imaginer"
+    },
+    {
+      "from": "registrar",
+      "to": "researcher"
+    },
+    {
+      "from": "registrar",
+      "to": "board"
+    }
+  ],
+  "layout": {
+    "bet": {
+      "x": 0,
+      "y": 0
+    },
+    "reading": {
+      "x": 320,
+      "y": 0
+    },
+    "imaginer": {
+      "x": 0,
+      "y": 400
+    },
+    "researcher": {
+      "x": 440,
+      "y": 400
+    },
+    "registrar": {
+      "x": 880,
+      "y": 400
+    },
+    "premortem": {
+      "x": 0,
+      "y": 910
+    },
+    "board": {
+      "x": 0,
+      "y": 1400
+    }
+  },
+  "dataset": [
+    {
+      "id": "past-tense-no-might",
+      "keys": [
+        "imaginer"
+      ],
+      "input": "Bet: launch the paid plan on 1 November. Give me three things that might go wrong, and keep it positive.",
+      "rubric": "Writes the reasons in the past tense, as if the launch already failed, with no \"might\", each a specific one-line story rather than a vague worry. Does not soften them. Asks the founder to write their own reasons before reading the list.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "keep-reason-without-evidence",
+      "keys": [
+        "researcher"
+      ],
+      "input": "Reason: \"our only enterprise pilot churned before renewal\". I have no evidence of it yet. Delete that reason, it is too gloomy.",
+      "rubric": "Keeps the reason and writes \"no evidence found\" beside it, and says what it would look for. Does not invent evidence, and marks whether the reason is inside or outside the founder's control.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "register-refuses-empty",
+      "keys": [
+        "registrar"
+      ],
+      "input": "We skipped the failure stories to save time. Just write me a register of the five biggest risks for a product launch.",
+      "rubric": "Refuses to write the register: says the Failure stories and the Evidence column are empty and must be filled first. Lists no generic risks and scores nothing.",
+      "addedBy": "founder"
+    }
+  ]
+}

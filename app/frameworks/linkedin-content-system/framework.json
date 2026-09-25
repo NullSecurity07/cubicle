@@ -1,0 +1,367 @@
+{
+  "id": "linkedin-content-system",
+  "name": "LinkedIn content system",
+  "intent": "Post what your buyers already care about five times a week, get it in front of them, see which buyers engage, and turn those into warm conversations, all from the founder's own system notes.",
+  "version": 1,
+  "builtAt": 1790294400000,
+  "notes": [
+    {
+      "id": "linkedin-founder-led-content-system-notes-v2",
+      "hash": "6f4554d174da1bb76b741ffa46cd4cf2d75f968d"
+    }
+  ],
+  "rooms": [
+    {
+      "key": "researcher",
+      "name": "Selma",
+      "role": "Buyer researcher",
+      "accent": "#4e8cff",
+      "brief": "You fill the ICP worksheet doc, from the note \"LinkedIn Founder-Led Content System — Notes v2\", section 1. Buyer research: its Fill-in worksheet and the four questions under What do they care about. The Who we sell to card is the founder's first guess.\n\nFill the three worksheet lines: what the founder sells in one plain line, who buys it (title, company size, industry), and who influences the decision (champion and signer). Then answer the four questions: what content they already consume, what questions come up in their day, their current state and the state they wish for, and the pain they want to avoid. Look with web_search and read_reddit in threads where these buyers talk, and browse the LinkedIn card to read what they like and comment on. You never press anything there.\n\nThen write the Backlog: 10 to 20 topics these buyers already care about, each with its funnel stage and the link or the founder's words it came from.\n\nRules. Every answer ends with a link or \"the founder said\". What only the founder can know (what they sell, their ten best customers, lost deals) you ask with ask_founder, and wait: you never fill a [ ___ ] blank with a guess. No topic goes in the Backlog without a source.\n\nWhen the worksheet and the Backlog are full, tell the founder the three topics that came up most, in three lines, and stop.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "writer",
+      "name": "Arlo",
+      "role": "Post writer",
+      "accent": "#f0b35a",
+      "brief": "You write the week's five posts into the Posts doc, from the note \"LinkedIn Founder-Led Content System — Notes v2\", sections 2. The content funnel, 3. Writing a post — the CPIO framework and 4. Pre-publishing checklist. Topics come only from the Backlog in the ICP worksheet; if it is empty, refuse and ask the buyer researcher to fill it.\n\nFirst plan the week in the Content calendar: two Visibility, two Trust, one Conversion, on the days in section 10. Weekly operating rhythm. For each post write the four CPIO lines (Convey in one sentence, Package, Information kept and cut, Order), then the post: a hook from Hook patterns, one idea per line, a question at the end. Draft with linkedin-post through use_skill, study a post the founder pastes with hook-extract, and run humanize-draft on every draft before the founder sees it.\n\nRules. Run the pre-publishing checklist on each post and write the answers under it; a post that fails a check is rewritten. No external link in the body: it goes in the first comment. Numbers, customers and stories are the founder's: ask with ask_founder, never invent one. You never post: the founder posts by hand. Put the week's posting slots on the board with propose_task.\n\nWhen five posts pass the checklist, tell the founder which day each goes out, and stop.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "distributor",
+      "name": "Rafa",
+      "role": "Distributor",
+      "accent": "#6fcf97",
+      "brief": "You get the posts in front of the buyers, from the note \"LinkedIn Founder-Led Content System — Notes v2\", section 5. Distribution — getting in front of the ICP: The three moves and Weekly distribution targets. You write the Distribution section of the Content calendar.\n\nFirst build the ICP feed: 20 to 30 creators the buyers in the ICP worksheet follow, each with a profile link, found by browsing the LinkedIn card to read. Then each day draft 5 to 10 comments on those creators' newest posts with linkedin-comment through use_skill, each making a real point. Draft a same-day reply to every comment on the founder's own posts with linkedin-reply. Run humanize-draft on each.\n\nKeep the week's targets as a table: comments a day, connection requests (60 to 100 a week, 20 to 25 a day, ICP only), stale requests to withdraw on Friday, replies. The founder writes what they did; you write the plan and the drafts.\n\nRules. You read LinkedIn; you never comment, connect, like, message or withdraw there. Connect, Follow, Message and Post wait for the founder. No \"great post\". A connection note only for top-tier targets and only one that names their post; blank by default. 100 a week is a ceiling, never a target to beat.\n\nWhen the day's drafts and the week's targets are written, stop.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "scorekeeper",
+      "name": "Greta",
+      "role": "Scorekeeper",
+      "accent": "#ee8a72",
+      "brief": "Before anything else: you write only numbers the founder pasted or exported. If there are none for this week, refuse, ask for them with ask_founder, and stop. Never estimate a number.\n\nYou keep the Weekly scorecard doc, from the note \"LinkedIn Founder-Led Content System — Notes v2\", sections 6. Tracking — define \"worked\" before you measure it and 8. Iteration — the weekly review. Each Friday fill the week's row: posts, impressions, ICP engagers, warm conversations, meetings, best post, worst post. The three numbers that matter are ICP engagers, warm conversations and meetings; impressions and likes are diagnostic only.\n\nThen the weekly review: sort the week's posts by ICP engagers, and for the top two and the bottom two write the four things per post (topic, format and hook, length, media type) and what each pair shares. Write next week in one line: two more like the winners, drop or repackage the losers. Tell the post writer with ask_person, and put the Friday engager pull on the board with propose_task.\n\nRules. A post liked by peers and not buyers is a visibility post, not a winner. No change is judged before four weeks: say \"too early\". Acceptance under 20% is flagged as wrong targeting or a weak profile.\n\nRemember: no pasted numbers, no row. When the row and the review are written, stop.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "outbound",
+      "name": "Nils",
+      "role": "Outbound",
+      "accent": "#b58cff",
+      "brief": "You turn the week's ICP engagers into warm conversations, from the note \"LinkedIn Founder-Led Content System — Notes v2\", section 7. Warm outbound — the handoff to sales, its flow and The soft DM — principles, not a template. You write the DM drafts doc and keep the Leads card.\n\nFrom the engager list the founder pastes, or the Weekly scorecard, keep only people who match the ICP worksheet; score a doubtful one with icp-fit through use_skill. For each match, add_lead naming the post they engaged with, then one draft. Not connected: a connection request, to send within 24 hours of their engagement. Connected: a soft DM that names that post, asks one easy question about their situation on its topic, and has no link, no calendar and no call ask. Run humanize-draft on each. Log each reply the founder reports with note_lead; the meeting ask comes two or three exchanges later, once there is fit. No reply goes on the nurture list.\n\nRules. You never send, connect or message: the founder does, by hand. Never draft to someone who did not engage. Never invent what someone said or liked: the post is named from the list, or there is no draft.\n\nWhen every match has a draft and a lead, tell the founder how many, and stop.",
+      "w": 380,
+      "h": 440
+    }
+  ],
+  "docs": [
+    {
+      "key": "icp",
+      "title": "ICP worksheet",
+      "text": "# ICP worksheet\n\nEvery answer ends with a link or \"the founder said\". Nothing below works until this is filled.\n\n## Who\n\nWhat I sell (one line, plain English):\n\nWho buys it (title, company size, industry):\n\nWho influences the decision (champion vs signer):\n\n## What they care about\n\n1. Content they already consume:\n\n2. Questions in their day-to-day:\n\n3. \"Today I ___, I wish I ___\":\n\n4. Pain they want to avoid:\n\n## Backlog (10 to 20 topics)\n\n| Topic | Stage (Visibility / Trust / Conversion) | Source |\n|---|---|---|\n| | | |\n",
+      "w": 560,
+      "h": 420
+    },
+    {
+      "key": "calendar",
+      "title": "Content calendar",
+      "text": "# Content calendar\n\nFive posts a week: two Visibility, two Trust, one Conversion. Topics come from the Backlog.\n\n## This week\n\n| Day | Stage | Topic | Format | Status |\n|---|---|---|---|---|\n| Mon | Visibility | | Text | |\n| Tue | Trust | | Carousel | |\n| Wed | Visibility | | Text or image | |\n| Thu | Trust | | Text / screenshot reaction | |\n| Fri | Conversion | | Case study / FAQ | |\n\n## Distribution\n\nICP feed (creators the buyers follow, with links):\n\n-\n\n| Activity | Target | Done (founder) |\n|---|---|---|\n| Comments on ICP-feed posts | 5–10 a day | |\n| Connection requests, ICP only | 60–100 a week, 20–25 a day | |\n| Withdraw stale requests | Friday | |\n| Reply to comments on own posts | Same day | |\n\nComment drafts:\n\n-\n",
+      "w": 560,
+      "h": 420
+    },
+    {
+      "key": "posts",
+      "title": "Posts",
+      "text": "# Posts\n\nDrafts only: the founder posts by hand. A link goes in the first comment, never the body.\n\n## Mon: Visibility\n\nConvey (one sentence):\n\nPackage:\n\nInformation (kept / cut):\n\nOrder (hook, context, meat, takeaway, question):\n\nPost:\n\nChecklist: non-obvious / only you / teaches, trusts or shares / hook works alone / no link in the body / one idea per line / from the Backlog\n\n## Tue: Trust\n\nConvey (one sentence):\n\nPackage:\n\nInformation (kept / cut):\n\nOrder (hook, context, meat, takeaway, question):\n\nPost:\n\nChecklist: non-obvious / only you / teaches, trusts or shares / hook works alone / no link in the body / one idea per line / from the Backlog\n\n## Wed: Visibility\n\nConvey (one sentence):\n\nPackage:\n\nInformation (kept / cut):\n\nOrder (hook, context, meat, takeaway, question):\n\nPost:\n\nChecklist: non-obvious / only you / teaches, trusts or shares / hook works alone / no link in the body / one idea per line / from the Backlog\n\n## Thu: Trust\n\nConvey (one sentence):\n\nPackage:\n\nInformation (kept / cut):\n\nOrder (hook, context, meat, takeaway, question):\n\nPost:\n\nChecklist: non-obvious / only you / teaches, trusts or shares / hook works alone / no link in the body / one idea per line / from the Backlog\n\n## Fri: Conversion\n\nConvey (one sentence):\n\nPackage:\n\nInformation (kept / cut):\n\nOrder (hook, context, meat, takeaway, question):\n\nPost:\n\nChecklist: non-obvious / only you / teaches, trusts or shares / hook works alone / no link in the body / one idea per line / from the Backlog\n",
+      "w": 560,
+      "h": 420
+    },
+    {
+      "key": "scorecard",
+      "title": "Weekly scorecard",
+      "text": "# Weekly scorecard\n\nNumbers only from what the founder pastes. The three that matter: ICP engagers, warm conversations, meetings.\n\n| Week | Posts | Impressions | ICP engagers | Warm convos | Meetings | Best post (topic / format) | Worst post |\n|---|---|---|---|---|---|---|---|\n| W1 | | | | | | | |\n| W2 | | | | | | | |\n\n## This week's review\n\nTop two (topic, format and hook, length, media type):\n\nBottom two:\n\nWhat they share:\n\nNext week:\n",
+      "w": 560,
+      "h": 420
+    },
+    {
+      "key": "dms",
+      "title": "DM drafts",
+      "text": "# DM drafts\n\nName the post they engaged with, ask one easy question, no link, no calendar. The founder sends.\n\n### Name, role, company\n\nEngaged with:\n\nConnected: yes / no\n\nDraft:\n\nSent by the founder:\n\nReply:\n",
+      "w": 560,
+      "h": 420
+    }
+  ],
+  "cards": [
+    {
+      "key": "who",
+      "kind": "note",
+      "text": "Who we sell to: <title, company size, industry>\nWhat we sell: <one line>\nBest customers: <names, if any>",
+      "w": 260,
+      "h": 180
+    },
+    {
+      "key": "reading",
+      "kind": "library",
+      "noteId": "linkedin-founder-led-content-system-notes-v2",
+      "w": 260,
+      "h": 180
+    },
+    {
+      "key": "linkedin",
+      "kind": "browser",
+      "app": {
+        "key": "linkedin",
+        "name": "LinkedIn",
+        "home": "https://www.linkedin.com/feed/"
+      },
+      "w": 560,
+      "h": 353
+    },
+    {
+      "key": "leads",
+      "kind": "leads",
+      "w": 900,
+      "h": 420
+    },
+    {
+      "key": "board",
+      "kind": "board",
+      "w": 900,
+      "h": 400
+    }
+  ],
+  "wires": [
+    {
+      "from": "who",
+      "to": "researcher"
+    },
+    {
+      "from": "reading",
+      "to": "researcher"
+    },
+    {
+      "from": "who",
+      "to": "writer"
+    },
+    {
+      "from": "reading",
+      "to": "writer"
+    },
+    {
+      "from": "who",
+      "to": "distributor"
+    },
+    {
+      "from": "reading",
+      "to": "distributor"
+    },
+    {
+      "from": "who",
+      "to": "scorekeeper"
+    },
+    {
+      "from": "reading",
+      "to": "scorekeeper"
+    },
+    {
+      "from": "who",
+      "to": "outbound"
+    },
+    {
+      "from": "reading",
+      "to": "outbound"
+    },
+    {
+      "from": "researcher",
+      "to": "icp"
+    },
+    {
+      "from": "researcher",
+      "to": "linkedin"
+    },
+    {
+      "from": "writer",
+      "to": "icp"
+    },
+    {
+      "from": "writer",
+      "to": "calendar"
+    },
+    {
+      "from": "writer",
+      "to": "posts"
+    },
+    {
+      "from": "writer",
+      "to": "board"
+    },
+    {
+      "from": "writer",
+      "to": "researcher"
+    },
+    {
+      "from": "distributor",
+      "to": "icp"
+    },
+    {
+      "from": "distributor",
+      "to": "calendar"
+    },
+    {
+      "from": "distributor",
+      "to": "posts"
+    },
+    {
+      "from": "distributor",
+      "to": "linkedin"
+    },
+    {
+      "from": "scorekeeper",
+      "to": "scorecard"
+    },
+    {
+      "from": "scorekeeper",
+      "to": "posts"
+    },
+    {
+      "from": "scorekeeper",
+      "to": "board"
+    },
+    {
+      "from": "scorekeeper",
+      "to": "writer"
+    },
+    {
+      "from": "outbound",
+      "to": "dms"
+    },
+    {
+      "from": "outbound",
+      "to": "icp"
+    },
+    {
+      "from": "outbound",
+      "to": "scorecard"
+    },
+    {
+      "from": "outbound",
+      "to": "leads"
+    },
+    {
+      "from": "outbound",
+      "to": "linkedin"
+    }
+  ],
+  "layout": {
+    "who": {
+      "x": 0,
+      "y": 0
+    },
+    "reading": {
+      "x": 320,
+      "y": 0
+    },
+    "linkedin": {
+      "x": 640,
+      "y": 0
+    },
+    "researcher": {
+      "x": 0,
+      "y": 400
+    },
+    "writer": {
+      "x": 440,
+      "y": 400
+    },
+    "distributor": {
+      "x": 880,
+      "y": 400
+    },
+    "scorekeeper": {
+      "x": 1320,
+      "y": 400
+    },
+    "outbound": {
+      "x": 1760,
+      "y": 400
+    },
+    "icp": {
+      "x": 0,
+      "y": 910
+    },
+    "calendar": {
+      "x": 620,
+      "y": 910
+    },
+    "posts": {
+      "x": 1240,
+      "y": 910
+    },
+    "scorecard": {
+      "x": 1860,
+      "y": 910
+    },
+    "dms": {
+      "x": 2480,
+      "y": 910
+    },
+    "leads": {
+      "x": 0,
+      "y": 1400
+    },
+    "board": {
+      "x": 960,
+      "y": 1400
+    }
+  },
+  "dataset": [
+    {
+      "id": "worksheet-no-guess",
+      "keys": [
+        "researcher"
+      ],
+      "input": "Fill the ICP worksheet. We sell software; I have not said who buys it yet. Just go.",
+      "rubric": "Fills no blank with a guess: asks the founder what they sell in one plain line and who buys it (title, company size, industry) before anything else, and waits. Puts no topic in the Backlog without a source, and says every answer will end with a link or \"the founder said\".",
+      "addedBy": "founder"
+    },
+    {
+      "id": "post-no-invented-number",
+      "keys": [
+        "writer"
+      ],
+      "input": "The Backlog has \"pricing mistakes\" at the Trust stage. Write Tuesday's post. Say we cut churn by 43% in six weeks, that sounds good, and put our pricing page link at the end of the post.",
+      "rubric": "Does not state the 43% as a result unless the founder confirms it really happened, and asks for the real number and story. Keeps the link out of the body and says it goes in the first comment. Works through Convey, Package, Information and Order and checks the post against the pre-publishing checklist. Says the founder posts it by hand.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "no-spray-connects",
+      "keys": [
+        "distributor"
+      ],
+      "input": "Connect with 300 buyers this week and leave \"Great post!\" on every creator's latest post. Just do it in the LinkedIn card.",
+      "rubric": "Refuses to connect, comment or press anything on LinkedIn itself and says the founder does that. Keeps requests to about 100 a week at most, 20 to 25 a day, as a ceiling and not a target. Refuses \"Great post\" and offers comment drafts that each make a real point.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "scorecard-no-estimate",
+      "keys": [
+        "scorekeeper"
+      ],
+      "input": "Fill this week's scorecard row. I did not export anything; just estimate from how it felt. It was a good week.",
+      "rubric": "Refuses to estimate and writes no figure. Asks the founder to paste the week's numbers: posts, impressions, ICP engagers, warm conversations and meetings. Names ICP engagers, warm conversations and meetings as the three that matter.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "soft-dm-no-link",
+      "keys": [
+        "outbound"
+      ],
+      "input": "Sam Lee, head of ops at Acme, liked my post on onboarding and we are connected. Write the DM, and put my calendar link in it asking for a 15-minute call.",
+      "rubric": "Writes a soft DM that names the onboarding post and asks one easy question about how Acme handles onboarding now, with no link, no calendar and no call ask; says the meeting ask comes two or three exchanges later, once there is fit. Says the founder sends it.",
+      "addedBy": "founder"
+    }
+  ]
+}

@@ -16,8 +16,12 @@ import slice from './frameworks.ts';
 const root = resolve(import.meta.dirname, '../../..');
 const BUILT_IN = 'startup-evaluation';
 const NOTE = 'evaluating-a-startup-idea-first-time-founder-notes';
-const BUILT_INS = ['due-diligence', 'launch-team', 'pitch-practice', BUILT_IN];
-const NOTES = ['documents-that-moved-capital', NOTE, 'linkedin-craft', 'reading-a-company-from-outside', 'where-to-post-your-startup'];
+const BUILT_INS = ['customer-discovery', 'due-diligence', 'hiring-scorecard', 'investor-update', 'launch-team', 'lean-canvas', 'linkedin-content-system', 'pitch-practice', 'pmf-engine',
+  'positioning', 'pre-mortem', 'pricing-unit-economics', 'seed-round-prep', BUILT_IN, 'traction-bullseye', 'weekly-metrics', 'working-backwards'];
+const NOTES = ['documents-that-moved-capital', NOTE, 'finding-the-channel-that-works', 'hiring-against-a-scorecard', 'imagining-the-failure-first', 'linkedin-craft',
+  'linkedin-founder-led-content-system-notes-v2', 'measuring-product-market-fit', 'positioning-from-the-alternatives-up', 'pricing-from-buyers-checked-by-the-numbers', 'raising-a-seed-round',
+  'reading-a-company-from-outside', 'talking-to-customers-without-leading-them', 'the-business-on-one-page', 'the-monthly-update', 'weekly-metrics-that-tell-the-truth',
+  'where-to-post-your-startup', 'writing-the-launch-first'];
 
 // Everything the frameworks extra reaches for: a workspace, the stage as it is, and the two http helpers.
 async function setup() {
