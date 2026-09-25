@@ -207,6 +207,9 @@ describe('one rule at a time', () => {
 describe('a headline is a line of English', () => {
   it('keeps the small words a telegram would drop', () => {
     // The real run set "INVESTORS ASK BRUTAL QUESTION" across a frame. That is a sentence with its grammar removed.
+    // The site's own hero set "You decide, and nothing leaves" — the first five words, cut before what leaves.
+    // Where the opening clause is too short to stand, a later whole clause is the headline.
+    expect(headlineOf('You decide, and nothing leaves your computer that you did not wire.', 5)).toBe('Nothing leaves your computer');
     expect(headlineOf('Investors ask a brutal question first', 5)).toBe('Investors ask a brutal question first');
     expect(headlineOf('Wires carry context between rooms', 6)).toBe('Wires carry context between rooms');
     // A question mark is the headline; a full stop belongs to the sentence it came from.
