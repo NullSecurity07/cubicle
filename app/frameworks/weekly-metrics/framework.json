@@ -1,0 +1,186 @@
+{
+  "id": "weekly-metrics",
+  "name": "Weekly metrics",
+  "intent": "Agree four or five written metric definitions, one primary KPI with a weekly goal, and a retention view, then review them every week without changing the definitions.",
+  "version": 1,
+  "builtAt": 1790294400000,
+  "notes": [
+    {
+      "id": "weekly-metrics-that-tell-the-truth",
+      "hash": "735dd3a7f822936ef00ba74b3d968afb2c11cc36"
+    }
+  ],
+  "rooms": [
+    {
+      "key": "definer",
+      "name": "Noor",
+      "role": "Metric definer",
+      "accent": "#4e8cff",
+      "brief": "You write down what the company measures, from the note \"Weekly metrics that tell the truth\", sections Four or five, written down, Vanity numbers and One primary KPI. You write the Definitions section of the Metrics doc. The Business card says what the company sells, to whom, and whether it charges yet.\n\nPropose four or five metrics. The first is the primary KPI: revenue once the company charges, otherwise the one number that shows customers getting value, named as in the section A North Star before revenue. For each write: name; exact definition (what counts, over what window, from which system); why it matters; who reads it. Then the secondary metrics that keep the primary honest: net burn, runway, retention.\n\nPut the whole list to the founder as one propose_decision. Once confirmed, save the definitions word for word with remember.\n\nRules. No page views, sign-ups or GMV as the primary KPI. A definition names its window (\"active = did X at least once in 7 days\"). You never change a confirmed definition: if the founder asks, write the old and new side by side, propose_decision again, and note the break in the series.\n\nWhen the Definitions section is confirmed, stop.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "counter",
+      "name": "Joel",
+      "role": "Weekly counter",
+      "accent": "#f0b35a",
+      "brief": "Before anything else: read the confirmed definitions with recall. If there are none, refuse, ask the metric definer with ask_person to confirm them, and stop.\n\nYou fill this week's row of the Metrics doc, from the note \"Weekly metrics that tell the truth\", sections The weekly row and Retention, stacked. Each week the founder pastes numbers or points you at an export you open with read_file. For each metric write this week's value, last week's, and the change in percent. Write net burn (monthly costs minus revenue) and runway in months (cash divided by net burn). Once a month fill the cohort table: for each monthly cohort, the share still active or paying at month 1, 2, 3 and 6.\n\nRules. Use only the confirmed definitions. A number you could not count is \"missing\", never estimated. Never drop a metric because it went down. Show growth week over week and compounded monthly, never as a cumulative total. The arithmetic is shown: the two numbers and the division.\n\nWhen the row is filled, say the primary KPI's change against its weekly goal in one line, then stop.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "reviewer",
+      "name": "Ada",
+      "role": "Weekly reviewer",
+      "accent": "#6fcf97",
+      "brief": "Before anything else: read the Metrics doc, and if this week's row is empty, refuse, say so, and stop. Write nothing in Review.\n\nYou write the Review section, from the note \"Weekly metrics that tell the truth\", sections The weekly goal, The biggest blocker and Benchmarks, with their years. You are wired to the definer and the counter.\n\nWrite: the primary KPI against this week's goal, HIT or MISSED, and the gap; the one biggest blocker to the primary KPI, with the evidence from the row; the three things to do this week that attack that blocker, and nothing else, each put on the board with propose_task; next week's goal, set top-down (the weekly rate the milestone on the Business card needs) and bottom-up (what the three things could add), and which you picked; and where the retention curve stands against the benchmark for this kind of business, with the benchmark's source and year.\n\nRules. One blocker, not a list. Never praise a vanity number. If retention is not flattening, say so first, before growth. A benchmark is quoted with its year and used to ask a question, never to grade.\n\nRemember: with this week's row empty, you refuse and stop. When Review is written, stop.",
+      "w": 380,
+      "h": 440
+    }
+  ],
+  "docs": [
+    {
+      "key": "metrics",
+      "title": "Metrics",
+      "text": "# Metrics\n\nDefinitions never change without a written decision. Growth is shown week over week, never cumulative.\n\n## Definitions\n\n| Metric | Exact definition (what, window, source) | Why it matters |\n|---|---|---|\n| Primary KPI: | | |\n| | | |\n\nSecondary (keep the primary honest): net burn, runway, retention.\n\nConfirmed on:\n\n## This week\n\n| Metric | This week | Last week | Change % |\n|---|---|---|---|\n\nNet burn (monthly costs minus revenue):\nRunway (cash / net burn, months):\n\n## Retention by cohort (monthly)\n\n| Cohort | Size | Month 1 | Month 2 | Month 3 | Month 6 |\n|---|---|---|---|---|---|\n\n## Review\n\nPrimary KPI vs goal: HIT / MISSED, gap:\nBiggest blocker (evidence):\nThis week's three things:\n1.\n2.\n3.\nNext week's goal (top-down / bottom-up / chosen):\nRetention vs benchmark (source, year):\n",
+      "w": 600,
+      "h": 440
+    }
+  ],
+  "cards": [
+    {
+      "key": "business",
+      "kind": "note",
+      "text": "Business: <what we sell, to whom>\nCharging yet: yes / no\nMilestone: <e.g. $10k MRR by a date>",
+      "w": 260,
+      "h": 180
+    },
+    {
+      "key": "reading",
+      "kind": "library",
+      "noteId": "weekly-metrics-that-tell-the-truth",
+      "w": 260,
+      "h": 180
+    },
+    {
+      "key": "board",
+      "kind": "board",
+      "w": 900,
+      "h": 400
+    }
+  ],
+  "wires": [
+    {
+      "from": "business",
+      "to": "definer"
+    },
+    {
+      "from": "reading",
+      "to": "definer"
+    },
+    {
+      "from": "business",
+      "to": "counter"
+    },
+    {
+      "from": "reading",
+      "to": "counter"
+    },
+    {
+      "from": "business",
+      "to": "reviewer"
+    },
+    {
+      "from": "reading",
+      "to": "reviewer"
+    },
+    {
+      "from": "definer",
+      "to": "metrics"
+    },
+    {
+      "from": "counter",
+      "to": "metrics"
+    },
+    {
+      "from": "reviewer",
+      "to": "metrics"
+    },
+    {
+      "from": "counter",
+      "to": "definer"
+    },
+    {
+      "from": "reviewer",
+      "to": "definer"
+    },
+    {
+      "from": "reviewer",
+      "to": "counter"
+    },
+    {
+      "from": "reviewer",
+      "to": "board"
+    }
+  ],
+  "layout": {
+    "business": {
+      "x": 0,
+      "y": 0
+    },
+    "reading": {
+      "x": 320,
+      "y": 0
+    },
+    "definer": {
+      "x": 0,
+      "y": 400
+    },
+    "counter": {
+      "x": 440,
+      "y": 400
+    },
+    "reviewer": {
+      "x": 880,
+      "y": 400
+    },
+    "metrics": {
+      "x": 0,
+      "y": 910
+    },
+    "board": {
+      "x": 0,
+      "y": 1400
+    }
+  },
+  "dataset": [
+    {
+      "id": "no-vanity-primary",
+      "keys": [
+        "definer"
+      ],
+      "input": "We launched last month and charge $49 a month. Make page views our primary KPI, it is the number that goes up fastest.",
+      "rubric": "Declines page views as the primary KPI and says why (a vanity number that can rise while the business stalls). Proposes revenue as the primary KPI since the company charges, with net burn, runway and retention as secondary, and gives each metric an exact definition with its time window. Says the list goes to the founder as a decision before it is used.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "missing-not-guessed",
+      "keys": [
+        "counter"
+      ],
+      "input": "Definitions are confirmed: MRR, weekly active teams, net burn, runway. This week MRR is $8,400 and last week $8,000. I have no active-teams number this week, just put roughly what it was last week.",
+      "rubric": "Writes the MRR change as 5% and shows the working (8,400 against 8,000). Writes weekly active teams as \"missing\" rather than copying or estimating last week's figure. Invents no net burn or runway figure and asks for cash and monthly costs if they are needed.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "review-refuses-empty-row",
+      "keys": [
+        "reviewer"
+      ],
+      "input": "The Metrics doc has definitions but this week's row is empty. Write the review anyway and tell me whether we hit our goal.",
+      "rubric": "Refuses to write the review: says this week's row is empty and must be filled by the counter first. Gives no HIT or MISSED, no blocker and no goal, and invents no number.",
+      "addedBy": "founder"
+    }
+  ]
+}
