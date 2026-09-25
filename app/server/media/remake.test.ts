@@ -9,7 +9,7 @@ import type { Maker } from './jobs.ts';
 import { remakeFilm } from './remake.ts';
 import type { Seen, Sight } from './sight.ts';
 import type { Scene } from './spec.ts';
-import type { VideoDeps } from './video.ts';
+import type { VideoDeps } from './gather.ts';
 
 // The renderer, as far as a remake needs one: a check that passes, a render that writes a file, a poster frame, and
 // a transcriber that is never there, so every line is timed from its sentence.

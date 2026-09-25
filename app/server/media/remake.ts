@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile, copyFile } from 'node:fs/promises';
+import { writeFile, copyFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { musicBed, SFX_DIR, sfxFile } from './audio.ts';
 import { bibleFor, type Understanding } from './director.ts';
@@ -8,7 +8,7 @@ import {
 } from './edits.ts';
 import { editFilm, cuttingFor, type Take } from './editor.ts';
 import { ffReady } from './ff.ts';
-import { atRate, joinPcm, pcmSeconds, partName, readPcm, recordOf, silence, slicePcm, wavOfPcm, type Pcm } from './film-record.ts';
+import { atRate, joinPcm, pcmSeconds, readPcm, recordOf, silence, slicePcm, wavOfPcm, type Pcm } from './film-record.ts';
 import { finishPicture, looking } from './finish.ts';
 import { fitStill } from './footage.ts';
 import { cachedImages } from './image.ts';
@@ -23,7 +23,8 @@ import type { Plies } from './sight.ts';
 import { photoCredits } from './stock.ts';
 import { hands } from './turns.ts';
 import { engineOf } from './voice.ts';
-import { editPlan, renderProject, stageVendor, type VideoDeps } from './video.ts';
+import type { VideoDeps } from './gather.ts';
+import { carryExtras, drawingFor, editPlan, renderProject, stageVendor, withJobDir } from './render.ts';
 
 type Help = { report: (line: string) => void; signal?: AbortSignal };
 type Tools = { bin: string; vendor: string };
@@ -95,10 +96,7 @@ export async function remakeFilm(film: { path: string; record: FilmRecord }, ops
   const pace: Pace = edited.pace;
   const bible = pack === record.look ? record.bible : bibleFor({ pack } as Understanding);
   const reuse = reuseOf(record, edited, bible);
-  const at = join(deps.dir, '.video', `edit-${Date.now().toString(36)}`);
-  try {
-    await mkdir(join(at, 'assets'), { recursive: true });
-    await mkdir(join(at, 'vendor'), { recursive: true });
+  return withJobDir(deps.dir, `edit-${Date.now().toString(36)}`, report, async (at) => {
     await stageVendor(tools.vendor, at, pack);
     const shape = record.shape;
     const { width, height } = FORMATS[shape];
@@ -216,9 +214,7 @@ export async function remakeFilm(film: { path: string; record: FilmRecord }, ops
     report(`${edit.shots.length} shots over ${scenes.length} scenes, ${Math.round(edit.total)} seconds`);
 
     // --- the pictures: the old ones where the notes left them, new ones where they asked --------------------------
-    const drawing = deps.images && !deps.images.ready()
-      ? cachedImages(deps.images, deps.cacheDir ? join(deps.cacheDir, 'pictures') : join(deps.dir, '.cache', 'pictures'))
-      : null;
+    const drawing = drawingFor(deps);
     const pictures: Record<string, RecordPicture> = {};
     const kept = new Set<string>();
     const drawn = new Set<string>();
@@ -386,16 +382,7 @@ export async function remakeFilm(film: { path: string; record: FilmRecord }, ops
       bed: bedSource && music ? { source: bedSource, mood, ...(record.bed?.own && bedSource === record.bed.source ? { own: true } : {}), ...(credit ? { credit } : {}) } : undefined,
     });
     Object.assign(next, { version: version.version, root: record.root ?? film.path, from: film.path, notes: opsWords(edited.done), credits });
-    if (handEdit) {
-      const carried = new Set(handEdit.files.map((one) => one.name));
-      const extra = [...cut.flatMap((one) => (one.plies ? [one.plies.back, one.plies.mid, one.plies.fore] : [])), ...(voiceFile ? [voiceFile.file] : []), ...(bedSource ? [bedSource] : [])];
-      for (const name of extra) {
-        const safe = partName(name);
-        if (!safe || carried.has(safe)) continue;
-        const read = await readFile(join(at, 'assets', name)).catch(() => null);
-        if (read) { handEdit.files.push({ name: safe, bytes: read }); carried.add(safe); }
-      }
-    }
+    if (handEdit) await carryExtras(handEdit, at, [...cut.flatMap((one) => (one.plies ? [one.plies.back, one.plies.mid, one.plies.fore] : [])), ...(voiceFile ? [voiceFile.file] : []), ...(bedSource ? [bedSource] : [])]);
     const omni = engine === OMNI_ENGINE;
     const photos = photoCredits(cut.flatMap((one) => [one.image, one.bg]).map((file) => (file ? pictures[file]?.credit : undefined)));
     const terms = [credits, ...(omni ? ['', `The narration was made with OmniVoice. This film is ${NONCOMMERCIAL}.`] : []),
@@ -405,10 +392,7 @@ export async function remakeFilm(film: { path: string; record: FilmRecord }, ops
       ext: 'mp4', bytes, poster, name: version.stem, record: next, credits: terms,
       ...(credit && music ? { credit } : {}), ...(omni ? { noncommercial: true } : {}), ...(handEdit ? { edit: handEdit } : {}),
     };
-  } finally {
-    if (process.env.STAGE_KEEP_PROJECT === '1') report(`the project this was rendered from is at ${at}`);
-    else await rm(at, { recursive: true, force: true }).catch(() => {});
-  }
+  });
 }
 
 // The same notes on a film in the fake-model mode: read and applied exactly as the real studio would, with the

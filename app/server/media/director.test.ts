@@ -10,7 +10,7 @@ import {
 } from './director.ts';
 import { countWords, saidWords, type Scene, type Spec } from './spec.ts';
 import { sourcesOf } from './grounding.ts';
-import { gather, type VideoDeps } from './video.ts';
+import { gather, type VideoDeps } from './gather.ts';
 
 const nothing: Material = { lines: [], assets: [], using: [] };
 

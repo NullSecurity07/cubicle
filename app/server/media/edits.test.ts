@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createStore } from '../store.ts';
 import { createMedia } from './jobs.ts';
-import { fakeVideos } from './video.ts';
+import { fakeVideos } from './fake-video.ts';
 import {
   applyEdits, creditsLine, isRecord, notesOf, notesToEdits, parseOp, readPlainly, reuseLine, reuseOf, sceneOf, versionName,
   type FilmRecord,
