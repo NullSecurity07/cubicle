@@ -15,7 +15,7 @@ import { LENGTHS, MAX_AI, MAX_IMAGES, MAX_LOCAL_AI, parseSpec, PURPOSE, PURPOSES
 import { hands } from './turns.ts';
 import { makingWords as estimate } from '../../shared/film-time.ts';
 import { bibleFor, jsonIn, layoutsFor, planPrompt, specPrompt, understandingOf, type Material, type Plan } from './director.ts';
-import { budgetOf } from './spec.ts';
+import { budgetOf, WORDS_A_SECOND } from './spec.ts';
 
 const film: Spec = {
   title: 'Week eleven',
@@ -635,6 +635,16 @@ describe('how long a film comes out', () => {
     const mind = understandingOf({}, { brief: 'x', purpose: 'reel' }, {});
     const brief = planPrompt(mind, { brief: 'x', purpose: 'reel' }, { lines: [], assets: [], using: [] });
     expect(brief).toContain('words — that is what makes the film 30 seconds long');
+  });
+
+  it('gives a calm film enough words to run close to its length, now that the length follows the reading', () => {
+    // One reading for the whole film: the words at the rate they are read, then the close held for a beat. A 20 s
+    // calm film of five scenes used to be handed 36 words — fifteen seconds read — and padded out with a frozen line.
+    for (const [seconds, scenes] of [[20, 5], [30, 6], [60, 12]] as const) {
+      const runs = budgetOf(seconds, scenes, 'calm') / WORDS_A_SECOND + 1.2;
+      expect(runs).toBeGreaterThanOrEqual(seconds * 0.85);
+      expect(runs).toBeLessThanOrEqual(seconds);
+    }
   });
 
   it('cuts a film that still overruns badly, from the middle and never the opening or the close', () => {

@@ -82,14 +82,22 @@ const STOP = new Set(['a', 'an', 'the', 'and', 'or', 'but', 'so', 'of', 'in', 'o
 // soundtrack, so what is asked for is the substance rather than the wording: either the line is there as written,
 // or most of the words that carry its meaning are. Two in three is the line — below that a sentence can share a
 // noun with the material and mean something else entirely.
+//
+// The founder's brief counts as much as anything they wired. A promise the founder wrote into the brief is theirs to
+// make: the site's own hero film was asked to "end on the promise" that nothing leaves the machine, and threw that
+// line out as "nowhere in your material" because the README it was wired to had been cut before it said so. Each of
+// the two is asked on its own, so a line is never grounded by a word from one and a word from the other.
 export const ENOUGH_OF_IT = 0.6;
 export function saysIt(quote: string, sources: Sources): boolean {
   const said = flat(quote ?? '');
   if (said.length < 6) return false;
-  if (sources.corpus.includes(said)) return true;
+  return [sources.corpus, sources.brief].some((body) => !!body && saidIn(said, body));
+}
+function saidIn(said: string, body: string): boolean {
+  if (body.includes(said)) return true;
   const words = said.split(' ').filter((one) => one.length > 2 && !STOP.has(one));
   if (words.length < 2) return false;
-  const found = words.filter((one) => sources.corpus.includes(one.length > 5 ? one.slice(0, -1) : one));
+  const found = words.filter((one) => body.includes(one.length > 5 ? one.slice(0, -1) : one));
   return found.length / words.length >= ENOUGH_OF_IT;
 }
 

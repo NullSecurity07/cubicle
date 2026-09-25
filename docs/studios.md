@@ -119,3 +119,12 @@ free keys that help, and what each one downloads the first time) is under "Run i
   the graphics card when about 2.4 GB is free and on the processor otherwise (about eight seconds of work a second
   of speech here, with Ollama holding the card), and lets go of the card after five idle minutes. See
   `app/server/media/omnivoice/CREDITS.md`.
+- **A film is never silently worse** (2026-09-25): the site's own hero film came back with four faults, and each
+  one is now a rule. A narrated film is as long as its reading and a beat to close on, never padded to the length
+  asked for — the hero was stretched from fifteen seconds to twenty and held one caption for the last eight; the card
+  says the real length instead, and a calm film is handed enough words to come close. A picture that comes back as a
+  near-uniform white or black frame is drawn once more and, blank again, left out, so the scene sits on the look's
+  own ground with its words; a calm film dips through that ground at an act break rather than flashing white. A claim
+  that is in the founder's brief is grounded as surely as one in the material, and every film ends on a scene whose
+  shape is its closing line, on the look itself, never on a picture of something else. Captions keep the script's
+  casing and its sentences, and are grouped by phrase from the measured timings — never "ai people works beside".

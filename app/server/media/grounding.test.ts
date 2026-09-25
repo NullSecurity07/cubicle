@@ -174,3 +174,64 @@ describe('a film with nothing behind it at all', () => {
     expect(rules(criticise(fine, want(bare, brief)))).not.toContain('invented');
   });
 });
+
+// The site's hero film: its brief promised that nothing leaves the machine, the README that was wired to it was cut
+// before it said so, and the film threw its own promise out as "nowhere in your material", closing on a drawing of an
+// empty warehouse instead.
+describe('the hero film', () => {
+  const HERO = 'A 20 second marketing film for the top of the product website, made to be understood with the sound off: '
+    + 'a canvas where a small team of AI people works beside a founder; wires are access, so each person reads only what '
+    + 'is wired to them; nothing leaves the machine. Calm and confident, show the product itself, end on the promise.';
+  // The README as the studio read it: the part before any line about where the data is kept.
+  const cut: Material = {
+    lines: ['README of cubicle:\nRooms hold people. Wires carry context. A board holds the work and the founder runs it. Every person has their own research desk.'],
+    assets: [], using: ['cubicle project'], brand: { colours: ['#4e8cff'], name: 'cubicle' },
+  };
+  const hero = (over: Partial<Want> = {}) => want(cut, HERO, { seconds: 20, pace: 'calm', purpose: 'launch', ...over });
+
+  it('takes the brief\'s own promise as grounded, said as written or near it', () => {
+    const sources = sourcesOf(cut, HERO);
+    expect(saysIt('nothing leaves the machine', sources)).toBe(true);
+    expect(saysIt('Nothing leaves your machine.', sources)).toBe(true);
+    const close: Scene = { layout: 'cta', text: 'Nothing leaves the machine', say: 'And nothing leaves the machine.' };
+    expect(repair(spec([
+      { layout: 'hook', text: 'Your team, on one canvas', say: 'A small team of AI people works beside you.' },
+      { layout: 'statement', text: 'Wires are access', say: 'Wires are access, so each person reads only what is wired to them.' },
+      close,
+    ]), hero()).spec.scenes.at(-1)!.say).toBe('And nothing leaves the machine.');
+  });
+
+  it('keeps a line said in the film\'s own words when the quotation behind it is the brief', () => {
+    const scene: Scene = { layout: 'cta', text: 'Data stays local', say: 'Your data stays local.', source: 'nothing leaves the machine' };
+    const made = repair(spec([
+      { layout: 'hook', text: 'Your team, on one canvas', say: 'A small team of AI people works beside you.' },
+      { layout: 'statement', text: 'Wires are access', say: 'Wires are access.' },
+      scene,
+    ]), hero());
+    expect(made.spec.scenes.at(-1)!.say).toBe('Your data stays local.');
+    expect(made.notes.join(' ')).not.toMatch(/nowhere in your material/);
+  });
+
+  it('closes on a shape that carries the closing line, never on a picture of something else', () => {
+    const made = repair(spec([
+      { layout: 'hook', text: 'Your team, on one canvas', say: 'A small team of AI people works beside you.' },
+      { layout: 'statement', text: 'Wires are access', say: 'Wires are access, so each person reads only what is wired to them.' },
+      { layout: 'picture', image_prompt: 'an empty warehouse at dusk', say: 'Nothing leaves the machine.' },
+    ]), hero());
+    const last = made.spec.scenes.at(-1)!;
+    expect(['cta', 'title', 'logo', 'outro']).toContain(last.layout);
+    expect(last.say).toBe('Nothing leaves the machine.');
+    expect(`${last.heading ?? ''} ${last.text ?? ''}`).toMatch(/Nothing leaves the machine/);
+    expect(last.image_prompt).toBeUndefined();
+  });
+});
+
+describe('the close', () => {
+  it('sits on the look\'s own ground: nothing is drawn behind the last scene when it is a close', async () => {
+    const { closesOnGround } = await import('./critic.ts');
+    expect(closesOnGround('cta', 4, 5)).toBe(true);
+    expect(closesOnGround('logo', 4, 5)).toBe(true);
+    expect(closesOnGround('cta', 2, 5)).toBe(false);
+    expect(closesOnGround('picture', 4, 5)).toBe(false);
+  });
+});

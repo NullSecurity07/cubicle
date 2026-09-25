@@ -127,6 +127,18 @@ function captionParts(name: Item, rootId: string, file: Surgery, wide: number, h
   return { css: tidy(firstStyle(name, file.text)), markup: markup[1].trim(), body: ownScript(name, file.text) };
 }
 
+// Which words of the film's transcript each caption line holds, as first and last index. Every registry item that
+// can take a grouping is handed the studio's own, so a caption line is the same phrase in every look.
+const groupsOf = (lines: CapLine[]): string => {
+  let at = 0;
+  return JSON.stringify(lines.map((line) => { const pair = [at, at + line.words.length - 1]; at += line.words.length; return pair; }));
+};
+// How long the last caption line stays after its last word: one beat to finish reading it, and no more.
+export const LAST_HOLD = 0.6;
+// How big the pill's type is against the studio's own caption size. The line measure scales with it: a caption set
+// smaller fits more letters, and holding it to the full-size measure is what cut "and nothing leaves" in two.
+export const PILL_TYPE = 0.74;
+
 export function captionPiece(style: RegistryCaps, lines: CapLine[], total: number, band: Band, theme: CapTheme, mostWords = 3): Piece {
   if (!lines.length) return { css: '', html: '', script: '', steps: [] };
   const words = spokenJson(lines);
@@ -139,7 +151,7 @@ export function captionPiece(style: RegistryCaps, lines: CapLine[], total: numbe
     // studio's caption size: two lines on a plate are read as a block, and a block at full size covers the picture.
     const name: Item = 'caption-pill-karaoke';
     const high = 220;
-    const box = fitted(band, 72, band.size * 0.74, high, '');
+    const box = fitted(band, 72, band.size * PILL_TYPE, high, '');
     const file = new Surgery(name, itemSource(name))
       .swap(/var TRANSCRIPT = \[[\s\S]*?\n {6}\];/, `var TRANSCRIPT = ${words};`, 'the sample transcript')
       .swap('var DURATION = 8;', `var DURATION = ${until};`, 'the duration')
@@ -148,7 +160,19 @@ export function captionPiece(style: RegistryCaps, lines: CapLine[], total: numbe
       // A tall frame is narrow: a long word has to be allowed to shrink further than a desktop demo ever needs.
       .swap('var MIN_FONT_SIZE = 52;', 'var MIN_FONT_SIZE = 30;', 'the smallest type size')
       .swap('var MAX_WORDS_PER_GROUP = 4;', `var MAX_WORDS_PER_GROUP = ${Math.max(1, Math.min(4, mostWords + 1))};`, 'the words in a group')
-      .swap('var FONT_FAMILY = "Poppins";', `var FONT_FAMILY = ${JSON.stringify(familyOf(theme.body))};`, 'the measured typeface');
+      .swap('var FONT_FAMILY = "Poppins";', `var FONT_FAMILY = ${JSON.stringify(familyOf(theme.body))};`, 'the measured typeface')
+      // The script's own words, as written. The item lowercases every word it sets, which is a style for a vlog and
+      // a fault in a film about a product: the site's own hero showed "ai people". It measures them lowercased too.
+      .swap('wordEl.textContent = word.text.toLowerCase();', 'wordEl.textContent = word.text;', 'the lowercased word')
+      .swap('word.text.toLowerCase(), fontSize)', 'word.text, fontSize)', 'the lowercased measure')
+      .swap('w.text.toLowerCase(), fontSize)', 'w.text, fontSize)', 'the lowercased widest word')
+      // The lines the studio grouped by phrase, not a grouping of the item's own: it fills a pill four words at a
+      // time and so cut "a small team of" off "AI people works beside".
+      .swap('var GROUPS = makeGroups(WORDS);', `var GROUPS = ${groupsOf(lines)}.map(function (pair) { var ws = WORDS.slice(pair[0], pair[1] + 1); return { words: ws, start: ws[0].start, end: ws[ws.length - 1].end }; });`, 'the grouping')
+      // The last line goes a beat after it is said. The item holds it to the end of the film, which is how one word
+      // sat on screen for the last eight seconds of the site's hero.
+      .swap('? DURATION\n', '? Math.min(DURATION, group.end + LAST_HOLD)\n', 'the last group held to the end')
+      .swap('var GROUP_END_BUFFER = 0.3;', `var GROUP_END_BUFFER = 0.3;\n      var LAST_HOLD = ${LAST_HOLD};`, 'the end buffer');
     const parts = captionParts(name, 'pill-karaoke', file, box.wide, high);
     css = new Surgery(name, parts.css)
       .swap('1600px', `${box.wide}px`, 'a 1600px safe-zone measure', 3)
@@ -157,7 +181,7 @@ export function captionPiece(style: RegistryCaps, lines: CapLine[], total: numbe
       // Ours, over theirs: the item floats its pill in the middle of a safe zone two lines high, which in a film
       // lifts a one-line pill off the line every other caption sits on and into the scene's own type above it.
       + '\n.regcaps .safe-zone, .regcaps .caption-group { align-items: flex-end; }';
-    html = fitted(band, 72, band.size * 0.74, high, parts.markup).html;
+    html = fitted(band, 72, band.size * PILL_TYPE, high, parts.markup).html;
     body = parts.body;
   } else if (style === 'highlight') {
     // The line in capitals with a block of the accent colour sweeping in behind the word being said.
@@ -252,7 +276,8 @@ export const BREAK_SECONDS: Record<BreakKind, number> = { 'whip-pan': 0.3, 'zoom
 
 // `from` and `to` are the two scenes' boxes; `at` is the cut; `index` is the arriving scene, which decides which way
 // a whip travels; `width` is the frame's.
-export function breakMove(kind: BreakKind, from: string, to: string, at: number, index: number, width: number): BreakMove {
+// `sheet` is the colour a flash goes through: white unless the film says otherwise.
+export function breakMove(kind: BreakKind, from: string, to: string, at: number, index: number, width: number, sheet = '#ffffff'): BreakMove {
   const seconds = BREAK_SECONDS[kind];
   if (kind === 'whip-pan') {
     // The shader slides both scenes sideways under a ten-sample directional blur. It cannot be run on a scene of
@@ -342,7 +367,7 @@ export function breakMove(kind: BreakKind, from: string, to: string, at: number,
     ],
     outOf: [],
     html: '<div class="reg-flash" id="regflash" aria-hidden="true"></div>',
-    css: '.reg-flash { position: absolute; inset: 0; z-index: 5; background: #ffffff; opacity: 0; pointer-events: none; }',
+    css: `.reg-flash { position: absolute; inset: 0; z-index: 5; background: ${sheet}; opacity: 0; pointer-events: none; }`,
   };
 }
 

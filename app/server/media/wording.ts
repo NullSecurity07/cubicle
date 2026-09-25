@@ -98,6 +98,17 @@ export function headlineOf(said: string, most: number): string {
   // thought it belongs to. Only a cut made in the middle of a line has to be checked for what it left behind.
   const first = whole.split(CLAUSE)[0]?.replace(/[\s,;:]+$/, '').trim() ?? '';
   if (first && countWords(first) <= room && countWords(first) >= 3 && content(first).length >= 2) return first;
+  // An opening clause too short to stand ("You decide,") hands over to the next whole one that fits, its joining word
+  // dropped: "nothing leaves your computer" is the headline of "You decide, and nothing leaves your computer that you
+  // did not wire", where the first five words stop before saying what leaves.
+  if (first && countWords(first) < 3) {
+    for (const part of whole.split(CLAUSE).slice(1)) {
+      const clause = part.replace(/^(?:and|but|so|or)\s+/i, '').replace(/[\s,;:]+$/, '').trim();
+      if (clause && countWords(clause) <= room && countWords(clause) >= 3 && content(clause).length >= 2) {
+        return clause.charAt(0).toUpperCase() + clause.slice(1);
+      }
+    }
+  }
   // No clause fits, so the words themselves — stopping on one that carries something, and never between "a" and
   // the thing it was about to name.
   let line = trimTo(whole, most);

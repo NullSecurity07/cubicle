@@ -2,7 +2,7 @@ import type { Shape } from '../../../shared/model.ts';
 import { SFX, type Cue } from '../audio.ts';
 import { countWords, crowdsCaptions, saysWhatItShows } from '../spec.ts';
 import { capHtml, capLines, capSteps, type CapLine, type Word } from './captions.ts';
-import { breakMove, captionPiece, type BreakMove } from '../registry/index.ts';
+import { breakMove, captionPiece, PILL_TYPE, type BreakMove } from '../registry/index.ts';
 import { actBreaks, cutSteps } from './cuts.ts';
 import { dataGraphic, groundHtml, onscreen, sceneHtml, sceneSteps, type Shot } from './layouts.ts';
 import { cutAt, FORMATS, PACE, PACK, paintOf, styleSheet, type Brand, type Pace, type Pack } from './looks.ts';
@@ -128,10 +128,24 @@ export function quietOf(shots: Shot[], starts: number[]): { at: number; seconds:
 export function captionLines(film: Film): CapLine[] {
   if (!film.captions || !film.words?.length) return [];
   const quiet = film.quiet ?? quietOf(film.shots, startsOf(film.shots).starts);
-  const spoken = film.words.filter((word) => !quiet.some((gap) => word.at >= gap.at - 0.01 && word.at < gap.at + gap.seconds));
+  const hushed = film.words.map((word) => quiet.some((gap) => word.at >= gap.at - 0.01 && word.at < gap.at + gap.seconds));
+  // A phrase that runs into a hushed stretch takes its first word or two with it. Left on their own they are a
+  // fragment in the band — the site's hero film showed "You" by itself, the rest of "You decide," being hushed
+  // under a scene that wrote the line out. A clause that ended before the hush is whole and stays.
+  for (let at = 1; at < film.words.length; at += 1) {
+    if (!hushed[at] || hushed[at - 1]) continue;
+    let from = at;
+    while (from > 0 && !hushed[from - 1] && !/[.!?,;:\u2014]$/.test(film.words[from - 1].word)) from -= 1;
+    if (at - from > 0 && at - from <= 2) for (let one = from; one < at; one += 1) hushed[one] = true;
+  }
+  const spoken = film.words.filter((_word, at) => !hushed[at]);
   if (!spoken.length) return [];
   const { capChars } = FORMATS[film.shape];
-  return capLines(spoken, Math.round(capChars * PACK[film.look].capScale), capWordsOf(film.look), film.keywords ?? []);
+  // The pill sets its type smaller and holds up to two lines, so it takes one more word and a longer measure; its
+  // own item is already told the same (`captionPiece`), and the two now agree on what a line is.
+  const pill = PACK[film.look].captions === 'pill';
+  const most = pill ? Math.min(4, capWordsOf(film.look) + 1) : capWordsOf(film.look);
+  return capLines(spoken, Math.round((capChars * PACK[film.look].capScale) / (pill ? PILL_TYPE : 1)), most, film.keywords ?? []);
 }
 
 // The whole video as one HTML file: the scenes in order with their timing on them, the narration and the music beside
@@ -159,7 +173,10 @@ export function composition(film: Film): string {
   const moves: (BreakMove | null)[] = film.shots.map((shot, index) => {
     if (!style.breaks || !index || !breaks.has(index)) return null;
     if (style.breaks !== 'flash-white' && (shot.video || film.shots[index - 1].video)) return null;
-    try { return breakMove(style.breaks, `#g${index - 1}`, `#g${index}`, starts[index], index, width); } catch { return null; }
+    // A calm film dips through its own ground rather than flashing white. Over a dark look at a calm pace, a third of
+    // a second of full white is not read as energy but as a blank frame — the site's own hero film showed one.
+    const sheet = style.breaks === 'flash-white' && pace === 'calm' ? paint.ground : undefined;
+    try { return breakMove(style.breaks, `#g${index - 1}`, `#g${index}`, starts[index], index, width, sheet); } catch { return null; }
   });
   for (const move of moves) if (move) { extra.css.add(move.css); extra.html.add(move.html); }
   // A scene is given its own length plus the time the next one needs to arrive over it, so the two really overlap.

@@ -83,3 +83,53 @@ describe('finishing a picture', () => {
     expect(still.planed).toEqual([]);
   });
 });
+
+describe('a blank picture', () => {
+  const pictures = async () => {
+    const { mkdtemp } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { default: sharp } = await import('sharp');
+    const dir = await mkdtemp(join(tmpdir(), 'blank-'));
+    const flat = (r: number, g: number, b: number) => sharp({ create: { width: 64, height: 36, channels: 3, background: { r, g, b } } }).png().toBuffer();
+    await sharp(await flat(250, 250, 250)).toFile(join(dir, 'white.png'));
+    await sharp(await flat(250, 250, 250)).toFile(join(dir, 'white-b.png'));
+    await sharp(await flat(4, 4, 4)).toFile(join(dir, 'black.png'));
+    // A real picture: a dark-to-light ramp with something in it.
+    const ramp = Buffer.alloc(64 * 36 * 3);
+    for (let at = 0; at < 64 * 36; at += 1) ramp.fill(Math.round(((at % 64) / 63) * 230), at * 3, at * 3 + 3);
+    await sharp(ramp, { raw: { width: 64, height: 36, channels: 3 } }).png().toFile(join(dir, 'real.png'));
+    return dir;
+  };
+
+  it('is drawn again once, and the real second picture is kept', async () => {
+    const dir = await pictures();
+    const lines: string[] = [];
+    const done = await finishPicture({
+      dir, file: 'white.png', visual, scene, pack: 'clean', paint, state: looking(), report: (line) => lines.push(line),
+      sight: sightOf({}), redraw: async () => 'real.png',
+    });
+    expect(done.file).toBe('real.png');
+    expect(lines.join(' ')).toMatch(/blank/);
+  });
+
+  it('never reaches the film: blank twice, and the scene is left to sit on the look with its words', async () => {
+    const dir = await pictures();
+    await expect(finishPicture({
+      dir, file: 'white.png', visual, scene, pack: 'clean', paint, state: looking(), report: () => {},
+      sight: sightOf({}), redraw: async () => 'white-b.png',
+    })).rejects.toThrow(/blank/);
+    await expect(finishPicture({ dir, file: 'black.png', visual, scene, pack: 'clean', paint, state: looking(), report: () => {} }))
+      .rejects.toThrow(/blank/);
+  });
+
+  it('is told apart from a real picture by how little it varies, not by how light it is', async () => {
+    const { blankness, isBlank } = await import('./contrast.ts');
+    const dir = await pictures();
+    const { join } = await import('node:path');
+    expect(isBlank(await blankness(join(dir, 'white.png')))).toBe(true);
+    expect(isBlank(await blankness(join(dir, 'black.png')))).toBe(true);
+    expect(isBlank(await blankness(join(dir, 'real.png')))).toBe(false);
+    expect(isBlank(await blankness('/nowhere/at-all.png'))).toBe(false);
+  });
+});
