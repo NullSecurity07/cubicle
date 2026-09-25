@@ -33,6 +33,7 @@
     "mermaid": "^12.0.0",
     "nodemailer": "^10.0.10",
     "openai": "^7.17.0",
+    "pptxgenjs": "^4.0.1",
     "pyodide": "^314.0.7",
     "react": "^19",
     "react-dom": "^19",
