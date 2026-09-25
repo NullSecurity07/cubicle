@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { checkAll, healthRows, keyChecks, keyPools, keysOf, liveChecks, liveReaders, LIVE_FEED, LIVE_REDDIT, LIVE_REDDIT_FEED, onPath, ytdlpVersion } from './health.ts';
+import { checkAll, freeProviders, healthRows, keyChecks, keyPools, keysOf, liveChecks, liveReaders, LIVE_FEED, LIVE_REDDIT, LIVE_REDDIT_FEED, onPath, ytdlpVersion } from './health.ts';
 import type { Check } from '../../shared/openends.ts';
 
 const at = new Date('2026-09-20T09:00:00').getTime();
@@ -31,6 +31,24 @@ describe('keys', () => {
     expect(models.detail).toBe('3 keys: groq (2), gemini (1)');
     expect(JSON.stringify(checks)).not.toContain('secret');
     expect(JSON.stringify(checks)).not.toContain('AIza');
+  });
+
+  it('say how many free providers can answer, and which names would bring the rest', async () => {
+    const none = row(await setup(), 'Free providers');
+    expect(none.ok).toBe(false);
+    expect(none.detail).toMatch(/^0 of 13 keyed; unset: GROQ_API_KEY, CEREBRAS_API_KEY, GEMINI_API_KEY, NVIDIA_API_KEY, /);
+    // A token without its account id is not a provider yet, and the id is named as missing.
+    const env = { GROQ_API_KEY: 'sk-secret', GEMINI_API_KEY: 'AIza-secret', CLOUDFLARE_API_TOKEN: 'cf-secret' };
+    const some = freeProviders(env);
+    expect(some.ok).toBe(true);
+    // groq, groq-qwen and gemini: the second Groq model is its own day's worth on the same key.
+    expect(some.detail).toMatch(/^3 of 13 keyed; unset: CEREBRAS_API_KEY, NVIDIA_API_KEY, ZAI_API_KEY, AI_GATEWAY_API_KEY, CLOUDFLARE_ACCOUNT_ID, OLLAMA_API_KEY, SAMBANOVA_API_KEY, MISTRAL_API_KEY, OPENROUTER_API_KEY$/);
+    expect(JSON.stringify(some)).not.toContain('secret');
+    expect(freeProviders({ ...env, CLOUDFLARE_ACCOUNT_ID: 'abc' }).detail).toMatch(/^4 of 13 keyed/);
+    expect(freeProviders({ GROQ_API_KEY: 'a' }).ok).toBe(true);
+    expect(freeProviders({ GEMINI_API_KEY: 'a' }).ok).toBe(false);
+    // Each key is counted once in the Models line, though three models read Groq's.
+    expect(keyPools({ GROQ_API_KEY: 'a' }).filter((one) => one.keys)).toEqual([{ provider: 'groq', keys: 1 }]);
   });
 
   it('say in plain words what to do when there are none', async () => {

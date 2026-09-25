@@ -33,6 +33,14 @@ describe('route', () => {
     expect(names(route(clients, usage, { promptChars: 400, tools: true }))).toEqual(['groq', 'gemini']);
   });
 
+  it('puts a key that takes one request at a time behind the others while it has one out', () => {
+    let out = true;
+    const clients = [client('zai-flash', { concurrency: 1, busy: () => out }), client('gemini')];
+    expect(names(route(clients, createUsage(null), { promptChars: 10, tools: true }))).toEqual(['gemini', 'zai-flash']);
+    out = false;
+    expect(names(route(clients, createUsage(null), { promptChars: 10, tools: true }))).toEqual(['zai-flash', 'gemini']);
+  });
+
   it('believes a provider header over the published limit', () => {
     const usage = createUsage(null);
     usage.record('groq', { input: 1, output: 1 }, { remainingRequests: 2, limitRequests: 1000 });

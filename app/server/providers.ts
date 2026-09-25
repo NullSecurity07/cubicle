@@ -29,6 +29,10 @@ export type ModelClient = {
   // A small model kept for the calls around a turn (a summary, a reflection, a compaction note): it is asked first
   // for those, so the big model's per-minute tokens stay with the people, and it never answers a turn.
   side?: boolean;
+  // How many requests this key may have out at once, when the provider says (Z.ai's flash model and Ollama's cloud
+  // take one at a time), and whether that many are out now. A busy client is passed over, never queued behind.
+  concurrency?: number;
+  busy?: () => boolean;
   // The OpenAI-compatible handle behind this client, when there is one. Nothing in a turn uses it — a turn goes
   // through `step`, which streams and counts — but a library that speaks the OpenAI API for us (the eval scorers)
   // needs the very same key and base URL rather than a second one the founder would have to go and get.
@@ -76,6 +80,7 @@ export async function complete(
     if (size > client.maxPromptChars) { failures.push(`${client.name}: prompt too large`); continue; }
     if (options.tools?.length && !client.tools) { failures.push(`${client.name}: no tool support`); continue; }
     if (!admit(client)) { failures.push(`${client.name}: resting after failing several times in a row`); continue; }
+    if (client.busy?.()) { failures.push(`${client.name}: already answering another request`); continue; }
     let text = '';
     const onToken = (token: string) => {
       if (!token || (!text && !token.trim())) return;
@@ -159,7 +164,26 @@ export function collectCalls(calls: ToolCall[], parts: CallPart[]) {
   }
 }
 
-type Entry = (typeof models)[number] & { side?: boolean; vision?: boolean; streamUsage?: boolean; callSignature?: string; extra?: Record<string, unknown>; limits?: Limits };
+export type Entry = (typeof models)[number] & { side?: boolean; vision?: boolean; streamUsage?: boolean; callSignature?: string; concurrency?: number; extra?: Record<string, unknown>; limits?: Limits };
+
+// What the free providers give, as their own pages said on 2026-09-24. A line with only `rpm` has no published daily
+// cap. Groq and Cerebras count each model apart, so `groq-qwen` and `cerebras-qwen` are a second day's worth on the
+// same key. NVIDIA's terms are for prototyping, development and evaluation. Z.ai's flash model and Ollama's cloud take
+// one request at a time (`concurrency: 1`); Z.ai's 10 a minute is our own guess, it publishes none. Vercel gives $5 of
+// credit a month, and buying any ends the free part. Cloudflare gives 10,000 neurons a day (about 130k tokens out on
+// Scout) and needs the account id in its address. SambaNova is 20 requests a day: the last resort.
+export const ENTRIES = models as Entry[];
+
+// Every name in the environment an entry needs: its key, then whatever its address carries as `${NAME}`.
+export const needs = (entry: { keyEnv: string; baseURL: string }) => [entry.keyEnv, ...[...entry.baseURL.matchAll(/\$\{(\w+)\}/g)].map((match) => match[1])];
+// The address with `${NAME}` filled in from the environment, or undefined when any of them is not set.
+export function expand(baseURL: string, env: NodeJS.ProcessEnv): string | undefined {
+  let missing = false;
+  const filled = baseURL.replace(/\$\{(\w+)\}/g, (_, name: string) => { const value = env[name]?.trim(); if (!value) missing = true; return value ?? ''; });
+  return missing ? undefined : filled;
+}
+// The names an entry needs that are not set here. Empty: the entry can be asked.
+export const unset = (entry: { keyEnv: string; baseURL: string }, env: NodeJS.ProcessEnv) => needs(entry).filter((name) => !env[name]?.trim());
 
 // The provider behind a client's name: `groq#2` is Groq's second key. Everything that counts what a key has spent
 // works on the name; everything the founder reads works on this.
@@ -173,9 +197,13 @@ function keysOf(env: NodeJS.ProcessEnv, keyEnv: string): { key: string; at: numb
   return [...(env[keyEnv] ? [{ key: env[keyEnv]!, at: 1 }] : []), ...spare.sort((one, other) => one.at - other.at)];
 }
 
-type Shape = { model: string; maxPromptChars: number; maxTokens: number; tools: boolean; side?: boolean; vision?: boolean; streamUsage?: boolean; callSignature?: string; extra?: Record<string, unknown>; limits?: Limits; local?: boolean };
+type Shape = { model: string; maxPromptChars: number; maxTokens: number; tools: boolean; side?: boolean; vision?: boolean; streamUsage?: boolean; callSignature?: string; concurrency?: number; extra?: Record<string, unknown>; limits?: Limits; local?: boolean };
 
 function clientOf(name: string, entry: Shape, api: OpenAI): ModelClient {
+  // Requests out on this key now. Kept here, beside the one handle every copy of the client shares, so a caller that
+  // never saw the usage book still cannot send a second.
+  let out = 0;
+  const busy = () => !!entry.concurrency && out >= entry.concurrency;
   return {
     name,
     model: entry.model,
@@ -185,29 +213,36 @@ function clientOf(name: string, entry: Shape, api: OpenAI): ModelClient {
     limits: entry.limits ?? {},
     ...(entry.local ? { local: true } : {}),
     ...(entry.side ? { side: true } : {}),
+    ...(entry.concurrency ? { concurrency: entry.concurrency, busy } : {}),
     openai: api,
-    async step(history, { tools, signal, onToken }) {
-      const messages = withImages(portable(history, entry.callSignature), !!entry.vision);
-      const { data: stream, response } = await api.chat.completions.create({
-        model: entry.model, messages, stream: true, max_tokens: entry.maxTokens,
-        ...(entry.streamUsage === false ? {} : { stream_options: { include_usage: true } }),
-        ...(tools?.length ? { tools: wireTools(tools) } : {}),
-        ...(entry.extra ?? {}),
-      } as OpenAI.Chat.ChatCompletionCreateParamsStreaming, { signal }).withResponse();
-
-      const calls: ToolCall[] = [];
-      let usage: Usage | undefined;
-      let cut = false;
-      for await (const chunk of stream) {
-        if (chunk.usage) usage = { input: chunk.usage.prompt_tokens ?? 0, output: chunk.usage.completion_tokens ?? 0 };
-        const delta = chunk.choices[0]?.delta;
-        if (chunk.choices[0]?.finish_reason === 'length') cut = true;
-        if (delta?.content) onToken(delta.content);
-        collectCalls(calls, delta?.tool_calls ?? []);
-      }
-      return { text: '', calls: calls.filter(Boolean).map((call, index) => ({ ...call, id: call.id || callId() })), usage, quota: readQuota(response.headers), ...(cut ? { cut } : {}) };
+    async step(history, options) {
+      if (busy()) throw new Error(`${name} is already answering another request`);
+      out += 1;
+      try { return await ask(history, options); } finally { out -= 1; }
     },
   };
+
+  async function ask(history: ModelMessage[], { tools, signal, onToken }: StepOptions): Promise<ModelTurn> {
+    const messages = withImages(portable(history, entry.callSignature), !!entry.vision);
+    const { data: stream, response } = await api.chat.completions.create({
+      model: entry.model, messages, stream: true, max_tokens: entry.maxTokens,
+      ...(entry.streamUsage === false ? {} : { stream_options: { include_usage: true } }),
+      ...(tools?.length ? { tools: wireTools(tools) } : {}),
+      ...(entry.extra ?? {}),
+    } as OpenAI.Chat.ChatCompletionCreateParamsStreaming, { signal }).withResponse();
+
+    const calls: ToolCall[] = [];
+    let usage: Usage | undefined;
+    let cut = false;
+    for await (const chunk of stream) {
+      if (chunk.usage) usage = { input: chunk.usage.prompt_tokens ?? 0, output: chunk.usage.completion_tokens ?? 0 };
+      const delta = chunk.choices[0]?.delta;
+      if (chunk.choices[0]?.finish_reason === 'length') cut = true;
+      if (delta?.content) onToken(delta.content);
+      collectCalls(calls, delta?.tool_calls ?? []);
+    }
+    return { text: '', calls: calls.filter(Boolean).map((call, index) => ({ ...call, id: call.id || callId() })), usage, quota: readQuota(response.headers), ...(cut ? { cut } : {}) };
+  }
 }
 
 // The model on this machine that answers for the people when the hosted ones cannot: where it is spoken to and which
@@ -237,10 +272,15 @@ function localClient(local: LocalModel): ModelClient {
 }
 
 export function realClients(env: NodeJS.ProcessEnv = process.env, local?: LocalModel): ModelClient[] {
-  const hosted = (models as Entry[]).flatMap((entry) => keysOf(env, entry.keyEnv).map(({ key, at }) => {
-    const api = new OpenAI({ apiKey: key, baseURL: entry.baseURL, timeout: 45_000, maxRetries: 0 });
+  // An entry whose key, or any name its address needs, is not set here is left out without a word: the health check
+  // says once which are unset.
+  const hosted = ENTRIES.flatMap((entry) => {
+    const baseURL = expand(entry.baseURL, env);
+    return baseURL === undefined ? [] : keysOf(env, entry.keyEnv).map(({ key, at }) => ({ entry, key, at, baseURL }));
+  }).map(({ entry, key, at, baseURL }) => {
+    const api = new OpenAI({ apiKey: key, baseURL, timeout: 45_000, maxRetries: 0 });
     return clientOf(at > 1 ? `${entry.name}#${at}` : entry.name, entry, api);
-  }));
+  });
   return local ? [...hosted, localClient(local)] : hosted;
 }
 

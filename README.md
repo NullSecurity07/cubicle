@@ -153,10 +153,30 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
 
 ## Run it
 
-`cd app && pnpm install && pnpm dev`, then open http://localhost:7420. Keys go in `.env` at the repository root:
-`GROQ_API_KEY`, `GEMINI_API_KEY`, and optionally `CEREBRAS_API_KEY`, `MISTRAL_API_KEY`, `OPENROUTER_API_KEY` —
-more keys mean more free quota for Auto. Your data lives in `workspace/`, which is not in git. The first search
-downloads a 23 MB embedding model into `app/.cache/recall/`.
+`cd app && pnpm install && pnpm dev`, then open http://localhost:7420. Keys go in `.env` at the repository root.
+One key is enough to start and two are better: Auto asks them in the order below, and when one is out of its free
+allowance for the day the next one answers. Every key here is free. Your data lives in `workspace/`, which is not in
+git. The first search downloads a 23 MB embedding model into `app/.cache/recall/`.
+
+| Provider | Free, as its own page said on 2026-09-24 | Key from | Asks for | In `.env` |
+| --- | --- | --- | --- | --- |
+| Groq | 1,000 requests a day for each model; gpt-oss and Qwen are counted apart, so one key is two days' worth | console.groq.com/keys | email | `GROQ_API_KEY` |
+| Cerebras | 1M tokens a day, 5 a minute, for each model; gpt-oss and Qwen apart again | cloud.cerebras.ai | email | `CEREBRAS_API_KEY` |
+| Gemini | 1,000 requests a day on Flash Lite; sees pictures | aistudio.google.com/apikey | a Google account | `GEMINI_API_KEY` |
+| NVIDIA | Kimi K2.6, 40 a minute, no daily cap; for trying things out and building, not for serving customers | build.nvidia.com | email and a phone number | `NVIDIA_API_KEY` |
+| Z.ai | GLM-4.7 Flash, no published cap, but one request at a time | z.ai | email | `ZAI_API_KEY` |
+| Vercel | $5 of credit a month; buying any credit ends the free part | vercel.com, AI Gateway | a Vercel account | `AI_GATEWAY_API_KEY` |
+| Cloudflare | 10,000 neurons a day, about 130k tokens out on Llama 4 Scout; sees pictures | dash.cloudflare.com, Workers AI | an account, and its account id | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
+| Ollama cloud | gpt-oss 120B, one request at a time; not the models on this machine | ollama.com/settings/keys | email | `OLLAMA_API_KEY` |
+| SambaNova | 20 requests a day, so it answers last | cloud.sambanova.ai | email | `SAMBANOVA_API_KEY` |
+| Mistral | Mistral Small, 60 a minute on the free plan | console.mistral.ai | email and a phone number | `MISTRAL_API_KEY` |
+| OpenRouter | 50 requests a day across all its free models; Gemma 4 31B, sees pictures | openrouter.ai/keys | email | `OPENROUTER_API_KEY` |
+
+On this machine `GROQ_API_KEY` and `GEMINI_API_KEY` are set, and the Cloudflare token and account id the pictures
+already use make Cloudflare answer too; `OPENROUTER_API_KEY` is there but empty. Health says how many are set and
+which names would bring the rest, and `pnpm check:providers` asks each one once and prints `OK`, `NO KEY` or what it
+said. A second key for the same provider goes in as `GROQ_API_KEY_2`, a third as `_3`. The limits the app works to
+are in `app/server/models.json`, and a provider's own headers and refusals overrule them.
 
 The studios are free, and nothing in them needs a key. **Pictures** are asked for in three places in turn. First
 Cloudflare Workers AI (FLUX.1 schnell), which answers in about four seconds: `CLOUDFLARE_API_TOKEN` and

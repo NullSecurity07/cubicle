@@ -1,7 +1,7 @@
 import { diffLine, type CoderAsk, type CoderEvent, type CoderLine, type CoderModels, type CoderPatch, type CoderState } from '../../shared/coder.ts';
 import type { Attention } from '../../shared/model.ts';
 import { askFounder, type Answer } from '../approvals.ts';
-import { MCP_NAME, type McpLocal } from './config.ts';
+import { KEYED as KEYS, MCP_NAME, type McpLocal } from './config.ts';
 import { translate, type RawEvent } from './events.ts';
 import { GONE, needsRestart, type Engine } from './server.ts';
 
@@ -48,7 +48,7 @@ const MONTH = 30 * 86_400_000;
 // The one local provider; its address comes from the config (the founder's bridge when it is up, Ollama itself otherwise).
 const LOCAL: Record<string, string> = { ollama: 'http://127.0.0.1:11434/v1' };
 const FREE = 'Free (OpenCode Zen)';
-const KEYED = new Set(['groq', 'google', 'openrouter']);
+const KEYED = new Set(KEYS.map(({ id }) => id));
 // Models a provider lists that are not for writing code: research agents, speech, pictures, video, guards, filters.
 const NOT_A_CODER = /deep-research|tts|embedding|image|veo|imagen|guard|whisper|moderation|audio/i;
 

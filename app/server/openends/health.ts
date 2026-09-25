@@ -2,8 +2,7 @@ import { execFile } from 'node:child_process';
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Check } from '../../shared/openends.ts';
-import models from '../models.json' with { type: 'json' };
-import type { ModelClient } from '../providers.ts';
+import { ENTRIES, unset, type ModelClient } from '../providers.ts';
 import type { EngineHealth } from '../opencode/server.ts';
 import { graphifyVersion, INSTALL, mcpCommand, PIN } from '../slices/graph.ts';
 import { isoDay, parseFeed, REDDIT_AGENT } from '../readers.ts';
@@ -23,8 +22,25 @@ export function keysOf(name: string, env: NodeJS.ProcessEnv): number {
   return found;
 }
 export function keyPools(env: NodeJS.ProcessEnv): { provider: string; keys: number }[] {
-  // The side model is another model behind a provider's own keys, not more keys: it is not counted twice.
-  return (models as { name: string; keyEnv: string; side?: boolean }[]).filter((entry) => !entry.side).map((entry) => ({ provider: entry.name, keys: keysOf(entry.keyEnv, env) }));
+  // The side model and a provider's second model (groq-qwen) are other models behind the same keys, not more keys:
+  // each key is counted once, under the first provider that reads it.
+  const seen = new Set<string>();
+  return ENTRIES.filter((entry) => !entry.side && !seen.has(entry.keyEnv) && seen.add(entry.keyEnv)).map((entry) => ({ provider: entry.name, keys: keysOf(entry.keyEnv, env) }));
+}
+
+// How many of the free providers can answer here, and which names in .env would bring the rest. A provider is one
+// line in models.json (the side model is not one); it counts once everything it needs is set, the Cloudflare account
+// id as much as its token. Two that can call tools is the floor: one alone has nobody to hand over to at its limit.
+export function freeProviders(env: NodeJS.ProcessEnv): Check {
+  const lines = ENTRIES.filter((entry) => !entry.side);
+  const keyed = lines.filter((entry) => !unset(entry, env).length);
+  const missing = [...new Set(lines.flatMap((entry) => unset(entry, env)))];
+  const callers = keyed.filter((entry) => entry.tools).length;
+  return {
+    name: 'Free providers', ok: callers >= 2,
+    detail: `${keyed.length} of ${lines.length} keyed${missing.length ? `; unset: ${missing.join(', ')}` : ''}`,
+    fix: 'Each free key you add is another day of free answers. The table under "Run it" in the README says where to make each one; put it in the .env file beside the app and start the app again.',
+  };
 }
 
 // A program this machine can run, looked for the way a shell looks for it.
@@ -127,6 +143,8 @@ export async function checkAll(deps: HealthDeps): Promise<Check[]> {
     detail: pools.length ? `${total} ${total === 1 ? 'key' : 'keys'}: ${pools.map((one) => `${one.provider} (${one.keys})`).join(', ')}` : 'no keys found, so nobody here can answer you',
     fix: 'Put a free key in the .env file beside the app, as GROQ_API_KEY. A second key for the same provider goes in as GROQ_API_KEY_2, a third as _3.',
   });
+
+  checks.push(freeProviders(env));
 
   const scratch = join(workspace, '.index', 'health-write-test');
   const writable = await mkdir(join(workspace, '.index'), { recursive: true }).then(() => writeFile(scratch, 'ok')).then(() => rm(scratch, { force: true })).then(() => true, () => false);

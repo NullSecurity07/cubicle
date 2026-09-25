@@ -32,6 +32,19 @@ describe('the coder config', () => {
     expect(permission.skill).toBe('deny');
   });
 
+  it('names the free providers opencode knows by their own ids, and keeps the picker to the models that cost nothing', () => {
+    const env = { CEREBRAS_API_KEY: 'c', NVIDIA_API_KEY: 'n', ZAI_API_KEY: 'z', AI_GATEWAY_API_KEY: 'v', OLLAMA_API_KEY: 'o', SAMBANOVA_API_KEY: 's', CLOUDFLARE_API_TOKEN: 'cf' };
+    // The Cloudflare token without its account id is not enough, and SambaNova is not a provider opencode knows.
+    const most = coderConfig({ env });
+    expect(most.config.enabled_providers).toEqual(['opencode', 'cerebras', 'nvidia', 'zai', 'vercel', 'ollama-cloud', 'ollama']);
+    expect(most.config.provider.zai).toEqual({ env: ['ZAI_API_KEY'], whitelist: ['glm-4.7-flash', 'glm-4.5-flash', 'glm-4.6v-flash'] });
+    expect(most.config.provider.vercel).toEqual({ env: ['AI_GATEWAY_API_KEY'], whitelist: ['openai/gpt-oss-120b'] });
+    expect(most.keys).toEqual(['CEREBRAS_API_KEY', 'NVIDIA_API_KEY', 'ZAI_API_KEY', 'AI_GATEWAY_API_KEY', 'OLLAMA_API_KEY']);
+    const all = coderConfig({ env: { ...env, CLOUDFLARE_ACCOUNT_ID: 'acct' } });
+    expect(all.config.provider['cloudflare-workers-ai']).toEqual({ env: ['CLOUDFLARE_API_TOKEN'], options: { baseURL: 'https://api.cloudflare.com/client/v4/accounts/acct/ai/v1' } });
+    expect(all.keys).toContain('CLOUDFLARE_ACCOUNT_ID');
+  });
+
   it('takes nothing of the founder\'s own opencode but the output caps', () => {
     const { config } = coderConfig({ env: {}, founder });
     expect(config.provider).not.toHaveProperty('ollama-bridge');
