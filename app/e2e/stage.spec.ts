@@ -731,6 +731,8 @@ test('an image studio: the founder draws, a wired person draws, and the card kee
   await expect(card.locator('.studio__result img')).toBeVisible();
   await expect(card.getByRole('link', { name: 'Download' })).toHaveAttribute('href', /\/api\/files\/media\/.+\.png$/);
   await expect.poll(async () => (await (await page.request.get(`/api/media/${id}`)).json()).results.length).toBe(1);
+  await card.getByRole('button', { name: 'Put on stage' }).click();
+  await expect(page.locator('.react-flow__node-image img')).toHaveAttribute('src', /\/api\/files\/media\/.+\.png$/);
 
   // The person draws there too: the picture shows in their reply and lands on the same card.
   await send(page, 'marketing', '/tool generate_image {"prompt":"a paper plane over a city"}');
