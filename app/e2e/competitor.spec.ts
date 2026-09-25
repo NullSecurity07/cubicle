@@ -20,11 +20,13 @@ async function wire(page: Page, roomId: string, cardId: string) {
   await expect(page.locator(`.react-flow__edge[data-id="${roomId}-${cardId}"], .react-flow__edge[data-testid="rf__edge-${roomId}-${cardId}"]`).first()).toBeAttached({ timeout: 15_000 });
 }
 async function tidy(page: Page) {
-  const stage = await (await page.request.get('/api/stage')).json();
+  // A cold server can answer the very first request before its api is up; it is asked again until it says a stage.
+  let stage: { rooms: { id: string }[]; docs: { id: string }[]; wires: { id: string }[] } | null = null;
+  await expect.poll(async () => (stage = await (await page.request.get('/api/stage')).json().catch(() => null)), { timeout: 20_000 }).toBeTruthy();
   const keep = new Set(['marketing', 'build', 'brand-doc', 'company-brief']);
   await page.request.put('/api/stage', { data: {
-    rooms: stage.rooms.filter((room: { id: string }) => keep.has(room.id)), docs: stage.docs.filter((doc: { id: string }) => keep.has(doc.id)), cards: [],
-    wires: stage.wires.filter((one: { id: string }) => one.id === 'marketing-brand-doc'),
+    rooms: stage!.rooms.filter((room) => keep.has(room.id)), docs: stage!.docs.filter((doc) => keep.has(doc.id)), cards: [],
+    wires: stage!.wires.filter((one) => one.id === 'marketing-brand-doc'),
   } });
   for (const who of ['marketing', 'founder']) await rm(join(WATCH, `${who}.json`), { force: true });
 }
