@@ -1,0 +1,71 @@
+/* The Interview card: the consent tick, the recorder (a red button, a level meter, a clock), the recordings, the
+   transcript with a time on every line, and the insights at the foot. A drop of a file lights the whole card. */
+
+.interview { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding: 10px 14px 12px; cursor: auto; border-radius: 0 0 13px 13px; transition: background 0.15s, box-shadow 0.15s; }
+.interview.is-over { background: rgba(78, 140, 255, 0.08); box-shadow: inset 0 0 0 1.5px var(--focus); }
+
+.interview__setup { display: flex; flex-direction: column; gap: 8px; margin: auto 0; }
+.interview__setup p { margin: 0 0 2px; font-size: 13px; color: var(--muted); }
+.interview__setup input { box-sizing: border-box; width: 100%; border: 1px solid var(--card-border); border-radius: 8px; padding: 7px 10px; outline: 0; background: rgba(255, 255, 255, 0.05); color: var(--text); font: inherit; font-size: 13px; color-scheme: dark; transition: border-color 0.15s; }
+.interview__setup input:focus { border-color: var(--focus); }
+.interview__setup-end { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+
+.interview button { font: inherit; }
+.interview__setup-end button, .interview__ask button, .interview__status button { border: 0; border-radius: 8px; padding: 6px 14px; font-size: 12.5px; font-weight: 550; color: var(--text); background: rgba(255, 255, 255, 0.1); cursor: pointer; transition: opacity 0.15s, background 0.15s; }
+.interview .primary { color: #fff; background: var(--accent); }
+.interview button:disabled { opacity: 0.35; cursor: default; }
+
+.interview__consent { display: flex; align-items: center; gap: 9px; padding: 8px 10px; border: 1px solid var(--card-border); border-radius: 10px; font-size: 13px; cursor: pointer; transition: border-color 0.2s, background 0.2s; }
+.interview__consent input { width: 15px; height: 15px; margin: 0; accent-color: var(--ok); cursor: pointer; }
+.interview__consent.is-on { border-color: rgba(111, 207, 151, 0.35); background: rgba(111, 207, 151, 0.06); }
+
+.interview__deck { display: flex; align-items: center; gap: 12px; padding: 4px 2px 0; }
+.interview__record { flex: none; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 2px solid rgba(255, 255, 255, 0.85); border-radius: 50%; background: transparent; cursor: pointer; transition: transform 0.15s, opacity 0.15s; }
+.interview__record span { width: 30px; height: 30px; border-radius: 50%; background: var(--danger); transition: width 0.2s, height 0.2s, border-radius 0.2s; }
+.interview__record:hover:not(:disabled) { transform: scale(1.05); }
+.interview__deck.is-live .interview__record span { width: 16px; height: 16px; border-radius: 4px; }
+.interview__deck.is-live .interview__record { animation: interview-live 1.6s ease-in-out infinite; }
+.interview__meter { flex: 1; height: 6px; overflow: hidden; border-radius: 3px; background: rgba(255, 255, 255, 0.08); }
+.interview__meter i { display: block; height: 100%; background: linear-gradient(90deg, var(--ok), #f0d35a 75%, var(--danger)); transform-origin: left; transform: scaleX(0); transition: transform 0.06s linear; }
+.interview__clock { flex: none; min-width: 44px; text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; color: var(--muted); }
+.interview__deck.is-live .interview__clock { color: var(--text); }
+.interview__or { margin: -2px 0 0; font-size: 11.5px; color: var(--muted); }
+.interview__or button, .interview__link { padding: 0; border: 0; background: none; color: var(--accent-soft); font-size: inherit; cursor: pointer; }
+.interview__or button:hover:not(:disabled), .interview__link:hover { text-decoration: underline; }
+
+.interview__recordings { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.interview__recordings li { display: flex; align-items: center; gap: 8px; padding: 3px 4px 3px 8px; border-radius: 7px; font-size: 12px; color: var(--muted); }
+.interview__recordings li span:first-child { flex: 1; color: var(--text); }
+.interview__recordings li button { width: 22px; height: 22px; padding: 5px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; opacity: 0; transition: opacity 0.15s, background 0.15s; }
+.interview__recordings li:hover button, .interview__recordings li button:focus-visible { opacity: 1; }
+.interview__recordings li button:hover { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+.interview__recordings svg { display: block; width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
+
+.interview__status { display: flex; align-items: center; gap: 8px; margin: 0; padding: 7px 10px; border-radius: 9px; font-size: 12px; color: var(--muted); background: rgba(255, 255, 255, 0.05); }
+.interview__status span { margin-left: auto; font-variant-numeric: tabular-nums; }
+.interview__status.is-failed { color: #ffd9d5; background: rgba(120, 30, 24, 0.6); }
+.interview__status.is-failed button { margin-left: auto; flex: none; }
+
+.interview__transcript { flex: 1; min-height: 90px; display: flex; flex-direction: column; gap: 6px; }
+.interview h3 { margin: 0; font-size: 11px; font-weight: 650; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+.interview h3 span { font-weight: 400; letter-spacing: 0; text-transform: none; opacity: 0.8; }
+.interview__transcript ol { flex: 1; min-height: 0; overflow-y: auto; margin: 0; padding: 0 2px 0 0; list-style: none; display: flex; flex-direction: column; gap: 6px; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
+.interview__transcript li { display: grid; grid-template-columns: 44px 1fr; gap: 8px; align-items: baseline; padding: 2px 4px; border-radius: 7px; font-size: 12.5px; line-height: 1.5; animation: interview-in 0.25s ease both; transition: background 0.2s; }
+.interview__transcript li span { user-select: text; overflow-wrap: anywhere; }
+.interview__transcript li button { justify-self: start; padding: 1px 5px; border: 0; border-radius: 5px; background: transparent; color: var(--accent-soft); font-size: 11.5px; font-variant-numeric: tabular-nums; cursor: pointer; transition: background 0.15s; }
+.interview__transcript li button:hover { background: rgba(78, 140, 255, 0.15); }
+.interview__transcript li.is-playing { background: rgba(78, 140, 255, 0.1); }
+.interview__empty { flex: 1; display: grid; place-items: center; margin: 0; padding: 0 12px; text-align: center; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+
+.interview__insights { flex: none; display: flex; flex-direction: column; gap: 6px; padding-top: 10px; border-top: 1px solid var(--card-border); }
+.interview__insights p { margin: 0; font-size: 12.5px; }
+.interview__ask { display: flex; justify-content: flex-end; gap: 8px; }
+.interview__ask select { min-width: 0; border: 1px solid var(--card-border); border-radius: 8px; padding: 5px 8px; outline: 0; background: rgba(255, 255, 255, 0.05); color: var(--text); font: inherit; font-size: 12.5px; color-scheme: dark; }
+.interview__ask option { background: #16181d; }
+
+.interview .board__problem { margin: 0; }
+.interview__private { flex: none; margin: 0; font-size: 11px; line-height: 1.4; color: var(--muted); opacity: 0.8; }
+
+@keyframes interview-live { 50% { box-shadow: 0 0 0 5px rgba(229, 100, 90, 0.18); } }
+@keyframes interview-in { from { opacity: 0; transform: translateY(3px); } }
+@media (prefers-reduced-motion: reduce) { .interview__deck.is-live .interview__record, .interview__transcript li { animation: none; } }

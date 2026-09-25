@@ -21,6 +21,7 @@ const NEW = {
   metrics: { size: [380, 440], data: {} },
   runway: { size: [760, 560], data: {} },
   competitor: { size: [420, 520], data: { name: '', url: '' } },
+  interview: { size: [440, 560], data: { who: '' } },
   note: { size: [220, 180], data: { text: '' } },
   image: { size: [300, 260], data: { path: '' } },
   link: { size: [320, 150], data: { url: '' } },

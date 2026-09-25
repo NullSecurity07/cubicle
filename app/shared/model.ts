@@ -42,6 +42,8 @@ export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean; 
   | { kind: 'runway'; currency?: string }
   // A rival: their name, site and the pages of theirs being watched. The watches live in `<workspace>/watch/`, owned by the server.
   | { kind: 'competitor'; name: string; url: string; pages?: string[] }
+  // A customer interview recorded and written down on this machine. The sound and the transcript live in `<workspace>/interviews/`, owned by the server.
+  | { kind: 'interview'; who: string; company?: string; on?: string }
   // Studios: the founder, or a wired person, says what they want and the server makes it. Only what was asked for lives
   // on the card; what came out lives in a sidecar the server owns.
   | { kind: 'imagegen'; prompt?: string; shape?: Shape }

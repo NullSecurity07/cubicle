@@ -58,6 +58,7 @@ const MORE: [kind: CardKind, label: string, hint: string][] = [
   ['metrics', 'Metrics', 'Your north star and the numbers beside it'],
   ['runway', 'Runway', 'Cash, burn, and the month it runs out'],
   ['competitor', 'Competitor', 'A rival\'s pages watched, and every change'],
+  ['interview', 'Interview', 'A customer call, recorded and written down here'],
 ];
 
 // Sites the founder is already signed in to: a browser card that opens as them. "Any app" asks for a name and an address.
