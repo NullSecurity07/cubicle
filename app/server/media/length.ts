@@ -1,5 +1,7 @@
 import type { Take } from './editor.ts';
 import type { Word } from './timings.ts';
+import { countWords, saidWords, WORDS_A_SECOND, type Spec } from './spec.ts';
+import type { Pace } from './templates/looks.ts';
 
 // How long a film really runs.
 //
@@ -50,4 +52,50 @@ export function settleLength(takes: Take[], words: Word[], target: number): stri
     shift += share;
   }
   return `the cards came to ${Math.round(runs)} seconds against ${target}, so every scene is given a little more room rather than the film ending early`;
+}
+
+// --- how long the storyboard reads, before anything is recorded ------------------------------------------------
+//
+// A film follows its reading (above), so a storyboard that reads short is a film that runs short. The site's hero
+// film came back anywhere from twelve to twenty seconds for the same twenty-second ask, because the director wrote
+// fewer words some runs than others and nothing asked it for more. Padding the time is not the answer: it is the
+// frozen caption again. The answer is more to say, so a storyboard that reads under 85% of the asked length sends
+// the director back once for as many more lines as fill it, and one that reads over 115% loses scenes from the
+// middle acts, never the opening or the close.
+export const SHORT_OF = 0.85;
+export const LONG_OF = 1.15;
+// The words one more line is worth: a calm sentence a viewer takes in one breath.
+export const WORDS_A_LINE = 9;
+const BEAT: Record<Pace, number> = { punchy: 0.4, calm: 0.45 };
+
+// How long a storyboard reads aloud: its words at the narrator's pace, and the pause the voice leaves between scenes.
+export function readingOf(spec: Spec, pace: Pace): number {
+  return saidWords(spec) / WORDS_A_SECOND + spec.scenes.length * BEAT[pace];
+}
+
+export type LengthFit = { more: number; words: number } | { drop: number[] } | null;
+export function lengthFit(spec: Spec, seconds: number, pace: Pace): LengthFit {
+  if (!seconds || !spec.scenes.length) return null;
+  const reads = readingOf(spec, pace);
+  if (reads < seconds * SHORT_OF) {
+    const words = Math.round((seconds - reads) * WORDS_A_SECOND - BEAT[pace] * WORDS_A_SECOND);
+    const more = Math.max(1, Math.round(words / WORDS_A_LINE));
+    return { more, words: Math.max(words, more * 4) };
+  }
+  if (reads > seconds * LONG_OF && spec.scenes.length > 3) {
+    // The middle acts, from the centre outwards: the opening sets the film up and the close ends it, and a real
+    // screenshot of the product is the last middle scene to go.
+    const middle = spec.scenes.map((_one, at) => at).slice(1, -1)
+      .sort((a, b) => Number(spec.scenes[a].layout === 'device') - Number(spec.scenes[b].layout === 'device')
+        || Math.abs(a - (spec.scenes.length - 1) / 2) - Math.abs(b - (spec.scenes.length - 1) / 2));
+    const drop: number[] = [];
+    let left = reads;
+    for (const at of middle) {
+      if (left <= seconds || spec.scenes.length - drop.length <= 3) break;
+      drop.push(at);
+      left -= countWords(spec.scenes[at].say) / WORDS_A_SECOND + BEAT[pace];
+    }
+    return drop.length ? { drop: drop.sort((a, b) => a - b) } : null;
+  }
+  return null;
 }

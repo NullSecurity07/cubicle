@@ -128,3 +128,16 @@ free keys that help, and what each one downloads the first time) is under "Run i
   that is in the founder's brief is grounded as surely as one in the material, and every film ends on a scene whose
   shape is its closing line, on the look itself, never on a picture of something else. Captions keep the script's
   casing and its sentences, and are grouped by phrase from the measured timings — never "ai people works beside".
+- **A film is specific, not generic** (2026-09-25): five more faults in the hero film, each now a rule with a test.
+  The poster is the opening headline once it has landed, photographed from the film set without its caption track,
+  because a poster caught mid-caption ("to what they") is the first thing a visitor sees. A film closes on the
+  founder's own line: the call to action quoted in the brief (or named as one in a wired document), else what the
+  product says it is, else its first headline said again; the director is told that line before it writes a beat,
+  and the critic sends back a close that names nothing the founder wrote — "Try it this week" fits every product and
+  so says nothing about this one. A headline is never the words its captions are saying under it: it takes another
+  phrase of the founder's, from the brief first, or comes off and lets the captions carry the line. A picture has one
+  of its line's own things in it, or a stand-in that says which of the line's words it stands for; the picture built
+  when neither holds is the line's things resting on a plain surface, because a list of words in front of "a loading
+  bay at dusk" is drawn as a loading bay. And a storyboard that reads under 85% of its asked length sends the
+  director back once for as many more lines as fill it, while one over 115% loses scenes from its middle acts —
+  more said, never time held still.

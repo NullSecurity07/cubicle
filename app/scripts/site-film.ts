@@ -36,7 +36,8 @@ const LIMIT = 2 * 1024 * 1024;
 
 const BRIEF = 'A 20 second marketing film for the top of the product website, made to be understood with the sound off: '
   + 'a canvas where a small team of AI people works beside a founder; wires are access, so each person reads only what '
-  + 'is wired to them; nothing leaves the machine. Calm and confident, show the product itself, end on the promise.';
+  + 'is wired to them; nothing leaves the machine. Calm and confident, show the product itself, end on the promise, '
+  + 'then close with the call to action "Get it, free, on your own machine."';
 const ASK = { prompt: BRIEF, purpose: 'launch', length: 20, format: 'wide', look: 'brand', pace: 'calm', captions: 'on', ai: 'off', music: 'none' };
 
 // The keys, from the `.env` beside this checkout, or the main checkout's when this is a worktree (which has none).
