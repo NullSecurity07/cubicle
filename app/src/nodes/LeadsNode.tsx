@@ -9,6 +9,7 @@ import { useWired } from '../flow';
 import { useFlushStage } from '../sync';
 import { CardActions, Frame } from './Frame';
 import './leads.css';
+import { LeadStaleMark } from './LeadNudge';
 import { pressed } from '../keys';
 import { useAttempt } from '../attempt';
 
@@ -96,6 +97,7 @@ export function LeadsNode({ id, selected }: NodeProps<LeadsNodeType>) {
                       <span className="lead__name">{lead.person.name}</span>
                       <span className="lead__company">{lead.company.name}</span>
                       {lead.fit && <span className={`lead__fit${lead.fit.score >= 7 ? ' is-good' : ''}`} title={lead.fit.why}>{lead.fit.score}</span>}
+                      <LeadStaleMark cardId={id} lead={lead} />
                     </button>
                   ))}
                 </div>

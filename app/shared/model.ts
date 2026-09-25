@@ -111,7 +111,9 @@ export type Repeat =
   | { every: 'day' | 'weekdays' | 'week'; time: string; weekday?: number }
   | { every: 'days'; time: string; weekdays: number[] }
   | { every: 'minutes'; minutes: number }
-  | { every: 'once'; at: number };
+  | { every: 'once'; at: number }
+  // The first weekday (Monday to Friday) of every month, at `time`: what a monthly report wants.
+  | { every: 'month'; time: string };
 // Work that is a script rather than a person: it runs in the same sandbox `run_code` uses, and no model is called.
 export type TaskScript = { language: 'javascript' | 'python'; code: string };
 // One background run of a task. `approval` is the outward step waiting for the founder while `state` is 'waiting';
@@ -136,6 +138,7 @@ export type BoardEvent = { tasks: Task[] } | { effect: ToolEffect; roomId: strin
 
 // One thing waiting for the founder. `lapsed`: the approval belonged to a turn that ended with the app; it can only be asked again.
 export type AttentionKind = 'approval' | 'run-approval' | 'proposed-task' | 'proposed-decision' | 'run-failed' | 'missed' | 'review-due' | 'proposed-source' | 'page-changed'
+  | 'lead-stale'
   | 'metric-alert' | 'proposed-target' | 'runway-low' | 'proposed-runway';
 export type Attention = {
   id: string; kind: AttentionKind; title: string; detail?: string; at: number; who?: string;

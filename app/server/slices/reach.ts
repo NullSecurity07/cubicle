@@ -10,6 +10,7 @@ import type { Source } from '../seams.ts';
 import { healthRows } from '../openends/health.ts';
 import { createBridge } from '../reach/bridge.ts';
 import { createDigest, dueAt } from '../reach/digest.ts';
+import { todayFive, todayLine } from '../today/rank.ts';
 import { fakeTelegram } from '../reach/fake.ts';
 import { createHooks, newSecret, rawBody } from '../reach/hooks.ts';
 import { createOutbox } from '../reach/outbox.ts';
@@ -67,7 +68,7 @@ export default {
     const asks = new Map<string, { id: string; attentionId: string }>();
 
     // Today, as one screen: what finished, what waits for the founder, what is coming, what the people learned.
-    const digest = createDigest({ boards: deps.boards, stage: () => deps.store.loadStage(), skills: deps.skills, attention: () => deps.attention.list(), workspace: deps.workspace });
+    const digest = createDigest({ boards: deps.boards, stage: () => deps.store.loadStage(), skills: deps.skills, attention: () => deps.attention.list(), workspace: deps.workspace, five: async () => (await todayFive(deps)).map(todayLine) });
     const since = async () => (await book.read()).digestAt || Date.now() - DAY;
 
     // A voice the app cast under an older, looser rule is cast again under today's, once, as the app starts: people

@@ -1,0 +1,18 @@
+{
+  "name": "Draft the monthly investor update",
+  "when": "The founder wants the monthly update for investors and advisors, or a board task asks for \"the <month> update\".",
+  "procedure": [
+    "Call gather_month with since set to the first day of the month being reported. It returns dated lines, each naming the card it came from.",
+    "Write a doc with create_doc, titled \"<Month> update\", in five parts: Highlights, Numbers, What shipped, Asks, Lowlights.",
+    "Numbers: the north star first, then the rest, each with its change and the card in brackets, e.g. \"MRR $3,120, up 8% [Metrics]\". Then runway months left [Runway].",
+    "What shipped: decisions decided and board tasks done, one line each. Highlights and lowlights come only from these lines.",
+    "Asks: copy the founder's own asks if they wrote any; otherwise leave \"Asks: (founder to add)\".",
+    "End with a line naming any card gather_month said is not wired, so the founder knows what is missing."
+  ],
+  "pitfalls": [
+    "Never invent traction: every number must appear in gather_month's lines, with the card it came from. A number you cannot cite is left out.",
+    "Do not round a change into a trend, or call a flat month growth.",
+    "Do not send it. The founder edits and sends it from the mail card."
+  ],
+  "verify": "Every number in the doc appears in gather_month's lines with its card named beside it, the five parts are there, and nothing was sent."
+}

@@ -11,6 +11,7 @@ import { compact } from '../numbers';
 import { overlay, showDecision, showPlaybook } from './store';
 import './dashboard.css';
 import { PanelShell } from './PanelShell';
+import { TodayFive } from './TodayFive';
 
 // The founder's one screen: what today holds, what the work has cost, how the teams are doing and what was made.
 // Nothing here is kept by the dashboard. Every row is a door to the place it came from, and going through one closes
@@ -198,6 +199,7 @@ export function Dashboard() {
           {board && day && tokens && <>
             <section id="dash-today" className="dash__section" aria-labelledby="dash-today-title">
               <h3 id="dash-today-title">Today</h3>
+              <TodayFive stamp={board.at} />
               <div className="dash__stats">
                 <button type="button" className={`dash__stat${day.needsYou.length ? ' is-needs' : ''}`} onClick={() => panel('needs')}><b>{day.needsYou.length}</b><span>Need you</span></button>
                 <div className="dash__stat"><b>{day.tasksDue.length}</b><span>Due today</span></div>

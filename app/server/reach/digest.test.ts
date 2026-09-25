@@ -33,6 +33,15 @@ describe('the morning note', () => {
     expect(said.length).toBeLessThan(700);
   });
 
+  it('opens on Today\'s five, the same ranked list the dashboard shows, when there is one', async () => {
+    const said = await createDigest({
+      boards: { list: async () => [] } as unknown as Boards, stage: async () => stage, skills: { list: async () => [] } as unknown as Skills,
+      attention: async () => [], workspace: mkdtempSync(join(tmpdir(), 'reach-dig-')), now: () => NOON,
+      five: async () => ['Ana at Acme replied 4 days ago. Draft a reply? — A lead is waiting on you · 4 days'],
+    })(NOON - 86_400_000);
+    expect(said).toMatch(/\*\*Today\*\* · Sunday 20 September\n\n\*\*Five for today\*\*\n• Ana at Acme replied/);
+  });
+
   it('cuts a long list short rather than filling the screen with it', () => {
     const said = digestText(NOON, { done: Array.from({ length: 9 }, (_, at) => `thing ${at}`), waiting: [], today: [], learned: [] });
     expect(said).toContain('• thing 4');
