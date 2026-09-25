@@ -29,13 +29,14 @@ import {
 } from './spec.ts';
 import { broll, creditOf, photoCredits } from './stock.ts';
 import {
-  afforded, drawnAs, lineUnder, shareOut, shotKey, slotsFor, type Slot, type Visual,
+  afforded, drawnAs, heldUp, lineUnder, photoOfTheLine, shareOut, shotKey, slotsFor, type Slot, type Visual,
 } from './visuals.ts';
 import { isDraft, makingWords, secondsEach } from '../../shared/film-time.ts';
 import { filmMemory, storyboardKey, subjectKey, type KeptSubject } from './remembered.ts';
 import { pictureHash, type FilmRecord, type RecordPicture } from './edits.ts';
 import { recordOf } from './film-record.ts';
 import { sourcesOf } from './grounding.ts';
+import { briefWants } from './close.ts';
 import {
   FORMATS, isPack, PACE, PACKS, PACES, paintOf, quietOf, sceneSeconds, snapToBeats, startsOf,
   type Film, type Pace, type Pack, type Shot,
@@ -141,6 +142,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
             sources: sourcesOf(material, asked.prompt),
             screens: material.assets.filter((one) => one.kind === 'screen').map((one) => one.name),
             person: understanding.person,
+            ...briefWants(material, asked.prompt),
           };
           const mended = repair(spec, want);
           spec = mended.spec;
@@ -509,8 +511,10 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
             if (deps.stock && !deps.stock.ready()) {
               try {
                 const looking = content(visual.subject).slice(0, 5).join(' ') || trimTo(visual.line, 4);
+                // A photograph whose own description has none of the line's things in it is of something else.
                 const found = broll(await deps.stock.find({ query: looking, kind: 'photo', shape, many: 6 }, stop),
-                  { speaker: !!scene.person || scene.layout === 'presenter', names: [material.brand?.name ?? ''].filter(Boolean) });
+                  { speaker: !!scene.person || scene.layout === 'presenter', names: [material.brand?.name ?? ''].filter(Boolean) })
+                  .filter((one) => photoOfTheLine(one.what, visual));
                 if (found.length) {
                   const piece = await deps.stock.get(found[0], stop);
                   file = `stock-${name}.${piece.ext}`;
@@ -586,13 +590,19 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           // model never writes the same sentence twice, so until this nothing drawn was ever found again.
           const keys = new Map(wanted.map((one) => [one.at, subjectKey(one, bible)]));
           const known = await memory.subjects([...keys.values()]);
-          const unknown = wanted.filter((one) => !known.has(keys.get(one.at)!));
+          const unknown = wanted.filter((one) => {
+            const before = known.get(keys.get(one.at)!);
+            return !before || !heldUp({ ...one, ...before });
+          });
           const written = unknown.length ? await photograph(unknown, bible, angle, deps.think, { report, signal }) : [];
           await memory.keepSubjects(written.filter((one) => one.subject.trim())
             .map((one): [string, KeptSubject] => [keys.get(one.at)!, { subject: one.subject, metaphor: one.metaphor }]));
           for (const slot of wanted) {
             const before = known.get(keys.get(slot.at)!);
-            const visual = before ? { ...slot, ...before } : written.find((one) => one.at === slot.at) ?? slot;
+            // A subject remembered from an earlier film is held to today's rules like a new one: one that does not
+            // hold up is written again rather than drawn again.
+            const remembered = before ? { ...slot, ...before } : undefined;
+            const visual = remembered && heldUp(remembered) ? remembered : written.find((one) => one.at === slot.at) ?? slot;
             const key = shotKey(visual);
             const mine = new AbortController();
             stops.set(key, mine);

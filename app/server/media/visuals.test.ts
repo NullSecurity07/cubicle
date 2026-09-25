@@ -44,7 +44,10 @@ describe('is this picture of what is being said', () => {
   it('passes a picture that uses one of the line\'s own words, or declares what it stands for', () => {
     expect(aboutTheLine(one(0, 'a partner reading a summary', 'investors read the summary first'))).toBe(true);
     expect(aboutTheLine(one(0, 'rain filling a gutter', 'investors read the summary first'))).toBe(false);
-    expect(aboutTheLine(one(0, 'rain filling a gutter', 'investors read the summary first', { metaphor: 'money running away' }))).toBe(true);
+    // A stand-in says which of the line's words it stands for. One that names none of them ("money running away" under
+    // a line about investors) is the pocket watch under "nothing leaves your computer": a picture of something else.
+    expect(aboutTheLine(one(0, 'rain filling a gutter', 'investors read the summary first', { metaphor: 'what investors lose while they read' }))).toBe(true);
+    expect(aboutTheLine(one(0, 'rain filling a gutter', 'investors read the summary first', { metaphor: 'money running away' }))).toBe(false);
   });
 });
 

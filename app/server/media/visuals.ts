@@ -161,13 +161,61 @@ export function shares(a: string, b: string): number {
 // are two pictures of the same thing, however far apart the rest of the words are.
 export const headNoun = (subject: string): string => content(subject)[0] ?? '';
 
-// Whether a picture is of the line it sits under. It is, if it uses one of the line's own words; or if it says,
-// in as many words, that it stands for the line instead. Anything else is a picture of something else.
+// The words of a line that can be photographed: its nouns, near enough. There is no parser here, so it is the line's
+// meaningful words less the ones that are plainly not things — verbs a line does, words for nothing and everything,
+// the ways of saying how — and less the ones a picture model cannot draw without lettering.
+//
+// It matters because a picture that shares a *word* with its line is not always of it. The site's hero film put
+// "nothing leaves your computer that you did not wire" over a loading dock: the director's picture (a lock over a data
+// diagram) had rightly been refused, and the picture built in its place was "computer and nothing and decide, on a
+// loading bay at dusk" — three words of the line, one of them a thing, and a picture model drew the only thing in the
+// sentence it could see, which was the loading bay.
+const NOT_THINGS = new Set(['nothing', 'anything', 'everything', 'something', 'nobody', 'anybody', 'everybody', 'somebody',
+  'decide', 'decides', 'leave', 'leaves', 'left', 'keep', 'keeps', 'make', 'makes', 'made', 'read', 'reads', 'write', 'writes',
+  'follow', 'follows', 'edit', 'edits', 'wired', 'works', 'work', 'runs', 'run', 'take', 'takes', 'give', 'gives', 'want',
+  'wants', 'need', 'needs', 'know', 'knows', 'see', 'sees', 'show', 'shows', 'get', 'gets', 'try', 'tries', 'use', 'uses',
+  'own', 'only', 'small', 'big', 'new', 'good', 'great', 'real', 'whole', 'every', 'each', 'other', 'same', 'first', 'last',
+  'never', 'always', 'still', 'even', 'also', 'again', 'beside', 'without', 'within', 'across', 'through', 'free',
+  'private', 'local', 'automatically', 'did', 'does', 'done', 'going', 'said', 'says', 'able', 'less', 'much', 'many']);
+const THING_STEM = (word: string) => word.replace(/(?:ing|ed|s)$/, '').replace(/e$/, '');
+export function nounsOf(line: string): string[] {
+  SUMMONS_TEXT.lastIndex = 0;
+  return [...new Set(content(line ?? '').filter((word) => !NOT_THINGS.has(word) && !/(?:ly|ing|ed)$/.test(word)
+    && !new RegExp(SUMMONS_TEXT.source, 'i').test(word)))];
+}
+const hasNoun = (text: string, nouns: string[]): boolean => {
+  const mine = new Set(content(text ?? '').map(THING_STEM));
+  return nouns.some((noun) => mine.has(THING_STEM(noun)));
+};
+
+// Whether a picture is of the line it sits under. It is, if it has one of the line's own things in it; or if it
+// declares a stand-in for the line, and the stand-in says which of the line's words it stands for. A line with no
+// thing in it at all ("you decide") may be met with any word of it, or a declared stand-in. Anything else is a
+// picture of something else.
 export const aboutTheLine = (visual: Visual): boolean => {
-  const line = new Set([...content(visual.line), ...content(visual.about ?? '')]);
-  if (!line.size) return true;
-  if (content(visual.subject).some((word) => line.has(word))) return true;
+  const said = `${visual.line} ${visual.about ?? ''}`;
+  const words = content(said);
+  if (!words.length) return true;
+  const nouns = nounsOf(said);
+  const standsIn = !!visual.metaphor && content(visual.metaphor).length >= 2
+    && content(visual.metaphor).map(THING_STEM).some((word) => words.map(THING_STEM).includes(word));
+  if (nouns.length) return hasNoun(visual.subject, nouns) || standsIn;
+  if (content(visual.subject).some((word) => words.includes(word))) return true;
   return !!visual.metaphor && content(visual.metaphor).length >= 2;
+};
+
+// A subject that is only a list of the line's words — "computer and nothing and decide, on a loading bay" — is not a
+// picture of anything: a picture model reads it as a place with some words in front, and draws the place.
+export const listSubject = (subject: string): boolean => /^(?:[\p{L}'-]+ and )+[\p{L}'-]+,/u.test((subject ?? '').trim());
+
+// Whether a subject, written now or remembered from an earlier film, holds up as this shot's picture.
+export const heldUp = (visual: Visual): boolean =>
+  countWords(visual.subject) >= 4 && !listSubject(visual.subject) && aboutTheLine(visual);
+
+// Whether a found photograph is of the line, by what its photographer said it is.
+export const photoOfTheLine = (what: string, visual: Pick<Visual, 'line' | 'about'>): boolean => {
+  const nouns = nounsOf(`${visual.line} ${visual.about ?? ''}`);
+  return !nouns.length || hasNoun(what, nouns);
 };
 
 // --- the reading ------------------------------------------------------------------------------------------
@@ -192,6 +240,9 @@ export function criticiseVisuals(visuals: Visual[]): Finding[] {
     }
     if (asksForWriting(visual.subject)) {
       say('lettering', index, `${where} asks a picture model to write "${asksForWriting(visual.subject)}", and a picture model cannot write`);
+    }
+    if (listSubject(visual.subject)) {
+      say('thin', index, `${where} is a list of words, "${trimTo(visual.subject, 8)}", and a picture model draws the place after them`);
     }
     if (!aboutTheLine(visual)) {
       say('unrelated', index, `${where} shares no word with "${trimTo(visual.line, 9)}" and names no stand-in for it`);
@@ -227,12 +278,21 @@ export function criticiseVisuals(visuals: Visual[]): Finding[] {
 
 // The places a picture can be, one per shot, so two shots drawn from the same line are still two pictures. These
 // are deliberately plain: a place is where a thing happens, and the drama is meant to come from the subject.
+//
+// A place is also never bigger than the thing on it. "On a loading bay at dusk" is a subject of its own, and a picture
+// model handed a thin subject and a loading bay draws the loading bay — which is how the hero film's promise ended
+// up over one. Every place here is a surface the thing rests on, so the thing stays the picture.
 const PLACES = [
-  'in an empty office at first light', 'across a bare wooden table', 'in a stairwell with one window',
-  'on a loading bay at dusk', 'in a workshop with the door open', 'against a plain painted wall',
-  'in a kitchen at the end of the day', 'on a bench outside a station', 'in a storeroom under one lamp',
-  'beside a window on a grey afternoon', 'in a corridor with the lights off', 'on a rooftop before the rain',
+  'resting on a bare wooden table in first light', 'on a plain desk against a painted wall', 'on a windowsill on a grey afternoon',
+  'on a workbench under one lamp', 'on a linen cloth in soft window light', 'on a stone step in open shade',
+  'on a kitchen counter at the end of the day', 'on a shelf in a quiet room', 'on a slate surface under raked light',
+  'on a folded blanket beside a window', 'on a painted floor in morning light', 'on a low table in an empty room',
 ];
+// Things that take no article: "research", not "a research".
+const MASS = new Set(['research', 'work', 'data', 'time', 'money', 'light', 'water', 'privacy', 'access', 'software',
+  'information', 'advice', 'feedback', 'progress', 'context', 'music', 'paper', 'mail', 'code']);
+const withArticle = (noun: string): string =>
+  (MASS.has(noun) || (/s$/.test(noun) && !/ss$/.test(noun)) ? noun : `${/^[aeiou]/.test(noun) ? 'an' : 'a'} ${noun}`);
 // What the camera is doing, per kind. This is the half of a picture nobody writes down and every generated still
 // is missing: a frame has a distance and a lens, and six frames at the same distance read as one frame.
 // One of these describes a person and the rest describe a place or a thing, and that is the whole point. A
@@ -271,10 +331,20 @@ export function subjectWords(line: string, used: Set<string>, most = 3): string[
 // It is the subject only — no framing and no hole for the type. Those are the same handful of words on every
 // picture in a film, and baking them into the subject made two perfectly different pictures look, to the rule
 // that counts shared words, like the same picture twice.
+//
+// The line's own things come first, set as things ("a computer beside a wire"), with nobody in them where the line
+// has a thing that is not a person. Only a line with no thing in it at all falls back to its other words.
 export function visualFrom(line: string, at: number, used: Set<string>): string {
+  const things = nounsOf(line).filter((word) => !used.has(word));
+  const still = things.filter((word) => !somebodyIn(word));
+  const picked = (still.length ? still : things).sort((a, b) => b.length - a.length).slice(0, 2);
+  if (picked.length) {
+    for (const word of picked) used.add(word);
+    return `${picked.map(withArticle).join(' beside ')}, ${PLACES[at % PLACES.length]}`;
+  }
   const words = subjectWords(line, used, 3);
   for (const word of words) used.add(word);
-  const about = words.length ? words.join(' and ') : trimTo(line, 4) || 'a pair of hands at rest';
+  const about = words.length ? `an object that stands for ${words.join(', ')}` : trimTo(line, 4) || 'a pair of hands at rest';
   return `${about}, ${PLACES[at % PLACES.length]}`;
 }
 
@@ -294,7 +364,7 @@ export function repairVisuals(visuals: Visual[]): { visuals: Visual[]; notes: st
     const wrong = () => {
       const filler = fillerShot(one.subject);
       if (filler && !content(one.line).some((word) => filler.includes(word))) return 'generic';
-      if (countWords(one.subject) < 4) return 'thin';
+      if (countWords(one.subject) < 4 || listSubject(one.subject)) return 'thin';
       if (!aboutTheLine(one)) return 'unrelated';
       if (made.some((other) => shares(one.subject, other.subject) >= SAME)) return 'repeated';
       const head = headNoun(one.subject);
