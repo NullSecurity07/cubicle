@@ -23,6 +23,7 @@ const VERBS: Record<string, [doing: string, done: string]> = {
   make_site: ['Making the site', 'Made the site'], edit_site: ['Editing the site', 'Edited the site'], read_site: ['Reading the site', 'Read the site'],
   read_metrics: ['Reading the numbers', 'Read the numbers'], log_metric: ['Writing a number', 'Wrote a number'], propose_target: ['Suggesting a target', 'Suggested a target'],
   read_interview: ['Reading the interview', 'Read the interview'],
+  read_survey: ['Reading the survey', 'Read the survey'],
   read_runway: ['Reading the runway', 'Read the runway'], propose_flow: ['Suggesting a flow', 'Suggested a flow'], propose_scenario: ['Suggesting a scenario', 'Suggested a scenario'],
   read_youtube: ['Reading the video', 'Read the video'], read_feed: ['Reading the feed of', 'Read the feed of'], read_reddit: ['Reading Reddit:', 'Read Reddit:'],
   use_skill: ['Reading the skill', 'Read the skill'], note_founder: ['Noting about you:', 'Noted about you:'], ask_founder: ['Asking you:', 'Asked you:'],

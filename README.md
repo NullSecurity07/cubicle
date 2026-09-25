@@ -191,6 +191,20 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   one subject. **Write insights** asks that person, with the `story-interview` skill, for the pains, the workaround,
   quotes with their times and any sign they would pay, in a doc the card makes beside itself; wire the Customer
   discovery team's Interviews doc to the card and the insights go there instead.
+- **Survey** (2026-09-25): the Sean Ellis question ("how would you feel if you could no longer use it?") is the
+  quickest honest read on product-market fit, and a founder should not need a survey tool's dashboard to score it.
+  The card starts from PMF (the four Sean Ellis questions), NPS or a blank, and the questions edit in place. The app
+  answers only its own page, so it hosts no form: **Copy questions** gives a plain list for an email, and **Copy for
+  Tally / Forms** a numbered list with each field's kind and choices, to build the form in Tally or Google Forms.
+  Their CSV export comes back by paste or drop; columns are matched to questions by their words (and the Sean Ellis
+  and NPS columns by their answers when the header was reworded), and the card says how many rows came in, which
+  were skipped and why, and which columns it did not use. The same file imported twice adds nothing. Results show the
+  share very disappointed against the **40% benchmark** (never rounded up, and "too few to trust" under 30 answers),
+  the segment that would miss it most (from "who would most benefit"), the reasons the very disappointed give and what
+  the somewhat disappointed ask for, clustered by shared words, and NPS. **Every number is counted in
+  `shared/survey.ts`**, never by a model. A wired person reads a two-line summary each turn and the raw answers with
+  `read_survey`; **Write summary** asks them for a doc. The Product-market fit engine team now lands with a Survey
+  card wired to its survey runner and segment reader. The answers live in `workspace/surveys/<card>.jsonl`.
 - **A site read whole, and a page watched** (2026-09-24): `crawl_site` reads a competitor's site in one go, 15
   pages two links deep unless a person asks for more (at most 40, three deep), two at a time and gently, and obeys
   its robots.txt. It gives a map of the pages and quotes the five that best answer your question; every page's text
