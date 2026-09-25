@@ -261,6 +261,11 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   **Pre-mortem**, **Pricing and unit economics**, **Traction channels**, **Hiring scorecard**, **Positioning**,
   **Working backwards** and the **One-page plan**. A shelf test checks every team's briefs against its own note's
   headings, and that whoever is told to use the board, the leads, a browser or a colleague is wired to it.
+- **Built-in teams stay current** (2026-09-25): a fix to a shipped team's briefs is worthless if workspaces that copied
+  it earlier never see it, so on every start a copy you never touched (its content still one the app once shipped, per
+  `app/frameworks/shipped.json`, written by `pnpm frameworks:ledger`) is swapped for today's team, and a copy you
+  changed stays yours with a quiet "An update is available" and a Take the update press in the Frameworks panel. The
+  replaced copy goes to `workspace/trash/`; teams already on the stage keep the briefs they were placed with.
 
 ## Run it
 

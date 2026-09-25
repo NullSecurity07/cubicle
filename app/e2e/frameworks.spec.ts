@@ -1,3 +1,5 @@
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 
 // The frameworks journey: the founder opens the panel, puts the built-in evaluation team on the stage in one press,
@@ -109,4 +111,47 @@ test('the thirteen new teams are on the shelf, and the LinkedIn content system l
   await expect(page.locator('.react-flow__edge')).toHaveCount(31);
   await expect.poll(async () => ((await (await page.request.get('/api/stage')).json()) as { rooms: { role: string }[] }).rooms.some((room) => room.role === 'Outbound')).toBe(true);
   await page.screenshot({ path: 'test-results/shots/linkedin-content-system.png' });
+});
+
+// A workspace that copied the built-in teams yesterday: the investor update exactly as it shipped then, and weekly
+// metrics as it shipped then with an intent the founder rewrote. On the next start the untouched team is today's, the
+// changed one is theirs with a quiet offer beside it, and taking the offer brings today's team in.
+test('a built-in team copied before a fix gets the fix on the next start, and an edited one is offered it', async ({ page }) => {
+  const fixture = (name: string) => JSON.parse(readFileSync(join(import.meta.dirname, 'fixtures', name), 'utf8')) as Record<string, unknown>;
+  const seed = (id: string, framework: Record<string, unknown>) => {
+    const dir = join(process.env.STAGE_WORKSPACE!, 'frameworks', id);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'framework.json'), `${JSON.stringify({ ...framework, id }, null, 2)}\n`);
+  };
+  seed('investor-update', fixture('investor-update-2026-09-24.json'));
+  seed('weekly-metrics', { ...fixture('weekly-metrics-2026-09-24.json'), intent: 'My own weekly numbers, my way.' });
+
+  // The start, the way the founder's app gets one: the watcher sees a file change and starts the api again.
+  writeFileSync(join(process.env.STAGE_RESTART_DIR!, 'restart.txt'), String(Date.now()));
+  type Held = { id: string; intent: string; update?: boolean; rooms: { key: string; brief: string }[] };
+  const held = async (id: string) => ((await (await page.request.get('/api/frameworks')).json()) as Held[]).find((one) => one.id === id);
+  await expect.poll(async () => (await held('investor-update').catch(() => undefined))?.rooms.find((room) => room.key === 'writer')?.brief ?? '',
+    { timeout: 60_000, intervals: [500] }).toContain('Numbers is empty when its This month column has no figures');
+  await page.reload();
+
+  await page.getByLabel('Frameworks', { exact: true }).click();
+  const investor = panel(page).locator('.frameworks__one').filter({ hasText: 'Investor update' });
+  await expect(investor.locator('.frameworks__update')).toHaveCount(0);
+  await investor.getByRole('button', { name: 'Briefs' }).click();
+  await expect(investor.getByRole('textbox', { name: /^Brief for .+/ }).last()).toHaveValue(/Numbers is empty when its This month column has no figures/);
+
+  // The founder's own copy is theirs: their intent, and an offer rather than a change.
+  const weekly = panel(page).locator('.frameworks__one').filter({ hasText: 'Weekly metrics' });
+  await expect(weekly).toContainText('My own weekly numbers, my way.');
+  await expect(weekly.locator('.frameworks__update')).toContainText('An update is available.');
+  await expect(weekly.locator('.frameworks__update')).toContainText('Teams already on the stage keep their briefs');
+  await weekly.scrollIntoViewIfNeeded();
+  await weekly.screenshot({ path: 'test-results/shots/frameworks-update-offered.png' });
+  await weekly.getByRole('button', { name: 'Take the update' }).click();
+  await expect(weekly.locator('.frameworks__update')).toHaveCount(0);
+  await expect(weekly).not.toContainText('My own weekly numbers, my way.');
+  await expect(weekly).toContainText('Agree four or five written metric definitions');
+  expect((await held('weekly-metrics'))?.update).toBeUndefined();
+  await weekly.screenshot({ path: 'test-results/shots/frameworks-update-taken.png' });
+  await page.keyboard.press('Escape');
 });
