@@ -27,6 +27,9 @@ function Canvas({ initial }: { initial: ReturnType<typeof toFlow> }) {
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initial.edges);
   const [connecting, setConnecting] = useState(false);
   const lastSaved = useRef(JSON.stringify(fromFlow(initial.nodes, initial.edges)));
+  // The save on its way, if one is: a caller that flushes while the same stage is still being put waits for that put
+  // rather than being told "saved" at once, so a card added a moment ago is known to the server before its first read.
+  const saving = useRef<Promise<void>>(Promise.resolve());
 
   const onConnect = useCallback(
     (connection: Connection) => setEdges((current) => (allowedWire(connection, current) ? addEdge({ ...connection, ...WIRE }, current) : current)),
@@ -48,9 +51,10 @@ function Canvas({ initial }: { initial: ReturnType<typeof toFlow> }) {
   const save = useCallback(async () => {
     const stage = fromFlow(latest.current.nodes, latest.current.edges);
     const text = JSON.stringify(stage);
-    if (text === lastSaved.current) return;
+    if (text === lastSaved.current) return saving.current;
     lastSaved.current = text;
-    await putStage(stage);
+    saving.current = putStage(stage).then(() => undefined, (error: Error) => { lastSaved.current = ''; throw error; });
+    return saving.current;
   }, []);
   useEffect(() => {
     const timer = setTimeout(() => void save(), 400);
