@@ -275,7 +275,7 @@ export function crawlFile(crawl: Crawled, ask: CrawlAsk, now: number): string {
   return text;
 }
 
-async function runCrawl(ask: CrawlAsk, options: CrawlOptions, signal?: AbortSignal): Promise<string> {
+export async function runCrawl(ask: CrawlAsk, options: CrawlOptions, signal?: AbortSignal): Promise<string> {
   const now = options.now ?? Date.now;
   let crawl: Crawled;
   try { crawl = await crawlSite(ask, options, signal); } catch (error) { return `The site could not be read: ${failure(error)}.`; }
@@ -296,10 +296,18 @@ export const WATCH_TEXT = 20_000;
 export const WATCHES_ROOM = 10;
 export const WATCHES_ALL = 40;
 export const FAILS_TOLD = 3;
+export const HISTORY = 24;
 const SHOWN_FOR = 14 * 86_400_000;
+// One change seen on a watched page, kept so a competitor's card can show more than the last one. `note` is what a
+// person wired to that card made of it, in two lines.
+export type WatchChange = { at: number; diff: string; note?: { by: string; text: string } };
+// `cardId` is the Competitor card a watch was started from; `roomId` is still whose it is (the person wired to that
+// card, or 'founder' when nobody was). `history` holds the changes, oldest first; a watch saved before it had one
+// carries only `changedAt` and `diff`.
 export type Watch = {
   id: string; url: string; what: string; roomId: string; title: string; hash: string; text: string;
   addedAt: number; checkedAt: number; readAt?: number; changedAt?: number; diff?: string; fails?: number; lastFail?: string;
+  cardId?: string; history?: WatchChange[];
 };
 
 // The text as it is compared: spacing does not count, and neither do the numbers that change on every visit (a date,
@@ -317,7 +325,7 @@ export function diffOf(before: string, after: string, most = 3): string {
   const lines = [...now.filter((line) => !had.has(numb(line))).map((line) => `+ ${clip(line, 200)}`), ...old.filter((line) => !has.has(numb(line))).map((line) => `− ${clip(line, 200)}`)];
   return lines.length ? `${lines.slice(0, most).join('\n')}${lines.length > most ? `\n(and ${lines.length - most} more changed lines)` : ''}` : 'The words moved around, but no line was added or taken out.';
 }
-const sameUrl = (one: string, other: string) => { try { return keyOf(webUrl(one)) === keyOf(webUrl(other)) && new URL(webUrl(one)).search === new URL(webUrl(other)).search; } catch { return one.trim() === other.trim(); } };
+export const sameUrl = (one: string, other: string) => { try { return keyOf(webUrl(one)) === keyOf(webUrl(other)) && new URL(webUrl(one)).search === new URL(webUrl(other)).search; } catch { return one.trim() === other.trim(); } };
 
 export function createWatches(dir: string) {
   const keyOf = (roomId: string) => roomId.replace(/[^\w-]/g, '_');
@@ -365,6 +373,9 @@ export function createWatches(dir: string) {
   return { read, all, change, settled: () => queue };
 }
 export type Watches = ReturnType<typeof createWatches>;
+// One store a folder, shared by every slice that reads or writes watches, so their changes queue behind each other.
+const opened = new Map<string, Watches>();
+export const watchesAt = (dir: string): Watches => { let one = opened.get(dir); if (!one) opened.set(dir, one = createWatches(dir)); return one; };
 
 async function readWatched(url: string, options: CrawlOptions, signal?: AbortSignal): Promise<{ title: string; text: string; url: string }> {
   const got = await getPublic(url, options.http ?? fetch, options.resolveHost ?? dnsResolve, signal ? AbortSignal.any([signal, AbortSignal.timeout(20_000)]) : AbortSignal.timeout(20_000));
@@ -403,6 +414,9 @@ export async function checkOne(watches: Watches, deps: WatchDeps, options: Crawl
     if (hash !== watch.hash) {
       const since = watch.readAt ?? watch.addedAt;
       watch.diff = diffOf(watch.text, read.text);
+      // A change from before the history began goes in first, so the older one is not lost.
+      const history = watch.history ?? (watch.changedAt ? [{ at: watch.changedAt, diff: watch.diff }] : []);
+      watch.history = [...history, { at: now, diff: watch.diff }].slice(-HISTORY);
       watch.changedAt = now;
       said.push(`The page ${read.title} changed since ${isoDay(since)}: ${watch.url}\n${watch.diff}${watch.what ? `\n(You asked to watch it for: ${watch.what}.)` : ''}`);
       watch.title = read.title;
@@ -412,8 +426,10 @@ export async function checkOne(watches: Watches, deps: WatchDeps, options: Crawl
     watch.readAt = now;
     return { ...watch };
   });
+  // A watch the founder started from a Competitor card with nobody wired belongs to no room: it is said in Needs you only.
+  const room = updated && said.length ? (await deps.store.loadStage()).rooms.some((one) => one.id === updated.roomId) : false;
   if (updated && said.length) {
-    await deps.store.appendChat(updated.roomId, { id: newMessageId(), role: 'assistant', text: said[0], at: now, provider: 'Page watch', model: new URL(updated.url).host });
+    if (room) await deps.store.appendChat(updated.roomId, { id: newMessageId(), role: 'assistant', text: said[0], at: now, provider: 'Page watch', model: new URL(updated.url).host });
     if (updated.changedAt === now) {
       await deps.attention.refresh();
       deps.notify(`${updated.title} changed`, said[0].split('\n')[1] ?? updated.url);
@@ -429,9 +445,36 @@ export const watchAttention = (watches: Watches, deps: Pick<Deps, 'store'>, now:
   const stage = await deps.store.loadStage();
   return changed.map((one) => ({
     id: `page-changed:${one.id}:${one.changedAt}`, kind: 'page-changed' as const, title: `The page ${one.title} changed`, at: one.changedAt!,
-    detail: `${one.url}\n${one.diff ?? ''}`.trim(), roomId: one.roomId, who: stage.rooms.find((room) => room.id === one.roomId)?.name,
+    detail: `${one.url}\n${one.diff ?? ''}`.trim(), ...(stage.rooms.some((room) => room.id === one.roomId) ? { roomId: one.roomId } : {}),
+    who: stage.rooms.find((room) => room.id === one.roomId)?.name, ...(one.cardId ? { cardId: one.cardId } : {}),
   }));
 };
+
+// ---------------------------------------------------------------- starting a watch
+
+// Starts watching one page for `roomId`, reading it once now. The words back say what happened either way; `ok` is
+// true when the page is watched afterwards, newly or already. Shared by watch_page and the Competitor card's Watch.
+export async function startWatch(watches: Watches, options: CrawlOptions, ask: { roomId: string; url: string; what?: string; cardId?: string }, signal?: AbortSignal): Promise<{ ok: boolean; text: string; watch?: Watch }> {
+  const now = options.now ?? Date.now;
+  let url: string;
+  try { url = await publicUrl(ask.url.trim(), options.resolveHost ?? dnsResolve); } catch (error) { return { ok: false, text: `That page cannot be watched: ${(error as Error).message}.` }; }
+  const mine = await watches.read(ask.roomId);
+  const there = mine.find((one) => sameUrl(one.url, url));
+  if (there) return { ok: true, text: `${there.url} is already watched, since ${isoDay(there.addedAt)}.`, watch: there };
+  if (mine.length >= WATCHES_ROOM) return { ok: false, text: `You already watch ${WATCHES_ROOM} pages, the most one person may. Stop one with stop_watching first.` };
+  if ((await watches.all()).length >= WATCHES_ALL) return { ok: false, text: `The app already watches ${WATCHES_ALL} pages, the most it keeps. Ask the founder which to stop.` };
+  let page: Awaited<ReturnType<typeof readWatched>>;
+  try { page = await readWatched(url, options, signal); } catch (error) { return { ok: false, text: `The page could not be read, so it is not watched: ${failure(error)}.` }; }
+  const at = now();
+  const watch: Watch = { id: newId('w', 4, '', at), url, what: (ask.what ?? '').trim().slice(0, 200), roomId: ask.roomId, title: page.title, hash: hashOf(page.text), text: page.text.slice(0, WATCH_TEXT), addedAt: at, checkedAt: at, readAt: at, ...(ask.cardId ? { cardId: ask.cardId } : {}) };
+  const added = await watches.change(ask.roomId, (list) => {
+    if (list.some((one) => sameUrl(one.url, url))) return false;
+    list.push(watch);
+    return true;
+  });
+  if (!added) return { ok: true, text: `${url} is already watched.` };
+  return { ok: true, text: `Watching ${page.title} (${url}). It was read just now and will be read again every 6 hours while the app is open. A change comes to this conversation and to Needs you.`, watch };
+}
 
 // ---------------------------------------------------------------- the tools
 
@@ -473,24 +516,7 @@ export function crawlTools(options: CrawlOptions, watches: Watches): Tool[] {
       parameters: { type: 'object', properties: { url: { type: 'string', description: 'The page to watch' }, what: { type: 'string', description: 'What to look out for on it, in a few words' } }, required: ['url'] },
       approval: async (args) => `Watch ${str(args, 'url')} for changes? It is read once every 6 hours while the app is open.`,
       async run(args, context) {
-        let url: string;
-        try { url = await publicUrl(str(args, 'url'), options.resolveHost ?? dnsResolve); } catch (error) { return { text: `That page cannot be watched: ${(error as Error).message}.` }; }
-        const mine = await watches.read(context.roomId);
-        const there = mine.find((one) => sameUrl(one.url, url));
-        if (there) return { text: `${there.url} is already watched, since ${isoDay(there.addedAt)}.` };
-        if (mine.length >= WATCHES_ROOM) return { text: `You already watch ${WATCHES_ROOM} pages, the most one person may. Stop one with stop_watching first.` };
-        if ((await watches.all()).length >= WATCHES_ALL) return { text: `The app already watches ${WATCHES_ALL} pages, the most it keeps. Ask the founder which to stop.` };
-        let page: Awaited<ReturnType<typeof readWatched>>;
-        try { page = await readWatched(url, options, context.signal); } catch (error) { return { text: `The page could not be read, so it is not watched: ${failure(error)}.` }; }
-        const at = now();
-        const watch: Watch = { id: newId('w', 4, '', at), url, what: str(args, 'what').slice(0, 200), roomId: context.roomId, title: page.title, hash: hashOf(page.text), text: page.text.slice(0, WATCH_TEXT), addedAt: at, checkedAt: at, readAt: at };
-        const added = await watches.change(context.roomId, (list) => {
-          if (list.some((one) => sameUrl(one.url, url))) return false;
-          list.push(watch);
-          return true;
-        });
-        if (!added) return { text: `${url} is already watched.` };
-        return { text: `Watching ${page.title} (${url}). It was read just now and will be read again every 6 hours while the app is open. A change comes to this conversation and to Needs you.` };
+        return { text: (await startWatch(watches, options, { roomId: context.roomId, url: str(args, 'url'), what: str(args, 'what') }, context.signal)).text };
       },
     },
     {
@@ -540,7 +566,7 @@ export const fakeSite: typeof fetch = async (input) => {
 export default {
   name: 'crawl',
   install(deps: Deps) {
-    const watches = createWatches(join(deps.workspace, 'watch'));
+    const watches = watchesAt(join(deps.workspace, 'watch'));
     const options: CrawlOptions = {
       workspace: deps.workspace,
       cache: !deps.fake,

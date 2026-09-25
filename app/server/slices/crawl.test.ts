@@ -10,7 +10,7 @@ import type { Store } from '../store.ts';
 import type { ToolContext } from '../tools/registry.ts';
 import { UNTRUSTED } from '../tools/web.ts';
 import {
-  checkOne, crawlFile, crawlSite, crawlTools, createWatches, diffOf, disallowed, fakeSite, hashOf, OUT_CHARS, readPage, without, robotsRules, showCrawl,
+  checkOne, crawlFile, startWatch, crawlSite, crawlTools, createWatches, diffOf, disallowed, fakeSite, hashOf, OUT_CHARS, readPage, without, robotsRules, showCrawl,
   WATCH_EVERY, WATCHES_ROOM, watchAttention, type CrawlOptions, type Crawled,
 } from './crawl.ts';
 
@@ -232,6 +232,27 @@ describe('watching a page', () => {
     up = true;
     clock.now = NOW + 5 * WATCH_EVERY;
     expect((await checkOne(watches, deps, opts))?.fails).toBe(0);
+  });
+
+  it('keeps every change, and a watch the founder started from a card is said in Needs you only', async () => {
+    let body = fixture('pricing.html');
+    const { http } = site({ '/pricing': () => html(body)() });
+    const { store, attention, watches, clock, deps, opts } = await setup(http);
+    expect((await startWatch(watches, opts, { roomId: 'founder', url: 'https://acme.test/pricing', cardId: 'competitor-1' })).ok).toBe(true);
+    // A change from before the history began is kept as the first entry.
+    await watches.change('founder', (list) => { list[0].changedAt = NOW - 1; list[0].diff = '+ older'; });
+    clock.now = NOW + WATCH_EVERY;
+    body = body.replace('billed yearly', 'billed monthly. A new Starter plan is free for two');
+    await checkOne(watches, deps, opts);
+    clock.now = NOW + 2 * WATCH_EVERY;
+    body = body.replace('free for two', 'gone again, and so is the old line');
+    await checkOne(watches, deps, opts);
+    const [saved] = await watches.read('founder');
+    expect(saved.history?.map((one) => one.at)).toEqual([NOW - 1, NOW + WATCH_EVERY, NOW + 2 * WATCH_EVERY]);
+    expect(await store.readChat('founder')).toEqual([]);
+    const needs = (await attention.list()).find((one) => one.kind === 'page-changed')!;
+    expect(needs).toMatchObject({ cardId: 'competitor-1' });
+    expect(needs.roomId).toBeUndefined();
   });
 
   it('never reads in fake mode, and keeps to its limits', async () => {
