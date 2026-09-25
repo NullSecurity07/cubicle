@@ -142,6 +142,20 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   Metrics card is wired, and names an amount on the ask only when your brief does. Notes under the deck ("merge 2
   and 3, drop 5, slide 4: say it for a buyer") remake only the slides they touch, as the next version beside the
   last. A person wired to the card can `make_deck`, `edit_deck` and `read_deck`.
+- **Site studio** (2026-09-25): a one-page website made on this machine, because a founder needs a page to point
+  people at long before they need a web designer. Write what the site is for and where its button goes (a link or an
+  email in the brief), pick a look (clean, editorial, or brand, which takes a wired project's colours, typeface and
+  logo), and press **Make**. It is made from what is wired to the card: documents, notes, a project's README, a
+  Metrics card, and pictures (a picture card, or an Image studio, which then draws the pictures the page asks for).
+  The page is our own HTML and CSS with no script on it: hero, problem, how it works, proof, pricing, questions and a
+  closing call to action. The card shows it at a laptop's width and a phone's side by side. A critic that is rules,
+  not a model, holds it to one H1, a button above the fold on a 390 px phone, text contrast of 4.5:1 (a brand colour
+  that cannot be read is moved just far enough, and words over a picture get a measured wash), a page under 500 KB,
+  and every claim traced to a wired doc or the Metrics card; a claim nobody wired is cut, not softened. Each version
+  is a folder, `workspace/sites/<card>/v<n>/` with `index.html`, `style.css` and `media/`. **Download folder** gives
+  it as a zip for any static host, and **Open in browser card** opens it on the stage. Nothing is hosted; publishing
+  is your own step. Notes ("shorter hero, drop pricing, button: Book a demo") remake only the sections they touch, as
+  the next version beside the last. A person wired to the card can `make_site`, `edit_site` and `read_site`.
 - **Metrics** (2026-09-25): the few numbers a founder steers by, on the stage where people can read them. One card
   holds a north star, large, with how it moved since last week (or month) and a line of the last twelve, and up to
   six more numbers beneath it. Paste a table or drop a `.csv` or `.json` file, a date then one column a number or

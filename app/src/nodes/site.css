@@ -1,0 +1,27 @@
+/* The Site card: the page at a laptop's width and a phone's, side by side at one scale, then the critic's rules as a
+   row of marks, then the studio's own rows (the folder, the versions, notes, the brief). Each preview is the real
+   page in a frame, scaled, so what the card shows is what a visitor sees. */
+
+.site__panes { position: relative; flex: none; min-height: 230px; margin: 8px 10px 0; padding: 12px 7px 8px; border-radius: 10px; background: rgba(0, 0, 0, 0.25); box-shadow: inset 0 0 0 1px var(--card-border); display: flex; align-items: flex-start; justify-content: center; }
+.site__panes > .chat__empty { max-width: 320px; margin: auto; padding: 14px; }
+.site__pair { display: flex; align-items: flex-start; gap: 14px; animation: site-in 0.28s ease both; }
+.site__lines { position: absolute; inset: 0; margin: 0; padding: 12px 14px; overflow-y: auto; }
+
+.site__screen { position: relative; flex: none; margin: 0 0 20px; }
+.site__screen iframe { position: absolute; top: 0; left: 0; border: 0; border-radius: 0; transform-origin: 0 0; background: #fff; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12), 0 14px 30px -18px rgba(0, 0, 0, 0.8); }
+.site__screen:last-child iframe { border-radius: 24px; }
+.site__screen figcaption { position: absolute; left: 0; right: 0; bottom: -18px; font-size: 10.5px; color: var(--muted); text-align: center; font-variant-numeric: tabular-nums; }
+
+.site__checks { flex: none; display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 8px 12px 0; padding: 0; list-style: none; font-size: 11px; color: var(--muted); }
+.site__checks li { display: flex; align-items: center; gap: 5px; cursor: default; }
+.site__checks span { display: inline-grid; place-items: center; width: 13px; height: 13px; border-radius: 50%; font-size: 8.5px; font-weight: 700; }
+.site__checks .is-ok span { color: #0d2a18; background: #6fcf97; }
+.site__checks .is-off span { color: #2a1b05; background: #f0b35a; }
+.site__checks .is-off { color: var(--text); }
+
+.site__said { max-height: 3.9em; overflow-y: auto; }
+.studio__done .site__open { margin-left: 0; }
+.studio__done .site__open:disabled { opacity: 0.5; cursor: default; text-decoration: none; }
+
+@keyframes site-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .site__pair { animation: none; } }

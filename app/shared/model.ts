@@ -36,6 +36,8 @@ export type Card = Box & { id: string } & ({ kind: 'browser'; headed?: boolean; 
   | { kind: 'leads' }
   // A deck made from a brief and what is wired to it. The slides and every version live in `<workspace>/decks/<id>.json`.
   | { kind: 'deck'; brief?: string; purpose?: 'pitch' | 'update' | 'sales' | 'demo-day'; look?: 'clean' | 'editorial' | 'brand' }
+  // A one-page website made from a brief and what is wired to it. Every version lives in `<workspace>/sites/<id>/`.
+  | { kind: 'site'; brief?: string; look?: 'clean' | 'editorial' | 'brand'; sections?: string[] }
   // The founder's numbers: a north star and a few beside it. The readings live in `<workspace>/metrics/<id>.json`, owned by the server.
   | { kind: 'metrics'; title?: string; period?: 'week' | 'month' }
   // The founder's cash and burn; the numbers live in `<workspace>/runway/<id>.json`, owned by the server.

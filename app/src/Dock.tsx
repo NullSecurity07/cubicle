@@ -55,6 +55,7 @@ const MORE: [kind: CardKind, label: string, hint: string][] = [
   ['board', 'Task board', 'People propose, you run'],
   ['leads', 'Leads', 'People to sell to, and where each one stands'],
   ['deck', 'Deck', 'Slides from a brief and what is wired, as a PDF'],
+  ['site', 'Site studio', 'A one-page website from a brief, as a folder'],
   ['metrics', 'Metrics', 'Your north star and the numbers beside it'],
   ['runway', 'Runway', 'Cash, burn, and the month it runs out'],
   ['competitor', 'Competitor', 'A rival\'s pages watched, and every change'],

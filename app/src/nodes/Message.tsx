@@ -20,6 +20,7 @@ const VERBS: Record<string, [doing: string, done: string]> = {
   add_lead: ['Adding lead', 'Added lead'], score_lead: ['Scoring', 'Scored'], note_lead: ['Noting on', 'Noted on'], move_lead: ['Moving', 'Moved'],
   list_leads: ['Reading', 'Read'], find_leads: ['Finding', 'Found'],
   make_deck: ['Making the deck', 'Made the deck'], edit_deck: ['Editing the deck', 'Edited the deck'], read_deck: ['Reading the deck', 'Read the deck'],
+  make_site: ['Making the site', 'Made the site'], edit_site: ['Editing the site', 'Edited the site'], read_site: ['Reading the site', 'Read the site'],
   read_metrics: ['Reading the numbers', 'Read the numbers'], log_metric: ['Writing a number', 'Wrote a number'], propose_target: ['Suggesting a target', 'Suggested a target'],
   read_interview: ['Reading the interview', 'Read the interview'],
   read_runway: ['Reading the runway', 'Read the runway'], propose_flow: ['Suggesting a flow', 'Suggested a flow'], propose_scenario: ['Suggesting a scenario', 'Suggested a scenario'],
