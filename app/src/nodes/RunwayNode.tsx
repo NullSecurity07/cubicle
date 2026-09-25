@@ -32,12 +32,14 @@ const amountOf = (text: string) => parseAmount(text.replace(/\s/g, ''));
 
 // One editable value that saves when the founder leaves it or presses Enter, and puts itself back on Escape or a value
 // that does not read. Keyed by what is saved, so news from the server replaces what is shown.
-function Field({ value, label, onCommit, className, placeholder, type = 'text', show }: {
-  value: string; label: string; onCommit: (text: string) => boolean | void; className?: string; placeholder?: string; type?: string; show?: (value: string) => string;
+function Field({ value, label, onCommit, className, placeholder, type = 'text', show, fit }: {
+  value: string; label: string; onCommit: (text: string) => boolean | void; className?: string; placeholder?: string; type?: string; show?: (value: string) => string; fit?: boolean;
 }) {
   const shown = show ? show(value) : value;
+  // `fit`: as wide as what it holds, so the words after it sit beside the number instead of a column's width away.
+  const width = fit ? `calc(${Math.max(shown.length, placeholder?.length ?? 0, 4)}ch + 16px)` : undefined;
   return (
-    <input key={shown} type={type} className={className} aria-label={label} placeholder={placeholder} defaultValue={shown}
+    <input key={shown} type={type} className={className} aria-label={label} placeholder={placeholder} defaultValue={shown} style={width ? { width } : undefined}
       onBlur={(event) => { const text = event.currentTarget.value.trim(); if (text === shown) return; if (onCommit(text) === false) event.currentTarget.value = shown; }}
       onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { event.currentTarget.value = shown; event.currentTarget.blur(); } }} />
   );
@@ -64,7 +66,7 @@ function Chart({ lines, active, currency }: { lines: { id: string; name: string;
       </defs>
       <line className="runway__axis" x1={left} x2={W - 6} y1={y(0)} y2={y(0)} />
       <text className="runway__tick" x={left - 6} y={y(high) + 4} textAnchor="end">{short(high, currency)}</text>
-      <text className="runway__tick" x={left - 6} y={y(0) + 4} textAnchor="end">0</text>
+      {y(0) - y(high) > 10 && <text className="runway__tick" x={left - 6} y={y(0) + 4} textAnchor="end">0</text>}
       {low < 0 && <text className="runway__tick" x={left - 6} y={y(low) + 4} textAnchor="end">{short(low, currency)}</text>}
       {first && [0, 12, 24].map((index) => <text key={index} className="runway__tick" x={x(index)} y={H - 4} textAnchor={index === 0 ? 'start' : index === 24 ? 'end' : 'middle'}>{monthName(`${Number(first.slice(0, 4)) + index / 12}${first.slice(4)}`, '2-digit')}</text>)}
       {front && <path d={`${path(front)} L${x(24).toFixed(1)},${y(0).toFixed(1)} L${x(0).toFixed(1)},${y(0).toFixed(1)} Z`} fill="url(#runway-fill)" className="runway__area" />}
@@ -203,11 +205,12 @@ export function RunwayNode({ id, data, selected }: NodeProps<RunwayNodeType>) {
               <div>
                 <dt>Cash today</dt>
                 <dd className="runway__cash">
-                  <Field label="Cash in the bank" className="runway__amount" placeholder="Enter cash" value={runway.cash.amount ? money(runway.cash.amount, currency) : ''}
+                  <Field fit label="Cash in the bank" className="runway__amount" placeholder="Enter cash" value={runway.cash.amount ? money(runway.cash.amount, currency) : ''}
                     onCommit={(text) => { const amount = amountOf(text); if (text && !Number.isFinite(amount)) return false; change((current) => ({ ...current, cash: { ...current.cash, amount: Number.isFinite(amount) ? Math.round(amount) : 0 } })); }} />
-                  <span>on</span>
-                  <Field label="Counted on" type="date" className="runway__date" value={runway.cash.asOf}
-                    onCommit={(text) => { if (!isDay(text)) return false; change((current) => ({ ...current, cash: { ...current.cash, asOf: text } })); }} />
+                  <small className="runway__asof">counted on
+                    <Field label="Counted on" type="date" className="runway__date" value={runway.cash.asOf}
+                      onCommit={(text) => { if (!isDay(text)) return false; change((current) => ({ ...current, cash: { ...current.cash, asOf: text } })); }} />
+                  </small>
                 </dd>
               </div>
               <div>

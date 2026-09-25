@@ -32,11 +32,11 @@
 .runway__sub { display: block; margin-top: 1px; }
 .runway__none { color: var(--muted); font-weight: 400; }
 .runway__fine { color: #6fcf97; font-size: 14px; }
-.runway__cash { display: flex; align-items: baseline; gap: 4px; }
+.runway__cash { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 4px; }
+.runway__asof { flex: 1 0 100%; display: flex; align-items: center; gap: 2px; margin-top: -2px; }
 .runway__date::-webkit-calendar-picker-indicator { opacity: 0.45; filter: invert(1); cursor: pointer; }
-.runway__cash > span { font-size: 11.5px; font-weight: 400; color: var(--muted); }
-.runway .runway__amount { width: 8.5em; margin-left: -7px; font-size: 16px; font-weight: 600; }
-.runway .runway__date { width: 10.2em; padding-right: 2px; font-size: 11.5px; color: var(--muted); }
+.runway .runway__amount { flex: 0 1 auto; max-width: 11em; margin-left: -7px; font-size: 16px; font-weight: 600; }
+.runway .runway__date { flex: none; width: auto; margin-left: -3px; padding: 1px 4px; font-size: 11.5px; color: var(--muted); }
 
 .runway__plot { min-width: 0; min-height: 150px; display: flex; align-items: center; justify-content: center; border-radius: 10px; background: rgba(0, 0, 0, 0.2); }
 .runway__chart { display: block; width: 100%; height: auto; overflow: visible; }

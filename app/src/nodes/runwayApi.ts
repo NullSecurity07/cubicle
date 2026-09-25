@@ -17,10 +17,15 @@ export const seenAlert = (cardId: string) => request<RunwayEvent>(`/api/runway/$
 
 // The feed, and one read of its own: a card put down after the window connected was not in what the feed opened with.
 // `rev` only grows, so whichever of the two arrives last, the newer one stays.
+// A card just put down may reach the server a moment after this first read (the stage's save can still be on its
+// way), so a refused read is tried again a few times rather than leaving the card waiting for good.
 export function watchRunway(cardId: string, onEvent: (event: RunwayEvent) => void) {
   let seen = -1;
+  let gone = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const newer = (event: RunwayEvent) => { if (event.rev < seen) return; seen = event.rev; onEvent(event); };
   const stop = feed<RunwayEvent>(runwayChannel(cardId), newer);
-  void getRunway(cardId).then(newer, () => {});
-  return stop;
+  const read = (left: number) => getRunway(cardId).then(newer, () => { if (!gone && left > 0 && seen < 0) timer = setTimeout(() => void read(left - 1), 400); });
+  void read(15);
+  return () => { gone = true; clearTimeout(timer); stop(); };
 }
