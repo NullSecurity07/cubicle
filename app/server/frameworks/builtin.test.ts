@@ -493,3 +493,21 @@ describe.each(Object.entries(TEAMS))('the %s team', (dir, team) => {
     for (const key of people.slice(0, -1)) expect(wired.has(`${last}>${key}`), `${last}>${key}`).toBe(true);
   });
 });
+
+// Every built-in team's content today is in the ledger of shipped versions. Without it, the next change to the team
+// would leave workspaces holding this version unable to tell it from one the founder edited, and they would never
+// receive the fix. `pnpm frameworks:ledger` writes it.
+describe('the ledger of shipped built-in teams', () => {
+  it('holds every built-in team as it is today', async () => {
+    const { contentHash, readLedger } = await import('./shipped.ts');
+    const from = resolve(import.meta.dirname, '../../frameworks');
+    const ledger = await readLedger(from);
+    const missing: string[] = [];
+    for (const one of await readdir(from, { withFileTypes: true })) {
+      if (!one.isDirectory()) continue;
+      const framework = JSON.parse(await readFile(resolve(from, one.name, 'framework.json'), 'utf8')) as Record<string, unknown>;
+      if (!(ledger[one.name] ?? []).includes(contentHash(framework))) missing.push(one.name);
+    }
+    expect(missing, 'a built-in team changed: run `pnpm frameworks:ledger` in app/').toEqual([]);
+  });
+});

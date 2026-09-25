@@ -36,6 +36,9 @@ export type Framework = {
   layout: Record<string, Spot>;
   dataset: Case[];
   scorecard?: Scorecard;
+  // A built-in team's copy records which shipped version it came from, and the list says when a newer one is waiting
+  // for a copy the founder changed (never saved; the server works it out each time).
+  shippedHash?: string; update?: boolean;
 };
 
 // What a framework becomes on the stage: the rooms, docs, cards and wires to merge into it, with ids of their own.

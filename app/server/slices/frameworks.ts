@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 import type { Case, Framework } from '../../shared/frameworks.ts';
 import { FRAMEWORK_ID } from '../../shared/frameworks.ts';
-import { copyBuiltIns, createFrameworks } from '../frameworks/store.ts';
+import { copyBuiltIns, createFrameworks, takeUpdate, updatesOf } from '../frameworks/store.ts';
 import { frameworkFrom, place } from '../frameworks/place.ts';
 import type { Slice } from '../install.ts';
 import { inUse } from '../library/notes.ts';
@@ -12,6 +12,7 @@ import { sharedLibrary } from '../slice-kit.ts';
 // piece of stage to merge. Saving one goes the other way, from whatever is selected on the canvas.
 const ONE = /^\/api\/frameworks\/([a-z0-9][a-z0-9-]{0,79})$/;
 const PLACE = /^\/api\/frameworks\/([a-z0-9][a-z0-9-]{0,79})\/place$/;
+const TAKE = /^\/api\/frameworks\/([a-z0-9][a-z0-9-]{0,79})\/update$/;
 const MOST_CASE_CHARS = 4000;
 const MOST_KEYS = 8;
 
@@ -42,8 +43,10 @@ export default {
     inUse.by = (id) => holders.get(id) ?? null;
 
     // The built-ins ship in the repository and are copied in the first time this workspace starts without them,
-    // with the founder's notes they were built from. A workspace that already has them is left exactly as it is.
-    await copyBuiltIns(resolve(deps.root, 'app/frameworks'), frameworks, library)
+    // with the founder's notes they were built from. A copy nobody changed is brought up to today's team on every
+    // start; one the founder changed is left as it is, and the list marks it as having an update waiting.
+    const shipped = resolve(deps.root, 'app/frameworks');
+    await copyBuiltIns(shipped, frameworks, library)
       // A framework that will not copy is one feature missing, never a server that will not start.
       .catch((error: Error) => console.error(`frameworks: the built-ins could not be copied: ${error.message}`));
     await refresh();
@@ -69,7 +72,22 @@ export default {
       async route(req, res, path) {
         if (!path.startsWith('/api/frameworks')) return false;
         const method = req.method ?? 'GET';
-        if (path === '/api/frameworks' && method === 'GET') { deps.json(res, 200, await frameworks.list()); return true; }
+        if (path === '/api/frameworks' && method === 'GET') {
+          const offered = await updatesOf(shipped, frameworks).catch(() => new Set<string>());
+          deps.json(res, 200, (await frameworks.list()).map((one) => (offered.has(one.id) ? { ...one, update: true } : one)));
+          return true;
+        }
+
+        // The founder took a built-in team's update: their copy to trash, today's team in its place. The stage is not
+        // touched, so people already placed keep the briefs they were placed with.
+        const taking = TAKE.exec(path)?.[1];
+        if (taking && method === 'POST') {
+          const framework = await takeUpdate(shipped, taking, frameworks, library);
+          if (!framework) { deps.json(res, 404, { error: 'there is no built-in team by that name' }); return true; }
+          await refresh();
+          deps.json(res, 200, framework);
+          return true;
+        }
 
         const placing = PLACE.exec(path)?.[1];
         if (placing && method === 'POST') {

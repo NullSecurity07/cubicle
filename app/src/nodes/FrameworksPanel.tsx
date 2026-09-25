@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { Case, Framework } from '../../shared/frameworks';
 import { sizeLine } from '../../shared/frameworks';
-import { removeFramework, rerunEvals, saveFramework } from '../api';
+import { removeFramework, rerunEvals, saveFramework, takeFrameworkUpdate } from '../api';
 import { refreshFrameworks, useFrameworks, usePlaceFramework } from '../frameworks';
 import { useNotes } from '../library';
 import { overlay } from '../overlay/store';
@@ -169,6 +169,14 @@ export function FrameworksPanel() {
     await score(framework);
   }
 
+  // A built-in team the founder changed, and the app has changed since: their copy goes to trash and today's team takes
+  // its place. The stage is left alone, so people already placed keep the briefs they were placed with.
+  async function take(framework: Framework) {
+    setBusy(framework.id);
+    try { setProblem(''); await takeFrameworkUpdate(framework.id); await refreshFrameworks(); setOpen(null); }
+    catch (error) { setProblem((error as Error).message); } finally { setBusy(''); }
+  }
+
   async function forget(framework: Framework) {
     setSure(null);
     try { setProblem(''); await removeFramework(framework.id); await refreshFrameworks(); }
@@ -209,6 +217,12 @@ export function FrameworksPanel() {
                   </div>
                   <button type="button" className="frameworks__place" disabled={busy === framework.id} onClick={() => void land(framework)}>Place</button>
                 </div>
+                {framework.update && (
+                  <div className="frameworks__update">
+                    <p><b>An update is available.</b> Your copy has changes of yours, so it was kept. Teams already on the stage keep their briefs either way.</p>
+                    <button type="button" disabled={busy === framework.id} onClick={() => void take(framework)}>Take the update</button>
+                  </div>
+                )}
                 <div className="frameworks__acts">
                   <button type="button" aria-expanded={open?.id === framework.id && open.what === 'cases'} onClick={() => setOpen(open?.id === framework.id && open.what === 'cases' ? null : { id: framework.id, what: 'cases' })}>
                     {framework.dataset.length === 1 ? '1 test case' : `${framework.dataset.length} test cases`}

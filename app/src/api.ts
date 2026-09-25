@@ -145,6 +145,7 @@ export const placeFramework = (id: string, at: { x: number; y: number }) => requ
 // Two ways to save one: the ids of what is selected on the canvas, or the whole framework back with something changed
 // in it (its test cases).
 export const saveFramework = (id: string, framework: Framework | { name: string; intent?: string; ids: string[] }) => request<Framework>(`/api/frameworks/${id}`, put(framework));
+export const takeFrameworkUpdate = (id: string) => request<Framework>(`/api/frameworks/${id}/update`, send('POST'));
 export const removeFramework = (id: string) => request(`/api/frameworks/${id}`, send('DELETE'));
 
 // The forge: notes and a line of intent go in, a team comes back. Proposing and building both answer at once with

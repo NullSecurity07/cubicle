@@ -1,8 +1,10 @@
-import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Framework } from '../../shared/frameworks.ts';
 import { FRAMEWORK_ID } from '../../shared/frameworks.ts';
 import { idOf, type Library } from '../library/notes.ts';
+import { trashStamp } from '../clock.ts';
+import { contentHash, readLedger } from './shipped.ts';
 
 export type Frameworks = ReturnType<typeof createFrameworks>;
 
@@ -39,7 +41,9 @@ export function createFrameworks(workspace: string) {
     read: readOne,
     // Exactly what it was handed. Whoever saves decides the version and the day, because only they know whether this
     // is a new team or the same one written again.
-    async save(framework: Framework): Promise<Framework> {
+    async save(given: Framework): Promise<Framework> {
+      // `update` is something the list says about a team, never part of it.
+      const { update: _said, ...framework } = given;
       const file = path(framework.id);
       await mkdir(join(folder, framework.id), { recursive: true });
       await writeFile(`${file}.tmp`, `${JSON.stringify(framework, null, 2)}\n`);
@@ -65,30 +69,96 @@ export const titleOfNote = (file: string, text: string): string =>
   || file.replace(/\.(md|markdown|txt)$/i, '').replace(/[-_]+/g, ' ').trim()
   || 'Note';
 
+// The notes a built-in team was built from, added to the library when they are absent. A note the founder already
+// keeps under that title is theirs: their words stay, and the framework works from whatever they have. Re-adding it
+// would quietly overwrite what they wrote.
+async function copyNotes(dir: string, library: Library): Promise<void> {
+  const notes = await readdir(join(dir, 'notes')).catch(() => []);
+  const held = new Set((await library.list()).map((note) => note.id));
+  for (const file of notes.filter((name) => /\.(md|markdown|txt)$/i.test(name))) {
+    const words = await readFile(join(dir, 'notes', file), 'utf8');
+    const title = titleOfNote(file, words);
+    if (!held.has(idOf(title))) await library.add({ title, text: words, source: 'file' as const });
+  }
+}
+
+// The workspace's own copy exactly as it sits in the file, bookkeeping and all: what is hashed has to be what was
+// written, not what reading fills in.
+const rawOf = async (frameworks: Frameworks, id: string): Promise<Record<string, unknown> | null> =>
+  JSON.parse(await readFile(join(frameworks.folder, id, 'framework.json'), 'utf8').catch(() => 'null')) as Record<string, unknown> | null;
+const builtIn = async (from: string, id: string): Promise<Framework | null> =>
+  JSON.parse(await readFile(join(from, id, 'framework.json'), 'utf8').catch(() => 'null')) as Framework | null;
+
+// A copy going away still goes somewhere: the workspace's trash, beside everything else the founder let go of.
+async function trash(frameworks: Frameworks, id: string): Promise<void> {
+  const trashDir = join(frameworks.folder, '..', 'trash');
+  await mkdir(trashDir, { recursive: true });
+  await copyFile(join(frameworks.folder, id, 'framework.json'), join(trashDir, `${trashStamp()}-framework-${id}.json`));
+}
+
+// Today's built-in team written over the workspace's copy, with the version it is recorded. The evals runs beside it
+// stay: they are what happened, and the next rerun scores the new briefs.
+async function install(from: string, id: string, framework: Framework, frameworks: Frameworks, library: Library): Promise<void> {
+  await copyNotes(join(from, id), library);
+  await frameworks.save({ ...framework, id, shippedHash: contentHash(framework as unknown as Record<string, unknown>) });
+}
+
 // The frameworks that ship with the app, copied into the workspace the first time it starts without them, together
-// with the notes they were built from. A framework the founder already has is left exactly as they left it — their
-// edits, their test cases — which is why this only ever writes what is absent. Gives back what it copied.
+// with the notes they were built from — and brought up to date on every start after that, when a built-in team has
+// changed since. A copy whose content is still one the app once shipped is a copy nobody touched, so it is replaced
+// (the old one goes to trash all the same). A copy the founder changed is theirs and is left exactly as they left it:
+// the panel offers the new team instead (`updatesOf`). Gives back what it wrote.
 export async function copyBuiltIns(from: string, frameworks: Frameworks, library: Library): Promise<string[]> {
   const found = await readdir(from, { withFileTypes: true }).catch(() => []);
+  const ledger = await readLedger(from);
   const copied: string[] = [];
   for (const one of found) {
     if (!one.isDirectory() || !FRAMEWORK_ID.test(one.name)) continue;
-    const text = await readFile(join(from, one.name, 'framework.json'), 'utf8').catch(() => null);
-    if (text === null || (await frameworks.read(one.name).catch(() => null))) continue;
-    const framework = JSON.parse(text) as Framework;
-    // The notes first: a framework whose note is not in the library places, but its people would read nothing.
-    const notes = await readdir(join(from, one.name, 'notes')).catch(() => []);
-    const held = new Set((await library.list()).map((note) => note.id));
-    for (const file of notes.filter((name) => /\.(md|markdown|txt)$/i.test(name))) {
-      const words = await readFile(join(from, one.name, 'notes', file), 'utf8');
-      const title = titleOfNote(file, words);
-      // A note the founder already keeps under that title is theirs: their words stay, and the framework works from
-      // whatever they have. Re-adding it would quietly overwrite what they wrote.
-      const note = { title, text: words, source: 'file' as const };
-      if (!held.has(idOf(title))) await library.add(note);
+    const framework = await builtIn(from, one.name).catch(() => null);
+    if (!framework) continue;
+    const today = contentHash(framework as unknown as Record<string, unknown>);
+    const held = await rawOf(frameworks, one.name).catch(() => undefined);
+    // A file broken by hand is the founder's to mend; writing over it would lose whatever they were in the middle of.
+    if (held === undefined) continue;
+    if (held) {
+      const hash = contentHash(held);
+      if (hash === today) {
+        // The same team, from before copies were stamped: stamped now, so a later edit of theirs is told apart.
+        if (held.shippedHash !== today) await frameworks.save({ ...(held as unknown as Framework), id: one.name, shippedHash: today });
+        continue;
+      }
+      if (!(ledger[one.name] ?? []).includes(hash)) continue;
+      await trash(frameworks, one.name);
     }
-    await frameworks.save({ ...framework, id: one.name });
+    await install(from, one.name, framework, frameworks, library);
     copied.push(one.name);
   }
   return copied;
+}
+
+// The built-in teams the founder changed and the app has changed since: their copy stays theirs, and the panel shows
+// a quiet mark with the new team one press away. A copy stamped with today's version is simply theirs, edited; a copy
+// from before stamping that differs from today's team cannot say which it came from, so it is offered too.
+export async function updatesOf(from: string, frameworks: Frameworks): Promise<Set<string>> {
+  const found = await readdir(from, { withFileTypes: true }).catch(() => []);
+  const offered = new Set<string>();
+  for (const one of found) {
+    if (!one.isDirectory() || !FRAMEWORK_ID.test(one.name)) continue;
+    const framework = await builtIn(from, one.name).catch(() => null);
+    const held = await rawOf(frameworks, one.name).catch(() => null);
+    if (!framework || !held) continue;
+    const today = contentHash(framework as unknown as Record<string, unknown>);
+    if (contentHash(held) !== today && held.shippedHash !== today) offered.add(one.name);
+  }
+  return offered;
+}
+
+// The founder took the update: their copy goes to trash, today's team takes its place. Null when there is no such
+// built-in team to take.
+export async function takeUpdate(from: string, id: string, frameworks: Frameworks, library: Library): Promise<Framework | null> {
+  const framework = await builtIn(from, safe(id)).catch(() => null);
+  if (!framework) return null;
+  if (await rawOf(frameworks, id).catch(() => null)) await trash(frameworks, id);
+  await install(from, id, framework, frameworks, library);
+  return frameworks.read(id);
 }

@@ -1,0 +1,73 @@
+{
+  "customer-discovery": [
+    "08fac40e5ad9013e",
+    "cf72f3e0bedd735a",
+    "d33b5f8fa7ea97bf"
+  ],
+  "due-diligence": [
+    "014f8275e36b3e81",
+    "3c785aa7fb08345a",
+    "4c0cac637afac68b",
+    "71f40296269698c9"
+  ],
+  "hiring-scorecard": [
+    "27e3fabd99e41581"
+  ],
+  "investor-update": [
+    "57f1cd53324358f2",
+    "97af82aaa459c5bb",
+    "97e3c7b7413a7d18"
+  ],
+  "launch-team": [
+    "16fc500a75dadf69",
+    "2f404ec4f5d56613",
+    "37f4bc176d856094",
+    "a0a43437518c8e5b"
+  ],
+  "lean-canvas": [
+    "6f99faee4c24f0a3"
+  ],
+  "linkedin-content-system": [
+    "1ef3aec35d140652",
+    "4fa2678538ffe71d",
+    "718551d8e56279b8"
+  ],
+  "pitch-practice": [
+    "b1d0473749c60bec"
+  ],
+  "pmf-engine": [
+    "16b984e18a6c5dab",
+    "66688a1fd314c22d",
+    "779937c5118ba492",
+    "d497a64b84e284ad"
+  ],
+  "positioning": [
+    "f6adf602caf1b5fe"
+  ],
+  "pre-mortem": [
+    "dfc398823058a4a0"
+  ],
+  "pricing-unit-economics": [
+    "510915a0bf4d9fd7",
+    "e17c921d14035c3b"
+  ],
+  "seed-round-prep": [
+    "3249bd621897905c",
+    "eab4af6a868a541e"
+  ],
+  "startup-evaluation": [
+    "d4acd065a4c9643e"
+  ],
+  "traction-bullseye": [
+    "4f82a8c5e96beae6",
+    "d667356741c7ce9c"
+  ],
+  "weekly-metrics": [
+    "30b370bd29451550",
+    "454ab6a74b54e2ba"
+  ],
+  "working-backwards": [
+    "37085808deb888c6",
+    "9384b5bab33a5753"
+  ]
+}

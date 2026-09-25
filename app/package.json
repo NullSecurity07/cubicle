@@ -21,6 +21,7 @@
     "vendor:hyperframes": "node scripts/vendor-hyperframes.ts",
     "site:shots": "node scripts/site-shots.ts",
     "site:film": "node scripts/site-film.ts",
+    "frameworks:ledger": "node scripts/frameworks-ledger.ts",
     "gate": "tsc --noEmit && vitest run && playwright test"
   },
   "dependencies": {
