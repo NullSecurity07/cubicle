@@ -37,8 +37,17 @@ describe('command bar', () => {
     expect(first('add leads').action).toEqual({ do: 'add', kind: 'leads' });
   });
 
+  it('adds each of the newer cards by its own words, and never hires a person called "Survey"', () => {
+    const want: [string, string][] = [
+      ['add metrics', 'metrics'], ['add a runway card', 'runway'], ['add a pitch deck', 'deck'], ['new deck', 'deck'], ['add a site studio', 'site'], ['add a landing page', 'site'],
+      ['add a competitor', 'competitor'], ['add an interview', 'interview'], ['add a survey', 'survey'], ['add a pmf survey', 'survey'],
+    ];
+    for (const [typed, kind] of want) expect(first(typed).action, typed).toEqual({ do: 'add', kind });
+    expect(suggest('add survey', known).some((one) => one.label.startsWith('Add a person'))).toBe(false);
+  });
+
   it('adds a source website, and never hires a person called "Source"', () => {
-    for (const typed of ['add source', 'add a source', 'add website', 'add a web site', 'new site', 'add a source website']) {
+    for (const typed of ['add source', 'add a source', 'add website', 'add a web site', 'add a source website']) {
       expect(first(typed).action).toEqual({ do: 'add', kind: 'source' });
       expect(actions(typed)).not.toContainEqual(expect.objectContaining({ kind: 'room' }));
     }

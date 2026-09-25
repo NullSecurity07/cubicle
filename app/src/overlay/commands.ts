@@ -3,7 +3,7 @@ import { sliceCommands } from '../slices';
 // What the command bar can do, as plain data: the bar shows suggestions, the window carries the chosen action out.
 // `run` is the one a UI slice brings: the bar closes and calls it, without knowing what it does.
 export type Action =
-  | { do: 'add'; kind: 'room' | 'doc' | 'note' | 'link' | 'image' | 'imagegen' | 'voicegen' | 'videogen' | 'browser' | 'project' | 'board' | 'leads' | 'source'; data?: Record<string, string> }
+  | { do: 'add'; kind: 'room' | 'doc' | 'note' | 'link' | 'image' | 'imagegen' | 'voicegen' | 'videogen' | 'browser' | 'project' | 'board' | 'leads' | 'source' | 'metrics' | 'runway' | 'deck' | 'site' | 'competitor' | 'interview' | 'survey'; data?: Record<string, string> }
   | { do: 'focus' | 'jump'; id: string } | { do: 'panel'; name: 'needs' | 'messages' | 'decisions' | 'playbook' | 'library' | 'dashboard' }
   // One note out of the founder's library, opened to be read.
   | { do: 'note'; id: string }
@@ -28,7 +28,16 @@ const CARD_WORDS: [RegExp, Extract<Action, { do: 'add' }>['kind'], string, strin
   [/^browser$/, 'browser', 'Add a browser', 'add a browser'], [/^(coder|opencode|project( folder)?|code|repo)$/, 'project', 'Add a coder', 'add a coder'],
   [/^((task )?board|tasks|kanban)$/, 'board', 'Add a task board', 'add a board'],
   [/^(leads?|crm|prospects?|pipeline)$/, 'leads', 'Add a leads card', 'add leads'],
-  [/^((trusted )?(source|web ?site|site)s?( website)?)$/, 'source', 'Add a source website', 'add a source'],
+  [/^((trusted )?(source|web ?site)s?( website)?)$/, 'source', 'Add a source website', 'add a source'],
+  // The cards that came on 2026-09-25, each by the words a founder reaches for. "site" alone is the Site studio now,
+  // so a source website is asked for as "source" or "website".
+  [/^(metrics?|numbers|north star|kpis?|dashboard numbers)$/, 'metrics', 'Add a metrics card', 'add metrics'],
+  [/^(runway|burn( rate)?|cash|finances?|money)$/, 'runway', 'Add a runway card', 'add runway'],
+  [/^((pitch |seed |sales )?deck|slides|presentation|pitch)$/, 'deck', 'Add a deck', 'add a deck'],
+  [/^(site studio|landing page|(one[- ]page )?(web)?site builder|site)$/, 'site', 'Add a site studio', 'add a site studio'],
+  [/^((a )?competitor|rival|competition)$/, 'competitor', 'Add a competitor', 'add a competitor'],
+  [/^((customer |user )?interview|customer call|call notes)$/, 'interview', 'Add an interview', 'add an interview'],
+  [/^((pmf |nps )?survey|questionnaire|poll)$/, 'survey', 'Add a survey', 'add a survey'],
 ];
 // A note from the library is picked in Notes, the way the dock's own button does it: the card is only which note.
 const LIBRARY_NOTE = /^((a )?note from (the |my )?library|library( note)?)$/;
@@ -99,7 +108,8 @@ export function suggest(input: string, known: Known, extra: Command[] = sliceCom
   const adding = /^(?:add|new|create|hire)\s+(?:an?\s+|the\s+)?(.+)$/.exec(low);
   if (adding) {
     const what = adding[1];
-    const card = CARD_WORDS.find(([pattern]) => pattern.test(what));
+    // "add a runway card" asks for the same thing as "add runway": the word card is the founder's, never the kind's.
+    const card = CARD_WORDS.find(([pattern]) => pattern.test(what) || pattern.test(what.replace(/\s+card$/, '')));
     const doc = /^(?:doc|document|page)(?:\s+(?:called\s+|named\s+)?(.+))?$/.exec(what);
     if (card) found.push({ section: 'Do', label: card[2], action: { do: 'add', kind: card[1] } });
     else if (LIBRARY_NOTE.test(what)) found.push({ section: 'Do', label: 'Add a note from your library', hint: 'Pick one in Notes', action: { do: 'panel', name: 'library' } });
