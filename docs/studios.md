@@ -141,3 +141,14 @@ free keys that help, and what each one downloads the first time) is under "Run i
   bay at dusk" is drawn as a loading bay. And a storyboard that reads under 85% of its asked length sends the
   director back once for as many more lines as fill it, while one over 115% loses scenes from its middle acts —
   more said, never time held still.
+- **One clock, the promise kept, lists that are lists** (2026-09-25): three faults from the hero film's second draft.
+  The narration and the cut now count one clock. A scene with nothing said over it, such as an opening title card, is
+  given its own length of silence inside the recording, so the voice waits it out and starts on the first scene that
+  says something; before, the voice ran from the first frame, the next scene's captions played under the title and
+  the whole film ran behind its own reading. The recording also starts one breath in, where the captions always
+  thought it did. A film's last scene is always its close, with its line said aloud, and nothing sits beside the close
+  that the founder did not write. A line that is the founder's, written in the brief or most of it one brief sentence
+  said again, is never swapped for another; a line that has to go is replaced only by a sentence of the material
+  about the same thing; and "end on the promise" is read out of the brief, resolved to the brief's own promise, and
+  said last, or last before the call to action. A list's heading is the founder's phrase or none, never "What you
+  get", and a list line is a thing of two to six words; a list with the tail of a sentence in it is set as plain words.
