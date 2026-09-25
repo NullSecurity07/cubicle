@@ -31,7 +31,9 @@ async function setup(files: Record<string, string> = {}) {
 }
 
 describe('the openends slice', () => {
-  it('answers health with the key rows, and keeps a fake run\'s backups beside its workspace', async () => {
+  // The health answer asks real programs on this machine whether they are there (yt-dlp, Chrome, uvx, opencode); under a
+  // heavy load those probes alone can take longer than the usual five seconds, so this one gets room.
+  it('answers health with the key rows, and keeps a fake run\'s backups beside its workspace', { timeout: 30_000 }, async () => {
     const { call, workspace } = await setup();
     const { checks } = (await call('/api/health'))!.body as { checks: Check[] };
     expect(checks.map((one) => one.name)).toEqual(expect.arrayContaining(['Models', 'Your workspace', 'Backup', 'Email', 'Finding leads']));
