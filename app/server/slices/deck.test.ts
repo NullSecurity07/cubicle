@@ -41,7 +41,8 @@ async function setup() {
 let closing: (() => Promise<void>) | undefined;
 afterEach(async () => { await closing?.(); closing = undefined; });
 
-describe('the Deck card', () => {
+// Making a deck prints it with headless Chrome, which is slow when every other test file runs beside it.
+describe('the Deck card', { timeout: 60_000 }, () => {
   it('is offered only to a person wired to one', async () => {
     const { part, store } = await setup();
     closing = part.close;
@@ -86,7 +87,7 @@ describe('the Deck card', () => {
     const { part, seams, use } = await setup();
     closing = part.close;
     const messages = [{ role: 'system' as const, content: 'You are Maya.' }];
-    const run = (roomId: string) => seams.run('turn:before', { roomId, messages } as never, async (payload: any) => payload);
+    const run = (roomId: string) => seams.run('turn:before', { roomId, messages } as never);
     expect(((await run('marketing')) as any).messages[0].content).toContain('No deck made yet.');
     await use('make_deck', {});
     const said = ((await run('marketing')) as any).messages[0].content as string;
@@ -101,7 +102,8 @@ describe('the Deck card', () => {
     expect((await call('/api/decks/nope')).status).toBe(404);
     expect((await call('/api/decks/deck-1')).body.deck.versions).toEqual([]);
     expect((await call('/api/decks/deck-1/make', 'POST', { purpose: 'update', look: 'editorial' })).status).toBe(202);
-    for (let wait = 0; wait < 100 && (await call('/api/decks/deck-1')).body.deck.state !== 'idle'; wait += 1) await new Promise((done) => setTimeout(done, 20));
+    // Chrome prints for real when it is here, and under a full test run that can take seconds.
+    for (let until = Date.now() + 45_000; Date.now() < until && (await call('/api/decks/deck-1')).body.deck.state !== 'idle';) await new Promise((done) => setTimeout(done, 50));
     const deck = (await call('/api/decks/deck-1')).body.deck;
     expect(deck.versions[0]).toMatchObject({ version: 1, look: 'editorial', purpose: 'update', brief: 'Seed deck for Relay' });
     expect((await call('/api/decks/deck-1/v/1/slides/9')).status).toBe(404);
