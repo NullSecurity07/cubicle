@@ -168,6 +168,15 @@ operator: people speed the founder up and propose, the founder decides. Nothing 
   app is open** and never while it is closed. A change comes to that person's conversation and to Needs you, with
   the lines that changed; numbers alone (dates, counters) do not count. A person watches at most ten pages, and the
   side panel shows them with a Stop button. The `watch-a-competitor` skill puts both together.
+- **Competitor card** (2026-09-25): a quiet competitor and a competitor nobody looked at for a week look the same,
+  so each rival gets a card that says which. Name them and give their site; the card offers their home, pricing and
+  changelog pages to watch, and "Watch" starts the same six-hourly watch `watch_page` does, owned by the person wired
+  to the card (or by you when nobody is). Every change lands on the card's timeline with the lines that changed and
+  the wired person's two lines on what it means (asked in their own voice, once per change; a fixed line in fake mode).
+  "Last read" turns amber when the pages have not been read for seven hours, because watches only run while the app is
+  open. "Crawl now" reads the whole site into `files/crawls/`. The card keeps no store of its own: it joins the watches
+  in `workspace/watch/` by address, and a watch now keeps its last 24 changes. A wired person reads one dated line per
+  card, like "Competitor Acme (acme.com): 3 changes this month, latest 2026-09-22 pricing page: Pro $29 → $39."
 - **Operator views** (2026-09-19): Focus mode (`F` or the header button; a card fills the window); Needs you (dock
   bell, `N`); Messages (`M`); Decisions (`D`; one markdown file per decision in `workspace/decisions/`); Recall (a
   `recall` tool for people, a search for the founder, by meaning, on a local model; a person finds only what their
