@@ -3,4 +3,4 @@ Made: 2026-09-25 · Hyperframes · brief: A 20 second marketing film for the top
 Words and storyboard: the free hosted models (Groq or Gemini). Pictures: Cloudflare Workers AI (FLUX.1 schnell).
 Narration: Kokoro, on this machine. The site copy carries no sound track, so neither the voice nor any music is heard.
 
-Studio file: 6354 KB · site file: 669 KB (1280,720 · 19.366667) · poster: 19 KB
+Studio file: 5316 KB · site file: 600 KB (1280,720 · 18.366667) · poster: 22 KB
