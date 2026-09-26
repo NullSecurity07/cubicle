@@ -283,6 +283,30 @@ describe('app cards', () => {
     await browser.act('card-li', 'fill', { ref: 'e4', text: 'Hello' });
     expect(await browser.outward('card-li', 'press', { key: 'Enter' }, undefined, 'LinkedIn')).toMatch(/^Press Enter on LinkedIn\?/);
   });
+  it('lets only a plain Enter through, only straight after a search fill, and only into a field that is a search', async () => {
+    const tree = '- textbox "Write a message…" [ref=e1]\n- searchbox "Search" [ref=e2]\n- textbox "Research notes" [ref=e3]\n- combobox "To" [ref=e4]\n';
+    const runner: Runner = async (_s, args) => (args[0] === 'snapshot' ? tree : args[0] === 'get' && args[1] === 'url' ? 'https://www.linkedin.com/messaging/\n' : '✓\n');
+    const browser = createBrowser(runner);
+    const enter = (key = 'Enter') => browser.outward('card-li', 'press', { key }, undefined, 'LinkedIn');
+    await browser.act('card-li', 'look', {});
+    // Message typed, search typed, focus moved back to the message by a click: Enter would send the message.
+    await browser.act('card-li', 'fill', { ref: 'e1', text: 'Hello' });
+    await browser.act('card-li', 'fill', { ref: 'e2', text: 'founders' });
+    expect(await enter()).toBeNull();
+    await browser.act('card-li', 'click', { ref: 'e1' });
+    expect(await enter()).toMatch(/^Press Enter on LinkedIn\?/);
+    // Straight after a search fill: plain Enter goes, a combination does not.
+    await browser.act('card-li', 'fill', { ref: 'e2', text: 'founders' });
+    expect(await enter('Control+Enter')).toMatch(/^Press Control\+Enter/);
+    // Every step but a fill forgets the search, the press itself included.
+    await browser.act('card-li', 'press', { key: 'Enter' });
+    expect(await enter()).toMatch(/^Press Enter/);
+    // A name that only contains "search", and a plain combobox, ask.
+    await browser.act('card-li', 'fill', { ref: 'e3', text: 'notes' });
+    expect(await enter()).toMatch(/^Press Enter/);
+    await browser.act('card-li', 'fill', { ref: 'e4', text: 'ada@example.com' });
+    expect(await enter()).toMatch(/^Press Enter/);
+  });
   it('asks before a click on an unnamed icon on an app card, and lets a profile link, a tab and a filter through', async () => {
     const tree = '- button [ref=e1]\n- link "Ada Lovelace" [ref=e2]\n- tab "Posts" [ref=e3]\n- button "All filters" [ref=e4]\n- searchbox "Search" [ref=e5]\n- button "Save" [ref=e6]\n- button "Show more results" [ref=e7]\n- link "Message" [ref=e8]\n- button "…see more" [ref=e9]\n';
     const runner: Runner = async (_s, args) => (args[0] === 'snapshot' ? tree : args[0] === 'get' && args[1] === 'url' ? 'https://www.linkedin.com/search/results/people/\n' : '✓\n');

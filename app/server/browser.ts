@@ -336,6 +336,9 @@ export function createBrowser(run: Runner, readers: Readers = { direct: [], fall
         if (address && !/^about:/.test(address)) webUrl(address);
         const tree = (await go(session, ['snapshot', '-i'])).trim();
         // The field is named from the page as it was when it was filled: the tree this step was taken on.
+        // What was typed stays only until the next step that could move the focus, so Enter can never be judged by a
+        // field the founder's cursor has already left.
+        if (['click', 'press', 'scroll', 'back', 'open'].includes(action)) typed.delete(session);
         if (action === 'fill') { const field = elementOfRef(seen.get(session)?.tree ?? tree, ref()); typed.set(session, { field: field?.name ?? '', role: field?.role ?? '', text: input.text ?? '' }); }
         seen.set(session, { tree, address });
         const title = (await go(session, ['get', 'title']).catch(() => '')).trim();
@@ -357,7 +360,8 @@ export function createBrowser(run: Runner, readers: Readers = { direct: [], fall
       if (action === 'press') {
         if (!/enter/i.test(input.key ?? '')) return null;
         // Enter in a search box is how LinkedIn and X search: nothing goes out, so it goes ahead.
-        if (own && last && (last.role === 'searchbox' || last.role === 'combobox' || /search/i.test(last.field))) return null;
+        // Only a plain Enter, only straight after the fill (every other step forgets it), and only into a search field.
+        if (own && input.key === 'Enter' && last && (last.role === 'searchbox' || /\bsearch\b/i.test(last.field))) return null;
         if (own) return `Press ${input.key} on ${where}? In a message or a post box this sends it as you.${shows}`;
         return MAIL_HOSTS.test(host) ? `Press ${input.key} on ${where}? In webmail this can send the message.${shows}` : null;
       }
