@@ -194,6 +194,20 @@ describe('the partner slice: the morning note', () => {
     await part.close!();
   });
 
+  it('asks for the morning note the way a turn does: a refused key is rested and the next model writes it', async () => {
+    let refusedAsked = 0;
+    const client = (name: string, step: () => Promise<string>) => ({ name, model: `${name}-1`, maxPromptChars: Infinity, tools: true, limits: {},
+      async step(_messages: unknown, { onToken }: { onToken: (token: string) => void }) { onToken(await step()); return { text: '', calls: [] }; } });
+    const refused = client('refused', async () => { refusedAsked += 1; throw Object.assign(new Error('401 invalid key'), { status: 401 }); });
+    const { deps, part } = await installed({ clients: [refused, client('good', async () => SHAPED)] as Deps['clients'] }, { now: () => NINE });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    expect(refusedAsked).toBe(1);
+    expect(deps.usage.dead('refused')).toBe(true);
+    expect((await deps.store.readChat('p1')).at(-1)?.text).toContain('Ship the landing page');
+    await part.close!();
+  });
+
   it('waits half an hour after a model call that throws, and stops after three in a day', async () => {
     let clock = NINE;
     let asked = 0;

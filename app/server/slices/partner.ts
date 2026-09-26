@@ -196,7 +196,7 @@ export function createPartner(options: PartnerOptions = {}) {
 
     const ask = options.ask ?? (deps.fake ? async () => FAKE_MORNING : async (messages: ModelMessage[]) => {
       const { order } = routeModels(deps.clients, deps.usage, { promptChars: promptSize(messages), tools: false });
-      const reply = await complete(messages, { onToken: () => {} }, order);
+      const reply = await complete(messages, { onToken: () => {} }, order, ({ client, error }) => deps.usage.failed(client.name, error), (client) => deps.usage.admit(client.name));
       deps.usage.record(reply.client.name, reply.usage, reply.quota);
       return reply.text;
     });
