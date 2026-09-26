@@ -5,21 +5,24 @@ import { describe, expect, it } from 'vitest';
 import type { ChatMessage, Stage } from '../../shared/model.ts';
 import type { Bet } from '../../shared/partner.ts';
 import type { ModelMessage } from '../prompt.ts';
-import { gatherMorning, MORNING_ASK, morningDue, MOST_TRIES, RETRY_AFTER, writeMorning, type MorningSources } from './morning.ts';
+import { gatherMorning, MORNING_ASK, morningDue, morningInputs, MOST_TRIES, RETRY_AFTER, writeMorning, type MorningSources } from './morning.ts';
 
 const at = (text: string) => new Date(text).getTime();
 const NINE = at('2026-09-27T09:00');
 
 describe('when the morning note is due', () => {
-  it('comes once a day, not before six, and tries again after a wait while tries are left', () => {
-    expect(morningDue({}, NINE)).toBe(true);
-    expect(morningDue({}, at('2026-09-27T05:59'))).toBe(false);
-    expect(morningDue({ morning: { day: '2026-09-27' } as never }, NINE)).toBe(false);
-    expect(morningDue({ morning: { day: '2026-09-26' } as never }, NINE)).toBe(true);
-    expect(morningDue({ tries: { day: '2026-09-27', count: 1, last: NINE } }, NINE + RETRY_AFTER - 1)).toBe(false);
-    expect(morningDue({ tries: { day: '2026-09-27', count: 1, last: NINE } }, NINE + RETRY_AFTER)).toBe(true);
-    expect(morningDue({ tries: { day: '2026-09-27', count: MOST_TRIES, last: NINE } }, NINE + 5 * RETRY_AFTER)).toBe(false);
-    expect(morningDue({ tries: { day: '2026-09-26', count: MOST_TRIES, last: NINE } }, NINE)).toBe(true);
+  it('comes once a day, not before six, not on the day the partner arrived, and tries again after a wait', () => {
+    const since = { partnerSince: '2026-09-26' };
+    expect(morningDue(since, NINE)).toBe(true);
+    expect(morningDue({}, NINE)).toBe(false);
+    expect(morningDue({ partnerSince: '2026-09-27' }, NINE)).toBe(false);
+    expect(morningDue(since, at('2026-09-27T05:59'))).toBe(false);
+    expect(morningDue({ ...since, morning: { day: '2026-09-27' } as never }, NINE)).toBe(false);
+    expect(morningDue({ ...since, morning: { day: '2026-09-26' } as never }, NINE)).toBe(true);
+    expect(morningDue({ ...since, tries: { day: '2026-09-27', count: 1, last: NINE } }, NINE + RETRY_AFTER - 1)).toBe(false);
+    expect(morningDue({ ...since, tries: { day: '2026-09-27', count: 1, last: NINE } }, NINE + RETRY_AFTER)).toBe(true);
+    expect(morningDue({ ...since, tries: { day: '2026-09-27', count: MOST_TRIES, last: NINE } }, NINE + 5 * RETRY_AFTER)).toBe(false);
+    expect(morningDue({ ...since, tries: { day: '2026-09-26', count: MOST_TRIES, last: NINE } }, NINE)).toBe(true);
   });
 });
 
@@ -76,6 +79,26 @@ describe('one morning turn', () => {
     expect(heard[0].content).toBe('You are Sam, Partner.');
     expect(heard[1].content.startsWith(MORNING_ASK)).toBe(true);
     expect(heard[1].content).toContain('Newsletter first');
+  });
+
+  it('refuses a note whose three moves only restate the Company document', async () => {
+    const company = '# Company brief\n\n## Idea\n\nProduct focus: weekly curated list.\n\n## Numbers\n\nCurrent stage: pre-idea validation.\n\n## Open questions\n\n- Newsletter first or marketplace first?\n';
+    const restated = 'Three moves for today:\n1. Product focus: weekly curated list.\n2. **Current stage:** pre-idea validation\n3. Newsletter first or marketplace first?\nRisk: r\nQuestion: q?';
+    expect(await writeMorning({ sources: { ...await sources(), company }, name: 'Sam', promptFor: prompt, ask: async () => restated })).toBeNull();
+    const moves = 'Three moves for today:\n1. Email the 5 replied leads before noon.\n2. Product focus: weekly curated list.\n3. Log signups.\nRisk: r\nQuestion: q?';
+    expect(await writeMorning({ sources: { ...await sources(), company }, name: 'Sam', promptFor: prompt, ask: async () => moves })).not.toBeNull();
+    expect(MORNING_ASK).toContain('three moves for today: what to do, and why');
+  });
+
+  it('keys what the note reads, so a change anywhere in it asks for a new one and the partner\'s own note does not', async () => {
+    const from = await sources();
+    const base = { stage: from.stage, partnerId: 'p1', decisions: await from.decisions(), bets: await from.bets(), company: '# Company', chats: { m: await from.chat('m') } };
+    const key = morningInputs(base);
+    expect(morningInputs(base)).toBe(key);
+    expect(morningInputs({ ...base, chats: { ...base.chats, p1: [{ id: 'n', role: 'assistant', text: '**Morning**', at: 99 }] } })).toBe(key);
+    expect(morningInputs({ ...base, company: '# Company\n\n- more' })).not.toBe(key);
+    expect(morningInputs({ ...base, decisions: [] })).not.toBe(key);
+    expect(morningInputs({ ...base, chats: { m: [...base.chats.m, { id: 'z', role: 'user', text: 'new', at: 5 }] } })).not.toBe(key);
   });
 
   it('gives back nothing when the reply lost the shape', async () => {

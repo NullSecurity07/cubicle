@@ -160,6 +160,8 @@ describe('the partner slice: the morning note', () => {
     const answers: [number, unknown][] = [];
     const { deps, part } = await installed({ json: (_res, status, body) => { answers.push([status, body]); } }, { now: () => clock, ask: async () => { asked += 1; return SHAPED; } });
     await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    // The partner arrived yesterday: no note on the day they arrive.
+    clock -= 86_400_000; await part.tick!(); clock += 86_400_000;
     deps.attention.source(decisionAttention(deps.decisions));
     await deps.decisions.propose({ title: 'Raise now?', options: ['yes', 'no'] });
     await part.tick!();
@@ -167,7 +169,7 @@ describe('the partner slice: the morning note', () => {
     expect(asked).toBe(1);
     const chat = await deps.store.readChat('p1');
     expect(chat).toHaveLength(1);
-    expect(chat[0].text).toContain('Three things that matter today:\n1. Ship the landing page.');
+    expect(chat[0].text).toContain('Three moves for today:\n1. Ship the landing page.');
     const needs = (await deps.attention.list()).find((one) => one.kind === 'morning-note')!;
     expect(needs).toMatchObject({ id: 'morning-note:2026-09-27', who: 'Sam', roomId: 'p1', title: 'Morning note: Ship the landing page.' });
     const five = await todayFive(deps, clock);
@@ -184,8 +186,11 @@ describe('the partner slice: the morning note', () => {
 
   it('posts nothing when the reply loses its shape, and waits before it tries again', async () => {
     let asked = 0;
-    const { deps, part } = await installed({}, { now: () => NINE, ask: async () => { asked += 1; return 'Good morning!'; } });
+    let clock = NINE;
+    const { deps, part } = await installed({}, { now: () => clock, ask: async () => { asked += 1; return 'Good morning!'; } });
     await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    // The partner arrived yesterday: no note on the day they arrive.
+    clock -= 86_400_000; await part.tick!(); clock += 86_400_000;
     await part.tick!();
     await part.tick!();
     expect(asked).toBe(1);
@@ -199,6 +204,8 @@ describe('the partner slice: the morning note', () => {
     let asked = 0;
     const { deps, part } = await installed({}, { now: () => clock, ask: async () => { asked += 1; throw new Error('429 too many requests'); } });
     await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    // The partner arrived yesterday: no note on the day they arrive.
+    clock -= 86_400_000; await part.tick!(); clock += 86_400_000;
     for (let tick = 0; tick < 4; tick += 1) { await part.tick!(); clock += 30_000; }
     expect(asked).toBe(1);
     clock = NINE + 30 * 60_000;
@@ -224,6 +231,30 @@ describe('the partner slice: the morning note', () => {
     await part.route!({ method: 'POST' } as never, {} as never, '/api/partner/morning');
     expect(asked).toBe(1);
     expect(answers.at(-1)).toEqual([200, expect.objectContaining({ day: '2026-09-27', things: ['Ship the landing page.', 'Email the five replied leads.', 'Log the signups.'] })]);
+    await part.close!();
+  });
+
+  it('writes nothing on the day the partner arrives, and the command writes again only when something it reads changed', async () => {
+    let asked = 0;
+    const answers: [number, unknown][] = [];
+    const { deps, part } = await installed({ json: (_res, status, body) => { answers.push([status, body]); } }, { now: () => NINE, ask: async () => { asked += 1; return SHAPED; } });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    await part.tick!();
+    expect(asked).toBe(0);
+    expect(await deps.store.readChat('p1')).toEqual([]);
+    const command = () => part.route!({ method: 'POST' } as never, {} as never, '/api/partner/morning');
+    await command();
+    expect(asked).toBe(1);
+    await command();
+    expect(asked).toBe(1);
+    expect(answers.at(-1)).toEqual([200, expect.objectContaining({ unchanged: true, things: expect.any(Array) })]);
+    await deps.decisions.record({ title: 'Newsletter first', chosen: 'Weekly' });
+    await part.tick!();
+    await command();
+    expect(asked).toBe(2);
+    expect((answers.at(-1)![1] as { unchanged?: true }).unchanged).toBeUndefined();
+    expect((await deps.store.readChat('p1')).filter((one) => one.role === 'assistant')).toHaveLength(2);
     await part.close!();
   });
 

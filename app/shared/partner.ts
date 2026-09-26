@@ -48,7 +48,8 @@ export const VERDICT_WORDS: Record<BetVerdict, string> = { worked: 'worked', 'di
 // ---------------------------------------------------------------- the morning note
 
 export type Morning = { things: string[]; risk: string; question: string };
-export type MorningNote = Morning & { day: string; at: number; roomId: string; who: string };
+// `inputs` is what the note was read from, as a key: asked again with nothing changed, the same note stands.
+export type MorningNote = Morning & { day: string; at: number; roomId: string; who: string; inputs?: string };
 
 const plain = (text: string) => text.replace(/\*\*|__|`/g, '').replace(/\s+/g, ' ').trim();
 // A numbered or bulleted line, the number or bullet bold or not: "1. a", "**1.** a", "- a".
@@ -81,7 +82,7 @@ export function readMorning(reply: string): Morning | null {
   return { things, risk, question };
 }
 
-export const morningText = (note: Morning) => ['Three things that matter today:', ...note.things.map((thing, index) => `${index + 1}. ${thing}`), '', `Risk: ${note.risk}`, '', `Question: ${note.question}`].join('\n');
+export const morningText = (note: Morning) => ['Three moves for today:', ...note.things.map((thing, index) => `${index + 1}. ${thing}`), '', `Risk: ${note.risk}`, '', `Question: ${note.question}`].join('\n');
 
 // ---------------------------------------------------------------- a plan read as steps
 

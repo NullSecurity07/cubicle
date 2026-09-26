@@ -7,7 +7,7 @@ import { leadsFor } from '../leads/store.ts';
 import { betDue, betsAttention, betsBook, closedLine, metricChoices, readMetric, type BetsBook } from '../partner/bets.ts';
 import { companyDocOf, ensureCompany, syncDecisions, writeBets } from '../partner/company.ts';
 import { hub } from '../events.ts';
-import { FAKE_MORNING, morningDue, morningMessage, writeMorning } from '../partner/morning.ts';
+import { FAKE_MORNING, morningDue, morningInputs, morningMessage, writeMorning } from '../partner/morning.ts';
 import { addPlan, boardFor, boardForPlan, NO_BOARD, planAttention, stepsFrom } from '../partner/plans.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import type { ModelMessage } from '../prompt.ts';
@@ -202,31 +202,44 @@ export function createPartner(options: PartnerOptions = {}) {
     });
 
     // Today's note, written now if it is due (or asked for), else the one already written, else null.
-    let writing: Promise<MorningNote | null> | null = null;
-    const morning = (asked: boolean) => (writing ??= (async () => {
+    let writing: Promise<(MorningNote & { unchanged?: true }) | null> | null = null;
+    // What the note is read from, as it stands now.
+    async function inputsNow(stage: Stage, partnerId: string) {
+      const doc = await companyNow(stage);
+      const chats = Object.fromEntries(await Promise.all(stage.rooms.map(async (room) => [room.id, await deps.store.readChat(room.id).catch(() => [])] as const)));
+      const company = doc ? await deps.store.readDoc(doc.id) : '';
+      return { company, key: morningInputs({ stage, partnerId, decisions: await deps.decisions.list(), bets: await book.list(), company, chats }) };
+    }
+
+    // Today's note: written on the tick when it is due, or when the founder asks. Asked again the same day, it is
+    // written again only when something it reads has changed since; otherwise the one there stands, marked unchanged.
+    const morning = (asked: boolean) => (writing ??= (async (): Promise<(MorningNote & { unchanged?: true }) | null> => {
       try {
         const at = now();
         const today = localDay(at);
         const held = await state.read();
-        if (held.morning?.day === today) return held.morning;
+        if (!asked && held.morning?.day === today) return held.morning;
         if (!asked && (!morningOnTick || !morningDue(held, at))) return null;
         const stage = await deps.store.loadStage();
         const partner = partnerOf(stage);
         // Never beside a turn of their own: the note would land in the middle of what they are saying.
         if (!partner || deps.busy.has(partner.id)) return null;
+        const inputs = await inputsNow(stage, partner.id);
+        if (held.morning?.day === today && held.morning.inputs === inputs.key) return { ...held.morning, unchanged: true };
         const count = held.tries?.day === today ? held.tries.count : 0;
         await state.change((draft) => { draft.tries = { day: today, count: count + 1, last: at }; });
-        const note = await writeMorning({
+        const written = await writeMorning({
           name: partner.name, ask,
           promptFor: (on, roomId) => deps.promptFor(on, roomId, [], true),
           sources: {
-            workspace: deps.workspace, stage, partnerId: partner.id, now: at, bets,
+            workspace: deps.workspace, stage, partnerId: partner.id, now: at, bets, company: inputs.company,
             decisions: () => deps.decisions.list(), boards: (id) => deps.boards.list(id), leads: (id) => leadsFor(deps.workspace).list(id),
             chat: (roomId) => deps.store.readChat(roomId),
           },
         }).catch((error: Error) => { console.error(`partner morning: ${error.message}`); return null; });
-        if (!note) return null;
-        await state.change((draft) => { draft.morning = note; });
+        if (!written) return null;
+        const note = { ...written, inputs: inputs.key };
+        await state.change((draft) => { draft.morning = note; if (draft.morningDone === today) delete draft.morningDone; });
         await deps.store.appendChat(partner.id, { id: newMessageId(), role: 'assistant', text: morningMessage(note), at: note.at });
         await deps.attention.refresh().catch(() => {});
         deps.notify?.(`Morning note from ${partner.name}`, note.things[0]);
@@ -292,6 +305,9 @@ export function createPartner(options: PartnerOptions = {}) {
         return tools.filter((tool) => (partner || !PARTNER_TOOLS.includes(tool.name)) && (board || !BOARD_TOOLS.includes(tool.name)));
       },
       async tick() {
+        // The day a partner first shows up is noted, so their first note is the next morning's.
+        const arrived = partnerOf(await deps.store.loadStage());
+        if (arrived && !(await state.read()).partnerSince) await state.change((draft) => { draft.partnerSince = localDay(now()); });
         await keepCompany();
         await sync();
         await checkBets();

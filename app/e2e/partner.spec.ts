@@ -63,7 +63,7 @@ test('the founder adds a partner who keeps the Company document and leaves a mor
   expect((await stageOf(page)).rooms.filter((room) => room.partner)).toHaveLength(1);
 
   await bar(page, 'morning note', 'Morning note');
-  await expect(page.getByRole('status').filter({ hasText: "Sam's morning note: Read the Company document" })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('status').filter({ hasText: "Sam's morning note: Fill the empty sections" })).toBeVisible({ timeout: 15_000 });
   const today = (await (await page.request.get('/api/today')).json()) as { items: { kind: string; reason: string }[] };
   expect(today.items[0]).toMatchObject({ kind: 'morning-note', reason: expect.stringContaining('From your partner') });
 

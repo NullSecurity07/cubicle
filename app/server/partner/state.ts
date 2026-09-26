@@ -11,6 +11,8 @@ export type PartnerState = {
   // The founder said they had read today's note: it leaves Needs you and Today's five.
   morningDone?: string;
   tries?: { day: string; count: number; last: number };
+  // The day a partner was first on the stage: no morning note that day.
+  partnerSince?: string;
   plans: PlanProposal[];
   // Every step already offered from each plan doc, by its task title: an edit offers only the steps that are new.
   offered?: Record<string, string[]>;

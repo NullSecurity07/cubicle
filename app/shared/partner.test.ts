@@ -122,7 +122,7 @@ describe('the morning note', () => {
     const reply = 'Three things that matter today:\n1. Ship the landing page.\n2. **Email** the five replied leads.\n3. Log last week\'s signups.\n\nRisk: pre-orders are at 3 of 17.\nQuestion: Do you keep the $9 price?';
     const read = readMorning(reply);
     expect(read).toEqual({ things: ['Ship the landing page.', 'Email the five replied leads.', 'Log last week\'s signups.'], risk: 'pre-orders are at 3 of 17.', question: 'Do you keep the $9 price?' });
-    expect(morningText(read!)).toBe('Three things that matter today:\n1. Ship the landing page.\n2. Email the five replied leads.\n3. Log last week\'s signups.\n\nRisk: pre-orders are at 3 of 17.\n\nQuestion: Do you keep the $9 price?');
+    expect(morningText(read!)).toBe('Three moves for today:\n1. Ship the landing page.\n2. Email the five replied leads.\n3. Log last week\'s signups.\n\nRisk: pre-orders are at 3 of 17.\n\nQuestion: Do you keep the $9 price?');
   });
 
   it('takes headings in place of labels, and the risk on the line after its heading', () => {
