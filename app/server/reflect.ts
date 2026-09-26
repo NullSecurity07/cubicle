@@ -38,12 +38,19 @@ export const isCorrection = (text: string) => sentences(text).some((one) => CORR
 const TAUGHT = [/\blearn (this|that|from (this|that|how))\b/i, /\bremember how (you|we) (did|got) (this|that|it)\b/i, /\badd (this|that|it) to (the|your|our) playbook\b/i, /\bwrite (this|that|it) down for next time\b/i];
 export const asksToLearn = (text: string) => TAUGHT.some((pattern) => pattern.test(text));
 
+// What a tool says when it could not get at something at all, as opposed to getting it and finding it wanting.
+const UNREACHED = /\b(no connected|not connected|not found|no such|does not exist|is not (?:wired|reachable)|needs a wire|draw a wire|no (?:access|permission)|access denied|permission denied|forbidden|unauthori[sz]ed|40[134])\b/i;
+
 // Costs nothing and decides almost everything: most turns are ordinary and never reach a model at all.
 // A run that failed threw before this point, so a turn that arrives here unstopped is a run that ended done.
 export function shouldReflect(turn: Pick<Turn, 'source' | 'query' | 'reply'>): Reason | null {
   if (turn.reply.stopped) return null;
   if (asksToLearn(turn.query)) return 'taught';
   const ran = turn.reply.tools.filter((tool) => tool.ok !== undefined);
+  // A turn where a tool could not reach something (not connected, not found, not allowed) and nothing else worked has
+  // only that wall to teach, and a live run wrote it down as "ask the founder to locate the doc": a skill that makes
+  // every later turn give up sooner. The fault is in the wiring or the tool, not a procedure worth repeating.
+  if (ran.length && ran.every((tool) => !tool.ok) && ran.some((tool) => UNREACHED.test(tool.result ?? ''))) return null;
   if (turn.source !== 'run') return isCorrection(turn.query) ? 'corrected' : null;
   if (ran.filter((tool) => tool.ok).length >= EFFORT) return 'effort';
   // Real effort is also getting somewhere after something went wrong; that recovery is the lesson worth keeping.

@@ -74,6 +74,19 @@ describe('what is worth learning from', () => {
     expect(shouldReflect({ source: 'chat', query: 'Learn this.', reply: { ...answered(''), stopped: true } })).toBe(null);
   });
 
+  it('learns nothing from a turn whose only lesson was a tool that could not reach something', () => {
+    const refused = call('read_doc', { doc: 'Company brief' }, false, 'Failed: no connected document is called "Company brief". Connected: none. Ask the founder to draw a wire to it.');
+    const missing = call('web_fetch', { url: 'https://x.test' }, false, 'Failed: 404 not found');
+    // A correction after a refusal, with nothing that worked: a live run turned this into "ask the founder to locate docs".
+    expect(shouldReflect({ source: 'chat', query: 'No, the brief is pinned. Read it again.', reply: answered('I cannot find it.', [refused]) })).toBe(null);
+    expect(shouldReflect({ source: 'chat', query: 'No, try again.', reply: answered('Still nothing.', [refused, missing]) })).toBe(null);
+    // Something that worked after it is a recovery, and a correction with no failed tool is still a correction.
+    expect(shouldReflect({ source: 'chat', query: 'No, the other one.', reply: answered('Done.', [refused, call('read_doc', { doc: 'Brand doc' }, true, 'ok')]) })).toBe('corrected');
+    expect(shouldReflect({ source: 'chat', query: 'No, the other one.', reply: answered('Done.') })).toBe('corrected');
+    // The founder asking for it outright is their call.
+    expect(shouldReflect({ source: 'chat', query: 'Learn this.', reply: answered('Noted.', [refused]) })).toBe('taught');
+  });
+
   it('knows the three shapes an answer may take, and says what is wrong with the rest', () => {
     expect(checkVerdict({ action: 'none' })).toEqual({ action: 'none' });
     expect(checkVerdict({ action: 'create', ...skill })).toMatchObject({ action: 'create', name: skill.name });

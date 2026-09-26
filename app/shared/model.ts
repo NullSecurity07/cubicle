@@ -17,7 +17,14 @@ export type Room = Box & {
   model?: string; gender?: Gender; voice?: string; voiceBy?: VoiceBy; framework?: { id: string; key: string };
 };
 // `pinned` makes a doc company-wide: every person reads it, wired or not. Writing it still needs a wire.
-export type Doc = Box & { id: string; title: string; pinned?: boolean };
+// `rules` ride on a built-in team's shared doc, so what its briefs ask can be held to in code: whose each section is
+// (by the framework key of the person placed for it), which section is the verdict, the sections it waits on, and
+// the caps evidence puts on it. `outcomes` lists the verdict words from lowest to highest. See server/tools/verdict.ts.
+export type DocRules = {
+  framework: string; sections: { heading: string; by: string }[]; verdict: { heading: string; by: string };
+  outcomes?: string[]; caps?: { heading: string; line: string; verdict: string; score: number; why: string }[];
+};
+export type Doc = Box & { id: string; title: string; pinned?: boolean; rules?: DocRules };
 // Resource cards that are not docs. `browser` is a live browser a wired person can drive; `project` is the coder card, a running OpenCode in one code folder that the founder or a wired person drives; `board` holds tasks that wired people may propose and the founder runs.
 // A coder card keeps the `model` the founder picked (`provider/model`, absent for the default) and the `session` it is in, so the same conversation carries on after a restart.
 // `headed` shows the card's Chrome as a real window, for the founder to sign in or pass a human check by hand.
