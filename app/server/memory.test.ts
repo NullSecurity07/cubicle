@@ -88,3 +88,13 @@ describe('memory', () => {
     expect((await readdir(join(dir, 'trash'))).filter((name) => name.includes('build')).length).toBe(2);
   });
 });
+
+describe('notes kept at once', () => {
+  it('keeps both of two facts remembered at the same moment', async () => {
+    const memory = createMemory(await fresh(), async () => '', () => NOON);
+    await Promise.all([memory.remember('build', 'Ships on Thursdays.'), memory.remember('build', 'The price is 19.')]);
+    const notes = (await memory.read('build')).notes;
+    expect(notes).toContain('Ships on Thursdays.');
+    expect(notes).toContain('The price is 19.');
+  });
+});

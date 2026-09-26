@@ -26,22 +26,20 @@ export function createMemory(store: Store, summarise: Summarise, now: () => numb
   const folding = new Set<string>();
   return {
     read: (roomId: string) => store.readMemory(roomId),
+    // Every change here is read, made and written in one go, so a note kept while another is kept is not lost.
     async write(roomId: string, next: { notes?: string; summary?: string }) {
-      const memory = await store.readMemory(roomId);
-      await store.writeMemory(roomId, { ...memory, ...(typeof next.notes === 'string' ? { notes: next.notes.slice(0, NOTES_CHARS) } : {}), ...(typeof next.summary === 'string' ? { summary: next.summary.slice(0, SUMMARY_CHARS * 2) } : {}) });
+      await store.editMemory(roomId, (memory) => ({ out: undefined, memory: { ...memory, ...(typeof next.notes === 'string' ? { notes: next.notes.slice(0, NOTES_CHARS) } : {}), ...(typeof next.summary === 'string' ? { summary: next.summary.slice(0, SUMMARY_CHARS * 2) } : {}) } }));
     },
-    async remember(roomId: string, fact: string) {
-      const memory = await store.readMemory(roomId);
+    remember: (roomId: string, fact: string) => store.editMemory(roomId, (memory) => {
       // A note read back months later needs the day it was kept, or "the price is 19" has no shelf life. The same fact
       // is still only kept once, matched on the words rather than the whole line, so notes written before this still count.
       const body = fact.replace(/\s+/g, ' ').trim().slice(0, 300);
-      if (memory.notes.split('\n').some((one) => one.trimEnd().endsWith(body))) return 'Already remembered.';
+      if (memory.notes.split('\n').some((one) => one.trimEnd().endsWith(body))) return { memory, out: 'Already remembered.' };
       const line = `- ${shortDay(now())} · ${body}`;
       const notes = `${memory.notes.trim()}${memory.notes.trim() ? '\n' : ''}${line}`;
       if (notes.length > NOTES_CHARS) throw new Error('your notes are full. Tell the founder; they can trim them in your memory panel.');
-      await store.writeMemory(roomId, { ...memory, notes });
-      return 'Remembered.';
-    },
+      return { memory: { ...memory, notes }, out: 'Remembered.' };
+    }),
     // Folds messages that have slid out of the recent window into the summary, once enough of them have piled up.
     async fold(roomId: string): Promise<boolean> {
       if (folding.has(roomId)) return false;
@@ -64,8 +62,7 @@ export function createMemory(store: Store, summarise: Summarise, now: () => numb
           { role: 'user', content: `Memory so far:\n${memory.summary || '(empty)'}\n\nNew conversation to fold in:\n${talk}` },
         ])).trim().slice(0, SUMMARY_CHARS * 2);
         if (!summary) return false;
-        const latest = await store.readMemory(roomId);
-        await store.writeMemory(roomId, { ...latest, summary, upTo: fresh.at(-1)!.id });
+        await store.editMemory(roomId, (latest) => ({ out: undefined, memory: { ...latest, summary, upTo: fresh.at(-1)!.id } }));
         return true;
       } finally { folding.delete(roomId); }
     },

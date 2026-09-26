@@ -20,7 +20,8 @@ const safe = (id: string) => safeId(id, 64);
 
 // `onChat` is told whenever a conversation changed, whoever changed it. It lives here rather than at each of the
 // half-dozen callers so that a writer added later cannot forget it: there is nowhere else a message can be written.
-export function createStore(dir: string, onChat: (roomId: string) => void = () => {}) {
+// `onStage` is told the stage as saved, revision and all, after every save, for the same reason.
+export function createStore(dir: string, onChat: (roomId: string) => void = () => {}, onStage: (stage: Stage) => void = () => {}) {
   const stagePath = join(dir, 'stage.json');
   const docPath = (id: string) => join(dir, 'docs', `${safe(id)}.md`);
   const chatPath = (id: string) => join(dir, 'rooms', `${safe(id)}.json`);
@@ -57,6 +58,28 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
     queue = job.catch(() => {});
     return job;
   };
+  // A read, a change and a write that must happen as one: two people's messages landing in one conversation at the
+  // same moment would otherwise both read the old list, and the second write would lose the first message. Inside the
+  // job, files are read and written directly (`readHere`, `writeAtomic`), since the queue is already this job's.
+  const exclusive = <T>(job: () => Promise<T>): Promise<T> => {
+    const run = queue.then(job);
+    queue = run.catch(() => {});
+    return run;
+  };
+  const readHere = async (path: string) => {
+    try { return await readFile(path, 'utf8'); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
+  };
+  const editChat = <T>(id: string, edit: (messages: ChatMessage[]) => T) => exclusive(async () => {
+    const path = chatPath(id);
+    const messages: ChatMessage[] = JSON.parse((await readHere(path)) ?? '[]');
+    const out = edit(messages);
+    await writeAtomic(path, JSON.stringify(messages, null, 2), { mkdir: true });
+    return out;
+  });
+
   // When a file was last written. Nothing here keeps a date of its own, so for a doc, a shared file or a fetched page
   // this is the only honest answer to "how old is this?", which is what recall has to say about what it finds.
   const timeOf = (path: string) => stat(path).then((info) => info.mtimeMs, () => undefined);
@@ -105,9 +128,11 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
     return structuredClone(seedStage);
   }
 
-  async function saveNow(stage: Stage) {
-    for (const card of [...stage.rooms, ...stage.docs, ...(stage.cards ?? [])]) safe(card.id);
+  // Every save is one revision on from the stage it replaces; see `putStage`.
+  async function saveNow(sent: Stage): Promise<Stage> {
+    for (const card of [...sent.rooms, ...sent.docs, ...(sent.cards ?? [])]) safe(card.id);
     const before = await loadStage();
+    const stage: Stage = { ...sent, rev: (before.rev ?? 0) + 1 };
     const gone = (was: { id: string }[], now: { id: string }[]) => was.filter((card) => !now.some((kept) => kept.id === card.id));
     const moves = [
       ...gone(before.rooms, stage.rooms).flatMap((room) => [chatPath(room.id), memoryPath(room.id)]),
@@ -122,6 +147,8 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
         if (error.code !== 'ENOENT') throw error;
       });
     }
+    onStage(stage);
+    return stage;
   }
 
   return {
@@ -132,7 +159,7 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
     // Cards that left the stage keep their files, in trash: the founder's words are never deleted.
     // Every change to the stage waits its turn behind the others, so two changes never read the same stage and the
     // second never writes over the first. Do not call these from inside a `patchStage` edit: it would wait for itself.
-    saveStage: (stage: Stage) => staged(() => saveNow(stage)),
+    saveStage: (stage: Stage) => staged(async () => { await saveNow(stage); }),
     // A change made here rather than in a window: read the stage, change it, save it, in turn. What it puts on the
     // stage is kept there until a window sends it back, because a window saves its whole stage as it last saw it,
     // and one that has not heard of the change yet would otherwise take it away again (and a doc with it, to trash).
@@ -144,16 +171,19 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
       if (JSON.stringify(after) === JSON.stringify(before)) return after;
       const had = new Set(idsOf(before));
       for (const id of idsOf(after)) if (!had.has(id)) unseen.add(id);
-      await saveNow(after);
-      return after;
+      return saveNow(after);
     }),
     // The stage as a window last saw it, saved whole: what it left out on purpose goes, but whatever a change made
     // here put on the stage and the window has not sent back yet stays. Hands back the stage before and as saved.
-    putStage: (sent: Stage) => staged(async () => {
+    // A window says which revision it last saw; if the stage has moved on since (another window saved, or a change
+    // made here did), nothing is written and the answer is `stale`, so that window can take in the newer stage and
+    // save again, rather than put back the stage as it was and take the other change away. A save that names no
+    // revision (a script, a test putting a stage back) is taken as it always was.
+    putStage: (sent: Stage) => staged(async (): Promise<{ before: Stage; next: Stage; stale: boolean }> => {
       const before = await loadStage();
-      const next = keepUnseen(before, sent);
-      await saveNow(next);
-      return { before, next };
+      if (sent.rev !== undefined && sent.rev !== (before.rev ?? 0)) return { before, next: before, stale: true };
+      const next = await saveNow(keepUnseen(before, sent));
+      return { before, next, stale: false };
     }),
     readDoc: async (id: string) => (await read(docPath(id))) ?? '',
     docTime: async (id: string) => timeOf(docPath(id)),
@@ -168,15 +198,22 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
     async readChat(id: string): Promise<ChatMessage[]> {
       const messages: ChatMessage[] = JSON.parse((await read(chatPath(id))) ?? '[]');
       if (messages.every((message) => message.id)) return messages;
-      const named = messages.map((message) => (message.id ? message : { ...message, id: newMessageId() }));
-      await write(chatPath(id), JSON.stringify(named, null, 2));
-      return named;
+      return editChat(id, (held) => {
+        for (const [at, message] of held.entries()) if (!message.id) held[at] = { ...message, id: newMessageId() };
+        return held;
+      });
     },
     async appendChat(id: string, message: ChatMessage) {
-      const path = chatPath(id);
-      const messages: ChatMessage[] = JSON.parse((await read(path)) ?? '[]');
-      messages.push(message);
-      await write(path, JSON.stringify(messages, null, 2));
+      await editChat(id, (messages) => messages.push(message));
+      onChat(id);
+    },
+    // A message written where it already is, by its id, or at the end if it is new. A reply is written early like
+    // this, as it stands, and again when it is finished, so a restart in the middle of a turn keeps what was done.
+    async putMessage(id: string, message: ChatMessage) {
+      await editChat(id, (messages) => {
+        const at = messages.findIndex((one) => one.id === message.id);
+        if (at < 0) messages.push(message); else messages[at] = message;
+      });
       onChat(id);
     },
     readPage: async (id: string): Promise<{ url: string; title: string; text: string } | null> => JSON.parse((await read(pagePath(id))) ?? 'null'),
@@ -186,14 +223,25 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
       return { notes: saved.notes ?? '', summary: saved.summary ?? '', upTo: saved.upTo };
     },
     writeMemory: (id: string, memory: Memory) => write(memoryPath(id), JSON.stringify(memory, null, 2)),
+    // A person's memory read, changed and written as one, so two notes kept at the same moment are both kept. `edit`
+    // may throw, and then nothing is written.
+    editMemory: <T>(id: string, edit: (memory: Memory) => { memory: Memory; out: T }) => exclusive(async () => {
+      const saved = JSON.parse((await readHere(memoryPath(id))) ?? '{}') as Partial<Memory>;
+      const { memory, out } = edit({ notes: saved.notes ?? '', summary: saved.summary ?? '', upTo: saved.upTo });
+      await writeAtomic(memoryPath(id), JSON.stringify(memory, null, 2), { mkdir: true });
+      return out;
+    }),
     // Takes messages out of a conversation (one, or one and everything after it). What is taken out goes to trash.
     async cutChat(id: string, messageId: string, andAfter: boolean): Promise<ChatMessage[]> {
-      const messages: ChatMessage[] = JSON.parse((await read(chatPath(id))) ?? '[]');
-      const at = messages.findIndex((message) => message.id === messageId);
-      if (at < 0) throw new Error('unknown message');
-      const gone = andAfter ? messages.splice(at) : messages.splice(at, 1);
-      await write(join(dir, 'trash', `${trashStamp()}-${safe(id)}-messages.json`), JSON.stringify(gone, null, 2));
-      await write(chatPath(id), JSON.stringify(messages, null, 2));
+      const messages = await exclusive(async () => {
+        const held: ChatMessage[] = JSON.parse((await readHere(chatPath(id))) ?? '[]');
+        const at = held.findIndex((message) => message.id === messageId);
+        if (at < 0) throw new Error('unknown message');
+        const gone = andAfter ? held.splice(at) : held.splice(at, 1);
+        await writeAtomic(join(dir, 'trash', `${trashStamp()}-${safe(id)}-messages.json`), JSON.stringify(gone, null, 2), { mkdir: true });
+        await writeAtomic(chatPath(id), JSON.stringify(held, null, 2), { mkdir: true });
+        return held;
+      });
       onChat(id);
       return messages;
     },

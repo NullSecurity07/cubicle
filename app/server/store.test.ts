@@ -112,4 +112,49 @@ describe('store, changes made here and in a window', () => {
     const { next } = await store.putStage({ ...seen, rooms: seen.rooms.filter((one) => one.id !== 'marketing'), wires: seen.wires.filter((one) => one.from !== 'marketing' && one.to !== 'marketing') });
     expect(next.wires.some((one) => one.id === 'marketing-brand-doc-x')).toBe(false);
   });
+
+  it('refuses a window that saves over a stage it has not seen, and counts every save', async () => {
+    const seen = await store.loadStage();
+    const first = await store.putStage({ ...seen, rev: 0 });
+    expect(first.stale).toBe(false);
+    expect((await store.loadStage()).rev).toBe(1);
+    // A second window still holds the stage as it was before the first one saved.
+    const late = await store.putStage({ ...seen, rooms: [], rev: 0 });
+    expect(late.stale).toBe(true);
+    expect((await store.loadStage()).rooms).toHaveLength(seen.rooms.length);
+    await store.patchStage((stage) => { stage.rooms[0].x = 7; });
+    expect((await store.loadStage()).rev).toBe(2);
+  });
+
+  it('tells whoever listens what the stage became after every save', async () => {
+    const heard: (number | undefined)[] = [];
+    const listened = createStore(dir, () => {}, (stage) => heard.push(stage.rev));
+    const seen = await listened.loadStage();
+    await listened.putStage({ ...seen, rev: 0 });
+    await listened.patchStage((stage) => { stage.rooms[0].x = 9; });
+    expect(heard).toEqual([1, 2]);
+  });
+
+  it('keeps both of two messages written to one conversation at once', async () => {
+    await Promise.all([
+      store.appendChat('marketing', { id: 'a', role: 'user', text: 'one', at: 1 }),
+      store.appendChat('marketing', { id: 'b', role: 'assistant', text: 'two', at: 2 }),
+      store.appendChat('marketing', { id: 'c', role: 'user', text: 'three', at: 3 }),
+    ]);
+    expect((await store.readChat('marketing')).map((m) => m.id).sort()).toEqual(['a', 'b', 'c']);
+  });
+
+  it('keeps a message written while another is being cut out', async () => {
+    await store.appendChat('marketing', { id: 'a', role: 'user', text: 'one', at: 1 });
+    await Promise.all([store.cutChat('marketing', 'a', false), store.appendChat('marketing', { id: 'b', role: 'user', text: 'two', at: 2 })]);
+    expect((await store.readChat('marketing')).map((m) => m.id)).toEqual(['b']);
+  });
+
+  it('writes a message in place by its id, or at the end when it is new', async () => {
+    await store.appendChat('marketing', { id: 'a', role: 'user', text: 'ask', at: 1 });
+    await store.putMessage('marketing', { id: 'r', role: 'assistant', text: 'half', at: 2, stopped: true });
+    await store.appendChat('marketing', { id: 'q', role: 'user', text: 'from a colleague', at: 3 });
+    await store.putMessage('marketing', { id: 'r', role: 'assistant', text: 'whole', at: 4 });
+    expect((await store.readChat('marketing')).map((m) => `${m.id}:${m.text}`)).toEqual(['a:ask', 'r:whole', 'q:from a colleague']);
+  });
 });
