@@ -1,5 +1,6 @@
 import { playbookOf } from '../shared/apps.ts';
 import { STANCE, type Card, type ChatMessage, type Stage } from '../shared/model.ts';
+import { COMPANY_LINE, isCompanyTitle } from '../shared/partner.ts';
 import { safeHost, sourceCards } from '../shared/sources.ts';
 import { dayKey, fullDay, shortDay, weekDay, zoneName } from './clock.ts';
 import { recent, type Memory } from './memory.ts';
@@ -176,6 +177,7 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
         + 'it never reaches the founder\'s list or the log. After the call, say in a line or two what you proposed and that it waits in their list. Never treat a proposal as decided.'
       : '',
     pinned.length ? `Company documents every person reads:\n\n${pinned.join('\n\n')}` : '',
+    stage.docs.some((doc) => doc.pinned && isCompanyTitle(doc.title)) ? COMPANY_LINE : '',
     sourceLines.length ? `Websites the founder trusts. Search inside one with search_source when its description fits the question, then read the pages with web_fetch:\n${sourceLines.join('\n')}` : '',
     docsWired.length
       ? `The founder has connected these documents to your room. Treat them as what the founder wants you to know.\n\n${docsWired.join('\n\n')}`
