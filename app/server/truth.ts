@@ -14,15 +14,22 @@ const KINDS: { verbs: RegExp; tools: RegExp }[] = [
   { verbs: /^(scheduled|booked)$/i, tools: /watch|automation|schedule|repeat|propose_task|remind|nudge|delegate/ },
 ];
 const VERBS = 'saved|wrote|written|updated|created|stored|recorded|sent|emailed|mailed|messaged|posted|published|scheduled|booked';
-// "I saved", "I've just sent", "we have posted"; "it has been saved", "the post was published"; a sentence that opens
-// with the verb, "Saved it to plan.md".
-const FIRST = new RegExp(`\\b(?:I|we)(?:'ve| have| had)?(?:\\s+(?:just|now|already|also|then))?\\s+(${VERBS})\\b`, 'gi');
-const PASSIVE = new RegExp(`\\b(?:has been|have been|had been|was|were|is now|are now|is|are)(?:\\s+(?:just|now|already|also))?\\s+(${VERBS})\\b`, 'gi');
+// "I saved", "I've just sent", "we have posted"; "it has been saved", "the draft was saved"; a sentence that opens with
+// the verb, "Saved it to plan.md". A bare "we sent" is the company's own history, not this turn, and a bare "is
+// updated" or "was created" says how things are or were ("updated weekly", "created in 2010"), so the passive counts
+// only when it says just now, or when its subject is a thing a person here makes: a file, a doc, an email, a post.
+const FIRST = new RegExp(`\\b(?:I(?:'ve| have| had)?(?:\\s+(?:just|now|already|also|then))?|we(?:'ve| have)(?:\\s+(?:just|now|already|also))?|we\\s+(?:just|now))\\s+(${VERBS})\\b`, 'gi');
+const PASSIVE = new RegExp(`\\b(?:has been|have been|is now|are now|was just|were just)(?:\\s+(?:just|now|already|also))?\\s+(${VERBS})\\b`, 'gi');
+const MADE = new RegExp(`\\b(?:file|doc|document|email|e-mail|mail|post|update|draft|note|message|deck|invite)s?\\s+(?:was|were|is|are)(?:\\s+(?:just|now|already|also))?\\s+(${VERBS})\\b`, 'gi');
 const OPENING = new RegExp(`(?:^|[.!?]\\s+|\\n\\s*)(${VERBS})\\s+(?:it|the|this|to|your|a|an|them|\`|")`, 'gi');
 // A claim that is not one: under a condition, denied, asked, or about words that sit in this very reply ("below",
 // or a sentence ending in a colon with the words after it).
 const CONDITION = /\b(?:once|after|when|if|before|until|unless|nothing|no one|nobody|none|not|never)\s*$/i;
 const HERE = /\b(?:below|above|here|in this (?:reply|message|chat))\b/i;
+// A sentence about some other time, or what the founder said happened, is not a claim about this turn; nor is "I sent
+// you nothing", or a change of mind ("I updated my view").
+const ELSEWHEN = /\b(?:yesterday|last (?:week|month|year|quarter|time)|ago|in (?:19|20)\d\d|you (?:said|told|mentioned|wrote))\b/i;
+const NOT_A_THING = /^\w+\s+(?:(?:you|them|him|her|us)\s+)?nothing\b|^\w+\s+my\s+(?:view|mind|thinking|take|estimate|opinion|read|understanding|guess)\b/i;
 
 function sentenceAround(text: string, at: number): { before: string; rest: string } {
   const start = Math.max(text.lastIndexOf('.', at - 1), text.lastIndexOf('!', at - 1), text.lastIndexOf('?', at - 1), text.lastIndexOf('\n', at - 1)) + 1;
@@ -35,7 +42,7 @@ function sentenceAround(text: string, at: number): { before: string; rest: strin
 // The action verbs this reply claims as done that no working receipt of the same kind stands behind, in the order said.
 export function unreceiptedClaims(reply: string, receipts: Receipt[]): string[] {
   const found: { at: number; verb: string }[] = [];
-  for (const pattern of [FIRST, PASSIVE, OPENING]) {
+  for (const pattern of [FIRST, PASSIVE, MADE, OPENING]) {
     for (const match of reply.matchAll(pattern)) {
       const verb = match[1];
       const at = match.index + match[0].length - verb.length;
@@ -44,6 +51,7 @@ export function unreceiptedClaims(reply: string, receipts: Receipt[]): string[] 
       const { before } = sentenceAround(reply, start);
       const { rest } = sentenceAround(reply, at);
       if (CONDITION.test(before) || HERE.test(rest) || /[?:]$/.test(rest.trimEnd())) continue;
+      if (ELSEWHEN.test(before + rest) || NOT_A_THING.test(rest)) continue;
       found.push({ at, verb: verb.toLowerCase() });
     }
   }
@@ -55,7 +63,8 @@ export function unreceiptedClaims(reply: string, receipts: Receipt[]): string[] 
 
 const AMOUNT = String.raw`(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?`;
 const SCALE: Record<string, number> = { k: 1e3, thousand: 1e3, m: 1e6, mm: 1e6, million: 1e6, b: 1e9, bn: 1e9, billion: 1e9 };
-const UNITS = 'users|customers|clients|signups|sign-ups|subscribers|downloads|visitors|leads|employees|hires|seats|months|weeks|days|hours';
+// Months stay (runway is counted in them); days, weeks and hours are nearly always advice ("run it 30 days").
+const UNITS = 'users|customers|clients|signups|sign-ups|subscribers|downloads|visitors|leads|employees|hires|seats|months';
 // A figure worth checking: money, a percentage, or a count with a unit. Bare numbers (dates, section numbers, steps)
 // are not figures here.
 const FIGURE = new RegExp(String.raw`[$€£]\s?${AMOUNT}\s?(k|mm|m|bn|b|thousand|million|billion)?\b|${AMOUNT}\s?(%|percent\b)|${AMOUNT}\s?(k|m|x|×)?\s?(${UNITS})\b|${AMOUNT}(x|×)(?![\w])`, 'gi');
@@ -108,6 +117,11 @@ export function proseToolCall(reply: string, names: string[] = []): boolean {
 export const CALL_THE_TOOL = 'You wrote a tool call as text. Call the tool, do not write it as text. If you meant to answer, answer in plain words.';
 export const ANSWER_IN_WORDS = 'You wrote a tool call as text, but no tool can be called here. Answer in plain words.';
 export const HELD_BACK = 'This reply wrote a tool call out as text twice instead of making it, so it was held back. Ask again, or ask for a plain answer.';
+
+// A reply with the truth net's lines taken off again, for a reader that grades only the person's own words.
+export function withoutFlags(text: string, flags: string[] = []): string {
+  return flags.reduce((kept, flag) => kept.replace(`\n\n${flag}`, '').replace(flag, ''), text).trimEnd();
+}
 
 // The lines the founder sees under a reply that says more than this turn can back.
 export function checkReply(input: { reply: string; receipts: Receipt[]; sources: string[] }): string[] {

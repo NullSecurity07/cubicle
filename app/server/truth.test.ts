@@ -17,7 +17,7 @@ describe('unreceiptedClaims', () => {
     expect(unreceiptedClaims('I sent the deck to Maya.', [])).toEqual(['sent']);
     expect(unreceiptedClaims('I have emailed the three investors.', [])).toEqual(['emailed']);
     expect(unreceiptedClaims('The post was published on LinkedIn and I scheduled the follow-up.', [])).toEqual(['published', 'scheduled']);
-    expect(unreceiptedClaims('We posted it this morning.', [])).toEqual(['posted']);
+    expect(unreceiptedClaims("We've posted it this morning.", [])).toEqual(['posted']);
     expect(unreceiptedClaims('I just updated the pricing doc.', [])).toEqual(['updated']);
   });
 
@@ -47,6 +47,18 @@ describe('unreceiptedClaims', () => {
       'I wrote a first draft for you:\n\nDear investors,',
     ]) expect(unreceiptedClaims(reply, []), reply).toEqual([]);
   });
+
+  it('leaves normal talk about state, history and opinions alone', () => {
+    for (const reply of [
+      'Stripe was created in 2010.',
+      'The data is updated weekly.',
+      'Last month we sent 50 cold emails and got 3 replies.',
+      'I updated my view: go with B.',
+      'You said you sent it Monday, so it was sent already.',
+      'Your landing page is published at acme.com.',
+      'I sent you nothing yet.',
+    ]) expect(unreceiptedClaims(reply, []), reply).toEqual([]);
+  });
 });
 
 describe('unsourcedFigures', () => {
@@ -74,6 +86,10 @@ describe('unsourcedFigures', () => {
   it('leaves small counts, dates and bare numbers alone', () => {
     expect(unsourcedFigures('Talk to 5 customers in 3 weeks, by 12 October 2026, in 2 steps.', [])).toEqual([]);
     expect(unsourcedFigures('Section 4 of the 2026 plan.', [])).toEqual([]);
+  });
+
+  it('leaves durations in advice alone', () => {
+    expect(unsourcedFigures('Run it for 30 days and reply within 24 hours, over 12 weeks.', [])).toEqual([]);
   });
 
   it('flags a large count with a unit', () => {
