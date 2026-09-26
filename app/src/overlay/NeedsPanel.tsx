@@ -58,7 +58,7 @@ export function NeedsPanel() {
           return (
             <li key={entry.id} className={`needs__item needs__item--${entry.kind}`}>
               <div className="needs__head">
-                <span className="needs__who">{entry.who ? `${entry.who} ${WHAT[entry.kind]}` : WHAT[entry.kind]}</span>
+                <span className="needs__who">{entry.who ? `${entry.who} ${entry.event?.name === 'ask_founder' ? 'asks you' : WHAT[entry.kind]}` : WHAT[entry.kind]}</span>
                 <time>{ago(entry.at)}</time>
               </div>
               {entry.lapsed

@@ -76,4 +76,18 @@ describe('doc tools', () => {
     expect(write.ok).toBe(false);
     expect(write.text).toMatch(/pinned company document: you can read it, but writing to it needs a wire/);
   });
+
+  it('lets a plain doc repeat a heading, as a running log does', async () => {
+    const { store, call } = await setup();
+    expect((await call('append_doc', { doc: 'Brand doc', text: '## Monday\n\na' })).ok).toBe(true);
+    expect((await call('append_doc', { doc: 'Brand doc', text: '## Monday\n\nb' })).ok).toBe(true);
+    expect((await call('append_doc', { doc: 'Brand doc', text: '## Review\n\nMore notes.' })).ok).toBe(true);
+    expect((await store.readDoc('brand-doc')).match(/^## Monday$/gm)).toHaveLength(2);
+  });
+
+  it('points a person to write_doc when a section to replace is there twice', async () => {
+    const { store, call } = await setup();
+    await store.replaceDoc('brand-doc', `${PLAN}\n## Build\n\nAgain\n`);
+    expect((await call('replace_section', { doc: 'Brand doc', heading: 'Build', text: 'x' })).text).toMatch(/more than one heading is called "Build".*write_doc/);
+  });
 });

@@ -243,6 +243,8 @@ div.msg--assistant { white-space: normal; display: flex; flex-direction: column;
 .approval input:focus, .approval textarea:focus { border-color: var(--focus); }
 .approval .approval__code { font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace; font-size: 11.5px; white-space: pre; }
 .approval__end { display: flex; justify-content: flex-end; gap: 8px; }
+.approval__choices { display: flex; flex-wrap: wrap; gap: 6px; }
+.approval__choices button { background: rgba(240, 179, 90, 0.16); }
 .approval button { border: 0; border-radius: 8px; padding: 6px 14px; font: inherit; font-size: 12.5px; font-weight: 550; color: var(--text); background: rgba(255, 255, 255, 0.1); cursor: pointer; }
 .approval button:hover { background: rgba(255, 255, 255, 0.16); }
 .approval .primary { background: var(--accent); color: #fff; }

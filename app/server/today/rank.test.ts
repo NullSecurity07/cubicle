@@ -19,6 +19,13 @@ describe('rank', () => {
     expect(five[0]).toMatchObject({ title: 'Maya needs your OK: ok', score: WEIGHTS.approval.weight });
   });
 
+  it('says a question put to the founder is a question, not an OK', async () => {
+    expect(rank([signal('Which fit?', 'approval', 0, { who: 'Priya', question: true })], NOW)[0].title).toBe('Priya asks you: Which fit?');
+    const needs = [{ id: 'approval:ask-1', kind: 'approval', title: 'Which fit?', at: NOW, who: 'Priya', event: { id: 'ask-1', name: 'ask_founder', args: {}, choices: ['Lived it'] } }] as Attention[];
+    const [found] = await gather({ attention: { list: async () => needs }, boards: { list: async () => [] }, stage: async () => ({ rooms: [], docs: [], wires: [], cards: [] }) }, NOW);
+    expect(rank([found], NOW)[0].title).toBe('Priya asks you: Which fit?');
+  });
+
   it('adds a little for every day waited, capped, so an old item climbs past a slightly heavier new one', () => {
     const [first, second] = rank([signal('fresh', 'metric-alert', 0), signal('old', 'lead-stale', 3)], NOW);
     expect(first).toMatchObject({ id: 'old', score: 75 + 15 });

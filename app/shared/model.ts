@@ -23,7 +23,10 @@ export type Room = Box & {
 // the caps evidence puts on it. `outcomes` lists the verdict words from lowest to highest. See server/tools/verdict.ts.
 export type DocRules = {
   framework: string; sections: { heading: string; by: string }[]; verdict: { heading: string; by: string };
-  outcomes?: string[]; caps?: { heading: string; line: string; verdict: string; score: number; why: string }[];
+  outcomes?: string[];
+  // A cap bounds the verdict unless `on` names another section, which it then bounds with its own `outcomes` (lowest
+  // first), a score out of `outOf`, and `name` for what the refusal calls it.
+  caps?: { heading: string; line: string; verdict: string; score: number; why: string; on?: string; outcomes?: string[]; outOf?: number; name?: string }[];
 };
 export type Doc = Box & { id: string; title: string; pinned?: boolean; rules?: DocRules };
 // Resource cards that are not docs. `browser` is a live browser a wired person can drive; `project` is the coder card, a running OpenCode in one code folder that the founder or a wired person drives; `board` holds tasks that wired people may propose and the founder runs.
@@ -222,7 +225,8 @@ export const MEMORY_CHANNEL = 'memory';
 export type ToolEffect = { kind: 'doc-changed'; id: string } | { kind: 'doc-created'; id: string; title: string } | { kind: 'browser-moved'; id: string } | { kind: 'chat-changed'; id: string } | { kind: 'memory-changed'; id: string }
   | { kind: 'media-progress'; id: string; line: string } | { kind: 'media-made'; id: string };
 // One tool call inside a reply. `ok` is absent while the tool is still running; `waiting` means it needs the founder's yes first.
-export type ToolEvent = { id: string; name: string; args: Record<string, unknown>; waiting?: boolean; question?: string; ok?: boolean; result?: string; effect?: ToolEffect };
+// `choices` are the answers a question to the founder offers, each one a button wherever it is shown.
+export type ToolEvent = { id: string; name: string; args: Record<string, unknown>; waiting?: boolean; question?: string; choices?: string[]; ok?: boolean; result?: string; effect?: ToolEffect };
 // A file the founder attached to a message; it lives in the shared files folder.
 export type Attachment = { path: string; type: string; size: number };
 // The founder is not always at the stage. When their words came in some other way, the message says which, so the

@@ -76,7 +76,7 @@ describe('a person asking the founder', () => {
     const open = await opened(attention);
     expect(open).toHaveLength(1);
     expect(open[0].title).toBe('Which price should I use?');
-    expect(open[0].detail).toContain('£29 · £49');
+    expect(open[0].event?.choices).toEqual(['£29', '£49']);
     await part.close?.();
   });
 
