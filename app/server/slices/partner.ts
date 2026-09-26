@@ -1,15 +1,18 @@
+import { isDay } from '../../shared/metrics.ts';
 import { newMessageId, type Attention, type Stage } from '../../shared/model.ts';
-import type { Bet, MorningNote } from '../../shared/partner.ts';
+import type { Bet, BetVerdict, MorningNote } from '../../shared/partner.ts';
 import { localDay } from '../clock.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
 import { leadsFor } from '../leads/store.ts';
-import { companyDocOf, ensureCompany, syncDecisions } from '../partner/company.ts';
+import { betDue, betsAttention, betsBook, closedLine, metricChoices, readMetric, type BetsBook } from '../partner/bets.ts';
+import { companyDocOf, ensureCompany, syncDecisions, writeBets } from '../partner/company.ts';
 import { FAKE_MORNING, morningDue, morningMessage, writeMorning } from '../partner/morning.ts';
 import { partnerState } from '../partner/state.ts';
 import type { ModelMessage } from '../prompt.ts';
 import { complete, promptSize } from '../providers.ts';
 import { route as routeModels } from '../router.ts';
 import { patchStageVia } from '../slice-kit.ts';
+import { speaker, text, type Tool } from '../tools/registry.ts';
 
 // The partner: one person who holds the whole company rather than one part of it, and the things that make that
 // true. The Company document is the shared record every person reads; decisions land in it as they are made. Once a
@@ -18,6 +21,69 @@ import { patchStageVia } from '../slice-kit.ts';
 
 // The founder's partner, if one is on the stage: the first person marked so.
 export const partnerOf = (stage: Stage) => stage.rooms.find((room) => room.partner);
+
+export const PARTNER_TOOLS = ['close_bet'];
+const VERDICTS: BetVerdict[] = ['worked', 'did-not'];
+
+// A person puts a bet to the founder; only the partner (or the founder, from Needs you) says how one went, and only
+// once its day has come. The number is read in code either way.
+export function betTools(book: BetsBook, workspace: string, changed: () => Promise<void>, now: () => number = Date.now): Tool[] {
+  return [
+    {
+      name: 'propose_bet', perTurn: 2,
+      description: 'Put a bet on record for the founder to take: something the company does, what it should move, by how much and by when. '
+        + 'It waits in Needs you; it is only on record once the founder takes it. Measure it by a number the app can read: '
+        + 'a Metrics card number (its key or name), "leads", "leads:<stage>" such as "leads:replied", or "survey" (answers).',
+      parameters: { type: 'object', properties: {
+        what: { type: 'string', description: 'What the company does, in a few words' },
+        hypothesis: { type: 'string', description: 'What should happen because of it, and why' },
+        metric: { type: 'string', description: 'What it is measured by, as above' },
+        target: { type: 'number', description: 'The value that metric should reach' },
+        check_date: { type: 'string', description: 'YYYY-MM-DD, the day to look' },
+      }, required: ['what', 'hypothesis', 'metric', 'target', 'check_date'] },
+      async run(args, context) {
+        const today = localDay(now());
+        const checkDate = text(args, 'check_date', 10).trim();
+        if (!isDay(checkDate)) throw new Error('"check_date" is a day, written YYYY-MM-DD');
+        if (checkDate < today) throw new Error(`"check_date" is before today (${today})`);
+        const target = typeof args.target === 'string' ? Number(args.target.replace(/[,$€£%\s]/g, '')) : Number(args.target);
+        if (!Number.isFinite(target)) throw new Error('"target" must be a number');
+        const metric = text(args, 'metric', 80).trim();
+        const choices = await metricChoices(workspace, context.stage);
+        if (!choices.some((one) => one.toLowerCase() === metric.toLowerCase()) && (await readMetric(workspace, context.stage, metric)).value === null) {
+          throw new Error(choices.length ? `nothing called "${metric}" can be read. Measure it by one of: ${choices.join(', ')}.` : 'nothing on the stage can be counted yet. Ask the founder to add a Metrics, Leads or Survey card first.');
+        }
+        const me = speaker(context);
+        const bet = await book.propose({ what: text(args, 'what', 160).replace(/\s+/g, ' ').trim(), hypothesis: typeof args.hypothesis === 'string' ? args.hypothesis.replace(/\s+/g, ' ').trim().slice(0, 400) : '', metric, target, checkDate, ...(me ? { proposedBy: me.name, roomId: me.id } : {}) });
+        await changed();
+        return { text: `Proposed the bet "${bet.what}" (${bet.metric} to ${bet.target} by ${bet.checkDate}). It waits in Needs you; it is not on record until the founder takes it.` };
+      },
+    },
+    {
+      name: 'close_bet', perTurn: 2,
+      description: 'Say how a bet on record went, on or after its check day. The number is read for you from its card; you say whether it worked and why in a line.',
+      parameters: { type: 'object', properties: {
+        bet: { type: 'string', description: 'What the bet was, as the Company document lists it' },
+        verdict: { type: 'string', enum: VERDICTS },
+        note: { type: 'string', description: 'One line on why' },
+      }, required: ['bet', 'verdict'] },
+      async run(args, context) {
+        if (!speaker(context)?.partner) throw new Error('only the founder or the partner closes a bet');
+        const wanted = text(args, 'bet', 200).trim().toLowerCase();
+        const open = (await book.list()).filter((one) => one.status === 'open');
+        const bet = open.find((one) => one.id === wanted || one.what.toLowerCase() === wanted) ?? open.find((one) => one.what.toLowerCase().includes(wanted));
+        if (!bet) throw new Error(`no open bet is called "${args.bet}". Open: ${open.map((one) => `"${one.what}"`).join(', ') || 'none'}`);
+        if (!betDue(bet, localDay(now()))) throw new Error(`"${bet.what}" is checked on ${bet.checkDate}; it cannot be closed before then`);
+        const verdict = VERDICTS.includes(args.verdict as BetVerdict) ? args.verdict as BetVerdict : null;
+        if (!verdict) throw new Error('"verdict" is "worked" or "did-not"');
+        const reading = await readMetric(workspace, context.stage, bet.metric);
+        const closed = await book.close(bet.id, { verdict, value: reading.value, note: typeof args.note === 'string' ? args.note.replace(/\s+/g, ' ').trim().slice(0, 300) : '', by: speaker(context)!.name });
+        await changed();
+        return { text: `${closedLine(closed)} (${reading.said}.)` };
+      },
+    },
+  ];
+}
 
 // What a test hands in instead of the clock and the model.
 export type PartnerOptions = { now?: () => number; ask?: (messages: ModelMessage[]) => Promise<string> };
@@ -33,7 +99,14 @@ export function createPartner(options: PartnerOptions = {}) {
     // The morning turn spends a model call every day, so a fake run (the browser tests) only takes one when asked:
     // STAGE_PARTNER_MORNING=1, or the founder's own "morning note".
     const morningOnTick = !deps.fake || process.env.STAGE_PARTNER_MORNING === '1';
-    const bets = async (): Promise<Bet[]> => [];
+    const book = betsBook(deps.workspace, now);
+    const bets = (): Promise<Bet[]> => book.list();
+    // A bet changed: the Company document's Bets section is written again from the ledger, and Needs you is told.
+    const betsChanged = async () => {
+      const doc = companyDocOf(await deps.store.loadStage());
+      if (doc) await writeBets(deps.store, doc.id, await book.list());
+      await deps.attention.refresh().catch(() => {});
+    };
 
     // Decided decisions go into the Company document, each once.
     let syncing: Promise<void> | null = null;
@@ -109,13 +182,31 @@ export function createPartner(options: PartnerOptions = {}) {
       if (note && note.day === localDay(now()) && held.morningDone !== note.day) {
         found.push({ id: `morning-note:${note.day}`, kind: 'morning-note', title: `Morning note: ${note.things[0]}`, detail: `Risk: ${note.risk} Question: ${note.question}`, at: note.at, who: note.who, roomId: note.roomId });
       }
-      return found;
+      return [...found, ...await betsAttention(await book.list(), await deps.store.loadStage(), deps.workspace, localDay(now()))];
     });
+    // Which bets were due at the last look, so a bet whose day has just come is said once, not every half minute.
+    let due: Set<string> | null = null;
+    async function checkBets() {
+      const today = localDay(now());
+      const list = (await book.list()).filter((bet) => betDue(bet, today));
+      const fresh = due ? list.filter((bet) => !due!.has(bet.id)) : [];
+      due = new Set(list.map((bet) => bet.id));
+      if (!fresh.length) return;
+      await deps.attention.refresh().catch(() => {});
+      deps.notify?.('A bet is due for a check', fresh[0].what);
+    }
 
     return {
+      tools: betTools(book, deps.workspace, betsChanged, now),
+      // Closing a bet is the partner's alone: nobody else is offered it.
+      offer(tools, stage, roomId) {
+        if (stage.rooms.find((one) => one.id === roomId)?.partner) return tools;
+        return tools.filter((tool) => !PARTNER_TOOLS.includes(tool.name));
+      },
       async tick() {
         await keepCompany();
         await sync();
+        await checkBets();
         await morning(false);
       },
       async route(req, res, path) {
@@ -137,6 +228,20 @@ export function createPartner(options: PartnerOptions = {}) {
             deps.json(res, 200, note);
             return true;
           }
+          const bet = /^\/api\/partner\/bets\/(bet-[a-z0-9-]{1,40})(\/close)?$/.exec(path);
+          if (bet && method === 'POST') {
+            const sent = await deps.body(req);
+            if (!bet[2]) { await book.answer(bet[1], sent?.accept === true); await betsChanged(); deps.json(res, 200, { ok: true }); return true; }
+            const verdict = VERDICTS.includes(sent?.verdict) ? sent.verdict as BetVerdict : null;
+            if (!verdict) { deps.json(res, 400, { error: 'say whether it worked' }); return true; }
+            const held = (await book.list()).find((one) => one.id === bet[1]);
+            if (!held) { deps.json(res, 404, { error: 'there is no bet by that name' }); return true; }
+            const reading = await readMetric(deps.workspace, await deps.store.loadStage(), held.metric);
+            const closed = await book.close(held.id, { verdict, value: reading.value, note: typeof sent?.note === 'string' ? sent.note.slice(0, 300) : '', by: 'Founder' });
+            await betsChanged();
+            deps.json(res, 200, closed);
+            return true;
+          }
           if (path === '/api/partner/morning/done' && method === 'POST') {
             await state.change((draft) => { if (draft.morning) draft.morningDone = draft.morning.day; });
             await deps.attention.refresh();
@@ -151,6 +256,7 @@ export function createPartner(options: PartnerOptions = {}) {
         await syncing?.catch(() => {});
         await writing?.catch(() => {});
         await state.settled();
+        await book.settled();
       },
     };
   };

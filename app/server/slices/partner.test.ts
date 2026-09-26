@@ -1,4 +1,4 @@
-import { mkdtemp } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -117,6 +117,70 @@ describe('the partner slice: the morning note', () => {
     const { part } = await installed({}, { now: () => NINE, ask: async () => { asked += 1; return SHAPED; } });
     await part.tick!();
     expect(asked).toBe(0);
+    await part.close!();
+  });
+});
+
+describe('the partner slice: the bets ledger', () => {
+  it('takes a proposed bet through Needs you onto the Company document, and lets only the partner close it on its day', async () => {
+    let clock = new Date('2026-09-26T10:00').getTime();
+    const told: string[] = [];
+    const answers: [number, unknown][] = [];
+    const { deps, part, workspace } = await installed({ notify: (title) => { told.push(title); }, json: (_res, status, body) => { answers.push([status, body]); } }, { now: () => clock, ask: async () => SHAPED });
+    await mkdir(join(workspace, 'metrics'), { recursive: true });
+    await writeFile(join(workspace, 'metrics', 'metrics-1.json'), JSON.stringify({ updatedAt: 0, metrics: [{ key: 'signups', label: 'Signups', unit: '', better: 'up', points: [{ at: '2026-09-20', value: 4, from: 'founder' }] }] }));
+    const stage = await deps.store.loadStage();
+    await deps.store.saveStage({ ...stage, rooms: [...stage.rooms, room('p1', 'Sam', { partner: true })], cards: [{ id: 'metrics-1', kind: 'metrics', x: 0, y: 0, w: 1, h: 1 }] });
+    const tool = (name: string) => part.tools!.find((one) => one.name === name)!;
+    const as = async (roomId: string) => ({ stage: await deps.store.loadStage(), roomId, store: deps.store, granted: new Map() }) as never;
+
+    await expect(tool('propose_bet').run({ what: 'Post in r/SaaS', hypothesis: 'founders sign up', metric: 'mrr', target: 20, check_date: '2026-10-03' }, await as('marketing'))).rejects.toThrow('Measure it by one of: signups');
+    await expect(tool('propose_bet').run({ what: 'x', hypothesis: 'y', metric: 'signups', target: 20, check_date: '2026-09-01' }, await as('marketing'))).rejects.toThrow('before today');
+    const said = await tool('propose_bet').run({ what: 'Post in r/SaaS', hypothesis: 'founders sign up', metric: 'signups', target: 20, check_date: '2026-10-03' }, await as('marketing'));
+    expect(said.text).toContain('It waits in Needs you');
+    const proposal = (await deps.attention.list()).find((one) => one.kind === 'proposed-bet')!;
+    expect(proposal).toMatchObject({ who: 'Maya', title: 'Post in r/SaaS' });
+
+    // Answered as the window does, with accept.
+    deps.body = async () => ({ accept: true });
+    await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/bets/${proposal.id.split(':')[1]}`);
+    const company = companyDocOf(await deps.store.loadStage())!;
+    expect(await deps.store.readDoc(company.id)).toContain('## Bets\n\n- Open: Post in r/SaaS. signups to 20 by 2026-10-03');
+
+    // Staff are never offered close_bet; the partner is, and cannot use it before the day.
+    const names = (roomId: string) => part.offer!(part.tools!, { rooms: [room('p1', 'Sam', { partner: true }), room('marketing', 'Maya')], docs: [], wires: [] }, roomId).map((one) => one.name);
+    expect(names('marketing')).toEqual(['propose_bet']);
+    expect(names('p1')).toEqual(['propose_bet', 'close_bet']);
+    await expect(tool('close_bet').run({ bet: 'Post in r/SaaS', verdict: 'worked' }, await as('marketing'))).rejects.toThrow('only the founder or the partner');
+    await expect(tool('close_bet').run({ bet: 'Post in r/SaaS', verdict: 'worked' }, await as('p1'))).rejects.toThrow('checked on 2026-10-03');
+
+    // The day comes: the tick says so once, Needs you shows the number read from the card.
+    await part.tick!();
+    clock = new Date('2026-10-03T10:00').getTime();
+    await part.tick!();
+    await part.tick!();
+    expect(told.filter((one) => one === 'A bet is due for a check')).toHaveLength(1);
+    expect((await deps.attention.list()).find((one) => one.kind === 'bet-check')?.detail).toBe('The target was 20 by 2026-10-03. Now: Signups is 4 (2026-09-20), read from the Metrics card.');
+    const closed = await tool('close_bet').run({ bet: 'r/saas', verdict: 'did-not', note: 'only 4 came' }, await as('p1'));
+    expect(closed.text).toBe('Closed "Post in r/SaaS": it did not work; signups was 4 against 20. (Signups is 4 (2026-09-20), read from the Metrics card.)');
+    expect((await deps.attention.list()).some((one) => one.kind === 'bet-check')).toBe(false);
+    expect(await deps.store.readDoc(company.id)).toContain('- Did not work: Post in r/SaaS. signups was 4 against 20 (checked 2026-10-03). only 4 came');
+    await part.close!();
+  });
+
+  it('lets the founder say how a due bet went from Needs you', async () => {
+    const answers: [number, unknown][] = [];
+    const { deps, part } = await installed({ json: (_res, status, body) => { answers.push([status, body]); } }, { now: () => new Date('2026-10-05T10:00').getTime(), ask: async () => SHAPED });
+    const stage = await deps.store.loadStage();
+    await deps.store.saveStage({ ...stage, cards: [{ id: 'leads-1', kind: 'leads', x: 0, y: 0, w: 1, h: 1 }] });
+    const bet = await part.tools!.find((one) => one.name === 'propose_bet')!.run({ what: 'Cold email 30', hypothesis: 'five reply', metric: 'leads:replied', target: 5, check_date: '2026-10-05' }, { stage: await deps.store.loadStage(), roomId: 'marketing', store: deps.store, granted: new Map() } as never);
+    expect(bet.text).toContain('Cold email 30');
+    const id = (await deps.attention.list()).find((one) => one.kind === 'proposed-bet')!.id.split(':')[1];
+    deps.body = async () => ({ accept: true });
+    await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/bets/${id}`);
+    deps.body = async () => ({ verdict: 'worked' });
+    await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/bets/${id}/close`);
+    expect(answers.at(-1)).toEqual([200, expect.objectContaining({ status: 'closed', result: expect.objectContaining({ verdict: 'worked', value: 0, by: 'Founder' }) })]);
     await part.close!();
   });
 });
