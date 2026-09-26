@@ -271,13 +271,25 @@ describe('app cards', () => {
     await browser.act('card-plain', 'look', {});
     expect(await browser.outward('card-plain', 'press', { key: 'Enter' })).toBeNull();
   });
+  it('lets Enter through after typing into a search box on an app card, since that is how LinkedIn and X search', async () => {
+    const tree = '- searchbox "Search" [ref=e1]\n- combobox "Search people" [ref=e2]\n- textbox "Search messages" [ref=e3]\n- textbox "Write a message…" [ref=e4]\n';
+    const runner: Runner = async (_s, args) => (args[0] === 'snapshot' ? tree : args[0] === 'get' && args[1] === 'url' ? 'https://www.linkedin.com/feed/\n' : '✓\n');
+    const browser = createBrowser(runner);
+    await browser.act('card-li', 'look', {});
+    for (const ref of ['e1', 'e2', 'e3']) {
+      await browser.act('card-li', 'fill', { ref, text: 'founders in Leeds' });
+      expect(await browser.outward('card-li', 'press', { key: 'Enter' }, undefined, 'LinkedIn')).toBeNull();
+    }
+    await browser.act('card-li', 'fill', { ref: 'e4', text: 'Hello' });
+    expect(await browser.outward('card-li', 'press', { key: 'Enter' }, undefined, 'LinkedIn')).toMatch(/^Press Enter on LinkedIn\?/);
+  });
   it('asks before a click on an unnamed icon on an app card, and lets a profile link, a tab and a filter through', async () => {
-    const tree = '- button [ref=e1]\n- link "Ada Lovelace" [ref=e2]\n- tab "Posts" [ref=e3]\n- button "All filters" [ref=e4]\n- searchbox "Search" [ref=e5]\n- button "Save" [ref=e6]\n- button "Show more results" [ref=e7]\n- link "Message" [ref=e8]\n';
+    const tree = '- button [ref=e1]\n- link "Ada Lovelace" [ref=e2]\n- tab "Posts" [ref=e3]\n- button "All filters" [ref=e4]\n- searchbox "Search" [ref=e5]\n- button "Save" [ref=e6]\n- button "Show more results" [ref=e7]\n- link "Message" [ref=e8]\n- button "…see more" [ref=e9]\n';
     const runner: Runner = async (_s, args) => (args[0] === 'snapshot' ? tree : args[0] === 'get' && args[1] === 'url' ? 'https://www.linkedin.com/search/results/people/\n' : '✓\n');
     const browser = createBrowser(runner);
     await browser.act('card-li', 'look', {});
     expect(await browser.outward('card-li', 'click', { ref: 'e1' }, undefined, 'LinkedIn')).toMatch(/unnamed button \(e1\) on LinkedIn/);
-    for (const ref of ['e2', 'e3', 'e4', 'e5', 'e7']) expect(await browser.outward('card-li', 'click', { ref }, undefined, 'LinkedIn')).toBeNull();
+    for (const ref of ['e2', 'e3', 'e4', 'e5', 'e7', 'e9']) expect(await browser.outward('card-li', 'click', { ref }, undefined, 'LinkedIn')).toBeNull();
     // A button the old list of words did not know is asked about all the same, and so is a link that sends.
     expect(await browser.outward('card-li', 'click', { ref: 'e6' }, undefined, 'LinkedIn')).toMatch(/^Click "Save" on LinkedIn\?/);
     expect(await browser.outward('card-li', 'click', { ref: 'e8' }, undefined, 'LinkedIn')).toMatch(/^Click "Message"/);

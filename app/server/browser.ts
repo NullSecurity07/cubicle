@@ -196,7 +196,7 @@ export const nameOfRef = (tree: string, ref: string) => elementOfRef(tree, ref)?
 // another page, a tab, a search box or a field, or a button that shows more, filters or sorts. Anything else could
 // act as the founder, whatever it is called or when it is called nothing at all.
 const READ_ROLES = new Set(['link', 'tab', 'searchbox', 'textbox', 'combobox', 'option', 'heading', 'treeitem']);
-const READ_NAMES = /^(search|show|see|view|more|less|load more|expand|collapse|next|previous|back|close|dismiss|sort|filters?|all filters)\b|\bfilters?\b/i;
+const READ_NAMES = /^[^\p{L}\p{N}]*(search|show|see|view|more|less|load more|expand|collapse|next|previous|back|close|dismiss|sort|filters?|all filters)\b|\bfilters?\b/iu;
 
 // `direct` readers know a site's feed or API and go first; `fallback` readers are asked, in order, when the local browser got nothing.
 type Readers = { direct: Reader[]; fallback: Reader[] };
@@ -207,7 +207,7 @@ export function createBrowser(run: Runner, readers: Readers = { direct: [], fall
   const hands = new Map<string, { done: Promise<void>; end: () => void }>();
   const seen = new Map<string, { tree: string; address: string }>();
   // What was last typed in each session, and into what: the question before a step that could send it shows it.
-  const typed = new Map<string, { field: string; text: string }>();
+  const typed = new Map<string, { field: string; role: string; text: string }>();
   // Each session is a Chrome tab set with its own memory; only a few run at once, the rest wait their turn.
   let active = 0;
   const waiting: (() => void)[] = [];
@@ -336,7 +336,7 @@ export function createBrowser(run: Runner, readers: Readers = { direct: [], fall
         if (address && !/^about:/.test(address)) webUrl(address);
         const tree = (await go(session, ['snapshot', '-i'])).trim();
         // The field is named from the page as it was when it was filled: the tree this step was taken on.
-        if (action === 'fill') typed.set(session, { field: nameOfRef(seen.get(session)?.tree ?? tree, ref()) ?? '', text: input.text ?? '' });
+        if (action === 'fill') { const field = elementOfRef(seen.get(session)?.tree ?? tree, ref()); typed.set(session, { field: field?.name ?? '', role: field?.role ?? '', text: input.text ?? '' }); }
         seen.set(session, { tree, address });
         const title = (await go(session, ['get', 'title']).catch(() => '')).trim();
         if (walled(title, tree.length < 1200 ? tree : '')) return `Now at ${address}\n${WALL_NOTE} ${CARD_WALL_NOTE}`;
@@ -356,6 +356,8 @@ export function createBrowser(run: Runner, readers: Readers = { direct: [], fall
       const shows = last?.text.trim() ? ` What was typed last${last.field ? ` into "${last.field}"` : ''}: "${last.text.trim().slice(0, 400)}".` : '';
       if (action === 'press') {
         if (!/enter/i.test(input.key ?? '')) return null;
+        // Enter in a search box is how LinkedIn and X search: nothing goes out, so it goes ahead.
+        if (own && last && (last.role === 'searchbox' || last.role === 'combobox' || /search/i.test(last.field))) return null;
         if (own) return `Press ${input.key} on ${where}? In a message or a post box this sends it as you.${shows}`;
         return MAIL_HOSTS.test(host) ? `Press ${input.key} on ${where}? In webmail this can send the message.${shows}` : null;
       }
