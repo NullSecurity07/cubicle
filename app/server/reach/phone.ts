@@ -391,7 +391,8 @@ export function createPhone(deps: {
         const key = `k${(count += 1).toString(36)}`;
         keys.set(key, { attentionId: entry.id, eventId: entry.event!.id });
         const wants = entry.event!.name === 'ask_founder';
-        const text = wants ? `${entry.who ?? 'Someone'} asks: ${entry.title}\n\nAnswer here in a message and I will pass it on.` : asksFor(entry);
+        const offered = entry.event!.choices?.length ? `\n\nChoices: ${entry.event!.choices.join(' · ')}` : '';
+        const text = wants ? `${entry.who ?? 'Someone'} asks: ${entry.title}${offered}\n\nAnswer here in a message and I will pass it on.` : asksFor(entry);
         const threadId = entry.roomId ? await topics.threadFor(entry.roomId) : undefined;
         const going: Where[] = state.group ? [{ chatId: state.group.chatId, threadId: threadId ?? state.group.company }] : state.paired.map((chat) => ({ chatId: chat.chatId }));
         // A question goes straight out rather than through the outbox: what comes back is the message's own id, and

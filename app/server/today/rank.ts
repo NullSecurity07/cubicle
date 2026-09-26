@@ -9,7 +9,8 @@ import { clockTime, localDay } from '../clock.ts';
 // repeats), each kind has a fixed weight, and waiting adds a little. The same five go to the dashboard and the phone.
 
 // One thing that might deserve the founder's day: a Needs you entry as it is, or a board task falling due.
-export type Signal = Pick<Attention, 'id' | 'title' | 'at' | 'who' | 'detail' | 'roomId' | 'cardId' | 'decisionId' | 'taskId' | 'lapsed'> & { kind: string };
+// `question` marks a person asking the founder something (ask_founder), which is not a step waiting for an OK.
+export type Signal = Pick<Attention, 'id' | 'title' | 'at' | 'who' | 'detail' | 'roomId' | 'cardId' | 'decisionId' | 'taskId' | 'lapsed'> & { kind: string; question?: boolean };
 
 // What each kind weighs, and the words that say why it is here. A person stopped until the founder answers comes
 // first, money second, a lead waiting third; suggestions, which wait politely, come last. Kinds added later without a
@@ -61,7 +62,7 @@ export function rank(signals: Signal[], now: number, dismissed: ReadonlySet<stri
   scored.sort((a, b) => b.score - a.score || a.one.at - b.one.at || a.one.id.localeCompare(b.one.id));
   return scored.slice(0, size).map(({ one, table, days, bonus, score }, index) => {
     const approval = one.kind === 'approval' || one.kind === 'run-approval';
-    const title = approval && !one.lapsed ? `${one.who ?? 'Someone'} needs your OK: ${one.title}` : one.title;
+    const title = approval && !one.lapsed ? `${one.who ?? 'Someone'} ${one.question ? 'asks you' : 'needs your OK'}: ${one.title}` : one.title;
     const when = one.kind === 'task-due' ? `at ${clockTime(one.at)}` : waiting(days);
     const reason = [table.label, one.kind === 'task-due' || !approval ? one.who : undefined, when].filter(Boolean).join(' · ');
     const why = `${place(index)} of today's ${size}: "${table.label}" weighs ${table.weight}${bonus ? `, plus ${bonus} for waiting ${waited(days)}` : ''}. A fixed table ranks these; no model picks them.`;
@@ -91,7 +92,7 @@ export async function gather(deps: { attention: { list(): Promise<Attention[]> }
       due.push({ id: `task-due:${task.id}:${task.nextRun}`, kind: 'task-due', title: task.title, at: task.nextRun, cardId: card.id, taskId: task.id, ...(who ? { who } : {}) });
     }
   }
-  return [...needs.map((one) => ({ ...one })), ...due];
+  return [...needs.map((one) => ({ ...one, ...(one.event?.name === 'ask_founder' ? { question: true } : {}) })), ...due];
 }
 
 // What the founder waved away for today, kept in `workspace/today.json`. A new day starts with nothing waved away.

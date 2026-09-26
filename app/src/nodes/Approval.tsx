@@ -15,6 +15,8 @@ const LONG = new Set(['body', 'code', 'text', 'task', 'brief']);
 const LABELS: Record<string, string> = { to: 'To', subject: 'Subject', body: 'Message', from: 'From', reply_to: 'In reply to', language: 'Language', code: 'Code', brief: 'Brief', card: 'Card', answer: 'Why not (if you won\'t)' };
 // A question put to the founder carries their answer in the same field a refused step carries its reason.
 export const fieldLabel = (tool: string, key: string) => (tool === 'ask_founder' && key === 'answer' ? 'Your answer' : LABELS[key] ?? key);
+// The answers a question to the founder offers, each shown as its own button; nothing for any other step.
+export const choicesOf = (tool: Pick<ToolEvent, 'name' | 'choices'> & Partial<ToolEvent>) => (tool.name === 'ask_founder' ? (tool.choices ?? []).filter((one) => one.trim()) : []);
 // What the founder was asked, when the step itself came with no question of its own. The needs panel says it back
 // in the same words, so an approval the app closed on reads there exactly as it read in the room.
 export const asked = (name: string) => TITLES[name]?.[0] ?? `Allow ${name}?`;
@@ -32,18 +34,26 @@ export function Approval({ tool }: { tool: ToolEvent }) {
   // standing yes would cover. A step whose reach nothing in it decides is never offered one.
   const reach = reachOf(tool.name, { ...tool.args, ...args });
 
-  async function answer(ok: boolean) {
+  const choices = choicesOf(tool);
+
+  // `picked` is one of the question's choices, sent as the answer in place of whatever the field says.
+  async function answer(ok: boolean, picked?: string) {
     setSending(true);
     try {
       if (ok && always && reach) await remember(tool.id, args);
       // A person asking for a hand is told why not, when the founder says why; every other "no" carries nothing.
-      await answerApproval(tool.id, ok, ok || tool.name === 'browse_help' ? args : undefined);
+      await answerApproval(tool.id, ok, picked !== undefined ? { ...args, answer: picked } : ok || tool.name === 'browse_help' ? args : undefined);
     } catch (error) { setProblem((error as Error).message); setSending(false); }
   }
 
   return (
     <div className="approval nodrag nowheel" role="group" aria-label={fallback}>
       <div className="approval__title">{title}</div>
+      {choices.length > 0 && (
+        <div className="approval__choices" role="group" aria-label="Choose an answer">
+          {choices.map((choice) => <button key={choice} type="button" disabled={sending} onClick={() => void answer(true, choice)}>{choice}</button>)}
+        </div>
+      )}
       {Object.entries(args).sort(([a], [b]) => Number(LONG.has(a)) - Number(LONG.has(b))).map(([key, value]) => (
         <label key={key}>{fieldLabel(tool.name, key)}
           {LONG.has(key)
