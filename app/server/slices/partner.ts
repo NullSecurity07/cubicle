@@ -1,17 +1,19 @@
 import { isDay } from '../../shared/metrics.ts';
 import { newMessageId, type Attention, type Stage } from '../../shared/model.ts';
-import type { Bet, BetVerdict, MorningNote } from '../../shared/partner.ts';
+import { isCompanyTitle, isPlanDoc, parsePlan, type Bet, type BetVerdict, type MorningNote, type PlanStep } from '../../shared/partner.ts';
 import { localDay } from '../clock.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
 import { leadsFor } from '../leads/store.ts';
 import { betDue, betsAttention, betsBook, closedLine, metricChoices, readMetric, type BetsBook } from '../partner/bets.ts';
 import { companyDocOf, ensureCompany, syncDecisions, writeBets } from '../partner/company.ts';
 import { FAKE_MORNING, morningDue, morningMessage, writeMorning } from '../partner/morning.ts';
-import { partnerState } from '../partner/state.ts';
+import { addPlan, planAttention, stepsFrom, stepsKey } from '../partner/plans.ts';
+import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import type { ModelMessage } from '../prompt.ts';
 import { complete, promptSize } from '../providers.ts';
 import { route as routeModels } from '../router.ts';
-import { patchStageVia } from '../slice-kit.ts';
+import type { Handler } from '../seams.ts';
+import { newId, patchStageVia } from '../slice-kit.ts';
 import { speaker, text, type Tool } from '../tools/registry.ts';
 
 // The partner: one person who holds the whole company rather than one part of it, and the things that make that
@@ -23,6 +25,7 @@ import { speaker, text, type Tool } from '../tools/registry.ts';
 export const partnerOf = (stage: Stage) => stage.rooms.find((room) => room.partner);
 
 export const PARTNER_TOOLS = ['close_bet'];
+export const BOARD_TOOLS = ['propose_tasks'];
 const VERDICTS: BetVerdict[] = ['worked', 'did-not'];
 
 // A person puts a bet to the founder; only the partner (or the founder, from Needs you) says how one went, and only
@@ -83,6 +86,39 @@ export function betTools(book: BetsBook, workspace: string, changed: () => Promi
       },
     },
   ];
+}
+
+// A plan's steps put to the founder as one question. A proposal from the same doc that is still waiting is replaced,
+// and steps already offered from that doc are not offered again.
+export async function offerPlan(state: PartnerStateBook, input: { who: string; roomId: string; title: string; steps: PlanStep[]; docId?: string }, now: number): Promise<boolean> {
+  if (input.steps.length < 2) return false;
+  const key = stepsKey(input.steps);
+  return state.change((held) => {
+    if (input.docId && held.offered?.[input.docId] === key) return false;
+    held.plans = [...held.plans.filter((one) => !input.docId || one.docId !== input.docId), { id: newId('plan-'), at: now, ...input }];
+    if (input.docId) held.offered = { ...held.offered, [input.docId]: key };
+    return true;
+  });
+}
+
+export function planTools(state: PartnerStateBook, changed: () => Promise<void>, now: () => number = Date.now): Tool[] {
+  return [{
+    name: 'propose_tasks', perTurn: 2,
+    description: 'Offer the founder the steps of a plan as tasks for the board, one step per line; a day at the front of a line ("Day 1: …", "Mon 5 Oct: …") is kept. '
+      + 'It waits in Needs you as one question; nothing is on the board until the founder says yes.',
+    parameters: { type: 'object', properties: {
+      title: { type: 'string', description: 'The plan, in a few words' },
+      steps: { type: 'array', items: { type: 'string' }, description: 'Two or more steps, one line each' },
+    }, required: ['title', 'steps'] },
+    async run(args, context) {
+      const steps = stepsFrom(Array.isArray(args.steps) ? args.steps.filter((one): one is string => typeof one === 'string') : []);
+      if (steps.length < 2) throw new Error('give two or more steps, one line each');
+      const me = speaker(context);
+      await offerPlan(state, { who: me?.name ?? 'Someone', roomId: context.roomId, title: text(args, 'title', 120).replace(/\s+/g, ' ').trim(), steps }, now());
+      await changed();
+      return { text: `Offered ${steps.length} tasks to the founder. They wait in Needs you; nothing is on the board until the founder says yes.` };
+    },
+  }];
 }
 
 // What a test hands in instead of the clock and the model.
@@ -182,8 +218,25 @@ export function createPartner(options: PartnerOptions = {}) {
       if (note && note.day === localDay(now()) && held.morningDone !== note.day) {
         found.push({ id: `morning-note:${note.day}`, kind: 'morning-note', title: `Morning note: ${note.things[0]}`, detail: `Risk: ${note.risk} Question: ${note.question}`, at: note.at, who: note.who, roomId: note.roomId });
       }
-      return [...found, ...await betsAttention(await book.list(), await deps.store.loadStage(), deps.workspace, localDay(now()))];
+      return [...found, ...planAttention(held.plans), ...await betsAttention(await book.list(), await deps.store.loadStage(), deps.workspace, localDay(now()))];
     });
+    // A person wrote a doc that is a plan (by its title or its first heading): its day-by-day steps are offered as tasks.
+    const afterTool: Handler<'tool:after'> = async (payload, next) => {
+      const { event, roomId } = payload;
+      const effect = event.effect;
+      if (event.ok && (effect?.kind === 'doc-created' || effect?.kind === 'doc-changed')) {
+        try {
+          const stage = await deps.store.loadStage();
+          const title = stage.docs.find((doc) => doc.id === effect.id)?.title ?? (effect.kind === 'doc-created' ? effect.title : '');
+          const body = await deps.store.readDoc(effect.id);
+          const who = stage.rooms.find((one) => one.id === roomId);
+          if (who && !isCompanyTitle(title) && isPlanDoc(title, body) && await offerPlan(state, { who: who.name, roomId, title, steps: parsePlan(body), docId: effect.id }, now())) await deps.attention.refresh();
+        } catch (error) { console.error(`partner plan: ${(error as Error).message}`); }
+      }
+      return next(payload);
+    };
+    const offSeam = deps.seams.on('tool:after', afterTool);
+
     // Which bets were due at the last look, so a bet whose day has just come is said once, not every half minute.
     let due: Set<string> | null = null;
     async function checkBets() {
@@ -197,11 +250,12 @@ export function createPartner(options: PartnerOptions = {}) {
     }
 
     return {
-      tools: betTools(book, deps.workspace, betsChanged, now),
-      // Closing a bet is the partner's alone: nobody else is offered it.
+      tools: [...betTools(book, deps.workspace, betsChanged, now), ...planTools(state, async () => { await deps.attention.refresh().catch(() => {}); }, now)],
+      // Closing a bet is the partner's alone; offering tasks needs a board on the stage.
       offer(tools, stage, roomId) {
-        if (stage.rooms.find((one) => one.id === roomId)?.partner) return tools;
-        return tools.filter((tool) => !PARTNER_TOOLS.includes(tool.name));
+        const partner = stage.rooms.find((one) => one.id === roomId)?.partner;
+        const board = (stage.cards ?? []).some((card) => card.kind === 'board');
+        return tools.filter((tool) => (partner || !PARTNER_TOOLS.includes(tool.name)) && (board || !BOARD_TOOLS.includes(tool.name)));
       },
       async tick() {
         await keepCompany();
@@ -242,6 +296,17 @@ export function createPartner(options: PartnerOptions = {}) {
             deps.json(res, 200, closed);
             return true;
           }
+          const plan = /^\/api\/partner\/plans\/(plan-[a-z0-9-]{1,40})$/.exec(path);
+          if (plan && method === 'POST') {
+            const sent = await deps.body(req);
+            const held = (await state.read()).plans.find((one) => one.id === plan[1]);
+            if (!held) { deps.json(res, 404, { error: 'that plan is no longer waiting' }); return true; }
+            const made = sent?.accept === true ? await addPlan(deps.boards, await deps.store.loadStage(), held) : null;
+            await state.change((draft) => { draft.plans = draft.plans.filter((one) => one.id !== held.id); });
+            await deps.attention.refresh();
+            deps.json(res, 200, { ok: true, ...(made ?? {}) });
+            return true;
+          }
           if (path === '/api/partner/morning/done' && method === 'POST') {
             await state.change((draft) => { if (draft.morning) draft.morningDone = draft.morning.day; });
             await deps.attention.refresh();
@@ -253,6 +318,7 @@ export function createPartner(options: PartnerOptions = {}) {
       },
       async close() {
         offDecisions();
+        offSeam();
         await syncing?.catch(() => {});
         await writing?.catch(() => {});
         await state.settled();

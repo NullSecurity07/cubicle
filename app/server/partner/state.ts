@@ -12,6 +12,8 @@ export type PartnerState = {
   morningDone?: string;
   tries?: { day: string; count: number; last: number };
   plans: PlanProposal[];
+  // The steps last offered from each plan doc, so an edit that leaves them as they were does not ask again.
+  offered?: Record<string, string>;
 };
 
 export function partnerState(workspace: string) {

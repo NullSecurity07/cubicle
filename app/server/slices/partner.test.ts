@@ -184,3 +184,49 @@ describe('the partner slice: the bets ledger', () => {
     await part.close!();
   });
 });
+
+describe('the partner slice: plans become tasks', () => {
+  const PLAN = '# Flipside: 2-week plan\n\n### Mon 28 Sep (Day 1)\n- Draft the landing page\n- Set up the pre-order form\n\n### Tue 29 Sep (Day 2)\n- List 30 projects\n\n## KPIs\n- Revenue >= $150\n';
+
+  it('offers a plan doc\'s steps once, and puts them on the board on the founder\'s yes', async () => {
+    const answers: [number, unknown][] = [];
+    const { deps, part } = await installed({ fake: true, json: (_res, status, body) => { answers.push([status, body]); } });
+    const stage = await deps.store.loadStage();
+    await deps.store.saveStage({ ...stage, docs: [...stage.docs, { id: 'doc-plan', title: 'Two weeks', x: 0, y: 0, w: 1, h: 1 }, { id: 'doc-notes', title: 'Notes', x: 0, y: 0, w: 1, h: 1 }], cards: [{ id: 'board-1', kind: 'board', x: 0, y: 0, w: 1, h: 1 }] });
+    await deps.store.writeDoc('doc-plan', PLAN);
+    await deps.store.writeDoc('doc-notes', '# Notes\n\n### Mon 28 Sep\n- a\n- b\n');
+    const wrote = (id: string, kind: 'doc-created' | 'doc-changed' = 'doc-changed') => deps.seams.run('tool:after', { roomId: 'marketing', event: { id: 'e', name: 'write_doc', args: {}, ok: true, effect: kind === 'doc-created' ? { kind, id, title: 'x' } : { kind, id } } });
+    await wrote('doc-notes');
+    await wrote('doc-plan', 'doc-created');
+    await wrote('doc-plan');
+    const offered = (await deps.attention.list()).filter((one) => one.kind === 'proposed-plan');
+    expect(offered).toHaveLength(1);
+    expect(offered[0]).toMatchObject({ who: 'Maya', roomId: 'marketing', title: 'Add these 3 tasks to the board? (Two weeks)' });
+    deps.body = async () => ({ accept: true });
+    await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/plans/${offered[0].id.split(':')[1]}`);
+    expect(answers.at(-1)).toEqual([200, { ok: true, boardId: 'board-1', added: 3 }]);
+    expect((await deps.boards.list('board-1')).map((task) => task.title)).toEqual(['Mon 28 Sep (Day 1): Draft the landing page', 'Mon 28 Sep (Day 1): Set up the pre-order form', 'Tue 29 Sep (Day 2): List 30 projects']);
+    expect((await deps.attention.list()).some((one) => one.kind === 'proposed-plan')).toBe(false);
+    // The same steps written again are not asked again; changed steps are.
+    await wrote('doc-plan');
+    expect((await deps.attention.list()).some((one) => one.kind === 'proposed-plan')).toBe(false);
+    await deps.store.writeDoc('doc-plan', `${PLAN}\n### Wed 30 Sep (Day 3)\n- Post in r/SaaS\n`);
+    await wrote('doc-plan');
+    expect((await deps.attention.list()).find((one) => one.kind === 'proposed-plan')?.title).toBe('Add these 4 tasks to the board? (Two weeks)');
+    await part.close!();
+  });
+
+  it('offers steps a person hands over with propose_tasks, only with a board on the stage', async () => {
+    const { deps, part } = await installed({ fake: true });
+    const tool = part.tools!.find((one) => one.name === 'propose_tasks')!;
+    const stage = await deps.store.loadStage();
+    expect(part.offer!(part.tools!, stage, 'marketing').map((one) => one.name)).not.toContain('propose_tasks');
+    const withBoard = { ...stage, cards: [{ id: 'board-1', kind: 'board' as const, x: 0, y: 0, w: 1, h: 1 }] };
+    expect(part.offer!(part.tools!, withBoard, 'marketing').map((one) => one.name)).toContain('propose_tasks');
+    await expect(tool.run({ title: 'x', steps: ['one'] }, { stage: withBoard, roomId: 'marketing' } as never)).rejects.toThrow('two or more');
+    const said = await tool.run({ title: 'Launch week', steps: ['Day 1: ship', 'Day 2: post'] }, { stage: withBoard, roomId: 'marketing' } as never);
+    expect(said.text).toContain('Offered 2 tasks');
+    expect((await deps.attention.list()).find((one) => one.kind === 'proposed-plan')?.detail).toBe('Day 1: ship; Day 2: post.');
+    await part.close!();
+  });
+});
