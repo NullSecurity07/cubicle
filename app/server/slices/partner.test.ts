@@ -280,7 +280,7 @@ describe('the partner slice: the bets ledger', () => {
     const tool = (name: string) => part.tools!.find((one) => one.name === name)!;
     const as = async (roomId: string) => ({ stage: await deps.store.loadStage(), roomId, store: deps.store, granted: new Map() }) as never;
 
-    await expect(tool('propose_bet').run({ what: 'Post in r/SaaS', hypothesis: 'founders sign up', metric: 'mrr', target: 20, check_date: '2026-10-03' }, await as('marketing'))).rejects.toThrow('Measure it by one of: signups');
+    await expect(tool('propose_bet').run({ what: 'Post in r/SaaS', hypothesis: 'founders sign up', metric: 'mrr', target: 20, check_date: '2026-10-03' }, await as('marketing'))).rejects.toThrow('the Metrics card has no "mrr" row. Ask the founder to add one');
     await expect(tool('propose_bet').run({ what: 'x', hypothesis: 'y', metric: 'signups', target: 20, check_date: '2026-09-01' }, await as('marketing'))).rejects.toThrow('before today');
     const said = await tool('propose_bet').run({ what: 'Post in r/SaaS', hypothesis: 'founders sign up', metric: 'signups', target: 20, check_date: '2026-10-03' }, await as('marketing'));
     expect(said.text).toContain('It waits in Needs you');

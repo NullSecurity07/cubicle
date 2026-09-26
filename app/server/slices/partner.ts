@@ -4,7 +4,7 @@ import { companyLine, isPlanDoc, SHARED_RECORD, parsePlan, PARTNER_CHANNEL, plan
 import { localDay } from '../clock.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
 import { leadsFor } from '../leads/store.ts';
-import { betDue, betsAttention, betsBook, closedLine, metricChoices, readMetric, type BetsBook } from '../partner/bets.ts';
+import { betDue, betsAttention, betsBook, closedLine, metricChoices, missingMetric, readMetric, type BetsBook } from '../partner/bets.ts';
 import { companyDocOf, ensureCompany, syncDecisions, writeBets } from '../partner/company.ts';
 import { hub } from '../events.ts';
 import { FAKE_MORNING, morningDue, morningInputs, morningMessage, writeMorning } from '../partner/morning.ts';
@@ -37,7 +37,8 @@ export function betTools(book: BetsBook, workspace: string, changed: () => Promi
       name: 'propose_bet', perTurn: 2,
       description: 'Put a bet on record for the founder to take: something the company does, what it should move, by how much and by when. '
         + 'It waits in Needs you; it is only on record once the founder takes it. Measure it by a number the app can read: '
-        + 'a Metrics card number (its key or name), "leads", "leads:<stage>" such as "leads:replied", or "survey" (answers).',
+        + 'a Metrics card number (its key or name), "leads", "leads:<stage>" such as "leads:replied", or "survey" (answers). '
+        + 'When it says a card or a row is missing, tell the founder exactly which card and row to add.',
       parameters: { type: 'object', properties: {
         what: { type: 'string', description: 'What the company does, in a few words' },
         hypothesis: { type: 'string', description: 'What should happen because of it, and why' },
@@ -55,7 +56,7 @@ export function betTools(book: BetsBook, workspace: string, changed: () => Promi
         const metric = text(args, 'metric', 80).trim();
         const choices = await metricChoices(workspace, context.stage);
         if (!choices.some((one) => one.toLowerCase() === metric.toLowerCase()) && (await readMetric(workspace, context.stage, metric)).value === null) {
-          throw new Error(choices.length ? `nothing called "${metric}" can be read. Measure it by one of: ${choices.join(', ')}.` : 'nothing on the stage can be counted yet. Ask the founder to add a Metrics, Leads or Survey card first.');
+          throw new Error(missingMetric(context.stage, metric, choices));
         }
         const me = speaker(context);
         const bet = await book.propose({ what: text(args, 'what', 160).replace(/\s+/g, ' ').trim(), hypothesis: typeof args.hypothesis === 'string' ? args.hypothesis.replace(/\s+/g, ' ').trim().slice(0, 400) : '', metric, target, checkDate, ...(me ? { proposedBy: me.name, roomId: me.id } : {}) });
