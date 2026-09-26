@@ -10,7 +10,7 @@ import { createStore } from '../store.ts';
 import { createUsage } from '../usage.ts';
 import { docTools } from './docs.ts';
 import { runTool } from './registry.ts';
-import { filled, sectionBody, verdictOf } from './verdict.ts';
+import { conversations, filled, sectionBody, verdictOf } from './verdict.ts';
 
 const OUTCOMES = ['WEAK', 'PIVOT REQUIRED', 'STRONG'];
 const FILLED = {
@@ -57,6 +57,8 @@ describe('reading a team doc', () => {
     // A figure in the reasons is not the score: the Score line is.
     expect(verdictOf('WEAK\n\nBecause: 7 of 10 we called said it hurts (3).\n\nScore: 4/10', OUTCOMES).score).toBe(4);
     expect(verdictOf('STRONG\n\nBecause: 3 of 10 replied (3).\n\nScore out of 10 — assumption, flaws, pain, fit, why now: 9/10', OUTCOMES).score).toBe(9);
+    expect(verdictOf('STRONG\n\nScore: 2, 2, 2, 1, 1 = 8', OUTCOMES).score).toBe(8);
+    expect(verdictOf('STRONG\n\nScore: 2/10 + 2/10 + 2/10 + 1/10 + 1/10 = 8/10', OUTCOMES).score).toBe(8);
   });
 
   it('ships the rules with the Evaluation doc, naming a section that is in it for each person', async () => {
@@ -168,6 +170,21 @@ describe('the conversations cap, however the pain section is written', () => {
     expect((await pain('Painkiller: we ran 14 customer interviews in two weeks.')).ok).toBe(true);
     expect((await pain('Painkiller. twelve conversations so far.')).ok).toBe(true);
     expect((await pain('Painkiller, from what the founder believes.')).ok).toBe(false);
+  });
+
+  it('reads the count after the label, past its own bracket, however it is separated', () => {
+    const LABEL = 'Real customer conversations done';
+    expect(conversations('Real customer conversations done (of ten to twenty) - 0', LABEL)).toBe(0);
+    expect(conversations('Real customer conversations done (of ten to twenty) — 7', LABEL)).toBe(7);
+    expect(conversations('Real customer conversations done (of ten to twenty): 12', LABEL)).toBe(12);
+  });
+
+  it('does not count interviews that were denied or only planned', () => {
+    const LABEL = 'Real customer conversations done';
+    expect(conversations('Painkiller. None of the 12 interviews happened yet.', LABEL)).toBeNull();
+    expect(conversations('No interviews yet; 10 calls planned', LABEL)).toBeNull();
+    expect(conversations('Painkiller. 5 interviews are booked for next week.', LABEL)).toBeNull();
+    expect(conversations('No workaround. Talked to 12 founders, all angry.', LABEL)).toBe(12);
   });
 
   it('asks the pain validator to keep the count line', async () => {

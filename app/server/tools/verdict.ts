@@ -62,7 +62,10 @@ export function verdictOf(body: string, outcomes: string[]): { word?: string; sc
   const found = outcomes.map((word) => ({ word, at: text.search(new RegExp(`\\b${word}\\b`)) })).filter((one) => one.at >= 0).sort((a, b) => a.at - b.at);
   const outOfTen = /(\d+(?:\.\d+)?)\s*(?:\/|out of|of)\s*10\b/i;
   const scoreLine = lines.find((line) => /^score\b/i.test(line));
-  const out = (scoreLine && (outOfTen.exec(scoreLine) ?? /:\s*(\d+(?:\.\d+)?)/.exec(scoreLine))) ?? outOfTen.exec(text);
+  // On the Score line, the last "N/10" is the total, since a breakdown comes before it; then a number after "=" ("2, 2, 2, 1, 1 = 8"), then the first number after the colon.
+  const onLine = scoreLine && ([...scoreLine.matchAll(new RegExp(outOfTen.source, 'gi'))].at(-1)
+    ?? /=\s*(\d+(?:\.\d+)?)\s*$/.exec(scoreLine) ?? /:\s*(\d+(?:\.\d+)?)/.exec(scoreLine));
+  const out = onLine ?? outOfTen.exec(text);
   return { word: found[0]?.word, score: out ? Number(out[1]) : undefined };
 }
 
@@ -76,15 +79,21 @@ const countOf = (word: string) => (/^\d+$/.test(word) ? Number(word) : SPELLED.i
 export function conversations(section: string, label: string): number | null {
   const line = section.split('\n').map(bare).find((one) => one.toLowerCase().startsWith(label.toLowerCase()));
   if (line) {
-    const value = line.slice(line.indexOf(':') + 1);
+    // What follows the label, past the template's own "(of ten to twenty)" and whatever separates the two.
+    const value = line.slice(label.length).replace(/^\s*\([^)]*\)/, '').replace(/^[\s:=\-–—]+/, '');
     if (/^\W*(none|no\b|nil)/i.test(value)) return 0;
     const count = new RegExp(`\\b${NUMBER}\\b`, 'i').exec(value);
     if (count) return countOf(count[1]);
   }
-  const prose = bare(section.replace(/\n/g, ' '));
-  const hit = new RegExp(`\\b${NUMBER}\\s+(?:[\\w-]+\\s+){0,3}?(?:conversations?|interviews?|calls?)\\b`, 'i').exec(prose)
-    ?? new RegExp(`\\b(?:talked (?:to|with)|spoke (?:to|with)|interviewed|called)\\s+${NUMBER}\\b`, 'i').exec(prose);
-  return hit ? countOf(hit[1]) : null;
+  // Clause by clause, and never one that denies or only plans them: "none of the 12 interviews happened", "10 calls
+  // planned" are no conversations at all.
+  for (const clause of bare(section.replace(/\n/g, ' ')).split(/[.;,!?]+/)) {
+    if (/\b(none|no|not|never|planned|plan|booked|scheduled|will|next)\b/i.test(clause)) continue;
+    const hit = new RegExp(`\\b${NUMBER}\\s+(?:[\\w-]+\\s+){0,3}?(?:conversations?|interviews?|calls?)\\b`, 'i').exec(clause)
+      ?? new RegExp(`\\b(?:talked (?:to|with)|spoke (?:to|with)|interviewed|called)\\s+${NUMBER}\\b`, 'i').exec(clause);
+    if (hit) return countOf(hit[1]);
+  }
+  return null;
 }
 
 export type Guarded = { text: string; note?: string; held?: boolean };
