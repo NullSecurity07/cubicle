@@ -57,9 +57,13 @@ export type DashMedia = {
 
 export type Dashboard = {
   at: number; day: DashDay; tokens: DashTokens; health: DashCheck[]; teams: DashTeam[]; skills: DashSkills; media: DashMedia[];
-  // The newest backup (null: none yet) and the folder they go to.
-  backup?: { at: number | null; dir: string };
+  // The newest backup (null: none yet), the folder they go to, and whether a backup could be written there now.
+  backup?: DashBackup;
 };
+export type DashBackup = { at: number | null; dir: string; writable: boolean };
+// One is made by itself each day, so a newest older than a day, none at all, or a folder that cannot take the next
+// one all mean something is wrong.
+export const backupLate = (backup: DashBackup, now: number) => !backup.writable || !backup.at || now - backup.at > 86_400_000;
 
 // What the live feed says when anything under the dashboard moved. The open panel reads itself again.
 export const DASHBOARD_CHANNEL = 'dashboard';

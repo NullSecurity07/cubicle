@@ -162,7 +162,7 @@ export function webTools(browser: Browser, launchFor: (cardId: string, card: Car
       name: 'browse',
       description: 'Drive the browser card connected to your room, one step at a time; the founder watches it live. Each step returns the page as a list of elements with refs like e12; refs are for your next step only, never show them to the founder. '
         + 'Actions: open (url), look, click (ref), fill (ref, text), press (key, for example Enter), scroll (direction up or down), back. Use web_fetch instead when you only need to read a page. '
-        + 'Email: when the card is signed in to webmail, write mail there (compose, fill the fields, click Send). Steps that send, post, pay or delete wait for the founder\'s yes. '
+        + 'Email: when the card is signed in to webmail, write mail there (compose, fill the fields, click Send). Steps that send, post, pay or delete wait for the founder\'s yes; on an app card so do Enter and any click that is not reading. '
         + 'The card keeps its logins. Never create an account, type a password or pass a human check yourself: ask the founder, who does it by hand in the card\'s window. '
         + 'To ask, use action help with "text" saying the one step to do (sign in, a human check, choosing a file, a page you cannot read); you wait until they have done it or said no. '
         + 'When more than one browser or app card is connected to your room, say which in "app". An app card is the founder\'s own account: act as they would, one careful step at a time.',
@@ -175,7 +175,8 @@ export function webTools(browser: Browser, launchFor: (cardId: string, card: Car
         },
         required: ['action'],
       },
-      // Plain browsing is free. A click that sends, posts, pays or deletes, and Enter inside webmail, wait for the founder.
+      // Plain browsing is free. A click that sends, posts, pays or deletes, and Enter inside webmail, wait for the founder;
+      // on an app card, the founder's own account, so do Enter and every click that is not plainly reading.
       // A card that cannot be picked asks nothing here: the run then fails with the same words for the person to read.
       async approval(args, context) {
         let picked: ReturnType<typeof pickBrowserCard>;

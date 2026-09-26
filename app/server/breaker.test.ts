@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createBreaker, OPEN_MS, REST_MOST } from './breaker.ts';
+import { createBreaker, DEAD_MS, limitWords, OPEN_MS, REST_MOST } from './breaker.ts';
 import { complete, type ModelClient } from './providers.ts';
 import { route } from './router.ts';
 import { createUsage } from './usage.ts';
@@ -70,6 +70,48 @@ describe('a key that keeps failing', () => {
     expect(breaker.failed('groq', failure(429, 20))).toBe(20_000);
     now += 20_000;
     expect(breaker.failed('groq', failure(429))).toBe(6000);
+  });
+});
+
+describe('a key that is refused', () => {
+  it('rests six hours after a 401 or a 403, is moved to the back, and comes back on one good answer', () => {
+    let now = 0;
+    const breaker = createBreaker(() => now);
+    expect(breaker.failed('groq', failure(401))).toBe(DEAD_MS);
+    expect(DEAD_MS).toBeGreaterThanOrEqual(6 * 3_600_000);
+    expect(breaker.dead('groq')).toBe(true);
+    expect(breaker.resting('groq')).toBe(true);
+    now += DEAD_MS - 1;
+    expect(breaker.resting('groq')).toBe(true);
+    now += 1;
+    expect(breaker.resting('groq')).toBe(false);
+    breaker.failed('gemini', failure(403));
+    expect(breaker.dead('gemini')).toBe(true);
+    breaker.ok('gemini');
+    expect(breaker.dead('gemini')).toBe(false);
+  });
+
+  it('is tried after a sibling in a turn, and the usage book tells of each refusal and each answer', () => {
+    let now = 0;
+    const usage = createUsage(null, () => now);
+    const heard: { name: string; dead: boolean }[] = [];
+    usage.onKey((event) => heard.push({ name: event.name, dead: event.dead }));
+    usage.failed('groq', failure(401));
+    expect(heard).toEqual([{ name: 'groq', dead: true }]);
+    const { order } = route([client('groq'), client('gemini')], usage, { promptChars: 10, tools: false });
+    expect(order.map((one) => one.name)).toEqual(['gemini', 'groq']);
+    now += DEAD_MS;
+    usage.record('groq');
+    expect(heard).toEqual([{ name: 'groq', dead: true }, { name: 'groq', dead: false }]);
+  });
+});
+
+describe('limitWords', () => {
+  it('says which free limit a 429 hit, from what the provider wrote', () => {
+    expect(limitWords(Object.assign(new Error('Rate limit reached for model on tokens per minute (TPM): Limit 8000'), { status: 429 }))).toBe('busy this minute');
+    expect(limitWords(Object.assign(new Error('Rate limit reached on requests per day (RPD): Limit 1000'), { status: 429 }))).toBe("today's free limit reached");
+    expect(limitWords(Object.assign(new Error('Quota exceeded for metric: generate_content_free_tier_requests, limit: 15, per minute'), { status: 429 }))).toBe('busy this minute');
+    expect(limitWords(Object.assign(new Error('Too many requests'), { status: 429 }))).toBe('busy for now');
   });
 });
 

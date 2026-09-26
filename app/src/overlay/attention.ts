@@ -21,6 +21,7 @@ export const WHAT: Record<Attention['kind'], string> = {
   'metric-alert': 'A number to look at', 'proposed-target': 'suggests a target',
   'runway-low': 'Runway is short', 'proposed-runway': 'suggests a change to the runway',
   'lead-stale': 'A lead to follow up',
+  'key-rejected': 'A model key was refused',
 };
 export const ago = (at: number, now = Date.now()) => {
   const minutes = Math.max(0, Math.round((now - at) / 60_000));

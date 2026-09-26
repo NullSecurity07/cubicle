@@ -82,11 +82,21 @@ describe('the rest of the checks', () => {
     expect(theirs.fix).toContain('allowed to write');
   });
 
-  it('count a backup as fine for a week and say how long ago in days', async () => {
+  it('count a backup as fine for a day and say how long ago in days', async () => {
     expect(row(await setup(), 'Backup').detail).toContain('nothing has been backed up yet');
     expect(row(await setup({ backups: async () => [{ at }] }), 'Backup')).toMatchObject({ ok: true, detail: expect.stringContaining('the newest made today') });
-    expect(row(await setup({ backups: async () => [{ at: at - DAY }, { at: at - 2 * DAY }] }), 'Backup').detail).toContain('2 kept in /tmp/backups, the newest made yesterday');
+    expect(row(await setup({ backups: async () => [{ at: at - DAY - 1000 }, { at: at - 2 * DAY }] }), 'Backup')).toMatchObject({ ok: false, detail: expect.stringContaining('2 kept in /tmp/backups, the newest made yesterday') });
     expect(row(await setup({ backups: async () => [{ at: at - 9 * DAY }] }), 'Backup')).toMatchObject({ ok: false, detail: expect.stringContaining('9 days ago') });
+    // The point of a backup is a second disk: the fix says so.
+    expect(row(await setup(), 'Backup').fix).toContain('second disk');
+  });
+
+  it('count a backup folder that cannot be written to as a problem, however fresh the newest', async () => {
+    const file = join(await mkdtemp(join(tmpdir(), 'health-')), 'not-a-folder');
+    await writeFile(file, 'x');
+    const stuck = row(await setup({ backupDir: join(file, 'backups'), backups: async () => [{ at }] }), 'Backup');
+    expect(stuck.ok).toBe(false);
+    expect(stuck.detail).toContain('cannot be written to');
   });
 
   it('name the outside program that did not answer, and say nothing at all when there are none', async () => {

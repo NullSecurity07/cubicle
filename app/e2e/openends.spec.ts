@@ -95,7 +95,7 @@ test('health says in plain words what is fine and what needs you, and a backup c
   const backup = rows.filter({ hasText: 'Backup' });
   await expect(backup).toContainText('nothing has been backed up yet');
   await expect(backup).toContainText('Needs you');
-  await expect(backup).toContainText('press "Back up now"');
+  await expect(backup).toContainText('a second disk or a synced folder');
   await expect(rows.filter({ has: page.locator('.ring--out') })).not.toHaveCount(0);
   await expect(rows.filter({ hasNot: page.locator('.ring--out') })).not.toHaveCount(0);
   // Not a word of any key is ever on this page — only how many there are.

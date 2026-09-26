@@ -8,6 +8,7 @@ import { graphifyVersion, INSTALL, mcpCommand, PIN } from '../slices/graph.ts';
 import { isoDay, parseFeed, REDDIT_AGENT } from '../readers.ts';
 import { which, whichAsync } from '../which.ts';
 import { FIND_VARS, outreachEnv } from '../leads/openoutreach.ts';
+import { canWrite } from './backup.ts';
 
 // Is everything this app leans on really here? One question a line, answered yes or no, and when the answer is no,
 // what the founder would do about it — in the words they would use, not ours.
@@ -204,13 +205,18 @@ export async function checkAll(deps: HealthDeps): Promise<Check[]> {
     fix: 'Ask a voice studio for one line. The voice fetches itself the first time, about 80 MB, and then speaks without the internet.',
   });
 
+  // A day, since one is made by itself every day; and a folder it can still be written to, or the next one fails.
   const held = await deps.backups();
   const newest = held[0]?.at ?? 0;
-  const fresh = !!newest && now() - newest < 7 * DAY;
+  const fresh = !!newest && now() - newest < DAY;
+  const backupWritable = await canWrite(deps.backupDir);
   checks.push({
-    name: 'Backup', ok: fresh,
-    detail: newest ? `${held.length} kept in ${deps.backupDir}, the newest made ${ago(newest, now())}` : `nothing has been backed up yet (they would go to ${deps.backupDir})`,
-    fix: 'Open Health and press "Back up now". Five are kept, and each one holds everything you have written.',
+    name: 'Backup', ok: fresh && backupWritable,
+    detail: [
+      newest ? `${held.length} kept in ${deps.backupDir}, the newest made ${ago(newest, now())}` : `nothing has been backed up yet (they would go to ${deps.backupDir})`,
+      ...(backupWritable ? [] : ['and that folder cannot be written to']),
+    ].join(', '),
+    fix: 'One is made by itself once a day, and five are kept. Point "Back up to…" in Health at a second disk or a synced folder: a copy on this same disk is gone with it.',
   });
 
   checks.push(...keyChecks(env, root));

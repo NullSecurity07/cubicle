@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
-import { backupDir, backupDirOf, leaveOut, landingPlace, listBackups, makeBackup, restore } from './backup.ts';
+import { autoBackup, backupDir, backupDirOf, canWrite, leaveOut, landingPlace, listBackups, makeBackup, restore } from './backup.ts';
 import { END, packTar, splitPath, tarBlock, tarEntries } from './tar.ts';
 
 const dir = (what: string) => mkdtemp(join(tmpdir(), `${what}-`));
@@ -132,5 +132,54 @@ describe('backupDirOf', () => {
     expect(backupDirOf({ fake: true, workspace: '/w' }, { STAGE_BACKUP_DIR: '/b' })).toBe('/b');
     expect(backupDirOf({ fake: false, workspace: '/w' }, { STAGE_BACKUP_DIR: '/b' })).toBe('/b');
     expect(backupDirOf({ fake: false, workspace: '/w' }, {})).toBe(backupDir({}));
+  });
+});
+
+describe('the backup that makes itself', () => {
+  const HOUR = 3_600_000;
+  it('makes one when there is none, then waits until the newest is a day old', async () => {
+    const root = await workspace();
+    const into = await dir('auto');
+    let clock = Date.now();
+    const auto = autoBackup({ workspace: root, dir: () => into, now: () => clock });
+    expect((await auto.tick())?.made?.backup.file).toMatch(/^cubicle-/);
+    expect(await listBackups(into)).toHaveLength(1);
+    clock += 23 * HOUR;
+    expect(await auto.tick()).toBeNull();
+    expect(await listBackups(into)).toHaveLength(1);
+    clock += 2 * HOUR;
+    expect((await auto.tick())?.made).toBeTruthy();
+    expect(await listBackups(into)).toHaveLength(2);
+  });
+
+  it('keeps five, the same as a backup made by hand', async () => {
+    const root = await workspace();
+    const into = await dir('auto');
+    let clock = Date.now();
+    const auto = autoBackup({ workspace: root, dir: () => into, now: () => clock });
+    for (let day = 0; day < 7; day += 1) { await auto.tick(); clock += 25 * HOUR; }
+    expect(await listBackups(into)).toHaveLength(5);
+  });
+
+  it('after a failure says why, and does not try again for an hour', async () => {
+    const root = await workspace();
+    const file = join(await dir('auto'), 'not-a-folder');
+    await writeFile(file, 'x');
+    let clock = Date.now();
+    const auto = autoBackup({ workspace: root, dir: () => join(file, 'backups'), now: () => clock, log: () => {} });
+    expect((await auto.tick())?.problem).toBeTruthy();
+    clock += 30 * 60_000;
+    expect(await auto.tick()).toBeNull();
+    clock += 31 * 60_000;
+    expect((await auto.tick())?.problem).toBeTruthy();
+  });
+});
+
+describe('canWrite', () => {
+  it('says yes for a folder not made yet under one that can be written, and no under a file', async () => {
+    const base = await dir('probe');
+    expect(await canWrite(join(base, 'later', 'backups'))).toBe(true);
+    await writeFile(join(base, 'file'), 'x');
+    expect(await canWrite(join(base, 'file', 'backups'))).toBe(false);
   });
 });

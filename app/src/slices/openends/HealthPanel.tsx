@@ -61,8 +61,10 @@ function Backing({ held, onMade }: { held: Backups | null; onMade: (held: Backup
       <h3>Backup<span>{held ? `${held.backups.length} of ${held.kept} kept` : ''}</span></h3>
       <p className="playbook__note">
         One file with everything you have written in it — your stage, your conversations, your docs and the playbook.
+        One is made by itself once a day while the app is open.
         {held ? ` They go to ${held.dir}, and the oldest goes when there are more than ${held.kept}.` : ''}
       </p>
+      <p className="playbook__note"><b>A backup on this same disk dies with it.</b> Use "Back up to…" to point them at a second disk or a folder a sync service carries.</p>
       {held && held.backups.length > 0 && (
         <ul className="health__files">
           {held.backups.map((one) => (

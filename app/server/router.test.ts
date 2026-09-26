@@ -20,7 +20,7 @@ describe('route', () => {
     for (let i = 0; i < 10; i += 1) usage.record('groq', { input: 1, output: 1 });
     const result = route([client('groq', { limits: { rpd: 10 } }), client('gemini')], usage, { promptChars: 10, tools: true });
     expect(names(result)).toEqual(['gemini', 'groq']);
-    expect(result.notice).toBe('Groq is near its free limit, so Gemini answers for now.');
+    expect(result.notice).toBe("Groq has used today's free quota, so Gemini answers for now.");
   });
 
   it('steps aside before the per-minute token wall, and comes back after a minute', () => {
@@ -28,9 +28,20 @@ describe('route', () => {
     const usage = createUsage(null, () => now);
     usage.record('groq', { input: 900, output: 50 });
     const clients = [client('groq', { limits: { tpm: 1000 } }), client('gemini')];
-    expect(names(route(clients, usage, { promptChars: 400, tools: true }))).toEqual(['gemini', 'groq']);
+    const hot = route(clients, usage, { promptChars: 400, tools: true });
+    expect(names(hot)).toEqual(['gemini', 'groq']);
+    // Most of the day is left: the founder hears it is this minute, not the day, that is full.
+    expect(hot.notice).toBe('Groq is busy this minute, so Gemini answers for now.');
     now += 61_000;
     expect(names(route(clients, usage, { promptChars: 400, tools: true }))).toEqual(['groq', 'gemini']);
+  });
+
+  it('says a refused key was refused, and where to fix it', () => {
+    const usage = createUsage(null);
+    usage.failed('groq', Object.assign(new Error('Invalid API Key'), { status: 401 }));
+    const result = route([client('groq'), client('gemini')], usage, { promptChars: 10, tools: true });
+    expect(names(result)).toEqual(['gemini', 'groq']);
+    expect(result.notice).toBe("Groq's key was refused, so Gemini answers. Fix it in Keys.");
   });
 
   it('puts a key that takes one request at a time behind the others while it has one out', () => {
@@ -84,7 +95,7 @@ describe('route', () => {
     for (let i = 0; i < 10; i += 1) { usage.record('groq', { input: 1, output: 1 }); usage.record('gemini', { input: 1, output: 1 }); }
     const spent = route([client('groq', { limits: { rpd: 10 } }), client('gemini', { limits: { rpd: 10 } }), local], usage, { promptChars: 10, tools: true });
     expect(names(spent)).toEqual(['ollama', 'groq', 'gemini']);
-    expect(spent.notice).toBe('Groq is near its free limit, so Ollama answers for now.');
+    expect(spent.notice).toBe("Groq has used today's free quota, so Ollama answers for now.");
     // Pinned by a person: first, like any pinned model.
     expect(names(route([client('groq'), local], createUsage(null), { pinned: 'ollama', promptChars: 10, tools: true }))).toEqual(['ollama', 'groq']);
   });

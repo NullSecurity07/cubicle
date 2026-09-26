@@ -258,6 +258,66 @@ describe('app cards', () => {
     // Without an app name the host is named, as before.
     expect(await browser.outward('card-a', 'click', { ref: 'e1' })).toContain('on www.linkedin.com?');
   });
+  // An app card is the founder's own account: whatever is not plainly reading waits for a yes, and says what was typed.
+  it('asks before Enter in a LinkedIn message box, and shows what would be sent', async () => {
+    const tree = '- textbox "Write a message…" [ref=e1]\n- button [ref=e2]\n- link "Ada Lovelace" [ref=e3]\n';
+    const runner: Runner = async (_s, args) => (args[0] === 'snapshot' ? tree : args[0] === 'get' && args[1] === 'url' ? 'https://www.linkedin.com/messaging/thread/1/\n' : '✓\n');
+    const browser = createBrowser(runner);
+    await browser.act('card-li', 'fill', { ref: 'e1', text: 'Hi Ada, fancy a coffee?' });
+    const asked = await browser.outward('card-li', 'press', { key: 'Enter' }, undefined, 'LinkedIn');
+    expect(asked).toMatch(/^Press Enter on LinkedIn\?/);
+    expect(asked).toContain('"Hi Ada, fancy a coffee?"');
+    // Outside an app card and outside webmail, Enter is still plain browsing.
+    await browser.act('card-plain', 'look', {});
+    expect(await browser.outward('card-plain', 'press', { key: 'Enter' })).toBeNull();
+  });
+  it('lets Enter through after typing into a search box on an app card, since that is how LinkedIn and X search', async () => {
+    const tree = '- searchbox "Search" [ref=e1]\n- combobox "Search people" [ref=e2]\n- textbox "Search messages" [ref=e3]\n- textbox "Write a message…" [ref=e4]\n';
+    const runner: Runner = async (_s, args) => (args[0] === 'snapshot' ? tree : args[0] === 'get' && args[1] === 'url' ? 'https://www.linkedin.com/feed/\n' : '✓\n');
+    const browser = createBrowser(runner);
+    await browser.act('card-li', 'look', {});
+    for (const ref of ['e1', 'e2', 'e3']) {
+      await browser.act('card-li', 'fill', { ref, text: 'founders in Leeds' });
+      expect(await browser.outward('card-li', 'press', { key: 'Enter' }, undefined, 'LinkedIn')).toBeNull();
+    }
+    await browser.act('card-li', 'fill', { ref: 'e4', text: 'Hello' });
+    expect(await browser.outward('card-li', 'press', { key: 'Enter' }, undefined, 'LinkedIn')).toMatch(/^Press Enter on LinkedIn\?/);
+  });
+  it('lets only a plain Enter through, only straight after a search fill, and only into a field that is a search', async () => {
+    const tree = '- textbox "Write a message…" [ref=e1]\n- searchbox "Search" [ref=e2]\n- textbox "Research notes" [ref=e3]\n- combobox "To" [ref=e4]\n';
+    const runner: Runner = async (_s, args) => (args[0] === 'snapshot' ? tree : args[0] === 'get' && args[1] === 'url' ? 'https://www.linkedin.com/messaging/\n' : '✓\n');
+    const browser = createBrowser(runner);
+    const enter = (key = 'Enter') => browser.outward('card-li', 'press', { key }, undefined, 'LinkedIn');
+    await browser.act('card-li', 'look', {});
+    // Message typed, search typed, focus moved back to the message by a click: Enter would send the message.
+    await browser.act('card-li', 'fill', { ref: 'e1', text: 'Hello' });
+    await browser.act('card-li', 'fill', { ref: 'e2', text: 'founders' });
+    expect(await enter()).toBeNull();
+    await browser.act('card-li', 'click', { ref: 'e1' });
+    expect(await enter()).toMatch(/^Press Enter on LinkedIn\?/);
+    // Straight after a search fill: plain Enter goes, a combination does not.
+    await browser.act('card-li', 'fill', { ref: 'e2', text: 'founders' });
+    expect(await enter('Control+Enter')).toMatch(/^Press Control\+Enter/);
+    // Every step but a fill forgets the search, the press itself included.
+    await browser.act('card-li', 'press', { key: 'Enter' });
+    expect(await enter()).toMatch(/^Press Enter/);
+    // A name that only contains "search", and a plain combobox, ask.
+    await browser.act('card-li', 'fill', { ref: 'e3', text: 'notes' });
+    expect(await enter()).toMatch(/^Press Enter/);
+    await browser.act('card-li', 'fill', { ref: 'e4', text: 'ada@example.com' });
+    expect(await enter()).toMatch(/^Press Enter/);
+  });
+  it('asks before a click on an unnamed icon on an app card, and lets a profile link, a tab and a filter through', async () => {
+    const tree = '- button [ref=e1]\n- link "Ada Lovelace" [ref=e2]\n- tab "Posts" [ref=e3]\n- button "All filters" [ref=e4]\n- searchbox "Search" [ref=e5]\n- button "Save" [ref=e6]\n- button "Show more results" [ref=e7]\n- link "Message" [ref=e8]\n- button "…see more" [ref=e9]\n';
+    const runner: Runner = async (_s, args) => (args[0] === 'snapshot' ? tree : args[0] === 'get' && args[1] === 'url' ? 'https://www.linkedin.com/search/results/people/\n' : '✓\n');
+    const browser = createBrowser(runner);
+    await browser.act('card-li', 'look', {});
+    expect(await browser.outward('card-li', 'click', { ref: 'e1' }, undefined, 'LinkedIn')).toMatch(/unnamed button \(e1\) on LinkedIn/);
+    for (const ref of ['e2', 'e3', 'e4', 'e5', 'e7', 'e9']) expect(await browser.outward('card-li', 'click', { ref }, undefined, 'LinkedIn')).toBeNull();
+    // A button the old list of words did not know is asked about all the same, and so is a link that sends.
+    expect(await browser.outward('card-li', 'click', { ref: 'e6' }, undefined, 'LinkedIn')).toMatch(/^Click "Save" on LinkedIn\?/);
+    expect(await browser.outward('card-li', 'click', { ref: 'e8' }, undefined, 'LinkedIn')).toMatch(/^Click "Message"/);
+  });
   it('pauses before a step only when a pace is given', async () => {
     const stamps: number[] = [];
     const runner: Runner = async (_s, args) => { if (args[0] === 'click') stamps.push(Date.now()); return args[0] === 'snapshot' ? '- button "Ok" [ref=e1]\n' : '✓\n'; };

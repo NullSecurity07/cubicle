@@ -9,7 +9,7 @@ import { hub } from '../events.ts';
 import { FRAMEWORK_ID, type Framework } from '../../shared/frameworks.ts';
 import type { Deps, Slice } from '../install.ts';
 import { leadsCardIds } from '../leads/store.ts';
-import { backupDirOf, listBackups } from '../openends/backup.ts';
+import { backupDirOf, canWrite, listBackups } from '../openends/backup.ts';
 import { checkAll, outsideHealth } from '../openends/health.ts';
 import { coderHealth } from '../opencode/server.ts';
 import { providerOf } from '../providers.ts';
@@ -298,7 +298,7 @@ export default {
         readSkills(deps, stage, read, now), readMedia(deps.workspace, stage, read, now),
       ]);
       const dir = dirOf();
-      const backup = { at: (await listBackups(dir))[0]?.at ?? null, dir };
+      const backup = { at: (await listBackups(dir))[0]?.at ?? null, dir, writable: await canWrite(dir) };
       return { at: now, day, tokens, health: health.checks, teams, skills, media, backup };
     }
     async function current(): Promise<Dashboard> {
