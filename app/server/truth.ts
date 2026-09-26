@@ -19,7 +19,8 @@ const VERBS = 'saved|wrote|written|updated|created|stored|recorded|sent|emailed|
 const FIRST = new RegExp(`\\b(?:I|we)(?:'ve| have| had)?(?:\\s+(?:just|now|already|also|then))?\\s+(${VERBS})\\b`, 'gi');
 const PASSIVE = new RegExp(`\\b(?:has been|have been|had been|was|were|is now|are now|is|are)(?:\\s+(?:just|now|already|also))?\\s+(${VERBS})\\b`, 'gi');
 const OPENING = new RegExp(`(?:^|[.!?]\\s+|\\n\\s*)(${VERBS})\\s+(?:it|the|this|to|your|a|an|them|\`|")`, 'gi');
-// A claim that is not one: under a condition, denied, or about words that sit in this very reply.
+// A claim that is not one: under a condition, denied, asked, or about words that sit in this very reply ("below",
+// or a sentence ending in a colon with the words after it).
 const CONDITION = /\b(?:once|after|when|if|before|until|unless|nothing|no one|nobody|none|not|never)\s*$/i;
 const HERE = /\b(?:below|above|here|in this (?:reply|message|chat))\b/i;
 
@@ -42,7 +43,7 @@ export function unreceiptedClaims(reply: string, receipts: Receipt[]): string[] 
       const start = match.index + match[0].length - match[0].trimStart().length;
       const { before } = sentenceAround(reply, start);
       const { rest } = sentenceAround(reply, at);
-      if (CONDITION.test(before) || HERE.test(rest) || rest.trimEnd().endsWith('?')) continue;
+      if (CONDITION.test(before) || HERE.test(rest) || /[?:]$/.test(rest.trimEnd())) continue;
       found.push({ at, verb: verb.toLowerCase() });
     }
   }

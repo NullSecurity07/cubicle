@@ -44,6 +44,7 @@ describe('unreceiptedClaims', () => {
       'If I sent it now, it would go out without figures.',
       'Here is what I wrote below:',
       'Should it be saved as a new doc?',
+      'I wrote a first draft for you:\n\nDear investors,',
     ]) expect(unreceiptedClaims(reply, []), reply).toEqual([]);
   });
 });
