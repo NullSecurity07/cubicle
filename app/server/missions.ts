@@ -18,10 +18,15 @@ export function founderWords(text: string): string {
   }).join('\n');
 }
 
+const TEMPLATE = wordsIn([...Object.values(seedDocs), companyTemplate()].join(' '));
+// Whether the founder has written something of their own in a doc: eight words the templates do not have, outside
+// the headings and the sections the app writes. The same test ticks "fill in the brief" and tells "add partner"
+// whether the idea is already there.
+export const saysSomething = (text: string) => [...wordsIn(founderWords(text))].filter((word) => !TEMPLATE.has(word)).length >= 8;
+
 // The first-run list. Every tick is read off the workspace: what the founder did shows, whatever was or was not clicked.
 export function missionsOf({ stage, chats, docs, decisions, tasks }: Facts): Mission[] {
-  const template = wordsIn([...Object.values(seedDocs), companyTemplate()].join(' '));
-  const briefed = stage.docs.some((doc) => doc.pinned && [...wordsIn(founderWords(docs[doc.id] ?? ''))].filter((word) => !template.has(word)).length >= 8);
+  const briefed = stage.docs.some((doc) => doc.pinned && saysSomething(docs[doc.id] ?? ''));
   const seedWires = new Set(seedStage.wires.map((wire) => `${wire.from}>${wire.to}`));
   const seedRooms = new Set(seedStage.rooms.map((room) => room.id));
   const acted = Object.values(chats).some((chat) => chat.some((message) => message.tools?.some((tool) => APPROVED.has(tool.name) && tool.ok === true)))

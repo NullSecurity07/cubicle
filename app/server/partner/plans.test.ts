@@ -12,6 +12,7 @@ const stage: Stage = {
   wires: [{ id: 'w', from: 'sam', fromHandle: 'r', to: 'board-b', toHandle: 'l' }],
 };
 const plan = { id: 'plan-1', at: 5, who: 'Sam', roomId: 'sam', title: '2-week plan', steps: stepsFrom(['Day 1: draft the page', '- post in r/SaaS', 'Mon 5 Oct – email 20 leads', '4', '5', '6']) };
+const SAT = new Date('2026-09-26T10:00').getTime();
 
 describe('a plan as tasks', () => {
   it('reads steps a person hands over, keeping a day written at the front', () => {
@@ -26,10 +27,11 @@ describe('a plan as tasks', () => {
     expect(boardFor(stage, 'sam')).toBe('board-b');
     expect(boardFor({ ...stage, wires: [] }, 'sam')).toBe('board-a');
     const boards = createBoards(await mkdtemp(join(tmpdir(), 'plans-')));
-    expect(await addPlan(boards, stage, plan)).toEqual({ boardId: 'board-b', added: 6 });
+    expect(await addPlan(boards, stage, plan, SAT)).toEqual({ boardId: 'board-b', added: 6 });
     const tasks = await boards.list('board-b');
     expect(tasks.map((task) => [task.title, task.column])).toEqual([['Day 1: draft the page', 'todo'], ['post in r/SaaS', 'todo'], ['Mon 5 Oct: email 20 leads', 'todo'], ['4', 'todo'], ['5', 'todo'], ['6', 'todo']]);
     expect(tasks[0].detail).toBe('From the plan "2-week plan", written by Sam.');
-    await expect(addPlan(boards, { ...stage, cards: [] }, plan)).rejects.toThrow('Add a task board first');
+    expect(tasks.map((task) => task.due)).toEqual([undefined, undefined, '2026-10-05', undefined, undefined, undefined]);
+    await expect(addPlan(boards, { ...stage, cards: [] }, plan)).rejects.toThrow('There is no task board on the stage yet');
   });
 });

@@ -43,6 +43,18 @@ const CARD_WORDS: [RegExp, Extract<Action, { do: 'add' }>['kind'], string, strin
 // A note from the library is picked in Notes, the way the dock's own button does it: the card is only which note.
 const LIBRARY_NOTE = /^((a )?note from (the |my )?library|library( note)?)$/;
 const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+const NOT_NAMES = /^(who|for|to|that|with|in|on|and|as|from|at|of)$/i;
+const ROLE_WORD = /^(?:\w+(?:er|or|ist|ing|ant|ent)|sales|seo|ops|hr|cto|ceo|cfo|coo|cmo|pm|ux|ui|qa|legal|finance|growth|support|design|product|research)$/i;
+// The name in "add a person called Lena Ortiz" or "add a person Lena", as typed; nothing when the words are a role.
+function personName(typed: string): string | undefined {
+  const after = /\b(?:person|someone|teammate|colleague)\s+(.+)$/i.exec(typed)?.[1].trim();
+  if (!after) return undefined;
+  const called = /^(?:called|named)\s+(.+)$/i.exec(after)?.[1].trim();
+  if (called) return sentence(called).slice(0, 40);
+  // One word: a name when written with a capital ("Vincent"); in lower case, unless it reads as a job ("designer").
+  if (!/^\p{L}[\p{L}'-]*$/u.test(after) || NOT_NAMES.test(after) || (!/^\p{Lu}/u.test(after) && ROLE_WORD.test(after))) return undefined;
+  return sentence(after);
+}
 // The bar's own commands. `words` is what, typed in full, asks for one outright; `say` is how the cheatsheet shows it.
 // `quiet` ones wait to be asked: they are not listed on an empty bar, where they would only crowd the views.
 type Starter = Suggestion & { words?: RegExp; say?: string[]; quiet?: true };
@@ -121,6 +133,12 @@ export function suggest(input: string, known: Known, extra: Command[] = sliceCom
     else if (LIBRARY_NOTE.test(what)) found.push({ section: 'Do', label: 'Add a note from your library', hint: 'Pick one in Notes', action: { do: 'panel', name: 'library' } });
     else if (doc) found.push({ section: 'Do', label: doc[1] ? `Add a doc called "${sentence(typed.slice(typed.length - doc[1].length))}"` : 'Add a doc', action: { do: 'add', kind: 'doc', ...(doc[1] ? { data: { title: sentence(typed.slice(typed.length - doc[1].length)) } } : {}) } });
     else if (/^(person|someone|teammate|colleague)$/.test(what)) found.push({ section: 'Do', label: 'Add a person', action: { do: 'add', kind: 'room' } });
+    // "add a person called Lena", or one capitalised word after it ("add a person Lena"): a person with that name.
+    // Anything else ("someone who does SEO", "a teammate for marketing") is the role, as before.
+    else if (personName(typed)) {
+      const name = personName(typed)!;
+      found.push({ section: 'Do', label: `Add ${name}`, hint: 'A person; you write their role and brief', action: { do: 'add', kind: 'room', data: { name } } });
+    }
     // Words a slice answers to ("add partner") are that slice's to carry out, not a person to hire by that role.
     else if (!extra.some((one) => one.when?.(low))) found.push({ section: 'Do', label: `Add a person: ${sentence(what)}`, hint: 'You name them and write their brief', action: { do: 'add', kind: 'room', data: { role: sentence(what) } } });
   }

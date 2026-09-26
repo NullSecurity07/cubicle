@@ -6,7 +6,7 @@ import type { Deps, Slice } from '../install.ts';
 import { catalogue, SETTINGS, type KeyInfo } from '../keys-file/catalogue.ts';
 import { NAME, readEnv, tailOf, withEnv } from '../keys-file/envfile.ts';
 import { backupPlaces, readyFolder } from '../keys-file/places.ts';
-import { backupDirOf } from '../openends/backup.ts';
+import { backupDirOf, chooseBackupDir } from '../openends/backup.ts';
 import { liveChecks } from '../openends/health.ts';
 import { ENTRIES, providerOf, type ModelClient } from '../providers.ts';
 
@@ -105,7 +105,7 @@ export default {
         if (path === '/api/keys-file' && method === 'GET') { deps.json(res, 200, await view()); return true; }
         if (path === '/api/keys-file/places' && method === 'GET') {
           const current = backupDirOf(deps);
-          const fallback = backupDirOf(deps, { ...process.env, STAGE_BACKUP_DIR: '' });
+          const fallback = backupDirOf(deps, { ...process.env, STAGE_BACKUP_DIR: '' }, false);
           deps.json(res, 200, { current, custom: current !== fallback, fallback, places: deps.fake ? [] : await backupPlaces() });
           return true;
         }
@@ -125,9 +125,14 @@ export default {
         const typed = typeof sent?.value === 'string' ? sent.value.trim() : '';
         try {
           if (typed.length > 4000) throw new Error('that is far longer than a key');
-          // A backup folder is made ready before it is written down, so the next backup never finds it missing.
-          const value = !typed ? null : name === 'STAGE_BACKUP_DIR' ? await readyFolder(typed, deps.workspace) : typed;
-          await write(name, value);
+          // A backup folder is made ready before it is written down, so the next backup never finds it missing. It
+          // is this workspace's choice, kept in the workspace, never the machine's in .env.
+          if (name === 'STAGE_BACKUP_DIR') {
+            await chooseBackupDir(deps.workspace, typed ? await readyFolder(typed, deps.workspace) : null);
+            deps.json(res, 200, await view());
+            return true;
+          }
+          await write(name, typed || null);
           deps.json(res, 200, await view());
         } catch (error) { deps.json(res, 400, { error: (error as Error).message }); }
         return true;

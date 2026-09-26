@@ -37,7 +37,13 @@ const VIA: Record<NonNullable<ChatMessage['via']>, string> = { phone: 'from your
 const outside = (name: string) => name.replace(/^mcp_/, '').replace(/_/g, ' ');
 
 // What a receipt says about one tool call: the verb while it runs, the verb once it is done, and what it was about.
-export function receiptOf(tool: Pick<ToolEvent, 'name' | 'args' | 'question'>): { doing: string; done: string; subject: string } {
+// The choices a question to the founder came with, said after it in the room, so the founder sees what was offered.
+const offered = (tool: Pick<ToolEvent, 'args' | 'choices'>) => {
+  const choices = tool.choices ?? (Array.isArray(tool.args.choices) ? tool.args.choices.filter((one): one is string => typeof one === 'string') : []);
+  return choices.length ? ` (${choices.join(' · ')})` : '';
+};
+
+export function receiptOf(tool: Pick<ToolEvent, 'name' | 'args' | 'question' | 'choices'>): { doing: string; done: string; subject: string } {
   if (tool.name.startsWith('mcp_')) return { doing: 'Using', done: 'Used', subject: outside(tool.name) };
   const [doing, done] = VERBS[tool.name] ?? [tool.name, tool.name];
   const many = (tool.args.queries ?? tool.args.urls) as unknown;
@@ -55,7 +61,7 @@ export function receiptOf(tool: Pick<ToolEvent, 'name' | 'args' | 'question'>): 
     : tool.name === 'ask_person' ? String(tool.args.name ?? '') : tool.name === 'recall' ? String(tool.args.query ?? '').slice(0, 60) : tool.name === 'reflect' ? String(tool.args.about ?? '').slice(0, 60)
     : tool.name === 'use_skill' ? String(tool.args.name ?? '').slice(0, 60)
     : tool.name === 'note_founder' ? String(tool.args.fact ?? '').replace(/\s+/g, ' ').slice(0, 60)
-    : tool.name === 'ask_founder' ? String(tool.question ?? tool.args.question ?? '').replace(/\s+/g, ' ').slice(0, 60)
+    : tool.name === 'ask_founder' ? `${String(tool.question ?? tool.args.question ?? '').replace(/\s+/g, ' ').slice(0, 60)}${offered(tool)}`
     : tool.name === 'code_task' ? String(tool.args.brief ?? '').replace(/\s+/g, ' ').slice(0, 60)
     : tool.name === 'ask_graph' ? String(tool.args.question ?? '').replace(/\s+/g, ' ').slice(0, 60)
     : tool.name === 'affected_by' ? String(tool.args.name ?? '').slice(0, 60)

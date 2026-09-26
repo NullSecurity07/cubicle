@@ -7,11 +7,11 @@ const root = resolve(import.meta.dirname, '../..');
 try { process.loadEnvFile(resolve(root, '.env')); } catch { /* no .env: the keys check will say so */ }
 
 const { checkAll, liveChecks, liveReaders } = await import('../server/openends/health.ts');
-const { backupDir, listBackups } = await import('../server/openends/backup.ts');
+const { backupDirOf, listBackups } = await import('../server/openends/backup.ts');
 const { connectAll, loadEntries } = await import('../server/openends/mcp.ts');
 
 const workspace = process.env.STAGE_WORKSPACE ?? resolve(root, 'workspace');
-const dir = backupDir(process.env);
+const dir = backupDirOf({ fake: process.env.STAGE_FAKE_MODEL === '1', workspace, root });
 const { entries, problem } = await loadEntries(workspace);
 const connections = entries.length ? await connectAll(entries) : [];
 const outside = [

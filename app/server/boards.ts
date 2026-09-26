@@ -50,10 +50,11 @@ export function createBoards(dir: string, now: () => number = Date.now) {
     list: load,
     // Any change on any board, for whoever keeps a view across all of them.
     onChange(tell: () => void) { listeners.add(tell); return () => { listeners.delete(tell); }; },
-    async add(boardId: string, input: { title: string; detail?: string; column?: Column; proposedBy?: string }): Promise<Task> {
+    async add(boardId: string, input: { title: string; detail?: string; column?: Column; proposedBy?: string; due?: string }): Promise<Task> {
       const title = input.title.trim().slice(0, 200);
       if (!title) throw new Error('a task needs a title');
-      const task: Task = { id: newId(), title, detail: (input.detail ?? '').trim().slice(0, 4000), column: input.column ?? 'todo', createdAt: now(), ...(input.proposedBy ? { proposedBy: input.proposedBy } : {}) };
+      const due = typeof input.due === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(input.due) ? input.due : undefined;
+      const task: Task = { id: newId(), title, detail: (input.detail ?? '').trim().slice(0, 4000), column: input.column ?? 'todo', createdAt: now(), ...(input.proposedBy ? { proposedBy: input.proposedBy } : {}), ...(due ? { due } : {}) };
       (await load(boardId)).push(task);
       save(boardId);
       return task;

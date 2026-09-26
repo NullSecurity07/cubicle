@@ -248,8 +248,9 @@ test('backups can be sent to a folder off this machine, and the dashboard says w
     await part.getByRole('button', { name: 'Back up now' }).click();
     await expect(part.locator('.health__files li').first()).toContainText(/^cubicle-\d{4}-\d{2}-\d{2}-\d{4}\.tar\.gz/, { timeout: 20_000 });
     expect((await readdir(folder)).filter((name) => name.endsWith('.tar.gz'))).toHaveLength(1);
-    // The folder is written down where the app reads it next time it starts.
-    expect(await readFile(join(workspace(), '.env'), 'utf8')).toContain(`STAGE_BACKUP_DIR='${folder}'`);
+    // The folder is written down for this workspace, inside it, never in .env for the whole machine.
+    expect(JSON.parse(await readFile(join(workspace(), 'backup-to.json'), 'utf8'))).toEqual({ dir: folder });
+    expect(await readFile(join(workspace(), '.env'), 'utf8').catch(() => '')).not.toContain('STAGE_BACKUP_DIR');
     await page.keyboard.press('Escape');
     await expect(health).toBeHidden();
 
@@ -265,7 +266,7 @@ test('backups can be sent to a folder off this machine, and the dashboard says w
     await line.locator('xpath=..').screenshot({ path: 'test-results/shots/dashboard-last-backup.png' });
     await page.keyboard.press('Escape');
   } finally {
-    // Back to the default folder, from the page: only the app's own window may write .env.
+    // Back to the default folder, from the page: only the app's own window may choose it.
     await page.goto('/');
     await page.evaluate(() => fetch('/api/keys-file/STAGE_BACKUP_DIR', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ value: '' }) }));
     await rm(away, { recursive: true, force: true });

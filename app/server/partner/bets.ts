@@ -107,6 +107,18 @@ export async function metricChoices(workspace: string, stage: Stage): Promise<st
   return [...new Set(found)];
 }
 
+// What the founder has to add before a bet can be measured by `metric`, in words the person passes on as they are:
+// which card, and which row on it. The choices already on the stage come after, when there are any.
+export function missingMetric(stage: Stage, metric: string, choices: string[]): string {
+  const asked = metric.trim().toLowerCase();
+  const has = (kind: string) => (stage.cards ?? []).some((card) => card.kind === kind);
+  const need = asked === 'leads' || asked.startsWith('leads:') ? (has('leads') ? `"${metric}" is not a lead stage on the Leads card` : `there is no Leads card to count "${metric}" on. Ask the founder to add a Leads card from the dock`)
+    : asked === 'survey' ? 'there is no Survey card to count answers on. Ask the founder to add a Survey card from the dock'
+    : has('metrics') ? `the Metrics card has no "${metric}" row. Ask the founder to add one: paste a CSV with a date,${asked.replace(/[^a-z0-9_]+/g, '_')} header onto the Metrics card`
+    : `there is no Metrics card with a "${metric}" row. Ask the founder to add a Metrics card and paste a CSV with a date,${asked.replace(/[^a-z0-9_]+/g, '_')} header onto it`;
+  return `${need}.${choices.length ? ` Or measure it by one of what is already there: ${choices.join(', ')}.` : ''} Tell the founder exactly which card and row to add.`;
+}
+
 // A bet's check is due from its check day on, while nobody has said how it went.
 export const betDue = (bet: Bet, today: string) => bet.status === 'open' && !bet.result && isDay(bet.checkDate) && bet.checkDate <= today;
 

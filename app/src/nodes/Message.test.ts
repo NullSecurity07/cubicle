@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fieldLabel } from './Approval';
+import { canAnswer, choicesOf, fieldLabel } from './Approval';
 import { receiptOf } from './Message';
 
 describe('what a receipt says', () => {
@@ -17,5 +17,17 @@ describe('what a receipt says', () => {
     expect(fieldLabel('ask_founder', 'answer')).toBe('Your answer');
     expect(fieldLabel('browse_help', 'answer')).toBe("Why not (if you won't)");
     expect(fieldLabel('send_email', 'to')).toBe('To');
+  });
+
+  it('offers a question\'s choices as its answers, in the room and in Needs you', () => {
+    const asking = { id: 'ask-1', name: 'ask_founder', args: { question: 'What is your founder fit?', choices: ['Lived it', 'Unusual access', 'None'] } };
+    expect(receiptOf(asking).subject).toBe('What is your founder fit? (Lived it · Unusual access · None)');
+    expect(choicesOf({ ...asking, args: { answer: 'Lived it' }, choices: ['Lived it', 'Unusual access', 'None'] })).toEqual(['Lived it', 'Unusual access', 'None']);
+    expect(choicesOf({ id: 'e', name: 'send_email', args: {}, choices: ['x'] })).toEqual([]);
+    expect(choicesOf({ id: 'q', name: 'ask_founder', args: {} })).toEqual([]);
+    // An empty answer would close the question with nothing said: Answer waits for words or a choice.
+    expect(canAnswer('ask_founder', { answer: '  ' })).toBe(false);
+    expect(canAnswer('ask_founder', { answer: 'Lived it' })).toBe(true);
+    expect(canAnswer('send_email', { to: 'a@b.c' })).toBe(true);
   });
 });

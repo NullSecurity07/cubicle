@@ -1,18 +1,19 @@
 import { isDay } from '../../shared/metrics.ts';
 import { newMessageId, type Attention, type Stage } from '../../shared/model.ts';
-import { companyLine, isPlanDoc, SHARED_RECORD, parsePlan, PARTNER_CHANNEL, planTaskTitle, type Bet, type BetVerdict, type MorningNote, type PlanStep } from '../../shared/partner.ts';
+import { bare, companyLine, isPlanDoc, SHARED_RECORD, parsePlan, PARTNER_CHANNEL, planTaskTitle, type Bet, type BetVerdict, type MorningNote, type PlanStep } from '../../shared/partner.ts';
 import { localDay } from '../clock.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
 import { leadsFor } from '../leads/store.ts';
-import { betDue, betsAttention, betsBook, closedLine, metricChoices, readMetric, type BetsBook } from '../partner/bets.ts';
+import { betDue, betsAttention, betsBook, closedLine, metricChoices, missingMetric, readMetric, type BetsBook } from '../partner/bets.ts';
 import { companyDocOf, ensureCompany, syncDecisions, writeBets } from '../partner/company.ts';
 import { hub } from '../events.ts';
-import { FAKE_MORNING, morningDue, morningMessage, writeMorning } from '../partner/morning.ts';
-import { addPlan, planAttention, stepsFrom } from '../partner/plans.ts';
+import { saysSomething } from '../missions.ts';
+import { FAKE_MORNING, morningDue, morningInputs, morningMessage, writeMorning } from '../partner/morning.ts';
+import { addPlan, boardFor, boardForPlan, NO_BOARD, planAttention, stepsFrom } from '../partner/plans.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import type { ModelMessage } from '../prompt.ts';
 import { complete, promptSize } from '../providers.ts';
-import { route as routeModels } from '../router.ts';
+import { partnerRoute } from '../partner/route.ts';
 import { withSystem, type Handler } from '../seams.ts';
 import { newId, patchStageVia } from '../slice-kit.ts';
 import { speaker, text, type Tool } from '../tools/registry.ts';
@@ -37,7 +38,8 @@ export function betTools(book: BetsBook, workspace: string, changed: () => Promi
       name: 'propose_bet', perTurn: 2,
       description: 'Put a bet on record for the founder to take: something the company does, what it should move, by how much and by when. '
         + 'It waits in Needs you; it is only on record once the founder takes it. Measure it by a number the app can read: '
-        + 'a Metrics card number (its key or name), "leads", "leads:<stage>" such as "leads:replied", or "survey" (answers).',
+        + 'a Metrics card number (its key or name), "leads", "leads:<stage>" such as "leads:replied", or "survey" (answers). '
+        + 'When it says a card or a row is missing, tell the founder exactly which card and row to add.',
       parameters: { type: 'object', properties: {
         what: { type: 'string', description: 'What the company does, in a few words' },
         hypothesis: { type: 'string', description: 'What should happen because of it, and why' },
@@ -55,10 +57,10 @@ export function betTools(book: BetsBook, workspace: string, changed: () => Promi
         const metric = text(args, 'metric', 80).trim();
         const choices = await metricChoices(workspace, context.stage);
         if (!choices.some((one) => one.toLowerCase() === metric.toLowerCase()) && (await readMetric(workspace, context.stage, metric)).value === null) {
-          throw new Error(choices.length ? `nothing called "${metric}" can be read. Measure it by one of: ${choices.join(', ')}.` : 'nothing on the stage can be counted yet. Ask the founder to add a Metrics, Leads or Survey card first.');
+          throw new Error(missingMetric(context.stage, metric, choices));
         }
         const me = speaker(context);
-        const bet = await book.propose({ what: text(args, 'what', 160).replace(/\s+/g, ' ').trim(), hypothesis: typeof args.hypothesis === 'string' ? args.hypothesis.replace(/\s+/g, ' ').trim().slice(0, 400) : '', metric, target, checkDate, ...(me ? { proposedBy: me.name, roomId: me.id } : {}) });
+        const bet = await book.propose({ what: bare(text(args, 'what', 160)), hypothesis: typeof args.hypothesis === 'string' ? args.hypothesis.replace(/\s+/g, ' ').trim().slice(0, 400) : '', metric, target, checkDate, ...(me ? { proposedBy: me.name, roomId: me.id } : {}) });
         await changed();
         return { text: `Proposed the bet "${bet.what}" (${bet.metric} to ${bet.target} by ${bet.checkDate}). It waits in Needs you; it is not on record until the founder takes it.` };
       },
@@ -195,38 +197,51 @@ export function createPartner(options: PartnerOptions = {}) {
     // ------------------------------------------------------------ the morning turn
 
     const ask = options.ask ?? (deps.fake ? async () => FAKE_MORNING : async (messages: ModelMessage[]) => {
-      const { order } = routeModels(deps.clients, deps.usage, { promptChars: promptSize(messages), tools: false });
-      const reply = await complete(messages, { onToken: () => {} }, order);
+      const { order } = partnerRoute(deps.clients, deps.usage, { promptChars: promptSize(messages), tools: false });
+      const reply = await complete(messages, { onToken: () => {} }, order, ({ client, error }) => deps.usage.failed(client.name, error), (client) => deps.usage.admit(client.name));
       deps.usage.record(reply.client.name, reply.usage, reply.quota);
       return reply.text;
     });
 
     // Today's note, written now if it is due (or asked for), else the one already written, else null.
-    let writing: Promise<MorningNote | null> | null = null;
-    const morning = (asked: boolean) => (writing ??= (async () => {
+    let writing: Promise<(MorningNote & { unchanged?: true }) | null> | null = null;
+    // What the note is read from, as it stands now.
+    async function inputsNow(stage: Stage, partnerId: string) {
+      const doc = await companyNow(stage);
+      const chats = Object.fromEntries(await Promise.all(stage.rooms.map(async (room) => [room.id, await deps.store.readChat(room.id).catch(() => [])] as const)));
+      const company = doc ? await deps.store.readDoc(doc.id) : '';
+      return { company, key: morningInputs({ stage, partnerId, decisions: await deps.decisions.list(), bets: await book.list(), company, chats }) };
+    }
+
+    // Today's note: written on the tick when it is due, or when the founder asks. Asked again the same day, it is
+    // written again only when something it reads has changed since; otherwise the one there stands, marked unchanged.
+    const morning = (asked: boolean) => (writing ??= (async (): Promise<(MorningNote & { unchanged?: true }) | null> => {
       try {
         const at = now();
         const today = localDay(at);
         const held = await state.read();
-        if (held.morning?.day === today) return held.morning;
+        if (!asked && held.morning?.day === today) return held.morning;
         if (!asked && (!morningOnTick || !morningDue(held, at))) return null;
         const stage = await deps.store.loadStage();
         const partner = partnerOf(stage);
         // Never beside a turn of their own: the note would land in the middle of what they are saying.
         if (!partner || deps.busy.has(partner.id)) return null;
+        const inputs = await inputsNow(stage, partner.id);
+        if (held.morning?.day === today && held.morning.inputs === inputs.key) return { ...held.morning, unchanged: true };
         const count = held.tries?.day === today ? held.tries.count : 0;
         await state.change((draft) => { draft.tries = { day: today, count: count + 1, last: at }; });
-        const note = await writeMorning({
+        const written = await writeMorning({
           name: partner.name, ask,
           promptFor: (on, roomId) => deps.promptFor(on, roomId, [], true),
           sources: {
-            workspace: deps.workspace, stage, partnerId: partner.id, now: at, bets,
+            workspace: deps.workspace, stage, partnerId: partner.id, now: at, bets, company: inputs.company,
             decisions: () => deps.decisions.list(), boards: (id) => deps.boards.list(id), leads: (id) => leadsFor(deps.workspace).list(id),
             chat: (roomId) => deps.store.readChat(roomId),
           },
         }).catch((error: Error) => { console.error(`partner morning: ${error.message}`); return null; });
-        if (!note) return null;
-        await state.change((draft) => { draft.morning = note; });
+        if (!written) return null;
+        const note = { ...written, inputs: inputs.key };
+        await state.change((draft) => { draft.morning = note; if (draft.morningDone === today) delete draft.morningDone; });
         await deps.store.appendChat(partner.id, { id: newMessageId(), role: 'assistant', text: morningMessage(note), at: note.at });
         await deps.attention.refresh().catch(() => {});
         deps.notify?.(`Morning note from ${partner.name}`, note.things[0]);
@@ -292,6 +307,9 @@ export function createPartner(options: PartnerOptions = {}) {
         return tools.filter((tool) => (partner || !PARTNER_TOOLS.includes(tool.name)) && (board || !BOARD_TOOLS.includes(tool.name)));
       },
       async tick() {
+        // The day a partner first shows up is noted, so their first note is the next morning's.
+        const arrived = partnerOf(await deps.store.loadStage());
+        if (arrived && !(await state.read()).partnerSince) await state.change((draft) => { draft.partnerSince = localDay(now()); });
         await keepCompany();
         await sync();
         await checkBets();
@@ -312,7 +330,8 @@ export function createPartner(options: PartnerOptions = {}) {
           // Asked for outright ("add partner"), it is made again even after the founder removed it.
           if (path === '/api/partner/company' && method === 'POST') {
             const sent = await deps.body(req);
-            deps.json(res, 200, await adopt(typeof sent?.id === 'string' ? sent.id : undefined));
+            const made = await adopt(typeof sent?.id === 'string' ? sent.id : undefined);
+            deps.json(res, 200, { ...made, hasIdea: saysSomething(await deps.store.readDoc(made.id)) });
             return true;
           }
           // "Morning note" from the command bar: today's, written now if there is none yet.
@@ -342,7 +361,13 @@ export function createPartner(options: PartnerOptions = {}) {
             const sent = await deps.body(req);
             const held = (await state.read()).plans.find((one) => one.id === plan[1]);
             if (!held) { deps.json(res, 404, { error: 'that plan is no longer waiting' }); return true; }
-            const made = sent?.accept === true ? await addPlan(deps.boards, await deps.store.loadStage(), held) : null;
+            const accept = sent?.accept === true;
+            // No board yet: said plainly, and the plan waits, unless the founder asked for a board to be made for it.
+            if (accept && !boardFor(await deps.store.loadStage(), held.roomId)) {
+              if (sent?.makeBoard !== true) { deps.json(res, 409, { error: NO_BOARD, noBoard: true }); return true; }
+              await boardForPlan(deps.store, held.roomId);
+            }
+            const made = accept ? await addPlan(deps.boards, await deps.store.loadStage(), held) : null;
             await state.change((draft) => { draft.plans = draft.plans.filter((one) => one.id !== held.id); });
             await deps.attention.refresh();
             deps.json(res, 200, { ok: true, ...(made ?? {}) });

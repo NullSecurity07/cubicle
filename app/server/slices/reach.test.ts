@@ -71,10 +71,25 @@ describe('the reach slice', () => {
       await new Promise((done) => { setTimeout(done, 10); });
       entry = (await deps.attention.list()).find((one) => one.kind === 'approval');
     }
-    expect(entry).toMatchObject({ title: 'Which colour?', detail: 'Their options: Blue · Green' });
+    expect(entry).toMatchObject({ title: 'Which colour?', event: { choices: ['Blue', 'Green'] } });
     // The entry is on the list a moment before the run starts waiting on it; the answer is given once it is.
     for (let tries = 0; !deps.approvals.answer(entry!.event!.id, { ok: true, args: { answer: 'Green' } }) && tries < 50; tries += 1) await new Promise((done) => { setTimeout(done, 10); });
     expect((await going).text).toBe('The founder says: Green');
+    expect((await deps.attention.list()).some((one) => one.kind === 'approval')).toBe(false);
+  });
+
+  it('puts a choice asked in a conversation into Needs you with its choices, and keeps it there after the turn ends', async () => {
+    const { deps, roomId } = await setup();
+    await deps.seams.run('turn:before', { roomId, source: 'chat', query: 'Give the verdict', messages: [] });
+    const [ask] = part!.tools!;
+    const context = { stage: await deps.store.loadStage(), roomId, store: deps.store, granted: new Map(), signal: new AbortController().signal } as unknown as ToolContext;
+    const out = await ask.run({ question: 'What is your founder fit?', choices: ['Lived it', 'Unusual access', 'Technical edge', 'None'] }, context);
+    expect(out.text).toMatch(/has been asked/);
+    await deps.seams.run('turn:after', { roomId, source: 'chat', query: 'Give the verdict', reply: { text: 'Waiting on you.', tools: [{ id: 't', name: 'ask_founder', args: {}, ok: true }], provider: 'x', model: 'y', usage: { input: 1, output: 1 }, stopped: false } } as never);
+    const entry = (await deps.attention.list()).find((one) => one.kind === 'approval');
+    expect(entry).toMatchObject({ title: 'What is your founder fit?', roomId, event: { name: 'ask_founder', question: 'What is your founder fit?', choices: ['Lived it', 'Unusual access', 'Technical edge', 'None'] } });
+    expect(deps.approvals.answer(entry!.event!.id, { ok: true, args: { answer: 'Lived it' } })).toBe(true);
+    for (let tries = 0; tries < 20 && (await deps.attention.list()).some((one) => one.kind === 'approval'); tries += 1) await new Promise((done) => { setTimeout(done, 10); });
     expect((await deps.attention.list()).some((one) => one.kind === 'approval')).toBe(false);
   });
 

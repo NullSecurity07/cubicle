@@ -159,8 +159,8 @@ export default {
         const who = context.stage.rooms.find((room) => room.id === context.roomId)?.name;
         const entry: Attention & { event: { id: string } } = {
           id: `approval:${id}`, kind: 'approval', title: question, at: Date.now(), roomId: context.roomId, who,
-          ...(choices.length ? { detail: `Their options: ${choices.join(' · ')}` } : {}),
-          event: { id, name: 'ask_founder', args: { answer: choices[0] ?? '' }, waiting: true, question },
+          // The choices ride on the event, so Needs you shows each as a button; the answer field stays for anything else.
+          event: { id, name: 'ask_founder', args: { answer: '' }, waiting: true, question, ...(choices.length ? { choices } : {}) },
         };
         // In a background run the run waits here, exactly as it waits for an outward step to be allowed.
         const run = sources.get(context.roomId) === 'run';

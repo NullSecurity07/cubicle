@@ -32,6 +32,8 @@ const HERE = /\b(?:below|above|here|in this (?:reply|message|chat))\b/i;
 // A sentence about some other time, or what the founder said happened, is not a claim about this turn; nor is "I sent
 // you nothing", or a change of mind ("I updated my view").
 const ELSEWHEN = /\b(?:yesterday|last (?:week|month|year|quarter|time)|ago|in (?:19|20)\d\d|you (?:said|told|mentioned|wrote))\b/i;
+// "In March", "last June": a month named as the time of it puts the sentence in the past (case kept, so "in may" is not one).
+const IN_MONTH = /\b(?:[Ii]n|[Dd]uring|[Ss]ince|[Ll]ast|[Bb]ack in|[Ee]arly|[Ll]ate)\s+(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept?|Oct|Nov|Dec)\b/;
 const NOT_A_THING = /^\w+\s+(?:(?:you|them|him|her|us)\s+)?nothing\b|^\w+\s+my\s+(?:view|mind|thinking|take|estimate|opinion|read|understanding|guess)\b/i;
 
 function sentenceAround(text: string, at: number): { before: string; rest: string } {
@@ -54,7 +56,7 @@ export function unreceiptedClaims(reply: string, receipts: Receipt[]): string[] 
       const { before } = sentenceAround(reply, start);
       const { rest } = sentenceAround(reply, at);
       if (CONDITION.test(before) || HERE.test(rest) || /[?:]$/.test(rest.trimEnd())) continue;
-      if (ELSEWHEN.test(before + rest) || NOT_A_THING.test(rest)) continue;
+      if (ELSEWHEN.test(before + rest) || IN_MONTH.test(before + rest) || NOT_A_THING.test(rest)) continue;
       found.push({ at, verb: verb.toLowerCase() });
     }
   }
@@ -72,22 +74,41 @@ const UNITS = 'users|customers|clients|signups|sign-ups|subscribers|downloads|vi
 // A figure worth checking: money, a percentage, or a count with a unit. Bare numbers (dates, section numbers, steps)
 // are not figures here.
 const FIGURE = new RegExp(String.raw`[$€£]\s?${AMOUNT}\s?(k|mm|m|bn|b|thousand|million|billion)?\b|${AMOUNT}\s?(%|percent\b)|${AMOUNT}\s?(k|m|x|×)?\s?(${UNITS})\b|${AMOUNT}(x|×)(?![\w])`, 'gi');
+// Hours, days and weeks are nearly always advice ("reply within 24 hours"), so they count only as a range ("20–40
+// hours") or a rate ("12 hours per week", "12 hours/week"; not "a", which is as often "within 24 hours a customer"), which is a claim about the world that has to come from somewhere.
+const SPAN = new RegExp(String.raw`${AMOUNT}(?:\s?(?:–|—|-|to)\s?${AMOUNT})?\s?(hours|days|weeks)\b(?=(\s*\/\s*\w|\s+per\b)?)`, 'gi');
 const ANY = new RegExp(String.raw`${AMOUNT}\s?(k|mm|m|bn|b|thousand|million|billion)?\b`, 'gi');
 
 const valueOf = (whole: string, fraction: string | undefined, scale?: string) => Number(`${whole.replace(/,/g, '')}${fraction ?? ''}`) * (scale ? SCALE[scale.toLowerCase()] ?? 1 : 1);
+// How exact a figure is: its significant digits, so $8k is one and $8,005 is four.
+const exactness = (value: number) => String(Number(Math.abs(value).toPrecision(12))).replace('.', '').replace(/^0+/, '').replace(/0+$/, '').length || 1;
+
+// A past reply's own flags, taken out of it before it counts as a source: the flag line itself, and every figure it
+// named as unsourced, so an invented figure does not become "sourced" by having been said once already. Anything that
+// squeezes a past message into one line (the morning note's talk, a colleague's excerpt) runs it through here first,
+// while the flag line still starts a line of its own.
+const FLAG_LINE = /^(?:Unconfirmed: this reply claims|Unsourced figures: ).*$/gm;
+export function stripFlagged(source: string): string {
+  const named = [...source.matchAll(/^Unsourced figures: (.+?) \(not found/gm)].flatMap((match) => match[1].split(', '));
+  // Taken out whole only: a flagged "2%" must not eat the end of a real "32%".
+  const whole = (label: string) => new RegExp(`(?<![\\d.,])${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\d])`, 'g');
+  return named.reduce((kept, label) => kept.replace(whole(label), ''), source.replace(FLAG_LINE, ''));
+}
 
 // Every figure in the reply whose value appears in none of the inputs of this turn: what the founder said, the history
 // and docs the prompt carried, and what the tools gave back. A figure written another way ($22k for $22,000, $36.9k
-// for $36,850) counts as found. Counts of ten or less with a unit ("3 weeks", "5 customers") are never flagged.
+// for $36,850) counts as found when it is within 1% and no more exact than the input: $8,005 does not come from "$8k".
+// Counts of ten or less with a unit ("3 weeks", "5 customers") are never flagged.
 export function unsourcedFigures(reply: string, sources: string[]): string[] {
-  const known: number[] = [];
+  const known: { value: number; digits: number }[] = [];
   for (const source of sources) {
-    for (const match of source.matchAll(ANY)) {
-      known.push(valueOf(match[1], match[2]));
-      if (match[3]) known.push(valueOf(match[1], match[2], match[3]));
+    for (const match of stripFlagged(source).matchAll(ANY)) {
+      const raw = valueOf(match[1], match[2]);
+      known.push({ value: raw, digits: exactness(raw) });
+      if (match[3]) known.push({ value: valueOf(match[1], match[2], match[3]), digits: exactness(raw) });
     }
   }
-  const found = (value: number) => known.some((one) => Math.abs(one - value) <= Math.abs(value) * 0.005 + 1e-9);
+  const found = (value: number) => known.some((one) => Math.abs(one.value - value) <= Math.abs(value) * 0.01 + 1e-9 && exactness(value) <= one.digits);
   const flagged: string[] = [];
   for (const match of reply.matchAll(FIGURE)) {
     const label = match[0].trim();
@@ -103,6 +124,12 @@ export function unsourcedFigures(reply: string, sources: string[]): string[] {
     }
     // A figure may be quoted in its bare form too ("18" for "18 months"), so the unscaled number also counts.
     if (found(value) || (match[1] === undefined && match[4] === undefined && found(valueOf(match[7] ?? match[11], match[8] ?? match[12])))) continue;
+    if (!flagged.includes(label)) flagged.push(label);
+  }
+  for (const match of reply.matchAll(SPAN)) {
+    const ends = [valueOf(match[1], match[2]), ...(match[3] === undefined ? [] : [valueOf(match[3], match[4])])];
+    if ((match[3] === undefined && match[6] === undefined) || Math.max(...ends) <= 10 || ends.every(found)) continue;
+    const label = match[0].trim();
     if (!flagged.includes(label)) flagged.push(label);
   }
   return flagged;

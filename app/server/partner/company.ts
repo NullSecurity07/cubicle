@@ -1,5 +1,5 @@
 import type { Box, Decision, Doc, Stage } from '../../shared/model.ts';
-import { COMPANY_SECTIONS, companyTemplate, COMPANY_TITLE, findCompanyDoc, VERDICT_WORDS, type Bet } from '../../shared/partner.ts';
+import { bare, COMPANY_SECTIONS, companyTemplate, COMPANY_TITLE, findCompanyDoc, VERDICT_WORDS, type Bet } from '../../shared/partner.ts';
 import { DOC_SIZE } from '../../shared/frameworks.ts';
 import { localDay } from '../clock.ts';
 import type { Store } from '../store.ts';
@@ -104,20 +104,40 @@ export async function syncDecisions(store: CompanyStore, docId: string, all: Dec
   const text = await store.readDoc(docId);
   const due = decided.filter((one) => (!known.has(one.id) || one.id in writtenAt) && !hasLine(text, one));
   if (due.length) {
-    await store.writeDoc(docId, addToSection(text, 'Decisions', due.map(decisionLine)));
+    const fresh = due.filter((one) => !known.has(one.id));
+    await store.writeDoc(docId, answerQuestions(addToSection(text, 'Decisions', due.map(decisionLine)), fresh));
     changed(docId);
     for (const one of due) if (!known.has(one.id)) writtenAt[one.id] = now;
   }
   return { decided: [...held.decided, ...decided.filter((one) => !known.has(one.id)).map((one) => one.id)], writtenAt };
 }
 
+const words = (text: string) => text.toLowerCase().replace(/[*_`~?.!:,;"'()]/g, ' ').replace(/\s+/g, ' ').trim();
+// A question under Open questions that a decision just answered is struck through, with the answer and its day,
+// rather than left open. It matches when one reads as the other ("Newsletter first or marketplace first?").
+export function answerQuestions(text: string, decided: Decision[]): string {
+  const all = headings(text);
+  const hit = all.find((one) => headingKey(one.title) === headingKey('Open questions'));
+  if (!hit || !decided.length) return text;
+  const next = all.find((one) => one.line > hit.line && one.level <= hit.level);
+  const lines = text.split('\n');
+  for (let at = hit.line + 1; at < (next ? next.line : lines.length); at += 1) {
+    const item = /^(\s*[-*+]\s+)(.+)$/.exec(lines[at]);
+    if (!item || item[2].startsWith('~~')) continue;
+    const asked = words(item[2]);
+    const answer = decided.find((one) => { const title = words(one.title); return asked.length >= 8 && title.length >= 8 && (asked.includes(title) || title.includes(asked)); });
+    if (answer) lines[at] = `${item[1]}~~${item[2].trim()}~~ Decided ${localDay(answer.decidedAt ?? answer.at)}: ${(answer.chosen ?? '').replace(/\s+/g, ' ').trim().slice(0, 120)}`;
+  }
+  return lines.join('\n');
+}
+
 // The ledger as the Company document shows it: open bets first, then the ones that were checked, newest first.
 export function betsSection(bets: Bet[]): string {
-  const open = bets.filter((bet) => bet.status === 'open').map((bet) => `- Open: ${bet.what}. ${bet.metric} to ${bet.target} by ${bet.checkDate} (made ${bet.made})`);
+  const open = bets.filter((bet) => bet.status === 'open').map((bet) => `- Open: ${bare(bet.what)}. ${bet.metric} to ${bet.target} by ${bet.checkDate} (made ${bet.made})`);
   const closed = bets.filter((bet) => bet.status === 'closed' && bet.result).sort((a, b) => b.checkDate.localeCompare(a.checkDate)).map((bet) => {
     const verdict = VERDICT_WORDS[bet.result!.verdict];
     const value = bet.result!.value === null ? 'could not be read' : `was ${bet.result!.value} against ${bet.target}`;
-    return `- ${verdict.charAt(0).toUpperCase()}${verdict.slice(1)}: ${bet.what}. ${bet.metric} ${value} (checked ${bet.checkDate})${bet.result!.note ? `. ${bet.result!.note}` : ''}`;
+    return `- ${verdict.charAt(0).toUpperCase()}${verdict.slice(1)}: ${bare(bet.what)}. ${bet.metric} ${value} (checked ${bet.checkDate})${bet.result!.note ? `. ${bare(bet.result!.note)}.` : ''}`;
   });
   return [...open, ...closed].join('\n');
 }

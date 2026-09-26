@@ -10,7 +10,7 @@ import { FRAMEWORK_ID, type Framework } from '../../shared/frameworks.ts';
 import type { Deps, Slice } from '../install.ts';
 import { leadsCardIds } from '../leads/store.ts';
 import { backupDirOf, canWrite, listBackups } from '../openends/backup.ts';
-import { checkAll, outsideHealth } from '../openends/health.ts';
+import { backupRow, checkAll, outsideHealth } from '../openends/health.ts';
 import { coderHealth } from '../opencode/server.ts';
 import { providerOf } from '../providers.ts';
 import type { TraceLine } from '../trace.ts';
@@ -259,7 +259,8 @@ export default {
   order: 130,
   install(deps) {
     const read = fileCache();
-    let copy: { at: number; body: Dashboard } | null = null;
+    // `from`: the health rows the copy was made from, so a new health answer makes it stale.
+    let copy: { at: number; body: Dashboard; from: DashCheck[] } | null = null;
     let making: Promise<Dashboard> | null = null;
     let dirty = true;
 
@@ -297,9 +298,14 @@ export default {
         readDay(deps, stage, read, now), readTokens(deps, stage, read, now), readTeams(deps.workspace, deps.root, stage, read),
         readSkills(deps, stage, read, now), readMedia(deps.workspace, stage, read, now),
       ]);
+      // One reading of the backups folder for the line and for the Backup row, which the last health check may have
+      // read a while ago: both say what is there now.
       const dir = dirOf();
-      const backup = { at: (await listBackups(dir))[0]?.at ?? null, dir, writable: await canWrite(dir) };
-      return { at: now, day, tokens, health: health.checks, teams, skills, media, backup };
+      const state = { dir, backups: await listBackups(dir), writable: await canWrite(dir) };
+      const backup = { at: state.backups[0]?.at ?? null, dir, writable: state.writable };
+      const { fix: _fix, ...row } = backupRow(state, now);
+      const rows = health.checks.some((one) => one.name === 'Backup') ? health.checks.map((one) => (one.name === 'Backup' ? row : one)) : health.checks;
+      return { at: now, day, tokens, health: rows, teams, skills, media, backup };
     }
     async function current(): Promise<Dashboard> {
       // The backups folder may be anywhere (a USB drive), so it is not watched: a copy that names another newest
@@ -309,10 +315,11 @@ export default {
       const newest = (await listBackups(dir))[0]?.at ?? null;
       if (copy && (copy.body.backup?.dir !== dir || copy.body.backup?.at !== newest)) dirty = true;
       checkHealth(!!sawBackup && (sawBackup.dir !== dir || sawBackup.at !== newest));
-      if (copy && !dirty && Date.now() - copy.at < FRESH_FOR && copy.body.health === health.checks) return copy.body;
+      if (copy && !dirty && Date.now() - copy.at < FRESH_FOR && copy.from === health.checks) return copy.body;
       making ??= (async () => {
         dirty = false;
-        try { const body = await make(); copy = { at: Date.now(), body }; return body; } finally { making = null; }
+        const from = health.checks;
+        try { const body = await make(); copy = { at: Date.now(), body, from }; return body; } finally { making = null; }
       })();
       return making;
     }

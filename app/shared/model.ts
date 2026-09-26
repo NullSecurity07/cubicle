@@ -23,7 +23,10 @@ export type Room = Box & {
 // the caps evidence puts on it. `outcomes` lists the verdict words from lowest to highest. See server/tools/verdict.ts.
 export type DocRules = {
   framework: string; sections: { heading: string; by: string }[]; verdict: { heading: string; by: string };
-  outcomes?: string[]; caps?: { heading: string; line: string; verdict: string; score: number; why: string }[];
+  outcomes?: string[];
+  // A cap bounds the verdict unless `on` names another section, which it then bounds with its own `outcomes` (lowest
+  // first), a score out of `outOf`, and `name` for what the refusal calls it.
+  caps?: { heading: string; line: string; verdict: string; score: number; why: string; on?: string; outcomes?: string[]; outOf?: number; name?: string }[];
 };
 export type Doc = Box & { id: string; title: string; pinned?: boolean; rules?: DocRules };
 // Resource cards that are not docs. `browser` is a live browser a wired person can drive; `project` is the coder card, a running OpenCode in one code folder that the founder or a wired person drives; `board` holds tasks that wired people may propose and the founder runs.
@@ -139,6 +142,8 @@ export type Task = {
   // `from.at` is when that earlier run finished, so "what changed since then" has a boundary; a board saved before
   // this was carried across has none, and then nothing is said about when.
   script?: TaskScript; skill?: string; onMissed?: 'once' | 'skip'; after?: string;
+  // The day a plan put this step on (YYYY-MM-DD). Only a date: it runs nothing, it is when the founder meant to do it.
+  due?: string;
   from?: { task: string; title: string; result: string; at?: number }; fails?: number;
 };
 // What a board streams to its card: the tasks after every change, and stage effects from runs that the client must mirror.
@@ -222,7 +227,8 @@ export const MEMORY_CHANNEL = 'memory';
 export type ToolEffect = { kind: 'doc-changed'; id: string } | { kind: 'doc-created'; id: string; title: string } | { kind: 'browser-moved'; id: string } | { kind: 'chat-changed'; id: string } | { kind: 'memory-changed'; id: string }
   | { kind: 'media-progress'; id: string; line: string } | { kind: 'media-made'; id: string };
 // One tool call inside a reply. `ok` is absent while the tool is still running; `waiting` means it needs the founder's yes first.
-export type ToolEvent = { id: string; name: string; args: Record<string, unknown>; waiting?: boolean; question?: string; ok?: boolean; result?: string; effect?: ToolEffect };
+// `choices` are the answers a question to the founder offers, each one a button wherever it is shown.
+export type ToolEvent = { id: string; name: string; args: Record<string, unknown>; waiting?: boolean; question?: string; choices?: string[]; ok?: boolean; result?: string; effect?: ToolEffect };
 // A file the founder attached to a message; it lives in the shared files folder.
 export type Attachment = { path: string; type: string; size: number };
 // The founder is not always at the stage. When their words came in some other way, the message says which, so the
@@ -236,12 +242,13 @@ export type ChatMessage = {
 };
 // `turn` names the turn this stream is; the same name goes out on the rooms feed, so the window that asked for a
 // reply can tell its own turn from one it is only watching.
-export type ChatEvent = { turn: string } | { token: string } | { tool: ToolEvent } | { notice: string } | { done: true; message: ChatMessage } | { error: string };
+// `restart` says the words streamed so far are replaced: the answer is being given again, so the bubble starts empty.
+export type ChatEvent = { turn: string } | { token: string } | { tool: ToolEvent } | { notice: string } | { restart: true } | { done: true; message: ChatMessage } | { error: string };
 // What the rooms feed carries, to every open window rather than only the one that started something: a conversation
 // changed (by anybody at all — the phone, a colleague, another window), and a turn from its first word to its last.
 export type RoomEvent = { roomId: string } & (
   { chat: 'changed' } | { turn: string; started: { via?: ChatVia } } | { turn: string; token: string }
-  | { turn: string; tool: ToolEvent } | { turn: string; ended: true });
+  | { turn: string; tool: ToolEvent } | { turn: string; restart: true } | { turn: string; ended: true });
 // One configured model as the client sees it: `left` is the share of today's free quota still there, 0 to 1.
 export type ModelInfo = { name: string; model: string; ready: boolean; left: number; requests: number; tokens: number };
 
@@ -264,6 +271,9 @@ export const PARTNER_STANCE =
   + 'with your reasons, once; then help with what they chose. Be concise. Act only through your tools, and never claim an action '
   + 'that a tool result does not confirm. You know about the founder, the product, the customers and the numbers only what the '
   + 'chat and the documents say. Do not invent such facts; when you need one, ask for it. '
+  + 'Before any plan to raise money, hire, spend or pivot, list its preconditions and check each against the Company document '
+  + 'and the chat. When one is not met, say no first ("Not yet"), give the shortest path to meeting it, and only then any plan. '
+  + 'When a teammate\'s section or the Company document contradicts the founder\'s premise, quote it. '
   + 'End every substantive reply with one line that starts "My call:" and says what you would do.';
 
 export const seedStage: Stage = {
