@@ -2,6 +2,7 @@ import type { ToolEvent, Usage } from '../shared/model.ts';
 import type { ModelMessage } from './prompt.ts';
 import { complete, type Failure, type ModelClient } from './providers.ts';
 import type { Answer } from './approvals.ts';
+import { limitWords } from './breaker.ts';
 import { resultCap } from './context/shrink.ts';
 import type { Offered } from './playbook.ts';
 import type { Payloads, Seams, Source } from './seams.ts';
@@ -84,7 +85,7 @@ export async function runTurn(input: {
   // When the model that should have answered could not, the founder hears which one stepped in and why.
   const onFailure = ({ client, error }: Failure) => {
     const status = (error as { status?: number }).status;
-    failed.push(`${client.name} could not answer (${status === 429 ? 'free limit reached' : (error.message || 'error').slice(0, 120)})`);
+    failed.push(`${client.name} could not answer (${status === 429 ? limitWords(error) : (error.message || 'error').slice(0, 120)})`);
     // A 429 rests the key, five breakdowns in a row open its breaker; either way its siblings serve meanwhile.
     usage.failed(client.name, error);
   };

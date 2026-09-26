@@ -123,7 +123,7 @@ describe('runTurn', () => {
       events: { token: () => {}, tool: () => {}, notice: (text) => notices.push(text) },
     });
     expect(result.provider).toBe('script');
-    expect(notices).toEqual(['gemini could not answer (free limit reached), so script answers.']);
+    expect(notices).toEqual(['gemini could not answer (busy for now), so script answers.']);
     expect(usage.hot(broken, 10)).toBe(true);
     void run;
   });
