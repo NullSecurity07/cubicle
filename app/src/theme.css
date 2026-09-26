@@ -98,6 +98,8 @@ body { font-family: 'Inter Variable', system-ui, sans-serif; color: var(--text);
 .grip.react-flow__resize-control { width: 9px; height: 9px; border-radius: 3px; background: var(--accent); border: 2px solid #0b0c10; }
 
 .stage__problem { position: absolute; inset: auto 0 24px; margin: 0; text-align: center; color: var(--problem); font-size: 13px; }
+/* The canvas as it is now is not on disk. Stays until a save lands, so the founder never edits on in the belief it is kept. */
+.stage__unsaved { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 20; margin: 0; padding: 6px 14px; border-radius: 999px; font-size: 12px; color: #ffd9d5; background: rgba(120, 30, 24, 0.9); pointer-events: none; }
 
 /* Header buttons appear on hover; the confirm covers the card. */
 .card__actions { flex: none; display: flex; gap: 2px; opacity: 0; transition: opacity 0.15s; }
