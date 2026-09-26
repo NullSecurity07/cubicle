@@ -27,6 +27,8 @@ test('stands in a column on the right edge, and its menu opens to its left, whol
   expect(shown.x).toBeGreaterThanOrEqual(0);
   expect(shown.y).toBeGreaterThanOrEqual(0);
   expect(shown.y + shown.height).toBeLessThanOrEqual(viewport.height);
+  // Short enough to read as a menu: the cards sit in two columns beside the apps.
+  expect(shown.height).toBeLessThan(560);
   // Every row is in view: nothing waits below a scroll on a window this tall.
   expect(await menu.evaluate((element) => element.scrollHeight <= element.clientHeight + 1)).toBe(true);
   await expect(menu.getByRole('menuitem', { name: 'Add survey' })).toBeInViewport();

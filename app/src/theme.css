@@ -374,7 +374,10 @@ div.msg--user { position: relative; white-space: pre-wrap; }
    them would no longer fit a window beside the dock. */
 .dock .dock__menu[role="menu"] { width: max-content; max-width: calc(100vw - 110px); }
 .dock__menu[role="menu"] .dock__group { flex: none; }
-.dock__menu[role="menu"] small { white-space: nowrap; }
+.dock__menu[role="menu"] small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Cards fill down a column of ten, then the next: a menu to glance across, not a list to read down. */
+.dock__cards { display: grid; grid-auto-flow: column; grid-template-rows: repeat(10, auto); gap: 2px 4px; }
+.dock__cards button { min-width: 0; }
 .dock .dock__menu[role="menu"] button { padding: 5px 10px; }
 .dock__menu[role="menu"] b, .dock__menu[role="menu"] small { line-height: 1.3; }
 .dock__group--apps { border-left: 1px solid var(--card-border); padding-left: 6px; }

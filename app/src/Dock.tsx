@@ -183,10 +183,12 @@ export function Dock() {
           </button>
           {more && !anyApp && (
             <div ref={menu} className="dock__menu" role="menu" aria-label="More cards">
-              {/* Two columns, so every row is in view at once: nothing waits below a scroll. */}
+              {/* The cards in two columns and the apps in a third, so the menu is short and every row is in view at once. */}
               <div className="dock__group">
                 <h6 role="presentation">Cards</h6>
-                {MORE.map(([kind, label, hint]) => <button key={kind} type="button" role="menuitem" aria-label={`Add ${label.toLowerCase()}`} onClick={() => add(kind)}><b>{label}</b><small>{hint}</small></button>)}
+                <div className="dock__cards">
+                  {MORE.map(([kind, label, hint]) => <button key={kind} type="button" role="menuitem" aria-label={`Add ${label.toLowerCase()}`} onClick={() => add(kind)}><b>{label}</b><small>{hint}</small></button>)}
+                </div>
               </div>
               <div className="dock__group dock__group--apps">
                 <h6 role="presentation">Apps, signed in as you</h6>
