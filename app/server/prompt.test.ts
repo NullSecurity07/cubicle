@@ -175,6 +175,15 @@ describe('prompt', () => {
     expect(asked.at(-1)!.content).toBe('[Maya, a colleague, asks you. The founder will see your answer.]\nIs SSO in scope?');
   });
 
+  it('shows a colleague\'s flagged reply without its flag line or the figure it flagged', () => {
+    const team: Stage = { ...stage, wires: [...stage.wires, { id: 't', from: 'build', fromHandle: 'l', to: 'marketing', toHandle: 'l' }] };
+    const theirs = [{ id: '1', role: 'assistant' as const, text: 'We should charge $29 a month, and 32% will pay.\n\nUnsourced figures: $29 (not found in anything this turn read).', at: 1 }];
+    const system = buildMessages(team, 'marketing', docs, [], ['ask_person'], { build: theirs })[0].content;
+    expect(system).toContain('We should charge a month, and 32% will pay.');
+    expect(system).not.toContain('Unsourced');
+    expect(system).not.toContain('$29');
+  });
+
   it('gives a person the notes and web pages wired to it, and nobody else', () => {
     const cards: Stage = { ...stage, cards: [{ id: 'n1', kind: 'note', text: 'Never discount below 15 dollars.', x: 0, y: 0, w: 1, h: 1 }, { id: 'l1', kind: 'link', url: 'https://example.com/pricing', x: 0, y: 0, w: 1, h: 1 }],
       wires: [...stage.wires, { id: 'a', from: 'n1', fromHandle: 'r', to: 'build', toHandle: 'l' }, { id: 'b', from: 'build', fromHandle: 'r', to: 'l1', toHandle: 'l' }] };

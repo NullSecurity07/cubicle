@@ -4,7 +4,7 @@ import type { ChatMessage, Decision, Stage, Task } from '../../shared/model.ts';
 import { bare, morningText, readMorning, type Bet, type MorningNote } from '../../shared/partner.ts';
 import { localDay, weekDay } from '../clock.ts';
 import type { ModelMessage } from '../prompt.ts';
-import { checkReply } from '../truth.ts';
+import { checkReply, stripFlagged } from '../truth.ts';
 import { gatherMonth } from '../slices/month.ts';
 import type { PartnerState } from './state.ts';
 
@@ -83,7 +83,7 @@ export async function gatherMorning(from: MorningSources): Promise<string> {
   for (const room of from.stage.rooms) {
     const said = (await from.chat(room.id).catch(() => [] as ChatMessage[])).filter((message) => message.at >= start && message.text.trim()).slice(-CHAT_LINES);
     if (!said.length) continue;
-    talk.push(`${room.name} (${room.role}):`, ...said.map((message) => `  ${message.role === 'assistant' ? room.name : message.from ?? 'Founder'}: ${message.text.replace(/\s+/g, ' ').slice(0, CHAT_CHARS)}`));
+    talk.push(`${room.name} (${room.role}):`, ...said.map((message) => `  ${message.role === 'assistant' ? room.name : message.from ?? 'Founder'}: ${stripFlagged(message.text).replace(/\s+/g, ' ').trim().slice(0, CHAT_CHARS)}`));
   }
   let chats = talk.join('\n');
   if (chats.length > CHAT_MOST) chats = `${chats.slice(0, CHAT_MOST)}\n  …(more was said)`;

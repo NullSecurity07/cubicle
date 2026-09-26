@@ -84,9 +84,11 @@ const valueOf = (whole: string, fraction: string | undefined, scale?: string) =>
 const exactness = (value: number) => String(Number(Math.abs(value).toPrecision(12))).replace('.', '').replace(/^0+/, '').replace(/0+$/, '').length || 1;
 
 // A past reply's own flags, taken out of it before it counts as a source: the flag line itself, and every figure it
-// named as unsourced, so an invented figure does not become "sourced" by having been said once already.
+// named as unsourced, so an invented figure does not become "sourced" by having been said once already. Anything that
+// squeezes a past message into one line (the morning note's talk, a colleague's excerpt) runs it through here first,
+// while the flag line still starts a line of its own.
 const FLAG_LINE = /^(?:Unconfirmed: this reply claims|Unsourced figures: ).*$/gm;
-function withoutFlagged(source: string): string {
+export function stripFlagged(source: string): string {
   const named = [...source.matchAll(/^Unsourced figures: (.+?) \(not found/gm)].flatMap((match) => match[1].split(', '));
   // Taken out whole only: a flagged "2%" must not eat the end of a real "32%".
   const whole = (label: string) => new RegExp(`(?<![\\d.,])${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\d])`, 'g');
@@ -100,7 +102,7 @@ function withoutFlagged(source: string): string {
 export function unsourcedFigures(reply: string, sources: string[]): string[] {
   const known: { value: number; digits: number }[] = [];
   for (const source of sources) {
-    for (const match of withoutFlagged(source).matchAll(ANY)) {
+    for (const match of stripFlagged(source).matchAll(ANY)) {
       const raw = valueOf(match[1], match[2]);
       known.push({ value: raw, digits: exactness(raw) });
       if (match[3]) known.push({ value: valueOf(match[1], match[2], match[3]), digits: exactness(raw) });

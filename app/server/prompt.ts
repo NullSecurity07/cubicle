@@ -4,6 +4,7 @@ import { companyLine, findCompanyDoc } from '../shared/partner.ts';
 import { safeHost, sourceCards } from '../shared/sources.ts';
 import { dayKey, fullDay, shortDay, weekDay, zoneName } from './clock.ts';
 import { recent, type Memory } from './memory.ts';
+import { stripFlagged } from './truth.ts';
 
 type CallEcho = { id: string; type: 'function'; function: { name: string; arguments: string }; extra_content?: unknown };
 // An image travels as its own part; only models that can see get it, the rest get a line saying an image was attached.
@@ -118,7 +119,7 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
   const team = colleagueIds(stage, roomId).map((id) => {
     const other = stage.rooms.find((candidate) => candidate.id === id)!;
     const recent = (colleagues[id] ?? []).filter((message) => message.text.trim()).slice(-4)
-      .map((message) => `  ${said(message.at)}${message.role === 'assistant' ? other.name : message.from ?? 'Founder'}: ${message.text.replace(/\s+/g, ' ').slice(0, EXCERPT)}`);
+      .map((message) => `  ${said(message.at)}${message.role === 'assistant' ? other.name : message.from ?? 'Founder'}: ${stripFlagged(message.text).replace(/\s+/g, ' ').trim().slice(0, EXCERPT)}`);
     return `- ${other.name}, ${other.role}. ${other.brief}${recent.length ? `\n  Lately in ${other.name}'s room:\n${recent.join('\n')}` : ''}`;
   });
   // A person only uses what it knows it has: say which cards are wired to the room, and what each is for.

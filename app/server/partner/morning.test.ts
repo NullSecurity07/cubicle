@@ -119,6 +119,15 @@ describe('one morning turn', () => {
     expect(quoted?.flags).toBeUndefined();
   });
 
+  it('flags a figure again when yesterday\'s note was flagged for it and today\'s repeats it', async () => {
+    const note = (price: string) => `Three moves for today:\n1. Set the price at ${price} on the landing page.\n2. Email the replied leads.\n3. Log signups.\nRisk: r\nQuestion: q?`;
+    const first = await writeMorning({ sources: await sources({ chat: async () => [] }), name: 'Sam', promptFor: prompt, ask: async () => note('$29/month') });
+    expect(first?.flags).toEqual([expect.stringMatching(/^Unsourced figures: \$29/)]);
+    const posted: ChatMessage = { id: 'n1', role: 'assistant', text: morningMessage(first!), at: at('2026-09-26T09:00') };
+    const second = await writeMorning({ sources: await sources({ chat: async (roomId) => (roomId === 'p1' ? [posted] : []) }), name: 'Sam', promptFor: prompt, ask: async () => note('$29/month') });
+    expect(second?.flags).toEqual([expect.stringMatching(/^Unsourced figures: \$29/)]);
+  });
+
   it('checks the note as it is posted, not the words around it the reshaping drops', async () => {
     const note = await writeMorning({ sources: await sources(), name: 'Sam', promptFor: prompt, ask: async () => 'Good morning! We are at $44,000 of runway.\nThree moves for today:\n1. Email the replied leads.\n2. b\n3. c\nRisk: r\nQuestion: q?\nMy call: sell $12,500 of ads.' });
     expect(note).not.toBeNull();
