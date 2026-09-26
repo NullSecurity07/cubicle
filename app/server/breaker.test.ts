@@ -91,18 +91,16 @@ describe('a key that is refused', () => {
     expect(breaker.dead('gemini')).toBe(false);
   });
 
-  it('is tried after a sibling in a turn, and the usage book tells once, then once more when it answers again', () => {
+  it('is tried after a sibling in a turn, and the usage book tells of each refusal and each answer', () => {
     let now = 0;
     const usage = createUsage(null, () => now);
     const heard: { name: string; dead: boolean }[] = [];
     usage.onKey((event) => heard.push({ name: event.name, dead: event.dead }));
     usage.failed('groq', failure(401));
-    usage.failed('groq', failure(401));
     expect(heard).toEqual([{ name: 'groq', dead: true }]);
     const { order } = route([client('groq'), client('gemini')], usage, { promptChars: 10, tools: false });
     expect(order.map((one) => one.name)).toEqual(['gemini', 'groq']);
     now += DEAD_MS;
-    usage.record('groq');
     usage.record('groq');
     expect(heard).toEqual([{ name: 'groq', dead: true }, { name: 'groq', dead: false }]);
   });

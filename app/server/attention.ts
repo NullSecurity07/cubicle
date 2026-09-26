@@ -4,6 +4,7 @@ import type { Lapsed } from '../shared/lapsed.ts';
 import type { Attention, AttentionKind, ToolEvent } from '../shared/model.ts';
 import type { Boards } from './boards.ts';
 import type { Store } from './store.ts';
+import { ENTRIES } from './providers.ts';
 import type { UsageBook } from './usage.ts';
 
 export type AttentionBook = ReturnType<typeof createAttention>;
@@ -40,8 +41,9 @@ export function createAttention(dir: string, now: () => number = Date.now) {
     try { saved = JSON.parse(await readFile(path, 'utf8')); } catch { /* nothing waited */ }
     // Whatever was waiting when the app last closed belonged to a turn that no longer exists. The event goes, but what
     // it was for stays, so the app can say what the founder was asked and know it when the same thing is done again.
-    // (A task run that was waiting is reported by its board as cut off; keeping it here too would show it twice.)
-    state = { open: (saved.open ?? []).filter((entry) => entry.kind !== 'run-approval').map(({ event, ...entry }) => ({ ...entry, ...(event ? { tool: event.name, about: about(event) } : {}), lapsed: true })), dismissed: saved.dismissed ?? [] };
+    // (A task run that was waiting is reported by its board as cut off; keeping it here too would show it twice. A
+    // refused key goes too: keys are read on a start, so this start has not yet been refused by anyone.)
+    state = { open: (saved.open ?? []).filter((entry) => entry.kind !== 'run-approval' && entry.kind !== 'key-rejected').map(({ event, ...entry }) => ({ ...entry, ...(event ? { tool: event.name, about: about(event) } : {}), lapsed: true })), dismissed: saved.dismissed ?? [] };
     return state;
   }
   async function list(): Promise<Attention[]> {
@@ -107,15 +109,23 @@ export const boardAttention = (store: Store, boards: Boards) => async (): Promis
 };
 
 // A key the provider refused (401, 403) is one item for the founder, raised once and kept until the key answers again:
-// no turn can fix it, only a new key in Keys can. One item a key, so a provider with two keys can name either.
+// no turn can fix it, only a new key in Keys can. One item a key: one Groq key serves groq, groq-small and groq-qwen,
+// so the item is named by the key's variable and number, and any model on that key answering clears it.
 export function keyAttention(usage: Pick<UsageBook, 'onKey'>, attention: AttentionBook, now: () => number = Date.now) {
+  const open = new Set<string>();
   return usage.onKey(({ name, dead, status }) => {
-    const id = `key-rejected:${name}`;
-    const provider = name.split('#')[0];
-    const said = provider[0].toUpperCase() + provider.slice(1);
-    const which = name.includes('#') ? ` (key ${name.split('#')[1]})` : '';
+    const [model, number = '1'] = name.split('#');
+    const entry = ENTRIES.find((one) => one.name === model);
+    const keyEnv = entry?.keyEnv ?? model;
+    const id = `key-rejected:${keyEnv}:${number}`;
+    if (dead === open.has(id)) return;
+    // Named after the first model on the key, the way the founder knows it: GROQ_API_KEY is Groq.
+    const first = ENTRIES.find((one) => one.keyEnv === keyEnv)?.name ?? model;
+    const said = first[0].toUpperCase() + first.slice(1);
+    const which = number === '1' ? keyEnv : `${keyEnv}_${number}`;
+    if (dead) open.add(id); else open.delete(id);
     void (dead
-      ? attention.raise({ id, kind: 'key-rejected', at: now(), title: `${said} key rejected; fix it in Keys`, detail: `${said}${which} answered ${status ?? 'with a refusal'}: the key is wrong, revoked or out of credit. Other models answer meanwhile; this goes away the next time it answers.` })
+      ? attention.raise({ id, kind: 'key-rejected', at: now(), title: `${said} key rejected; fix it in Keys`, detail: `${which} was refused (${status ?? 'no status'}): the key is wrong, revoked or out of credit. Other models answer meanwhile; this goes away the next time it answers.` })
       : attention.clear(id)).catch(() => {});
   });
 }

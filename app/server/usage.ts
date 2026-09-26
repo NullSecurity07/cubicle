@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { ModelInfo, Usage } from '../shared/model.ts';
-import { createBreaker } from './breaker.ts';
+import { createBreaker, refused } from './breaker.ts';
 import { fromCache, onCache } from './cache.ts';
 import { providerOf, type ModelClient, type Quota } from './providers.ts';
 import { writeAtomic } from './fsx.ts';
@@ -31,8 +31,7 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
   const cooling: Record<string, number> = {};
   let saving: Promise<unknown> = Promise.resolve();
   const breaker = createBreaker(now);
-  // Keys the provider refused, told once when they go and once when they answer again.
-  const refusedKeys = new Set<string>();
+  // Every refusal (401, 403) and, while anyone listens, every answer: whoever listens decides what is news.
   const keyWatchers = new Set<(event: { name: string; dead: boolean; status?: number }) => void>();
   const tellKey = (event: { name: string; dead: boolean; status?: number }) => { for (const tell of keyWatchers) { try { tell(event); } catch { /* a listener never costs a call */ } } };
   const folder = path ? dirname(path) : null;
@@ -86,7 +85,7 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
       if (usage && fromCache.has(usage)) return;
       roll();
       breaker.ok(name);
-      if (refusedKeys.delete(name)) tellKey({ name, dead: false });
+      if (keyWatchers.size) tellKey({ name, dead: false });
       const of = ((state.kinds ??= {})[kind] ??= { requests: 0, input: 0, output: 0 });
       of.requests += 1;
       of.input += usage?.input ?? 0;
@@ -105,10 +104,7 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     // timeouts in a row open its breaker, a 401 or 403 rests it six hours as dead. See breaker.ts.
     failed(name: string, error: unknown) {
       const rest = breaker.failed(name, error);
-      if (breaker.dead(name) && !refusedKeys.has(name)) {
-        refusedKeys.add(name);
-        tellKey({ name, dead: true, status: (error as { status?: number })?.status });
-      }
+      if (refused(error)) tellKey({ name, dead: true, status: (error as { status?: number })?.status });
       return rest;
     },
     // Hears a key the provider refused, and the same key answering again.
