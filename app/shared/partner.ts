@@ -43,6 +43,8 @@ export type Bet = {
   id: string; made: string; what: string; hypothesis: string; metric: string; target: number; checkDate: string;
   status: 'proposed' | 'open' | 'closed'; at: number; proposedBy?: string; roomId?: string; result?: BetResult;
 };
+// A bet's words as they go between full stops: whatever stop the writer ended on is dropped, so a line never reads "product..".
+export const bare = (text: string) => text.replace(/\s+/g, ' ').trim().replace(/[.\s]+$/, '');
 export const VERDICT_WORDS: Record<BetVerdict, string> = { worked: 'worked', 'did-not': 'did not work' };
 
 // ---------------------------------------------------------------- the morning note

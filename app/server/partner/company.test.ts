@@ -121,6 +121,22 @@ describe('the Company document', () => {
     expect(sectionText(await store.readDoc(id), 'Decisions').match(/^- \S+ Price:/gm)).toEqual(['- 2026-09-21 Price:']);
   });
 
+  it('strikes an open question through once a decision answers it, and leaves the others open', async () => {
+    const store = createStore(await mkdtemp(join(tmpdir(), 'company-')));
+    const { id } = await ensureCompany(store);
+    await store.writeDoc(id, `${await store.readDoc(id)}\n- Newsletter first or marketplace first?\n- What price?\n`);
+    const list = [decided('d1', 'Newsletter first or marketplace first?', 'Newsletter first', '2026-09-26')];
+    await syncDecisions(store, id, list, { decided: [] }, () => {}, 1);
+    const open = sectionText(await store.readDoc(id), 'Open questions');
+    expect(open).toContain('- ~~Newsletter first or marketplace first?~~ Decided 2026-09-26: Newsletter first');
+    expect(open).toContain('- What price?');
+  });
+
+  it('never ends a bet\'s words on two full stops', () => {
+    const bet: Bet = { id: 'b', made: '2026-09-26', what: 'Launch the product.', hypothesis: '', metric: 'signups', target: 50, checkDate: '2026-10-11', status: 'open', at: 1 };
+    expect(betsSection([bet])).toBe('- Open: Launch the product. signups to 50 by 2026-10-11 (made 2026-09-26)');
+  });
+
   it('keeps the Bets section as the ledger says, open ones first', async () => {
     const store = createStore(await mkdtemp(join(tmpdir(), 'company-')));
     const { id } = await ensureCompany(store);

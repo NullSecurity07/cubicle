@@ -144,7 +144,10 @@ describe('the partner slice: the Company document', () => {
     await deps.store.saveStage({ ...stage, docs: [...stage.docs.filter((doc) => !doc.pinned), { id: 'doc-x1', title: 'Company', pinned: true, x: 0, y: 0, w: 1, h: 1 }] });
     deps.body = async () => ({ id: 'doc-x1' });
     await part.route!({ method: 'POST' } as never, {} as never, '/api/partner/company');
-    expect(answers.at(-1)).toEqual([200, { id: 'doc-x1', created: false }]);
+    expect(answers.at(-1)).toEqual([200, { id: 'doc-x1', created: false, hasIdea: false }]);
+    await deps.store.writeDoc('doc-x1', `${await deps.store.readDoc('doc-x1')}\nA weekly paid list of abandoned side projects under five thousand dollars.\n`);
+    await part.route!({ method: 'POST' } as never, {} as never, '/api/partner/company');
+    expect(answers.at(-1)).toEqual([200, { id: 'doc-x1', created: false, hasIdea: true }]);
     expect(await deps.store.readDoc('doc-x1')).toContain('## Idea');
     await part.close!();
   });

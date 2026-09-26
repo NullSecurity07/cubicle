@@ -66,8 +66,8 @@ function PartnerDesk() {
       // Both new cards in view: the doc was put down last, so the view had glided to it and left the partner behind.
       void flow.fitView({ nodes: [{ id: roomId }, { id: docId }], duration: 400, padding: 0.25, maxZoom: 1 });
       await flush();
-      await request('/api/partner/company', send('POST', { id: docId }));
-      say({ text: `${name} is your partner. The Company document is theirs to keep: start it with the idea.`, roomId });
+      const { hasIdea } = await request<{ hasIdea?: boolean }>('/api/partner/company', send('POST', { id: docId }));
+      say({ text: hasIdea ? `${name} is your partner and keeps the Company document from here.` : `${name} is your partner. The Company document is theirs to keep: start it with the idea.`, roomId });
     })().catch((error: Error) => say({ text: error.message, problem: true }));
   }, [asked, flow, addCard, flush]);
 

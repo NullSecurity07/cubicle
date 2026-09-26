@@ -121,6 +121,11 @@ export function suggest(input: string, known: Known, extra: Command[] = sliceCom
     else if (LIBRARY_NOTE.test(what)) found.push({ section: 'Do', label: 'Add a note from your library', hint: 'Pick one in Notes', action: { do: 'panel', name: 'library' } });
     else if (doc) found.push({ section: 'Do', label: doc[1] ? `Add a doc called "${sentence(typed.slice(typed.length - doc[1].length))}"` : 'Add a doc', action: { do: 'add', kind: 'doc', ...(doc[1] ? { data: { title: sentence(typed.slice(typed.length - doc[1].length)) } } : {}) } });
     else if (/^(person|someone|teammate|colleague)$/.test(what)) found.push({ section: 'Do', label: 'Add a person', action: { do: 'add', kind: 'room' } });
+    // "add a person Lena", "add a person called Lena": a person with that name, never one whose role is "Person lena".
+    else if (/^(?:person|someone|teammate|colleague)\s+(?:called\s+|named\s+)?\S/.test(what)) {
+      const name = sentence(typed.replace(/^.*?\b(?:person|someone|teammate|colleague)\s+(?:called\s+|named\s+)?/i, '').trim());
+      found.push({ section: 'Do', label: `Add ${name}`, hint: 'A person; you write their role and brief', action: { do: 'add', kind: 'room', data: { name } } });
+    }
     // Words a slice answers to ("add partner") are that slice's to carry out, not a person to hire by that role.
     else if (!extra.some((one) => one.when?.(low))) found.push({ section: 'Do', label: `Add a person: ${sentence(what)}`, hint: 'You name them and write their brief', action: { do: 'add', kind: 'room', data: { role: sentence(what) } } });
   }

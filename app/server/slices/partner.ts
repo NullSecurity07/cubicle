@@ -1,12 +1,13 @@
 import { isDay } from '../../shared/metrics.ts';
 import { newMessageId, type Attention, type Stage } from '../../shared/model.ts';
-import { companyLine, isPlanDoc, SHARED_RECORD, parsePlan, PARTNER_CHANNEL, planTaskTitle, type Bet, type BetVerdict, type MorningNote, type PlanStep } from '../../shared/partner.ts';
+import { bare, companyLine, isPlanDoc, SHARED_RECORD, parsePlan, PARTNER_CHANNEL, planTaskTitle, type Bet, type BetVerdict, type MorningNote, type PlanStep } from '../../shared/partner.ts';
 import { localDay } from '../clock.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
 import { leadsFor } from '../leads/store.ts';
 import { betDue, betsAttention, betsBook, closedLine, metricChoices, missingMetric, readMetric, type BetsBook } from '../partner/bets.ts';
 import { companyDocOf, ensureCompany, syncDecisions, writeBets } from '../partner/company.ts';
 import { hub } from '../events.ts';
+import { saysSomething } from '../missions.ts';
 import { FAKE_MORNING, morningDue, morningInputs, morningMessage, writeMorning } from '../partner/morning.ts';
 import { addPlan, boardFor, boardForPlan, NO_BOARD, planAttention, stepsFrom } from '../partner/plans.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
@@ -59,7 +60,7 @@ export function betTools(book: BetsBook, workspace: string, changed: () => Promi
           throw new Error(missingMetric(context.stage, metric, choices));
         }
         const me = speaker(context);
-        const bet = await book.propose({ what: text(args, 'what', 160).replace(/\s+/g, ' ').trim(), hypothesis: typeof args.hypothesis === 'string' ? args.hypothesis.replace(/\s+/g, ' ').trim().slice(0, 400) : '', metric, target, checkDate, ...(me ? { proposedBy: me.name, roomId: me.id } : {}) });
+        const bet = await book.propose({ what: bare(text(args, 'what', 160)), hypothesis: typeof args.hypothesis === 'string' ? args.hypothesis.replace(/\s+/g, ' ').trim().slice(0, 400) : '', metric, target, checkDate, ...(me ? { proposedBy: me.name, roomId: me.id } : {}) });
         await changed();
         return { text: `Proposed the bet "${bet.what}" (${bet.metric} to ${bet.target} by ${bet.checkDate}). It waits in Needs you; it is not on record until the founder takes it.` };
       },
@@ -329,7 +330,8 @@ export function createPartner(options: PartnerOptions = {}) {
           // Asked for outright ("add partner"), it is made again even after the founder removed it.
           if (path === '/api/partner/company' && method === 'POST') {
             const sent = await deps.body(req);
-            deps.json(res, 200, await adopt(typeof sent?.id === 'string' ? sent.id : undefined));
+            const made = await adopt(typeof sent?.id === 'string' ? sent.id : undefined);
+            deps.json(res, 200, { ...made, hasIdea: saysSomething(await deps.store.readDoc(made.id)) });
             return true;
           }
           // "Morning note" from the command bar: today's, written now if there is none yet.

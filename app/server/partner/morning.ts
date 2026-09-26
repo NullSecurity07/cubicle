@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Lead } from '../../shared/leads.ts';
 import type { ChatMessage, Decision, Stage, Task } from '../../shared/model.ts';
-import { morningText, readMorning, type Bet, type MorningNote } from '../../shared/partner.ts';
+import { bare, morningText, readMorning, type Bet, type MorningNote } from '../../shared/partner.ts';
 import { localDay, weekDay } from '../clock.ts';
 import type { ModelMessage } from '../prompt.ts';
 import { gatherMonth } from '../slices/month.ts';
@@ -66,8 +66,8 @@ export type MorningSources = {
 };
 
 const betLine = (bet: Bet) => (bet.status === 'open'
-  ? `- Open: ${bet.what}. Bet: ${bet.hypothesis || 'unsaid'}. ${bet.metric} to ${bet.target} by ${bet.checkDate}.`
-  : `- Closed ${bet.checkDate}: ${bet.what}. ${bet.result?.verdict === 'worked' ? 'Worked' : 'Did not work'}; ${bet.metric} was ${bet.result?.value ?? 'unread'} against ${bet.target}.${bet.result?.note ? ` ${bet.result.note}` : ''}`);
+  ? `- Open: ${bare(bet.what)}. Bet: ${bare(bet.hypothesis) || 'unsaid'}. ${bet.metric} to ${bet.target} by ${bet.checkDate}.`
+  : `- Closed ${bet.checkDate}: ${bare(bet.what)}. ${bet.result?.verdict === 'worked' ? 'Worked' : 'Did not work'}; ${bet.metric} was ${bet.result?.value ?? 'unread'} against ${bet.target}.${bet.result?.note ? ` ${bet.result.note}` : ''}`);
 
 export async function gatherMorning(from: MorningSources): Promise<string> {
   const yesterday = localDay(from.now - DAY);

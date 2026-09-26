@@ -25,6 +25,8 @@ describe('command bar', () => {
     expect(first('hire a designer').action).toEqual({ do: 'add', kind: 'room', data: { role: 'Designer' } });
     expect(first('add a growth marketer').action).toEqual({ do: 'add', kind: 'room', data: { role: 'Growth marketer' } });
     expect(first('add person').action).toEqual({ do: 'add', kind: 'room' });
+    expect(first('add a person Lena')).toMatchObject({ label: 'Add Lena', action: { do: 'add', kind: 'room', data: { name: 'Lena' } } });
+    expect(first('add a person called lena ortiz').action).toEqual({ do: 'add', kind: 'room', data: { name: 'Lena ortiz' } });
     expect(first('new doc Launch plan').action).toEqual({ do: 'add', kind: 'doc', data: { title: 'Launch plan' } });
     expect(first('add a task board').action).toEqual({ do: 'add', kind: 'board' });
     expect(first('add sticky note').action).toEqual({ do: 'add', kind: 'note' });
