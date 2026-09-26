@@ -36,19 +36,27 @@ describe('PUT /api/stage', () => {
     const server = createServer(async (req, res) => { const url = new URL(req.url ?? '/', 'http://x'); if (!(await route(req, res, url.pathname, url))) { res.writeHead(404); res.end(); } });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    const put = (stage: Stage) => fetch(`${base}/api/stage`, { method: 'PUT', body: JSON.stringify(stage) });
-    const seen = (await (await fetch(`${base}/api/stage`)).json()) as Stage;
-    expect(seen.rev).toBe(0);
-    const fresh = await put({ ...seen, rooms: seen.rooms.map((room) => ({ ...room, x: room.x + 10 })) });
+    const put = (stage: Stage, rev?: string) => fetch(`${base}/api/stage`, { method: 'PUT', body: JSON.stringify(stage), headers: rev === undefined ? {} : { 'if-match': rev } });
+    const got = await fetch(`${base}/api/stage`);
+    // The revision rides in the headers: the stage a script reads is plain data it can put back as it is.
+    expect(got.headers.get('etag')).toBe('"0"');
+    const seen = (await got.json()) as Stage;
+    expect(seen.rev).toBeUndefined();
+    const fresh = await put({ ...seen, rooms: seen.rooms.map((room) => ({ ...room, x: room.x + 10 })) }, '"0"');
     expect(fresh.status).toBe(200);
     expect(await fresh.json()).toEqual({ ok: true, rev: 1 });
     // Another window, still on revision 0, tries to take every person away.
-    const stale = await put({ ...seen, rooms: [] });
+    const stale = await put({ ...seen, rooms: [] }, '"0"');
     expect(stale.status).toBe(409);
-    const said = (await stale.json()) as { stage: Stage };
-    expect(said.stage.rev).toBe(1);
+    const said = (await stale.json()) as { stage: Stage; rev: number };
+    expect(said.rev).toBe(1);
     expect(said.stage.rooms).toHaveLength(seen.rooms.length);
     expect((await store.loadStage()).rooms).toHaveLength(seen.rooms.length);
+    // A script that puts back what it read, revision number in the body or not, is never refused.
+    expect((await put({ ...seen, rev: 0 })).status).toBe(200);
+    expect((await put({ ...seen, rev: null } as unknown as Stage)).status).toBe(200);
+    expect((await put(seen, 'nonsense')).status).toBe(200);
+    expect((await fetch(`${base}/api/stage`)).headers.get('etag')).toBe('"4"');
     server.close();
   });
 });

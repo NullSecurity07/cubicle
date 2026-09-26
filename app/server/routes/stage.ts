@@ -11,8 +11,13 @@ import { browserSession } from '../tools/web.ts';
 export function stageRoutes(deps: { store: Store; events: ReturnType<typeof createEvents>; browser: Pick<Browser, 'close'>; attention: Pick<AttentionBook, 'refresh'>; approvals: Approvals }): Route {
   const { store, events, browser, attention, approvals } = deps;
   return async (req, res, path) => {
-    // With its revision, which a stage saved before revisions were counted has as 0.
-    if (path === '/api/stage' && req.method === 'GET') { const stage = await store.loadStage(); return answer(res, 200, { ...stage, rev: stage.rev ?? 0 }); }
+    // The revision goes in the ETag header, never the body, so a stage read by a script is plain data it can put back
+    // as it is. A stage saved before revisions were counted is at 0.
+    if (path === '/api/stage' && req.method === 'GET') {
+      const { rev, ...stage } = await store.loadStage();
+      res.setHeader('etag', `"${rev ?? 0}"`);
+      return answer(res, 200, stage);
+    }
     // One connection for the whole window, carrying every feed below it under its own channel name. The comment on
     // opening, and the pulse, are the rooms feed's for the rooms feed's reasons: a window knows it is listening
     // before the first word arrives, and it can tell a feed that has gone quiet from one that has died.
@@ -30,8 +35,10 @@ export function stageRoutes(deps: { store: Store; events: ReturnType<typeof crea
       // In turn with every change made here, and keeping whatever one of those put down that this window has not heard of.
       // A window that saves over a stage it has not seen is told so, with the stage as it is now, and saves again.
       // The store tells the events feed about every stage it saves, so every other window hears of this one.
-      const { before, next, stale } = await store.putStage((await body(req)) as Stage);
-      if (stale) return answer(res, 409, { error: 'the stage changed in another window', stage: { ...before, rev: before.rev ?? 0 } });
+      // Only a window sends If-Match, with the revision it last saw; a save without one is taken whole, as ever.
+      const match = /^"?(\d+)"?$/.exec(String(req.headers['if-match'] ?? '').trim());
+      const { before, next, stale } = await store.putStage((await body(req)) as Stage, match ? Number(match[1]) : undefined);
+      if (stale) { const { rev, ...stage } = before; return answer(res, 409, { error: 'the stage changed in another window', stage, rev: rev ?? 0 }); }
       // A browser or source card that left the stage takes its Chrome session with it. No other card has one, and
       // closing a session nobody opened still starts a process to say so.
       for (const card of before.cards ?? []) {

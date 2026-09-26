@@ -115,11 +115,11 @@ describe('store, changes made here and in a window', () => {
 
   it('refuses a window that saves over a stage it has not seen, and counts every save', async () => {
     const seen = await store.loadStage();
-    const first = await store.putStage({ ...seen, rev: 0 });
+    const first = await store.putStage(seen, 0);
     expect(first.stale).toBe(false);
     expect((await store.loadStage()).rev).toBe(1);
     // A second window still holds the stage as it was before the first one saved.
-    const late = await store.putStage({ ...seen, rooms: [], rev: 0 });
+    const late = await store.putStage({ ...seen, rooms: [] }, 0);
     expect(late.stale).toBe(true);
     expect((await store.loadStage()).rooms).toHaveLength(seen.rooms.length);
     await store.patchStage((stage) => { stage.rooms[0].x = 7; });
@@ -130,9 +130,25 @@ describe('store, changes made here and in a window', () => {
     const heard: (number | undefined)[] = [];
     const listened = createStore(dir, () => {}, (stage) => heard.push(stage.rev));
     const seen = await listened.loadStage();
-    await listened.putStage({ ...seen, rev: 0 });
+    await listened.putStage(seen, 0);
     await listened.patchStage((stage) => { stage.rooms[0].x = 9; });
     expect(heard).toEqual([1, 2]);
+  });
+
+  it('lets a window that saw a person\'s card take it away, and takes a revision only from its argument', async () => {
+    const seen = await store.loadStage();
+    await store.patchStage((stage) => { stage.docs.push({ id: 'doc-new', title: 'New', x: 900, y: 0, w: 340, h: 300 }); });
+    const heard = await store.loadStage();
+    await store.writeDoc('doc-new', 'words');
+    // The window heard of the doc (revision 1), and the founder took it away again.
+    const { next, stale } = await store.putStage({ ...heard, docs: seen.docs, rev: 99 }, heard.rev);
+    expect(stale).toBe(false);
+    expect(next.docs.map((one) => one.id)).not.toContain('doc-new');
+    expect(await store.readDoc('doc-new')).toBe('');
+    // A revision in the body is not a revision: the stage is saved whole, and the body's number is not kept.
+    const { stale: bodyOnly, next: saved } = await store.putStage({ ...next, rev: 0 });
+    expect(bodyOnly).toBe(false);
+    expect(saved.rev).toBe(next.rev! + 1);
   });
 
   it('keeps both of two messages written to one conversation at once', async () => {

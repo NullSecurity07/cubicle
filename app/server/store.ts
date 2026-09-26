@@ -175,15 +175,19 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
     }),
     // The stage as a window last saw it, saved whole: what it left out on purpose goes, but whatever a change made
     // here put on the stage and the window has not sent back yet stays. Hands back the stage before and as saved.
-    // A window says which revision it last saw; if the stage has moved on since (another window saved, or a change
-    // made here did), nothing is written and the answer is `stale`, so that window can take in the newer stage and
-    // save again, rather than put back the stage as it was and take the other change away. A save that names no
+    // A window says which revision it last saw (`rev`, from the request's If-Match header, never from the body); if
+    // the stage has moved on since (another window saved, or a change made here did), nothing is written and the
+    // answer is `stale`, so that window can take in the newer stage and save again, rather than put back the stage as
+    // it was and take the other change away. A window on the latest revision has heard of everything a change made
+    // here put down, so what it sends is saved as it is: a card it took away goes, to trash. A save that names no
     // revision (a script, a test putting a stage back) is taken as it always was.
-    putStage: (sent: Stage) => staged(async (): Promise<{ before: Stage; next: Stage; stale: boolean }> => {
+    putStage: (sent: Stage, rev?: number) => staged(async (): Promise<{ before: Stage; next: Stage; stale: boolean }> => {
       const before = await loadStage();
-      if (sent.rev !== undefined && sent.rev !== (before.rev ?? 0)) return { before, next: before, stale: true };
-      const next = await saveNow(keepUnseen(before, sent));
-      return { before, next, stale: false };
+      const { rev: _ignored, ...plain } = sent;
+      if (typeof rev !== 'number' || !Number.isFinite(rev)) return { before, next: await saveNow(keepUnseen(before, plain)), stale: false };
+      if (rev !== (before.rev ?? 0)) return { before, next: before, stale: true };
+      unseen.clear();
+      return { before, next: await saveNow(plain), stale: false };
     }),
     readDoc: async (id: string) => (await read(docPath(id))) ?? '',
     docTime: async (id: string) => timeOf(docPath(id)),

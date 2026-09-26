@@ -19,14 +19,22 @@ export async function request<T>(path: string, init?: RequestInit, fallback?: st
 }
 const put = (body: unknown): RequestInit => ({ method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
-export const getStage = () => request<Stage>('/api/stage');
+// The stage with its revision, which the server sends in the ETag header rather than the body.
+export async function getStage(): Promise<Stage> {
+  const response = await fetch('/api/stage');
+  if (!response.ok) throw new Error((await response.json().catch(() => null) as { error?: string } | null)?.error ?? `${response.status} /api/stage`);
+  const rev = Number((response.headers.get('etag') ?? '').replace(/"/g, ''));
+  return { ...((await response.json()) as Stage), ...(Number.isFinite(rev) ? { rev } : {}) };
+}
 // The founder's own keys from keys.json, as the server checked them, and where that file is.
 export const getKeys = () => request<{ keys: Record<string, string[]>; problems: string[]; file: string }>('/api/keys');
-// A save made over a stage another window has changed since is refused (409) with the stage as it is now; that is an
-// answer to act on, not a failure, so it comes back as `stale` rather than thrown.
-export async function putStage(stage: Stage): Promise<PutAnswer> {
-  const response = await fetch('/api/stage', put(stage));
-  if (response.status === 409) return { stale: ((await response.json()) as { stage: Stage }).stage };
+// Saved on the revision the window last saw, sent as If-Match: the body is only the stage. A save made over a stage
+// another window has changed since is refused (409) with the stage as it is now; that is an answer to act on, not a
+// failure, so it comes back as `stale` rather than thrown.
+export async function putStage({ rev, ...stage }: Stage): Promise<PutAnswer> {
+  const init = put(stage);
+  const response = await fetch('/api/stage', { ...init, headers: { ...(init.headers as Record<string, string>), ...(rev === undefined ? {} : { 'if-match': `"${rev}"` }) } });
+  if (response.status === 409) { const said = (await response.json()) as { stage: Stage; rev: number }; return { stale: { ...said.stage, rev: said.rev } }; }
   if (!response.ok) throw new Error((await response.json().catch(() => null) as { error?: string } | null)?.error ?? `${response.status} /api/stage`);
   return response.json() as Promise<PutAnswer>;
 }
