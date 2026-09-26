@@ -119,6 +119,12 @@ describe('one morning turn', () => {
     expect(quoted?.flags).toBeUndefined();
   });
 
+  it('checks the note as it is posted, not the words around it the reshaping drops', async () => {
+    const note = await writeMorning({ sources: await sources(), name: 'Sam', promptFor: prompt, ask: async () => 'Good morning! We are at $44,000 of runway.\nThree moves for today:\n1. Email the replied leads.\n2. b\n3. c\nRisk: r\nQuestion: q?\nMy call: sell $12,500 of ads.' });
+    expect(note).not.toBeNull();
+    expect(note?.flags).toBeUndefined();
+  });
+
   it('gives back nothing when the reply lost the shape', async () => {
     expect(await writeMorning({ sources: await sources(), name: 'Sam', promptFor: prompt, ask: async () => 'Good morning!' })).toBeNull();
   });

@@ -121,7 +121,8 @@ export async function writeMorning(input: {
   if (!read || restates(read.things, sources.company ?? '')) return null;
   // The truth net, as every turn has it: a figure in the note that nothing it was given holds is flagged under it,
   // and the note is posted all the same, so the founder sees both.
-  const flags = checkReply({ reply, receipts: [], sources: messages.map((message) => (typeof message.content === 'string' ? message.content : '')) });
+  // Checked as posted: the reshaped note, not the raw reply, so the flags name only what the founder reads.
+  const flags = checkReply({ reply: morningText(read), receipts: [], sources: messages.map((message) => (typeof message.content === 'string' ? message.content : '')) });
   return { ...read, day: localDay(sources.now), at: sources.now, roomId: sources.partnerId, who: input.name, ...(flags.length ? { flags } : {}) };
 }
 
