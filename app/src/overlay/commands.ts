@@ -1,3 +1,4 @@
+import { setDockPlace } from '../dockPlace';
 import { sliceCommands } from '../slices';
 
 // What the command bar can do, as plain data: the bar shows suggestions, the window carries the chosen action out.
@@ -43,7 +44,8 @@ const CARD_WORDS: [RegExp, Extract<Action, { do: 'add' }>['kind'], string, strin
 const LIBRARY_NOTE = /^((a )?note from (the |my )?library|library( note)?)$/;
 const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 // The bar's own commands. `words` is what, typed in full, asks for one outright; `say` is how the cheatsheet shows it.
-type Starter = Suggestion & { words?: RegExp; say?: string[] };
+// `quiet` ones wait to be asked: they are not listed on an empty bar, where they would only crowd the views.
+type Starter = Suggestion & { words?: RegExp; say?: string[]; quiet?: true };
 const STARTERS: Starter[] = [
   { section: 'Do', label: 'Needs you', hint: 'What waits for you', action: { do: 'panel', name: 'needs' }, words: /^(needs?( you| me)?|what needs me|inbox|approvals?|waiting)$/, say: ['needs', 'inbox', 'approvals'] },
   { section: 'Do', label: 'Messages', hint: 'Every conversation', action: { do: 'panel', name: 'messages' }, words: /^(messages?|conversations?|chats?|threads?)$/, say: ['messages', 'chats'] },
@@ -57,8 +59,12 @@ const STARTERS: Starter[] = [
   { section: 'Do', label: 'Show everything', hint: 'Fit the stage in the window', action: { do: 'fit' }, words: /^(show (everything|all)|fit|zoom out|overview)$/, say: ['show everything', 'zoom out'] },
   { section: 'Do', label: 'Keyboard shortcuts', action: { do: 'keys' }, words: /^(shortcuts?|keys|keyboard( shortcuts)?|help)$/, say: ['shortcuts', 'keys', 'help'] },
   { section: 'Do', label: 'Dashboard', hint: 'Your day, your tokens, your teams, what was made', action: { do: 'panel', name: 'dashboard' }, words: /^(dashboard|home|today|my day)$/, say: ['dashboard', 'home', 'today'] },
+  // Where the dock sits. A narrow window keeps it along the bottom whatever is chosen here.
+  { section: 'Do', label: 'Dock on the right', hint: 'The buttons in a column on the right edge', action: { do: 'run', run: () => setDockPlace('right') }, words: /^(move (the )?)?dock (on |to )?(the )?right( side| edge)?$/, say: ['dock right'], quiet: true },
+  { section: 'Do', label: 'Dock on the left', hint: 'The buttons in a column on the left edge', action: { do: 'run', run: () => setDockPlace('left') }, words: /^(move (the )?)?dock (on |to )?(the )?left( side| edge)?$/, say: ['dock left'], quiet: true },
+  { section: 'Do', label: 'Dock on the bottom', hint: 'The buttons in a row along the bottom', action: { do: 'run', run: () => setDockPlace('bottom') }, words: /^(move (the )?)?dock (on |to |at )?(the )?bottom( edge)?$/, say: ['dock bottom'], quiet: true },
 ];
-const offer = ({ words: _words, say: _say, ...suggestion }: Starter): Suggestion => suggestion;
+const offer = ({ words: _words, say: _say, quiet: _quiet, ...suggestion }: Starter): Suggestion => suggestion;
 
 // Every word the bar knows, as the cheatsheet lists it: made from the same tables `suggest` reads, so it can never
 // say something the bar does not do. `say` is typed as shown; "…" is where the founder's own words go.
@@ -94,7 +100,7 @@ export function commandWords(extra: Command[] = sliceCommands()): Word[] {
 // person as a question, and the workspace search (added by the bar itself) shows where those words were said.
 export function suggest(input: string, known: Known, extra: Command[] = sliceCommands()): Suggestion[] {
   const typed = input.trim().replace(/\s+/g, ' ');
-  if (!typed) return [...STARTERS.map(offer), ...extra.filter((one) => !one.when)];
+  if (!typed) return [...STARTERS.filter((one) => !one.quiet).map(offer), ...extra.filter((one) => !one.when)];
   const low = typed.toLowerCase().replace(/[?.!]+$/, '');
   const people = known.cards.filter((card) => card.type === 'room' && card.label);
   const person = (name: string) => people.find((one) => one.label.toLowerCase() === name.toLowerCase());

@@ -85,6 +85,19 @@ describe('command bar', () => {
     expect(first('shortcuts').action).toEqual({ do: 'keys' });
   });
 
+  it('moves the dock by the words a founder would type, and keeps those rows off an empty bar', async () => {
+    const { dockPlace } = await import('../dockPlace');
+    const want: [string, string][] = [['dock right', 'right'], ['dock on the left', 'left'], ['Dock bottom', 'bottom'], ['move the dock to the right', 'right'], ['dock at the bottom', 'bottom']];
+    for (const [typed, place] of want) {
+      const action = first(typed).action;
+      expect(action.do, typed).toBe('run');
+      if (action.do === 'run') action.run();
+      expect(dockPlace(), typed).toBe(place);
+    }
+    expect(suggest('', known).some((one) => one.label.startsWith('Dock'))).toBe(false);
+    expect(commandWords().some((word) => word.say.includes('dock bottom'))).toBe(true);
+  });
+
   it('never guesses: text that matches nothing is offered to each person as a question', () => {
     const offered = suggest('what should our refund policy be', known);
     expect(offered.map((one) => one.action)).toEqual([
