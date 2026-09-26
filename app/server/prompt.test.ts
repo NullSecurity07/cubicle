@@ -269,6 +269,9 @@ describe('source websites', () => {
     expect(partner).toContain(PARTNER_STANCE);
     expect(partner).not.toContain('you do not run the company');
     expect(partner).toContain('My call:');
+    expect(partner).toContain('Before any plan to raise money, hire, spend or pivot, list its preconditions');
+    expect(partner).toContain('say no first');
+    expect(partner).toContain('contradicts the founder\'s premise, quote it');
     const staff = buildMessages(withPartner, 'build', {}, [])[0].content as string;
     expect(staff).toContain(STANCE);
     expect(staff).not.toContain(PARTNER_STANCE);

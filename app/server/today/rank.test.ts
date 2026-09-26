@@ -2,6 +2,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { localDay } from '../clock.ts';
 import type { Attention, Stage, Task } from '../../shared/model.ts';
 import { AGE_MOST, gather, rank, readWaved, wave, WEIGHTS, type Signal } from './rank.ts';
 
@@ -64,6 +65,32 @@ describe('gather and the day\'s dismissals', () => {
     const needs = [{ id: 'missed:t2:1', kind: 'missed', title: 'Missed one', at: NOW - DAY, taskId: 't2', cardId: 'board-1' }] as Attention[];
     const signals = await gather({ attention: { list: async () => needs }, boards: { list: async () => tasks }, stage: async () => stage }, NOW);
     expect(signals.map((one) => [one.id, one.kind, one.who])).toEqual([['missed:t2:1', 'missed', undefined], [`task-due:t1:${NOW + 3_600_000}`, 'task-due', 'Dev']]);
+  });
+
+  it('brings in a plan\'s steps dated today or earlier and not done, as one item per board that never climbs by waiting', async () => {
+    const stage = { rooms: [], docs: [], wires: [], cards: [{ id: 'board-1', kind: 'board' }] } as unknown as Stage;
+    const today = localDay(NOW);
+    const weekAgo = localDay(NOW - 7 * DAY);
+    const tasks = [
+      ...Array.from({ length: 7 }, (_, index) => ({ id: `p${index}`, title: `Step ${index}`, column: 'todo', createdAt: 0, detail: '', due: index < 3 ? weekAgo : today })),
+      { id: 'later', title: 'Later', column: 'todo', createdAt: 0, detail: '', due: '2999-01-01' },
+      { id: 'done', title: 'Done already', column: 'done', createdAt: 0, detail: '', due: today },
+    ] as Task[];
+    const needs = [
+      { id: 'proposed-decision:d', kind: 'proposed-decision', title: 'Raise now?', at: NOW },
+      { id: 'run-failed:t:1', kind: 'run-failed', title: 'Weekly numbers', at: NOW },
+    ] as Attention[];
+    const signals = await gather({ attention: { list: async () => needs }, boards: { list: async () => tasks }, stage: async () => stage }, NOW);
+    const planned = signals.filter((one) => one.kind === 'planned-today');
+    expect(planned).toEqual([expect.objectContaining({ id: `planned-today:board-1:${today}`, title: 'Step 0, and 6 more planned for today', taskId: 'p0', cardId: 'board-1' })]);
+    const five = rank(signals, NOW);
+    expect(five.map((one) => one.kind)).toEqual(['proposed-decision', 'run-failed', 'planned-today']);
+    expect(five[2]).toMatchObject({ score: 40, reason: expect.stringContaining('Planned for today') });
+  });
+
+  it('keeps at most two boards\' plans in the five', () => {
+    const board = (id: string) => ({ id: `planned-today:${id}:d`, kind: 'planned-today', title: id, at: NOW - 30 * DAY });
+    expect(rank([board('a'), board('b'), board('c')], NOW).map((one) => one.title)).toEqual(['a', 'b']);
   });
 
   it('forgets what was dismissed when the day turns', async () => {

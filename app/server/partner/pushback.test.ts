@@ -1,0 +1,62 @@
+import { describe, expect, it } from 'vitest';
+import type { TurnResult } from '../loop.ts';
+import { asksCommitment, checksPreconditions, holdPartner, oneCall, PRECONDITION_NUDGE, UNCHECKED } from './pushback.ts';
+
+const JOURNEY = 'I want to raise a $2M pre-seed next week. We have no users. Draft the plan.';
+const turn = (text: string, tools: TurnResult['tools'] = []): TurnResult => ({ text, tools, provider: 'p', model: 'm', usage: { input: 10, output: 5 }, stopped: false });
+
+describe('the partner\'s precondition check', () => {
+  it('knows a founder asking for a raise, hire, spend or pivot plan, and not an ask that only shares the words', () => {
+    for (const said of [JOURNEY, 'Plan how we hire two engineers next month', 'Draft a budget to spend $20k on ads', "Let's pivot to B2B, write the plan", 'We should pivot to B2B. Thoughts?', 'should we hire a designer eventually?', 'Should we raise now?', 'Draft outreach to investors for our seed']) expect(asksCommitment(said), said).toBe(true);
+    for (const said of ['What do you think of the name?', 'Draft the landing page copy', 'We raised the price, how do users react?', 'help me write an investor update', "let's spend the afternoon on customer calls", 'I want to raise the price to $20']) expect(asksCommitment(said), said).toBe(false);
+  });
+
+  it('knows a reply that checked the preconditions, however it says no', () => {
+    for (const reply of ['Not yet. Before that, get 20 paying users.', 'I disagree: no users means no round.\n\nMy call: no.', 'No. Here is why: nobody has paid yet.', "I'd hold off until you have ten users.", 'Plan below.\n\nMy call: not now.', 'Too early. First get ten paying readers.', "Don't raise yet: nobody pays so far.", 'My call: **wait** a month.']) expect(checksPreconditions(reply), reply).toBe(true);
+    expect(checksPreconditions('Here is your 7-phase raise plan. 1. Prepare a SAFE with a $2M cap.')).toBe(false);
+    expect(checksPreconditions('Great idea. Know your numbers before the first call.')).toBe(false);
+    // The journey's own failure, and replies that only start a line with "No" or say "wait", are not pushback.
+    for (const reply of ['Here is the plan.\n\nNo existing marketplace serves this niche, so investors will love it.\n\nMy call: raise $2M.', 'Steps:\n- No-code landing page\n- SAFE at $2M\n\nMy call: go.', 'Wait for replies in week 2, then send the deck.\n\nMy call: go.']) expect(checksPreconditions(reply), reply).toBe(false);
+    for (const reply of ["You can't raise without users.", 'I have to push back on this.', 'Wait until you have ten paying readers.']) expect(checksPreconditions(reply), reply).toBe(true);
+  });
+
+  it('asks once more with the nudge when a raise plan comes back unchecked, and keeps the tools of both', async () => {
+    let asked = 0;
+    const reply = await holdPartner(JOURNEY, turn('Phase 1: SAFE at $2M.', [{ id: 't1', name: 'web_search', args: {}, ok: true }]), async (first) => { asked += 1; expect(first.text).toBe('Phase 1: SAFE at $2M.'); return turn('Not yet. Before that: 20 users.\n\nMy call: no raise this month.'); });
+    expect(asked).toBe(1);
+    expect(reply.text).toBe('Not yet. Before that: 20 users.\n\nMy call: no raise this month.');
+    expect(reply.tools.map((one) => one.id)).toEqual(['t1']);
+    expect(reply.usage).toEqual({ input: 20, output: 10 });
+  });
+
+  it('never asks again after a first answer that did something, and labels it instead', async () => {
+    let asked = 0;
+    const wrote = turn('Here is the raise plan, saved as a doc.', [{ id: 'w1', name: 'create_doc', args: { title: 'Raise plan' }, ok: true }]);
+    const reply = await holdPartner(JOURNEY, wrote, async () => { asked += 1; return turn('x'); });
+    expect(asked).toBe(0);
+    expect(reply.text).toBe(`Here is the raise plan, saved as a doc.\n\n${UNCHECKED}`);
+    expect(reply.tools.map((one) => one.id)).toEqual(['w1']);
+  });
+
+  it('posts the second answer with a line for the founder when it still did not check', async () => {
+    const reply = await holdPartner(JOURNEY, turn('Phase 1: SAFE.'), async () => turn('Phase 1: SAFE, again.'));
+    expect(reply.text).toBe(`Phase 1: SAFE, again.\n\n${UNCHECKED}`);
+    expect(UNCHECKED).toContain('Partner did not check preconditions.');
+  });
+
+  it('leaves other asks, checked replies and stopped turns alone', async () => {
+    let asked = 0;
+    const again = async () => { asked += 1; return turn('x'); };
+    await holdPartner('What do you think of the name?', turn('Fine.'), again);
+    await holdPartner(JOURNEY, turn('Not yet.'), again);
+    await holdPartner(JOURNEY, { ...turn('Phase 1'), stopped: true }, again);
+    expect(asked).toBe(0);
+    expect(PRECONDITION_NUDGE).toMatch(/preconditions/);
+  });
+
+  it('keeps one "My call:" line, the last', () => {
+    expect(oneCall('Newsletter first.\n\nMy call: **Newsletter first**.\n\nWhy: less risk.\n\nMy call: Newsletter first.')).toBe('Newsletter first.\n\nWhy: less risk.\n\nMy call: Newsletter first.');
+    expect(oneCall('- **My call:** a\ntext\n**My call:** b')).toBe('text\n**My call:** b');
+    expect(oneCall('No call here.')).toBe('No call here.');
+  });
+});

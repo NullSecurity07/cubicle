@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { Lead } from '../../shared/leads.ts';
 import type { Metrics } from '../../shared/metrics.ts';
 import type { Stage } from '../../shared/model.ts';
-import { betDue, betsAttention, betsBook, metricChoices, readMetric } from './bets.ts';
+import { betDue, betsAttention, betsBook, metricChoices, missingMetric, readMetric } from './bets.ts';
 
 const card = (id: string, kind: 'metrics' | 'leads' | 'survey') => ({ id, kind, x: 0, y: 0, w: 1, h: 1, ...(kind === 'survey' ? { title: 'PMF', questions: [] } : {}) }) as NonNullable<Stage['cards']>[number];
 
@@ -33,6 +33,17 @@ describe('the number a bet is measured by', () => {
     expect(await readMetric(workspace, stage, 'mrr')).toEqual({ value: null, said: 'no number called "mrr" is on a Metrics card' });
     expect(await readMetric(workspace, { ...stage, cards: [...stage.cards!, card('s1', 'survey')] }, 'survey')).toMatchObject({ value: 0 });
     expect(await metricChoices(workspace, stage)).toEqual(['signups', 'leads', 'leads:new', 'leads:fit', 'leads:contacted', 'leads:replied', 'leads:meeting', 'leads:customer', 'leads:passed']);
+  });
+});
+
+describe('what to add when a bet cannot be measured', () => {
+  it('names the card and the row the founder has to add, then what is already there', () => {
+    const cards = (...kinds: string[]) => ({ rooms: [], docs: [], wires: [], cards: kinds.map((kind, index) => ({ id: `c${index}`, kind, x: 0, y: 0, w: 1, h: 1 })) }) as unknown as Stage;
+    expect(missingMetric(cards(), 'signups', [])).toBe('there is no Metrics card with a "signups" row. Ask the founder to add a Metrics card and paste a CSV with a date,signups header onto it. Tell the founder exactly which card and row to add.');
+    expect(missingMetric(cards('metrics'), 'signups', ['mrr'])).toBe('the Metrics card has no "signups" row. Ask the founder to add one: paste a CSV with a date,signups header onto the Metrics card. Or measure it by one of what is already there: mrr. Tell the founder exactly which card and row to add.');
+    // The journey's case: "leads" with a Metrics card and no Leads card.
+    expect(missingMetric(cards('metrics'), 'leads', ['signups'])).toBe('there is no Leads card to count "leads" on. Ask the founder to add a Leads card from the dock. Or measure it by one of what is already there: signups. Tell the founder exactly which card and row to add.');
+    expect(missingMetric(cards(), 'survey', [])).toContain('add a Survey card');
   });
 });
 

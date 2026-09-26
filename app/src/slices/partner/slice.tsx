@@ -32,7 +32,7 @@ const useWanted = () => useSyncExternalStore(subscribe, () => wanted);
 const morning = () => {
   say({ text: 'Asking your partner for the morning note…' });
   askMorning()
-    .then((note) => say({ text: `${note.who}'s morning note: ${note.things[0]}`, roomId: note.roomId }))
+    .then((note) => say({ text: note.unchanged ? `Nothing changed since ${new Date(note.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}. ${note.who}'s note stands: ${note.things[0]}` : `${note.who}'s morning note: ${note.things[0]}`, roomId: note.roomId }))
     .catch((error: Error) => say({ text: error.message, problem: true }));
 };
 const frame = () => new Promise<void>((done) => { requestAnimationFrame(() => done()); });
@@ -66,8 +66,8 @@ function PartnerDesk() {
       // Both new cards in view: the doc was put down last, so the view had glided to it and left the partner behind.
       void flow.fitView({ nodes: [{ id: roomId }, { id: docId }], duration: 400, padding: 0.25, maxZoom: 1 });
       await flush();
-      await request('/api/partner/company', send('POST', { id: docId }));
-      say({ text: `${name} is your partner. The Company document is theirs to keep: start it with the idea.`, roomId });
+      const { hasIdea } = await request<{ hasIdea?: boolean }>('/api/partner/company', send('POST', { id: docId }));
+      say({ text: hasIdea ? `${name} is your partner and keeps the Company document from here.` : `${name} is your partner. The Company document is theirs to keep: start it with the idea.`, roomId });
     })().catch((error: Error) => say({ text: error.message, problem: true }));
   }, [asked, flow, addCard, flush]);
 

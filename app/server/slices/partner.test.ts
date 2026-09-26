@@ -144,7 +144,10 @@ describe('the partner slice: the Company document', () => {
     await deps.store.saveStage({ ...stage, docs: [...stage.docs.filter((doc) => !doc.pinned), { id: 'doc-x1', title: 'Company', pinned: true, x: 0, y: 0, w: 1, h: 1 }] });
     deps.body = async () => ({ id: 'doc-x1' });
     await part.route!({ method: 'POST' } as never, {} as never, '/api/partner/company');
-    expect(answers.at(-1)).toEqual([200, { id: 'doc-x1', created: false }]);
+    expect(answers.at(-1)).toEqual([200, { id: 'doc-x1', created: false, hasIdea: false }]);
+    await deps.store.writeDoc('doc-x1', `${await deps.store.readDoc('doc-x1')}\nA weekly paid list of abandoned side projects under five thousand dollars.\n`);
+    await part.route!({ method: 'POST' } as never, {} as never, '/api/partner/company');
+    expect(answers.at(-1)).toEqual([200, { id: 'doc-x1', created: false, hasIdea: true }]);
     expect(await deps.store.readDoc('doc-x1')).toContain('## Idea');
     await part.close!();
   });
@@ -160,6 +163,8 @@ describe('the partner slice: the morning note', () => {
     const answers: [number, unknown][] = [];
     const { deps, part } = await installed({ json: (_res, status, body) => { answers.push([status, body]); } }, { now: () => clock, ask: async () => { asked += 1; return SHAPED; } });
     await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    // The partner arrived yesterday: no note on the day they arrive.
+    clock -= 86_400_000; await part.tick!(); clock += 86_400_000;
     deps.attention.source(decisionAttention(deps.decisions));
     await deps.decisions.propose({ title: 'Raise now?', options: ['yes', 'no'] });
     await part.tick!();
@@ -167,7 +172,7 @@ describe('the partner slice: the morning note', () => {
     expect(asked).toBe(1);
     const chat = await deps.store.readChat('p1');
     expect(chat).toHaveLength(1);
-    expect(chat[0].text).toContain('Three things that matter today:\n1. Ship the landing page.');
+    expect(chat[0].text).toContain('Three moves for today:\n1. Ship the landing page.');
     const needs = (await deps.attention.list()).find((one) => one.kind === 'morning-note')!;
     expect(needs).toMatchObject({ id: 'morning-note:2026-09-27', who: 'Sam', roomId: 'p1', title: 'Morning note: Ship the landing page.' });
     const five = await todayFive(deps, clock);
@@ -184,8 +189,11 @@ describe('the partner slice: the morning note', () => {
 
   it('posts nothing when the reply loses its shape, and waits before it tries again', async () => {
     let asked = 0;
-    const { deps, part } = await installed({}, { now: () => NINE, ask: async () => { asked += 1; return 'Good morning!'; } });
+    let clock = NINE;
+    const { deps, part } = await installed({}, { now: () => clock, ask: async () => { asked += 1; return 'Good morning!'; } });
     await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    // The partner arrived yesterday: no note on the day they arrive.
+    clock -= 86_400_000; await part.tick!(); clock += 86_400_000;
     await part.tick!();
     await part.tick!();
     expect(asked).toBe(1);
@@ -213,6 +221,8 @@ describe('the partner slice: the morning note', () => {
     let asked = 0;
     const { deps, part } = await installed({}, { now: () => clock, ask: async () => { asked += 1; throw new Error('429 too many requests'); } });
     await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    // The partner arrived yesterday: no note on the day they arrive.
+    clock -= 86_400_000; await part.tick!(); clock += 86_400_000;
     for (let tick = 0; tick < 4; tick += 1) { await part.tick!(); clock += 30_000; }
     expect(asked).toBe(1);
     clock = NINE + 30 * 60_000;
@@ -241,6 +251,40 @@ describe('the partner slice: the morning note', () => {
     await part.close!();
   });
 
+  it('writes nothing on the day the partner arrives, and the command writes again only when something it reads changed', async () => {
+    let asked = 0;
+    const answers: [number, unknown][] = [];
+    const { deps, part } = await installed({ json: (_res, status, body) => { answers.push([status, body]); } }, { now: () => NINE, ask: async () => { asked += 1; return SHAPED; } });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    await part.tick!();
+    expect(asked).toBe(0);
+    expect(await deps.store.readChat('p1')).toEqual([]);
+    const command = () => part.route!({ method: 'POST' } as never, {} as never, '/api/partner/morning');
+    await command();
+    expect(asked).toBe(1);
+    await command();
+    expect(asked).toBe(1);
+    expect(answers.at(-1)).toEqual([200, expect.objectContaining({ unchanged: true, things: expect.any(Array) })]);
+    await deps.decisions.record({ title: 'Newsletter first', chosen: 'Weekly' });
+    await part.tick!();
+    await command();
+    expect(asked).toBe(2);
+    expect((answers.at(-1)![1] as { unchanged?: true }).unchanged).toBeUndefined();
+    expect((await deps.store.readChat('p1')).filter((one) => one.role === 'assistant')).toHaveLength(2);
+    await part.close!();
+  });
+
+  it('posts a note with an unsourced figure all the same, with the flag line under it in the partner\'s chat', async () => {
+    const { deps, part } = await installed({}, { now: () => NINE, ask: async () => 'Three moves for today:\n1. Charge $29/month from Monday.\n2. Email the replied leads.\n3. Log signups.\nRisk: r\nQuestion: q?' });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.route!({ method: 'POST' } as never, {} as never, '/api/partner/morning');
+    const said = (await deps.store.readChat('p1')).at(-1)!.text;
+    expect(said).toContain('1. Charge $29/month from Monday.');
+    expect(said).toMatch(/\n\nUnsourced figures: \$29/);
+    await part.close!();
+  });
+
   it('has no partner, no note', async () => {
     let asked = 0;
     const { part } = await installed({}, { now: () => NINE, ask: async () => { asked += 1; return SHAPED; } });
@@ -263,7 +307,7 @@ describe('the partner slice: the bets ledger', () => {
     const tool = (name: string) => part.tools!.find((one) => one.name === name)!;
     const as = async (roomId: string) => ({ stage: await deps.store.loadStage(), roomId, store: deps.store, granted: new Map() }) as never;
 
-    await expect(tool('propose_bet').run({ what: 'Post in r/SaaS', hypothesis: 'founders sign up', metric: 'mrr', target: 20, check_date: '2026-10-03' }, await as('marketing'))).rejects.toThrow('Measure it by one of: signups');
+    await expect(tool('propose_bet').run({ what: 'Post in r/SaaS', hypothesis: 'founders sign up', metric: 'mrr', target: 20, check_date: '2026-10-03' }, await as('marketing'))).rejects.toThrow('the Metrics card has no "mrr" row. Ask the founder to add one');
     await expect(tool('propose_bet').run({ what: 'x', hypothesis: 'y', metric: 'signups', target: 20, check_date: '2026-09-01' }, await as('marketing'))).rejects.toThrow('before today');
     const said = await tool('propose_bet').run({ what: 'Post in r/SaaS', hypothesis: 'founders sign up', metric: 'signups', target: 20, check_date: '2026-10-03' }, await as('marketing'));
     expect(said.text).toContain('It waits in Needs you');
@@ -348,6 +392,28 @@ describe('the partner slice: plans become tasks', () => {
     const titles = (await deps.boards.list('board-1')).map((task) => task.title);
     expect(titles).toHaveLength(4);
     expect(new Set(titles).size).toBe(4);
+    await part.close!();
+  });
+
+  it('says there is no board rather than failing quietly, and makes one wired to the writer when asked', async () => {
+    const answers: [number, unknown][] = [];
+    const { deps, part } = await installed({ fake: true, json: (_res, status, body) => { answers.push([status, body]); } });
+    const stage = await deps.store.loadStage();
+    await deps.store.saveStage({ ...stage, docs: [...stage.docs, { id: 'doc-plan', title: 'Two weeks', x: 0, y: 0, w: 1, h: 1 }] });
+    await deps.store.writeDoc('doc-plan', '# Two-week plan\n\n### Mon 28 Sep\n- Draft the page\n- Set up the form\n');
+    await deps.seams.run('tool:after', { roomId: 'marketing', event: { id: 'e', name: 'write_doc', args: {}, ok: true, effect: { kind: 'doc-changed', id: 'doc-plan' } } });
+    const id = (await deps.attention.list()).find((one) => one.kind === 'proposed-plan')!.id.split(':')[1];
+    deps.body = async () => ({ accept: true });
+    await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/plans/${id}`);
+    expect(answers.at(-1)).toEqual([409, { error: 'There is no task board on the stage yet.', noBoard: true }]);
+    expect((await deps.attention.list()).some((one) => one.kind === 'proposed-plan')).toBe(true);
+    deps.body = async () => ({ accept: true, makeBoard: true });
+    await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/plans/${id}`);
+    const after = await deps.store.loadStage();
+    const board = after.cards!.find((card) => card.kind === 'board')!;
+    expect(after.wires.some((wire) => wire.from === 'marketing' && wire.to === board.id)).toBe(true);
+    expect(answers.at(-1)).toEqual([200, { ok: true, boardId: board.id, added: 2 }]);
+    expect((await deps.boards.list(board.id))).toHaveLength(2);
     await part.close!();
   });
 

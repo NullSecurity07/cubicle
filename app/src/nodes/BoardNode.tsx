@@ -85,6 +85,7 @@ export function BoardNode({ id, selected }: NodeProps<BoardNodeType>) {
                       {task.assignee && !task.script && <i style={{ background: who(task.assignee)?.accent }} />}{task.script ? 'a script' : who(task.assignee)?.name}
                       {task.proposedBy && column === 'proposed' && <>from {task.proposedBy}</>}
                       {task.repeat && <em>↻ {sayRepeat(task.repeat)}</em>}
+                      {task.due && column !== 'done' && <em className="task__due">{new Date(`${task.due}T12:00`).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}</em>}
                       {task.missed && <em className="task__missed">missed</em>}
                       {task.run?.state === 'waiting' && <em className="task__needs">needs you</em>}
                       {task.run?.state === 'running' && <em>working…</em>}

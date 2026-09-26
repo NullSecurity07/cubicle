@@ -43,12 +43,16 @@ export type Bet = {
   id: string; made: string; what: string; hypothesis: string; metric: string; target: number; checkDate: string;
   status: 'proposed' | 'open' | 'closed'; at: number; proposedBy?: string; roomId?: string; result?: BetResult;
 };
+// A bet's words as they go between full stops: whatever stop the writer ended on is dropped, so a line never reads "product..".
+export const bare = (text: string) => text.replace(/\s+/g, ' ').trim().replace(/[.\s]+$/, '');
 export const VERDICT_WORDS: Record<BetVerdict, string> = { worked: 'worked', 'did-not': 'did not work' };
 
 // ---------------------------------------------------------------- the morning note
 
 export type Morning = { things: string[]; risk: string; question: string };
-export type MorningNote = Morning & { day: string; at: number; roomId: string; who: string };
+// `inputs` is what the note was read from, as a key: asked again with nothing changed, the same note stands.
+// `flags` are the truth net's lines on it: a figure nothing the note was given holds.
+export type MorningNote = Morning & { day: string; at: number; roomId: string; who: string; inputs?: string; flags?: string[] };
 
 const plain = (text: string) => text.replace(/\*\*|__|`/g, '').replace(/\s+/g, ' ').trim();
 // A numbered or bulleted line, the number or bullet bold or not: "1. a", "**1.** a", "- a".
@@ -81,7 +85,7 @@ export function readMorning(reply: string): Morning | null {
   return { things, risk, question };
 }
 
-export const morningText = (note: Morning) => ['Three things that matter today:', ...note.things.map((thing, index) => `${index + 1}. ${thing}`), '', `Risk: ${note.risk}`, '', `Question: ${note.question}`].join('\n');
+export const morningText = (note: Morning) => ['Three moves for today:', ...note.things.map((thing, index) => `${index + 1}. ${thing}`), '', `Risk: ${note.risk}`, '', `Question: ${note.question}`].join('\n');
 
 // ---------------------------------------------------------------- a plan read as steps
 
@@ -93,8 +97,13 @@ const WEEKDAY = '(?:mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)(?:day|sday|nesd
 const MONTH = '(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*';
 // What makes a heading or a label a day of the plan: "Day 3", "Week 2", a weekday, "28 Sep", "Sep 28", or 2026-09-28.
 const DAYISH = new RegExp(`\\b(?:day|week|phase)\\s*\\d+\\b|\\b${WEEKDAY}\\b|\\b\\d{1,2}\\s+${MONTH}\\b|\\b${MONTH}\\s+\\d{1,2}\\b|\\b\\d{4}-\\d{2}-\\d{2}\\b`, 'i');
-// A day written at the front of a line: "Day 1: …", "Mon 28 Sep – …", "**Day 3:** …".
-const LEADING = new RegExp(`^\\**\\s*((?:day|week)\\s*\\d+|${WEEKDAY}(?:\\s+\\d{1,2}(?:\\s+${MONTH})?)?|\\d{1,2}\\s+${MONTH}|\\d{4}-\\d{2}-\\d{2})\\s*\\**\\s*[:\\-–—]\\s*\\**\\s*(.+)$`, 'i');
+// One day as a plan writes it: "Day 3", "Week 2", "Mon", "Mon 28 Sep", "28 Sep", "Sep 28", 2026-09-28, each with an
+// optional "(28–29 Sep)" after it. A label is one day or a range of two ("Mon–Tue (28–29 Sep)", "Mon 28 Sep – Tue 29 Sep").
+const ONE_DAY = `(?:(?:day|week|phase)\\s*\\d+|${WEEKDAY}(?:\\s+\\d{1,2}(?:\\s+${MONTH})?)?|\\d{1,2}\\s+${MONTH}|${MONTH}\\s+\\d{1,2}|\\d{4}-\\d{2}-\\d{2})(?:\\s*\\([^)]{1,40}\\))?`;
+const LABEL = `${ONE_DAY}(?:\\s*(?:[–—-]|to)\\s*${ONE_DAY})?`;
+// A day written at the front of a line, then a colon, or a dash with space after it: "Day 1: …", "Day 2 – …",
+// "**Mon–Tue (28–29 Sep):** …", "Mon 28 Sep – Tue 29 Sep: …".
+const LEADING = new RegExp(`^\\**\\s*(${LABEL})\\s*\\**\\s*(?::|[–—-](?=\\s))\\s*\\**\\s*(.+)$`, 'i');
 const HEADING = /^\s*#{1,6}\s+(.+?)\s*#*\s*$/;
 const BOLD_LINE = /^\s*\*\*(.+?)\*\*:?\s*$/;
 const BULLET = /^(\s*)(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?(.+)$/;
@@ -109,7 +118,8 @@ export function parsePlan(text: string): PlanStep[] {
   const steps: PlanStep[] = [];
   let day: string | null = null;
   let bulletDay: string | null = null;
-  for (const line of text.split('\n')) {
+  // Models write narrow and no-break spaces between a weekday and its date: they are spaces.
+  for (const line of text.replace(/[\u00a0\u2007\u202f]/g, ' ').split('\n')) {
     if (steps.length >= MOST_STEPS) break;
     const heading = HEADING.exec(line) ?? BOLD_LINE.exec(line);
     if (heading) { day = DAYISH.test(heading[1]) ? cleanDay(heading[1]) : null; bulletDay = null; continue; }
@@ -135,6 +145,29 @@ export function parsePlan(text: string): PlanStep[] {
   return steps;
 }
 
-export const planTaskTitle = (step: PlanStep) => (step.day ? `${step.day}: ${step.text}` : step.text).slice(0, 160);
+// The day once, then the step: a step that already starts with its own day is not given it twice.
+export const planTaskTitle = (step: PlanStep) => {
+  const text = step.day && step.text.toLowerCase().startsWith(step.day.toLowerCase()) ? step.text.slice(step.day.length).replace(/^\s*[:\-–—]\s*/, '') : step.text;
+  return (step.day ? `${step.day}: ${text}` : text).slice(0, 160);
+};
+
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+const pad = (value: number) => String(value).padStart(2, '0');
+// The first calendar day a label names, as YYYY-MM-DD, or undefined when it names none ("Day 3", "Mon"). The year is
+// the one that puts the day nearest `today`, so a plan written in late December for "4 Jan" lands in the new year.
+export function dueOf(label: string, today: string): string | undefined {
+  const iso = /\b(\d{4})-(\d{2})-(\d{2})\b/.exec(label);
+  if (iso) return iso[0];
+  const dayMonth = /\b(\d{1,2})(?:\s*[–—-]\s*\d{1,2})?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/i.exec(label);
+  const monthDay = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{1,2})\b/i.exec(label);
+  // Whichever form comes first names the day: "Sep 28 – 2 Oct" is Sep 28, "28–29 Sep" the 28th.
+  const useMonthDay = !!monthDay && (!dayMonth || monthDay.index < dayMonth.index);
+  const [day, month] = useMonthDay ? [Number(monthDay![2]), MONTHS.indexOf(monthDay![1].toLowerCase())] : dayMonth ? [Number(dayMonth[1]), MONTHS.indexOf(dayMonth[2].toLowerCase())] : [0, -1];
+  if (month < 0 || day < 1 || day > 31) return undefined;
+  const now = new Date(`${today}T12:00:00`);
+  const options = [-1, 0, 1].map((shift) => new Date(now.getFullYear() + shift, month, day, 12));
+  const best = options.filter((one) => one.getDate() === day).sort((a, b) => Math.abs(a.getTime() - now.getTime()) - Math.abs(b.getTime() - now.getTime()))[0];
+  return best ? `${best.getFullYear()}-${pad(best.getMonth() + 1)}-${pad(best.getDate())}` : undefined;
+}
 // A doc is a plan when its title or its first heading says so.
 export const isPlanDoc = (title: string, text: string) => /\bplan(?:s|ning)?\b/i.test(title) || /\bplan(?:s|ning)?\b/i.test(HEADING.exec(text.split('\n').find((line) => HEADING.test(line)) ?? '')?.[1] ?? '');
