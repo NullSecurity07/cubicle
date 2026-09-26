@@ -91,6 +91,14 @@ describe('a key that is refused', () => {
     expect(breaker.dead('gemini')).toBe(false);
   });
 
+  it('does not take a 403 for a flagged prompt as a dead key', () => {
+    const breaker = createBreaker(() => 0);
+    const flagged = Object.assign(new Error('403 Your input was flagged by moderation'), { status: 403 });
+    expect(breaker.failed('openrouter', flagged)).toBe(0);
+    expect(breaker.dead('openrouter')).toBe(false);
+    expect(breaker.resting('openrouter')).toBe(false);
+  });
+
   it('is tried after a sibling in a turn, and the usage book tells of each refusal and each answer', () => {
     let now = 0;
     const usage = createUsage(null, () => now);

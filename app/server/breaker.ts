@@ -14,7 +14,9 @@ export const DEAD_MS = 6 * 3_600_000;
 type Key = { fails: number; openUntil?: number; probeUntil?: number; half?: boolean; rest?: number; restUntil?: number; deadUntil?: number };
 
 const statusOf = (error: unknown) => (error as { status?: number })?.status;
-export const refused = (error: unknown) => statusOf(error) === 401 || statusOf(error) === 403;
+// A 403 for a prompt the provider's moderation flagged (OpenRouter does this) says nothing about the key.
+export const refused = (error: unknown) => statusOf(error) === 401
+  || (statusOf(error) === 403 && !/moderat|flagged/i.test(String((error as Error)?.message ?? '')));
 // Which free limit a 429 hit, in the words the founder reads, from what the provider wrote: the day's quota is not
 // the same news as a busy minute, and the dashboard's "left today" is only about the first.
 export const limitWords = (error: unknown) => {
