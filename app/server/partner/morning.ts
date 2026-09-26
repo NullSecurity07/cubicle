@@ -4,6 +4,7 @@ import type { ChatMessage, Decision, Stage, Task } from '../../shared/model.ts';
 import { bare, morningText, readMorning, type Bet, type MorningNote } from '../../shared/partner.ts';
 import { localDay, weekDay } from '../clock.ts';
 import type { ModelMessage } from '../prompt.ts';
+import { checkReply } from '../truth.ts';
 import { gatherMonth } from '../slices/month.ts';
 import type { PartnerState } from './state.ts';
 
@@ -115,13 +116,17 @@ export async function writeMorning(input: {
   const { sources } = input;
   const facts = await gatherMorning(sources);
   const messages: ModelMessage[] = [...await input.promptFor(sources.stage, sources.partnerId), { role: 'user', content: `${MORNING_ASK}\n\n${facts}` }];
-  const read = readMorning(await input.ask(messages));
+  const reply = await input.ask(messages);
+  const read = readMorning(reply);
   if (!read || restates(read.things, sources.company ?? '')) return null;
-  return { ...read, day: localDay(sources.now), at: sources.now, roomId: sources.partnerId, who: input.name };
+  // The truth net, as every turn has it: a figure in the note that nothing it was given holds is flagged under it,
+  // and the note is posted all the same, so the founder sees both.
+  const flags = checkReply({ reply, receipts: [], sources: messages.map((message) => (typeof message.content === 'string' ? message.content : '')) });
+  return { ...read, day: localDay(sources.now), at: sources.now, roomId: sources.partnerId, who: input.name, ...(flags.length ? { flags } : {}) };
 }
 
 // How the note reads in the partner's own conversation.
-export const morningMessage = (note: MorningNote) => `**Morning, ${weekDay(note.at)}**\n\n${morningText(note)}`;
+export const morningMessage = (note: MorningNote) => [`**Morning, ${weekDay(note.at)}**`, morningText(note), ...(note.flags ?? [])].join('\n\n');
 
 // The fake model's morning, for a run with no model at all: the same shape, said plainly.
 export const FAKE_MORNING = 'Three moves for today:\n1. Fill the empty sections of the Company document, so every answer rests on it.\n2. Decide what waits in Needs you, so nobody works on a guess.\n3. Check the bets that are due against their numbers.\nRisk: the record is thin, so every choice rests on guesses.\nQuestion: What is the one number this week should move?';

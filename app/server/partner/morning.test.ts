@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { ChatMessage, Stage } from '../../shared/model.ts';
 import type { Bet } from '../../shared/partner.ts';
 import type { ModelMessage } from '../prompt.ts';
-import { gatherMorning, MORNING_ASK, morningDue, morningInputs, MOST_TRIES, RETRY_AFTER, writeMorning, type MorningSources } from './morning.ts';
+import { gatherMorning, MORNING_ASK, morningDue, morningInputs, morningMessage, MOST_TRIES, RETRY_AFTER, writeMorning, type MorningSources } from './morning.ts';
 
 const at = (text: string) => new Date(text).getTime();
 const NINE = at('2026-09-27T09:00');
@@ -99,6 +99,14 @@ describe('one morning turn', () => {
     expect(morningInputs({ ...base, company: '# Company\n\n- more' })).not.toBe(key);
     expect(morningInputs({ ...base, decisions: [] })).not.toBe(key);
     expect(morningInputs({ ...base, chats: { m: [...base.chats.m, { id: 'z', role: 'user', text: 'new', at: 5 }] } })).not.toBe(key);
+  });
+
+  it('runs the note through the truth net: an invented figure is flagged under it, and the note still goes out', async () => {
+    const note = await writeMorning({ sources: await sources(), name: 'Sam', promptFor: prompt, ask: async () => 'Three moves for today:\n1. Chase the $36,850 in pipeline.\n2. Email the replied leads.\n3. Log signups.\nRisk: r\nQuestion: q?' });
+    expect(note?.flags).toEqual([expect.stringContaining('Unsourced figures: $36,850')]);
+    expect(morningMessage(note!)).toMatch(/Question: q\?\n\nUnsourced figures: \$36,850/);
+    const clean = await writeMorning({ sources: await sources(), name: 'Sam', promptFor: prompt, ask: async () => 'Three moves for today:\n1. Price it at $9 as decided.\n2. b\n3. c\nRisk: r\nQuestion: q?' });
+    expect(clean?.flags).toBeUndefined();
   });
 
   it('gives back nothing when the reply lost the shape', async () => {

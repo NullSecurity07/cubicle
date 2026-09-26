@@ -51,7 +51,8 @@ export const VERDICT_WORDS: Record<BetVerdict, string> = { worked: 'worked', 'di
 
 export type Morning = { things: string[]; risk: string; question: string };
 // `inputs` is what the note was read from, as a key: asked again with nothing changed, the same note stands.
-export type MorningNote = Morning & { day: string; at: number; roomId: string; who: string; inputs?: string };
+// `flags` are the truth net's lines on it: a figure nothing the note was given holds.
+export type MorningNote = Morning & { day: string; at: number; roomId: string; who: string; inputs?: string; flags?: string[] };
 
 const plain = (text: string) => text.replace(/\*\*|__|`/g, '').replace(/\s+/g, ' ').trim();
 // A numbered or bulleted line, the number or bullet bold or not: "1. a", "**1.** a", "- a".
