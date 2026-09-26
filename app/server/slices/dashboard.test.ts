@@ -2,8 +2,8 @@ import { mkdir, mkdtemp, utimes, writeFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import type { Dashboard } from '../../shared/dashboard.ts';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { backupLate, type Dashboard } from '../../shared/dashboard.ts';
 import { seedStage, type Attention, type Stage, type Task } from '../../shared/model.ts';
 import { createBoards } from '../boards.ts';
 import { createDecisions } from '../decisions.ts';
@@ -21,7 +21,7 @@ const root = resolve(import.meta.dirname, '../../..');
 const NOW = Date.now();
 const HOUR = 3_600_000;
 const closers: (() => Promise<void>)[] = [];
-afterEach(async () => { for (const close of closers.splice(0)) await close(); hub.say = () => {}; });
+afterEach(async () => { for (const close of closers.splice(0)) await close(); hub.say = () => {}; vi.unstubAllEnvs(); });
 
 // A workspace with a little of everything the dashboard reads: a board with one task running and one due, a leads
 // card, a watched page that changed, a proposed decision, a reply waiting, a fortnight of turns, a picture and a film.
@@ -105,12 +105,27 @@ async function setup() {
 
 describe('the dashboard', () => {
   it('says when the newest backup was made, from the folder backups go to now', async () => {
-    expect((await (await setup()).get()).body.backup).toEqual({ at: null, dir: expect.stringMatching(/backups$/) });
+    expect((await (await setup()).get()).body.backup).toEqual({ at: null, dir: expect.stringMatching(/backups$/), writable: true });
     const { get, workspace } = await setup();
     await mkdir(join(workspace, 'backups'), { recursive: true });
     await writeFile(join(workspace, 'backups', 'cubicle-2026-09-24-0900.tar.gz'), 'x');
     await utimes(join(workspace, 'backups', 'cubicle-2026-09-24-0900.tar.gz'), NOW / 1000, NOW / 1000);
-    expect((await get()).body.backup).toEqual({ at: NOW, dir: join(workspace, 'backups') });
+    expect((await get()).body.backup).toEqual({ at: NOW, dir: join(workspace, 'backups'), writable: true });
+  });
+
+  it('says so when the backup folder cannot be written to', async () => {
+    const away = await mkdtemp(join(tmpdir(), 'dashboard-away-'));
+    await writeFile(join(away, 'file'), 'x');
+    vi.stubEnv('STAGE_BACKUP_DIR', join(away, 'file', 'backups'));
+    const { get } = await setup();
+    expect((await get()).body.backup).toMatchObject({ writable: false });
+  });
+
+  it('counts a backup late after a day, when there is none, or when its folder cannot be written to', () => {
+    expect(backupLate({ at: NOW - HOUR, dir: '/b', writable: true }, NOW)).toBe(false);
+    expect(backupLate({ at: NOW - 25 * HOUR, dir: '/b', writable: true }, NOW)).toBe(true);
+    expect(backupLate({ at: null, dir: '/b', writable: true }, NOW)).toBe(true);
+    expect(backupLate({ at: NOW - HOUR, dir: '/b', writable: false }, NOW)).toBe(true);
   });
 
   it('asks its Backup health row again once a backup lands, whatever the health it already held', { timeout: 60_000 }, async () => {
