@@ -43,7 +43,8 @@ test.beforeEach(async ({ page }) => {
 
 test.afterEach(async ({ page }) => {
   await page.goto('about:blank');
-  await page.request.put('/api/stage', { data: held });
+  // Put back whole, whatever was saved since: no revision, so it is not refused as a save over a newer stage.
+  await page.request.put('/api/stage', { data: { ...(held as object), rev: undefined } });
   await page.request.delete(`/api/frameworks/${MINE}`);
   expect(broke).toEqual([]);
 });

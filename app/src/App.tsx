@@ -17,16 +17,27 @@ import { NEW_SIZE } from './addCard';
 import { freeSpot } from './place';
 import { CARD, WIRE, allowedWire, fromFlow, toFlow, type StageNode } from './stage';
 import { SyncContext } from './sync';
+import { feed } from './feed';
+import { mergeStage, saveOver } from './stageSync';
+import { STAGE_CHANNEL, type Stage } from '../shared/model';
 
 // Built once: handed to the canvas inline, they would be new objects on every render, every drag frame included.
 const FIT_VIEW = { padding: 0.15, maxZoom: 1 };
 const PRO = { hideAttribution: true };
 
-function Canvas({ initial }: { initial: ReturnType<typeof toFlow> }) {
+const sameStage = (a: Stage, b: Stage) => JSON.stringify({ ...a, rev: 0 }) === JSON.stringify({ ...b, rev: 0 });
+
+function Canvas({ stage }: { stage: Stage }) {
+  const [initial] = useState(() => toFlow(stage));
   const [nodes, setNodes, onNodesChange] = useNodesState<StageNode>(initial.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initial.edges);
   const [connecting, setConnecting] = useState(false);
   const lastSaved = useRef(JSON.stringify(fromFlow(initial.nodes, initial.edges)));
+  // The stage as the server last said it is, with its revision: every save is made on it, so a save over a stage
+  // another window has changed since is refused, and this window takes that change in rather than undoing it.
+  const base = useRef(stage);
+  // Why the canvas as it is now is not on disk, while it is not. Cleared by the next save that lands.
+  const [unsaved, setUnsaved] = useState('');
   // The save on its way, if one is: a caller that flushes while the same stage is still being put waits for that put
   // rather than being told "saved" at once, so a card added a moment ago is known to the server before its first read.
   const saving = useRef<Promise<void>>(Promise.resolve());
@@ -47,19 +58,64 @@ function Canvas({ initial }: { initial: ReturnType<typeof toFlow> }) {
   // Read from the ref, so the check keeps one identity while the wires change under a drag.
   const isValidConnection = useCallback((connection: Connection | Edge) => allowedWire(connection, latest.current.edges), []);
 
+  // A stage from the server put on the canvas. A card that is the same as before keeps its node, so nothing the
+  // founder has in hand (a selection, a measured size) is lost to a change made somewhere else.
+  const show = useCallback((next: Stage) => {
+    const flow = toFlow(next);
+    const one = (node: StageNode) => JSON.stringify(fromFlow([node], []));
+    setNodes((current) => flow.nodes.map((node) => {
+      const held = current.find((was) => was.id === node.id);
+      return held && one(held) === one(node) ? held : { ...node, ...(held?.selected ? { selected: true } : {}) };
+    }));
+    setEdges((current) => flow.edges.map((edge) => current.find((was) => was.id === edge.id && was.source === edge.source && was.target === edge.target && was.sourceHandle === edge.sourceHandle && was.targetHandle === edge.targetHandle) ?? edge));
+  }, [setNodes, setEdges]);
+
   // Layout, sizes and wires save themselves shortly after they stop changing; `save` can also be called at once.
-  const save = useCallback(async () => {
-    const stage = fromFlow(latest.current.nodes, latest.current.edges);
-    const text = JSON.stringify(stage);
-    if (text === lastSaved.current) return saving.current;
-    lastSaved.current = text;
-    saving.current = putStage(stage).then(() => undefined, (error: Error) => { lastSaved.current = ''; throw error; });
-    return saving.current;
-  }, []);
+  // Saves go one after another: each is made on the revision the one before it left, never two on the same one.
+  const save = useCallback(() => {
+    const run = saving.current.catch(() => {}).then(async () => {
+      const stage = fromFlow(latest.current.nodes, latest.current.edges);
+      const text = JSON.stringify(stage);
+      if (text === lastSaved.current) return;
+      lastSaved.current = text;
+      try {
+        const out = await saveOver(base.current, stage, putStage);
+        // Only ever forward: the stage may have moved on again, and this window heard it, while this save was out.
+        if ((out.base.rev ?? 0) > (base.current.rev ?? 0)) base.current = out.base;
+        if (out.merged) { lastSaved.current = out.saved ? JSON.stringify({ ...out.merged, rev: undefined }) : ''; show(out.merged); }
+        if (!out.saved) throw new Error('the stage kept changing in another window');
+        setUnsaved('');
+      } catch (error) {
+        lastSaved.current = '';
+        setUnsaved((error as Error).message || 'the server did not answer');
+        throw error;
+      }
+    });
+    saving.current = run;
+    return run;
+  }, [show]);
   useEffect(() => {
-    const timer = setTimeout(() => void save(), 400);
+    const timer = setTimeout(() => save().catch(() => {}), 400);
     return () => clearTimeout(timer);
   }, [nodes, edges, save]);
+  // A save that did not land is tried again every few seconds until one does, changed canvas or not.
+  useEffect(() => {
+    if (!unsaved) return;
+    const timer = setTimeout(() => save().catch(() => {}), 5000);
+    return () => clearTimeout(timer);
+  }, [unsaved, save]);
+
+  // Another window saved, or a person put something on the stage: this window takes it in as it happens, keeping
+  // whatever the founder has changed here and not yet saved, and then saves that on top of it.
+  useEffect(() => feed<Stage>(STAGE_CHANNEL, (theirs) => {
+    if ((theirs.rev ?? 0) <= (base.current.rev ?? 0)) return;
+    const mine = fromFlow(latest.current.nodes, latest.current.edges);
+    const merged = mergeStage(base.current, mine, theirs);
+    base.current = theirs;
+    if (!sameStage(merged, mine)) show(merged);
+    if (sameStage(merged, theirs)) lastSaved.current = JSON.stringify({ ...merged, rev: undefined });
+    else save().catch(() => {});
+  }), [show, save]);
 
   // A person made a doc: its card lands beside them, already wired.
   useEffect(() => listen('effect', (effect) => {
@@ -106,21 +162,22 @@ function Canvas({ initial }: { initial: ReturnType<typeof toFlow> }) {
       <SelectionMenu />
       <Overlay />
     </ReactFlow>
+    {unsaved && <p className="stage__unsaved" role="status">Not saved: {unsaved}. Trying again…</p>}
     </SyncContext.Provider>
   );
 }
 
 export default function App() {
-  const [initial, setInitial] = useState<ReturnType<typeof toFlow> | null>(null);
+  const [initial, setInitial] = useState<Stage | null>(null);
   const [problem, setProblem] = useState('');
 
   // The founder's own keys, if they wrote any. Without them, or without an answer, every key is the table's.
   useEffect(() => { getKeys().then((found) => setOverrides(found.keys)).catch(() => {}); }, []);
-  useEffect(() => { getStage().then((stage) => setInitial(toFlow(stage))).catch((error: Error) => setProblem(error.message)); }, []);
+  useEffect(() => { getStage().then(setInitial).catch((error: Error) => setProblem(error.message)); }, []);
 
   return (
     <div className="stage">
-      {initial && <Canvas initial={initial} />}
+      {initial && <Canvas stage={initial} />}
       {problem && <p className="stage__problem">The stage could not load: {problem}</p>}
     </div>
   );

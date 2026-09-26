@@ -8,6 +8,7 @@ import type { CoderAsk, CoderLine, CoderModels, CoderPatch, CoderState, GraphVie
 import { leadsChannel, TWENTY_CHANNEL, type Lead, type LeadsEvent, type LeadStage, type TwentyStatus } from '../shared/leads';
 import { MEMORY_CHANNEL } from '../shared/model';
 import { feed, snapshot } from './feed';
+import type { PutAnswer } from './stageSync';
 
 // The one way the page asks the server. A refusal carries the server's own words; `fallback` is what is said when it
 // sent none. The slices ask through this too, so every corner of the page reports a failure the same way.
@@ -21,7 +22,14 @@ const put = (body: unknown): RequestInit => ({ method: 'PUT', headers: { 'conten
 export const getStage = () => request<Stage>('/api/stage');
 // The founder's own keys from keys.json, as the server checked them, and where that file is.
 export const getKeys = () => request<{ keys: Record<string, string[]>; problems: string[]; file: string }>('/api/keys');
-export const putStage = (stage: Stage) => request('/api/stage', put(stage));
+// A save made over a stage another window has changed since is refused (409) with the stage as it is now; that is an
+// answer to act on, not a failure, so it comes back as `stale` rather than thrown.
+export async function putStage(stage: Stage): Promise<PutAnswer> {
+  const response = await fetch('/api/stage', put(stage));
+  if (response.status === 409) return { stale: ((await response.json()) as { stage: Stage }).stage };
+  if (!response.ok) throw new Error((await response.json().catch(() => null) as { error?: string } | null)?.error ?? `${response.status} /api/stage`);
+  return response.json() as Promise<PutAnswer>;
+}
 export const getDoc = (id: string) => request<{ text: string }>(`/api/docs/${id}`).then((doc) => doc.text);
 // `last` is a save made as the page goes away: the browser is asked to finish it even though nobody is left to hear the answer.
 export const putDoc = (id: string, text: string, last = false) => request(`/api/docs/${id}`, { ...put({ text }), ...(last ? { keepalive: true } : {}) });
