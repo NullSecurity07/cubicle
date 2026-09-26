@@ -1,4 +1,7 @@
-import type { Box, Stage } from '../../shared/model.ts';
+import { readFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import type { Framework } from '../../shared/frameworks.ts';
+import type { Box, DocRules, Stage } from '../../shared/model.ts';
 import { readableDocIds, wiredDocIds } from '../prompt.ts';
 import { replaceSection, rewriteLoss } from './sections.ts';
 import { text, type Tool, type ToolContext } from './registry.ts';
@@ -57,11 +60,33 @@ function find(context: ToolContext, wanted: string, reading = false) {
   throw new Error(hits.length ? `more than one connected document is called "${wanted}"` : `no connected document is called "${wanted}". Connected: ${titles}. Ask the founder to draw a wire to it.`);
 }
 
+// A team placed before its doc carried rules still has people who say which team they came from. The rules are
+// taken from that team as it ships, by the doc's title, each time and never saved: a miss is a doc with no rules, as
+// before. Read once per team.
+const SHIPPED = resolve(import.meta.dirname, '../../frameworks');
+const shipped = new Map<string, Promise<Framework | null>>();
+const shippedTeam = (id: string) => {
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(id)) return Promise.resolve(null);
+  if (!shipped.has(id)) shipped.set(id, readFile(join(SHIPPED, id, 'framework.json'), 'utf8').then((raw) => JSON.parse(raw) as Framework).catch(() => null));
+  return shipped.get(id)!;
+};
+
+async function rulesOf(stage: Stage, id: string): Promise<DocRules | undefined> {
+  const doc = stage.docs.find((one) => one.id === id);
+  if (!doc || doc.rules) return doc?.rules;
+  const teams = new Set(stage.rooms.filter((room) => room.framework && wiredDocIds(stage, room.id).includes(id)).map((room) => room.framework!.id));
+  for (const team of teams) {
+    const spec = (await shippedTeam(team))?.docs.find((one) => one.title.trim().toLowerCase() === doc.title.trim().toLowerCase());
+    if (spec?.rules?.framework === team) return spec.rules;
+  }
+  return undefined;
+}
+
 // Every write goes through here. A team's shared doc carries rules for whose each section is and when its verdict may
 // stand, so what is saved may be the writer's words with a stale mark or a "not assessed" verdict put in.
 async function save(context: ToolContext, id: string, before: string, after: string, done: string) {
-  const rules = context.stage.docs.find((one) => one.id === id)?.rules;
-  const guarded = rules ? guardWrite({ rules, stage: context.stage, writerId: context.roomId, before, after, now: Date.now() }) : { text: after };
+  const rules = await rulesOf(context.stage, id);
+  const guarded = rules ? guardWrite({ rules, stage: context.stage, docId: id, writerId: context.roomId, before, after, now: Date.now() }) : { text: after };
   await context.store.replaceDoc(id, guarded.text);
   const said = guarded.held ? guarded.note! : [done, guarded.note].filter(Boolean).join(' ');
   return { text: said, effect: { kind: 'doc-changed' as const, id } };

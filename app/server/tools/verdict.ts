@@ -1,5 +1,6 @@
 import type { DocRules, Room, Stage } from '../../shared/model.ts';
 import { shortDay } from '../clock.ts';
+import { wiredDocIds } from '../prompt.ts';
 import { headingKey, headings } from './sections.ts';
 
 // What a team's shared doc lets a person write, held in code because the briefs alone were not enough: on a live run
@@ -43,39 +44,62 @@ export function filled(body: string | null): string[] {
 
 const titleOf = (text: string, heading: string) => headings(text).find((one) => headingKey(one.title) === headingKey(heading))?.title ?? heading;
 
-// The person placed for a section, when they are on this stage; nobody when they have been fired or renamed away.
-const ownerOf = (stage: Stage, rules: DocRules, by: string): Room | undefined =>
-  stage.rooms.find((room) => room.framework?.id === rules.framework && room.framework.key === by);
+// The person placed for a section, when they are on this stage and wired to this doc; nobody when they have been
+// fired or renamed away. The wire matters: a team placed twice has two people with the same framework key, and each
+// owns the sections of the doc their own team was placed with, never the other copy's.
+const ownerOf = (stage: Stage, rules: DocRules, by: string, docId: string): Room | undefined =>
+  stage.rooms.find((room) => room.framework?.id === rules.framework && room.framework.key === by && wiredDocIds(stage, room.id).includes(docId));
+
+// A line with its markdown taken off: list marks, quote marks, emphasis. "- **Score:** 4/10" reads as "Score: 4/10".
+const bare = (line: string) => line.replace(/^\s*(?:[-*+>]|\d+[.)])\s+/, '').replace(/[*_`]/g, '').trim();
 
 // The verdict word and the score a verdict gives. The template's own "(STRONG / WEAK / PIVOT REQUIRED)" is a label,
-// not a verdict, so anything in brackets with a slash in it is read past.
+// not a verdict, so anything in brackets with a slash in it is read past. The score is read from a line that starts
+// with "Score" before anything else, because the reasons carry figures too: "7 of 10 we called said it hurts".
 export function verdictOf(body: string, outcomes: string[]): { word?: string; score?: number } {
-  const text = filled(body).join('\n').replace(/\([^)]*\/[^)]*\)/g, ' ');
+  const lines = filled(body).map(bare).map((line) => line.replace(/\([^)]*\/[^)]*\)/g, ' '));
+  const text = lines.join('\n');
   const found = outcomes.map((word) => ({ word, at: text.search(new RegExp(`\\b${word}\\b`)) })).filter((one) => one.at >= 0).sort((a, b) => a.at - b.at);
-  const out = /(\d+(?:\.\d+)?)\s*(?:\/|out of|of)\s*10\b/i.exec(text) ?? /score[^:\n]*:\s*(\d+(?:\.\d+)?)/i.exec(text);
+  const outOfTen = /(\d+(?:\.\d+)?)\s*(?:\/|out of|of)\s*10\b/i;
+  const scoreLine = lines.find((line) => /^score\b/i.test(line));
+  const out = (scoreLine && (outOfTen.exec(scoreLine) ?? /:\s*(\d+(?:\.\d+)?)/.exec(scoreLine))) ?? outOfTen.exec(text);
   return { word: found[0]?.word, score: out ? Number(out[1]) : undefined };
 }
 
-// The cap line's value: no number, a first number of zero, or a plain none, means the evidence was never gathered.
-const lacking = (value: string) => {
-  const count = /\d+/.exec(value);
-  return /^\W*(none|zero|no\b|nil)/i.test(value) || !count || Number(count[0]) === 0;
-};
+const SPELLED = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty'];
+const NUMBER = `(\\d+|${SPELLED.join('|')})`;
+const countOf = (word: string) => (/^\d+$/.test(word) ? Number(word) : SPELLED.indexOf(word.toLowerCase()));
 
-// `held` says the writer's own words were not saved: the note is then the whole answer, not an addition to it.
+// How many customer conversations a section records, or null when it records none at all. The template's line comes
+// first, read past bold and bullets; a section written as prose is read for a number next to the conversations
+// ("talked to 12 founders", "14 customer interviews"). No count anywhere is no evidence, and the cap holds.
+export function conversations(section: string, label: string): number | null {
+  const line = section.split('\n').map(bare).find((one) => one.toLowerCase().startsWith(label.toLowerCase()));
+  if (line) {
+    const value = line.slice(line.indexOf(':') + 1);
+    if (/^\W*(none|no\b|nil)/i.test(value)) return 0;
+    const count = new RegExp(`\\b${NUMBER}\\b`, 'i').exec(value);
+    if (count) return countOf(count[1]);
+  }
+  const prose = bare(section.replace(/\n/g, ' '));
+  const hit = new RegExp(`\\b${NUMBER}\\s+(?:[\\w-]+\\s+){0,3}?(?:conversations?|interviews?|calls?)\\b`, 'i').exec(prose)
+    ?? new RegExp(`\\b(?:talked (?:to|with)|spoke (?:to|with)|interviewed|called)\\s+${NUMBER}\\b`, 'i').exec(prose);
+  return hit ? countOf(hit[1]) : null;
+}
+
 export type Guarded = { text: string; note?: string; held?: boolean };
 
 // `before` and `after` are the whole doc either side of one write by `writerId`. Returns the text to save (with a
 // "not assessed" verdict or a stale mark put in) and a note for the writer, or throws the reason nothing is written.
-export function guardWrite(input: { rules: DocRules; stage: Stage; writerId: string; before: string; after: string; now: number }): Guarded {
-  const { rules, stage, writerId, before, now } = input;
+export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string; writerId: string; before: string; after: string; now: number }): Guarded {
+  const { rules, stage, docId, writerId, before, now } = input;
   let after = input.after;
   const changed = (heading: string) => (sectionBody(before, heading) ?? '') !== (sectionBody(after, heading) ?? '');
   const writer = stage.rooms.find((room) => room.id === writerId);
 
   // Only the person placed for a section writes it. The verdict judge above all: a missing section is theirs to name.
   for (const { heading, by } of [...rules.sections, rules.verdict]) {
-    const owner = ownerOf(stage, rules, by);
+    const owner = ownerOf(stage, rules, by, docId);
     if (!owner || owner.id === writerId || !changed(heading)) continue;
     throw new Error(`not written: "${titleOf(before, heading)}" is ${owner.name}'s section (${owner.role}), and only they write it. `
       + `Ask ${owner.name} with ask_person, or name what is missing in your own section; never fill in their part yourself.`);
@@ -91,7 +115,7 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; writerId: str
       const empty = rules.sections.filter(({ heading }) => sectionBody(after, heading) !== null && !filled(sectionBody(after, heading)).length);
       if (empty.length) {
         const names = empty.map(({ heading }) => titleOf(after, heading));
-        const who = [...new Set(empty.map(({ by }) => ownerOf(stage, rules, by)?.name).filter((name): name is string => !!name))];
+        const who = [...new Set(empty.map(({ by }) => ownerOf(stage, rules, by, docId)?.name).filter((name): name is string => !!name))];
         const body = `${names.map((name) => `Not assessed: ${name}`).join('\n')}\n\nNo verdict and no score until ${names.length > 1 ? 'these sections are' : 'this section is'} written.`;
         return {
           text: withBody(after, verdictAt, body),
@@ -102,9 +126,7 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; writerId: str
       }
       const { word, score } = verdictOf(fresh, rules.outcomes ?? []);
       for (const cap of rules.caps ?? []) {
-        // A missing line counts as no evidence: the brief asks for it filled in.
-        const line = (sectionBody(after, cap.heading) ?? '').split('\n').map((one) => one.trim()).find((one) => one.toLowerCase().startsWith(cap.line.toLowerCase())) ?? '';
-        if (!lacking(line.slice(line.indexOf(':') + 1))) continue;
+        if (conversations(sectionBody(after, cap.heading) ?? '', cap.line)) continue;
         const order = rules.outcomes ?? [];
         const over = (word && order.indexOf(word) > order.indexOf(cap.verdict)) || (score !== undefined && score > cap.score);
         if (over) {
@@ -122,7 +144,7 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; writerId: str
   if (!moved.length) return { text: after };
   const kept = (sectionBody(after, verdictAt) ?? '').split('\n').filter((line) => !moved.some((name) => line.trim().startsWith(`Stale: ${name} changed`)));
   const marks = moved.map((name) => `Stale: ${name} changed after this verdict on ${shortDay(now)}.`);
-  const judge = ownerOf(stage, rules, rules.verdict.by);
+  const judge = ownerOf(stage, rules, rules.verdict.by, docId);
   return {
     text: withBody(after, verdictAt, [...marks, ...kept].join('\n').trim()),
     note: `The verdict was written before this change, so it is now marked stale${judge && judge.id !== writer?.id ? `; ${judge.name} judges it again` : ''}.`,

@@ -35,7 +35,7 @@ async function setup() {
   const fill = async (skip: string[] = []) => {
     for (const [heading, text] of Object.entries(FILLED)) {
       if (skip.includes(heading)) continue;
-      const by = placed.docs[0].rules!.sections.find((one) => one.heading === heading)!.by;
+      const by = framework.docs[0].rules!.sections.find((one) => one.heading === heading)!.by;
       expect((await as(by)('replace_section', { heading, text })).ok, heading).toBe(true);
     }
   };
@@ -54,6 +54,9 @@ describe('reading a team doc', () => {
     expect(verdictOf('One word (STRONG / WEAK / PIVOT REQUIRED): WEAK\n\nScore out of 10 — assumption, flaws, pain, fit, why now: 4/10', OUTCOMES)).toEqual({ word: 'WEAK', score: 4 });
     expect(verdictOf('**STRONG** because the pain is real.\nScore: 10', OUTCOMES)).toEqual({ word: 'STRONG', score: 10 });
     expect(verdictOf('PIVOT REQUIRED, 6 out of 10', OUTCOMES)).toEqual({ word: 'PIVOT REQUIRED', score: 6 });
+    // A figure in the reasons is not the score: the Score line is.
+    expect(verdictOf('WEAK\n\nBecause: 7 of 10 we called said it hurts (3).\n\nScore: 4/10', OUTCOMES).score).toBe(4);
+    expect(verdictOf('STRONG\n\nBecause: 3 of 10 replied (3).\n\nScore out of 10 — assumption, flaws, pain, fit, why now: 9/10', OUTCOMES).score).toBe(9);
   });
 
   it('ships the rules with the Evaluation doc, naming a section that is in it for each person', async () => {
@@ -143,6 +146,78 @@ describe('the verdict judge on a team doc', () => {
     const { stage, as } = await setup();
     stage.rooms = stage.rooms.filter((room) => room.id !== 'fit');
     expect((await as('verdict')('replace_section', { heading: '4. Founder-market fit', text: 'none: the founder said so.' })).ok).toBe(true);
+  });
+});
+
+describe('the conversations cap, however the pain section is written', () => {
+  const pain = async (text: string) => {
+    const { as, fill } = await setup();
+    await fill();
+    expect((await as('pain')('replace_section', { heading: '3. Is the pain real?', text })).ok).toBe(true);
+    return as('verdict')('replace_section', { heading: '5. Verdict', text: 'STRONG (3)\n\nScore: 8/10' });
+  };
+
+  it('reads the count from a bolded label or a bullet', async () => {
+    expect((await pain('**Real customer conversations done (of ten to twenty):** 12')).ok).toBe(true);
+    expect((await pain('- Real customer conversations done (of ten to twenty): 12')).ok).toBe(true);
+    expect((await pain('- **Real customer conversations done:** 0')).ok).toBe(false);
+  });
+
+  it('reads the count from prose when the line was dropped, and caps only when none is found', async () => {
+    expect((await pain('Painkiller. Talked to 12 founders who sold a side project last year.')).ok).toBe(true);
+    expect((await pain('Painkiller: we ran 14 customer interviews in two weeks.')).ok).toBe(true);
+    expect((await pain('Painkiller. twelve conversations so far.')).ok).toBe(true);
+    expect((await pain('Painkiller, from what the founder believes.')).ok).toBe(false);
+  });
+
+  it('asks the pain validator to keep the count line', async () => {
+    const { framework } = await setup();
+    expect(framework.rooms.find((room) => room.key === 'pain')!.brief).toContain('Real customer conversations done: <n>');
+  });
+});
+
+describe('two copies of the team on one stage', () => {
+  it('lets each judge and each colleague write their own doc, and not the other team\'s', async () => {
+    const { stage, store, framework } = await setup();
+    const second = place(framework, stage, { x: 4000, y: 2000 });
+    stage.rooms.push(...second.placed.rooms); stage.docs.push(...second.placed.docs); stage.wires.push(...second.placed.wires); stage.cards!.push(...second.placed.cards);
+    const [otherDoc, text] = Object.entries(second.texts)[0];
+    await store.replaceDoc(otherDoc, text);
+    // The second copy's doc keeps its title, so each person names it by the doc wired to them only.
+    const idOf = (key: string) => second.placed.rooms.find((room) => room.framework?.key === key)!.id;
+    const call = (roomId: string, name: string, args: Record<string, unknown>) =>
+      runTool(docTools, name, JSON.stringify({ doc: 'Evaluation', ...args }), { stage, roomId, store, granted: new Map() });
+    for (const [heading, body] of Object.entries(FILLED)) {
+      const by = framework.docs[0].rules!.sections.find((one) => one.heading === heading)!.by;
+      expect((await call(idOf(by), 'replace_section', { heading, text: body })).ok, heading).toBe(true);
+    }
+    expect((await call(idOf('verdict'), 'replace_section', { heading: '5. Verdict', text: 'STRONG (3)\n\nScore: 8/10' })).ok).toBe(true);
+    expect(sectionBody(await store.readDoc(otherDoc), '5. Verdict')).toContain('STRONG (3)');
+    // The first team's judge still writes the first doc, and its sections still wait on the first team.
+    const first = await call('verdict', 'replace_section', { heading: '5. Verdict', text: 'WEAK\n\nScore: 3/10' });
+    expect(first.text).toMatch(/^Not written: the verdict waits for/);
+  });
+});
+
+describe('a team placed before its doc carried rules', () => {
+  it('takes the rules from the shipped team, and saves none of them', async () => {
+    const { stage, as, doc, fill } = await setup();
+    const placed = stage.docs.find((one) => one.id === 'evaluation')!;
+    delete placed.rules;
+    await fill(['4. Founder-market fit']);
+    expect((await as('verdict')('replace_section', { heading: '4. Founder-market fit', text: 'lived it' })).text).toMatch(/is Rohan's section/);
+    await as('verdict')('replace_section', { heading: '5. Verdict', text: 'STRONG\n\nScore: 10/10' });
+    expect(sectionBody(await doc(), '5. Verdict')).toMatch(/^Not assessed: 4\. Founder-market fit/);
+    expect(placed.rules).toBeUndefined();
+  });
+
+  it('behaves as before when no shipped team matches', async () => {
+    const { stage, as } = await setup();
+    const placed = stage.docs.find((one) => one.id === 'evaluation')!;
+    delete placed.rules;
+    placed.title = 'Evaluation';
+    for (const room of stage.rooms) if (room.framework) room.framework = { ...room.framework, id: 'no-such-team' };
+    expect((await as('verdict')('replace_section', { heading: '4. Founder-market fit', text: 'lived it' })).ok).toBe(true);
   });
 });
 
