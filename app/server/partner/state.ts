@@ -14,6 +14,8 @@ export type PartnerState = {
   plans: PlanProposal[];
   // Every step already offered from each plan doc, by its task title: an edit offers only the steps that are new.
   offered?: Record<string, string[]>;
+  // When the app wrote each recent decision line, so one a window saved over can be put back while it is fresh.
+  writtenAt?: Record<string, number>;
   // The company's one document once it is made or adopted, found by this id from then on. Gone from the stage, it
   // is not made again until the founder adds a partner again.
   companyId?: string;
@@ -24,14 +26,17 @@ export type PartnerState = {
 export function partnerState(workspace: string) {
   const path = join(workspace, 'partner.json');
   let held: PartnerState | null = null;
+  let onDisk = false;
   let queue: Promise<unknown> = Promise.resolve();
   async function read(): Promise<PartnerState> {
-    // The file taken away (a check cleaning up, the founder starting over) takes what was held with it.
-    if (held && await access(path).then(() => false, () => true)) held = null;
+    // A file that was there and has been taken away (a check cleaning up, the founder starting over) takes what was
+    // held with it. A workspace that never had one keeps what is held: it is being written for the first time.
+    if (held && onDisk && await access(path).then(() => false, () => true)) { held = null; onDisk = false; }
     if (held) return held;
     try {
       const saved = JSON.parse(await readFile(path, 'utf8')) as Partial<PartnerState>;
       held = { ...saved, decided: Array.isArray(saved.decided) ? saved.decided : [], plans: Array.isArray(saved.plans) ? saved.plans : [] };
+      onDisk = true;
     } catch { held = { decided: [], plans: [] }; }
     return held;
   }
@@ -41,6 +46,7 @@ export function partnerState(workspace: string) {
       const state = await read();
       const out = await edit(state);
       await writeAtomic(path, JSON.stringify(state, null, 2), { mkdir: true });
+      onDisk = true;
       return out;
     });
     queue = job.catch(() => {});

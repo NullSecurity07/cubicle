@@ -10,7 +10,10 @@ export const COMPANY_SECTIONS = ['Idea', 'Customer', 'Numbers', 'Decisions', 'Be
 export const PARTNER_CHANNEL = 'partner';
 export type PartnerEvent = { docChanged: string };
 // The one line every person's prompt carries while the document is on the stage.
-export const COMPANY_LINE = 'The Company document is the shared record; when the chat and it disagree, say so.';
+// It names the document by its title as it is now, so a renamed one is still called what the founder called it.
+export const SHARED_RECORD = 'document is the shared record';
+export const companyLine = (title = COMPANY_TITLE) => `The "${title.trim() || COMPANY_TITLE}" ${SHARED_RECORD}; when the chat and it disagree, say so.`;
+export const COMPANY_LINE = companyLine();
 // The seeded stage already pins "Company brief": that is the company's document, adopted rather than doubled.
 export const isCompanyTitle = (title: string) => /^company( brief)?$/.test(title.trim().toLowerCase());
 // The one company document on a stage: the one recorded by id while it is there, else the first pinned one that is

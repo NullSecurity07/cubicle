@@ -3,9 +3,10 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Room, Stage } from '../../shared/model.ts';
-import { COMPANY_LINE } from '../../shared/partner.ts';
+import { COMPANY_LINE, companyLine } from '../../shared/partner.ts';
 import type { Deps, Installed } from '../install.ts';
 import { companyDocOf } from '../partner/company.ts';
+import { partnerState } from '../partner/state.ts';
 import { stubDeps } from '../slice-stubs.ts';
 import { decisionAttention } from '../decisions.ts';
 import { hub } from '../events.ts';
@@ -84,7 +85,8 @@ describe('the partner slice: the Company document', () => {
     const { deps, part } = await installed();
     await deps.store.patchStage((stage) => { stage.docs.find((doc) => doc.id === 'company-brief')!.title = 'Flipside'; });
     const turn = (content: string) => deps.seams.run('turn:before', { roomId: 'marketing', source: 'chat', query: 'hi', messages: [{ role: 'system', content }] });
-    expect((await turn('You are Maya.')).messages[0].content).toBe(`You are Maya.\n\n${COMPANY_LINE}`);
+    expect((await turn('You are Maya.')).messages[0].content).toBe(`You are Maya.\n\n${companyLine('Flipside')}`);
+    expect(companyLine('Flipside')).toBe('The "Flipside" document is the shared record; when the chat and it disagree, say so.');
     expect((await turn(`You are Maya.\n\n${COMPANY_LINE}`)).messages[0].content).toBe(`You are Maya.\n\n${COMPANY_LINE}`);
     await deps.store.patchStage((stage) => { stage.docs = stage.docs.filter((doc) => doc.id !== 'company-brief'); });
     expect((await turn('You are Maya.')).messages[0].content).toBe('You are Maya.');
@@ -106,6 +108,18 @@ describe('the partner slice: the Company document', () => {
     await part.tick!();
     expect(await readFile(join(workspace, 'partner.json'), 'utf8').then((text) => JSON.parse(text).companyId).catch(() => undefined)).toBeUndefined();
     await part.close!();
+  });
+
+  it('keeps the state it holds in a fresh workspace until a file that existed is taken away', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'partner-state-'));
+    const book = partnerState(workspace);
+    const first = await book.read();
+    first.decided.push('held in memory');
+    expect(await book.read()).toBe(first);
+    await book.change((held) => { held.companyId = 'company-brief'; });
+    expect((await book.read()).decided).toEqual(['held in memory']);
+    await rm(join(workspace, 'partner.json'));
+    expect(await book.read()).toEqual({ decided: [], plans: [] });
   });
 
   it('tells the window each time the app writes into the document', async () => {

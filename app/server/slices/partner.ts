@@ -1,6 +1,6 @@
 import { isDay } from '../../shared/metrics.ts';
 import { newMessageId, type Attention, type Stage } from '../../shared/model.ts';
-import { COMPANY_LINE, isPlanDoc, parsePlan, PARTNER_CHANNEL, planTaskTitle, type Bet, type BetVerdict, type MorningNote, type PlanStep } from '../../shared/partner.ts';
+import { companyLine, isPlanDoc, SHARED_RECORD, parsePlan, PARTNER_CHANNEL, planTaskTitle, type Bet, type BetVerdict, type MorningNote, type PlanStep } from '../../shared/partner.ts';
 import { localDay } from '../clock.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
 import { leadsFor } from '../leads/store.ts';
@@ -171,7 +171,7 @@ export function createPartner(options: PartnerOptions = {}) {
         const doc = await companyNow();
         if (!doc) return;
         const list = await deps.decisions.list();
-        await state.change(async (held) => { held.decided = await syncDecisions(deps.store, doc.id, list, held.decided, changed); });
+        await state.change(async (held) => { Object.assign(held, await syncDecisions(deps.store, doc.id, list, held, changed, now())); });
       } finally { syncing = null; }
     })());
     const offDecisions = deps.decisions.onChange(() => { void sync().catch(() => {}); });
@@ -264,10 +264,10 @@ export function createPartner(options: PartnerOptions = {}) {
     // found here by the id recorded for it), so the line saying it is the shared record is added here instead.
     const beforeTurn: Handler<'turn:before'> = async (payload, next) => {
       const system = payload.messages[0];
-      if (system?.role !== 'system' || system.content.includes(COMPANY_LINE)) return next(payload);
+      if (system?.role !== 'system' || system.content.includes(SHARED_RECORD)) return next(payload);
       const { companyId } = await state.read();
       const doc = companyId ? companyDocOf(await deps.store.loadStage(), companyId) : undefined;
-      return next(doc?.pinned ? withSystem(payload, COMPANY_LINE) : payload);
+      return next(doc?.pinned ? withSystem(payload, companyLine(doc.title)) : payload);
     };
     const offTurn = deps.seams.on('turn:before', beforeTurn);
 

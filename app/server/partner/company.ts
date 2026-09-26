@@ -72,15 +72,29 @@ export const decisionLine = (decision: Decision) => `- ${localDay(decision.decid
 
 // Every decided decision not yet written goes under Decisions as one dated line, oldest first. Hands back every id
 // written so far, so a decision is never written twice however often this runs.
-export async function syncDecisions(store: CompanyStore, docId: string, all: Decision[], known: string[], changed: Changed = () => {}): Promise<string[]> {
-  const held = new Set(known);
+// How long after the app writes a decision's line it puts that line back if it goes missing: long enough for a window
+// that had the document open to save its old text over it, short enough that a line the founder deletes or rewords
+// later stays as they left it.
+export const RESTORE_FOR = 2 * 60_000;
+export type DecisionsWritten = { decided: string[]; writtenAt?: Record<string, number> };
+// Whether the document already has a line for this decision, by its title: a line reworded around the title, or
+// dated in another time zone, is still that decision's line.
+const hasLine = (text: string, decision: Decision) => text.includes(` ${decision.title}:`);
+
+// Each decided decision gets one dated line under Decisions, oldest first, once. A line the app wrote goes back in
+// only while it is fresh (a window saved over it); after that the founder's edits stand.
+export async function syncDecisions(store: CompanyStore, docId: string, all: Decision[], held: DecisionsWritten, changed: Changed = () => {}, now = Date.now()): Promise<DecisionsWritten> {
+  const known = new Set(held.decided);
+  const writtenAt = Object.fromEntries(Object.entries(held.writtenAt ?? {}).filter(([, at]) => now - at < RESTORE_FOR));
   const decided = all.filter((one) => one.status === 'decided').sort((a, b) => (a.decidedAt ?? a.at) - (b.decidedAt ?? b.at));
   const text = await store.readDoc(docId);
-  // Every decided decision's line that is not in the text: new ones, one the app stopped before noting, and one a
-  // window saved its old text over. Nothing is written twice.
-  const lines = decided.map(decisionLine).filter((line) => !text.includes(line));
-  if (lines.length) { await store.writeDoc(docId, addToSection(text, 'Decisions', lines)); changed(docId); }
-  return [...known, ...decided.filter((one) => !held.has(one.id)).map((one) => one.id)];
+  const due = decided.filter((one) => (!known.has(one.id) || one.id in writtenAt) && !hasLine(text, one));
+  if (due.length) {
+    await store.writeDoc(docId, addToSection(text, 'Decisions', due.map(decisionLine)));
+    changed(docId);
+    for (const one of due) if (!known.has(one.id)) writtenAt[one.id] = now;
+  }
+  return { decided: [...held.decided, ...decided.filter((one) => !known.has(one.id)).map((one) => one.id)], writtenAt };
 }
 
 // The ledger as the Company document shows it: open bets first, then the ones that were checked, newest first.
