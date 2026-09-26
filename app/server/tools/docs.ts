@@ -2,6 +2,7 @@ import type { Box, Stage } from '../../shared/model.ts';
 import { readableDocIds, wiredDocIds } from '../prompt.ts';
 import { replaceSection, rewriteLoss } from './sections.ts';
 import { text, type Tool, type ToolContext } from './registry.ts';
+import { guardWrite } from './verdict.ts';
 
 // A new doc card's size, and the gap kept round it: the same the window uses when it places one.
 const [WIDTH, HEIGHT, GAP] = [340, 300, 40];
@@ -56,6 +57,16 @@ function find(context: ToolContext, wanted: string, reading = false) {
   throw new Error(hits.length ? `more than one connected document is called "${wanted}"` : `no connected document is called "${wanted}". Connected: ${titles}. Ask the founder to draw a wire to it.`);
 }
 
+// Every write goes through here. A team's shared doc carries rules for whose each section is and when its verdict may
+// stand, so what is saved may be the writer's words with a stale mark or a "not assessed" verdict put in.
+async function save(context: ToolContext, id: string, before: string, after: string, done: string) {
+  const rules = context.stage.docs.find((one) => one.id === id)?.rules;
+  const guarded = rules ? guardWrite({ rules, stage: context.stage, writerId: context.roomId, before, after, now: Date.now() }) : { text: after };
+  await context.store.replaceDoc(id, guarded.text);
+  const said = guarded.held ? guarded.note! : [done, guarded.note].filter(Boolean).join(' ');
+  return { text: said, effect: { kind: 'doc-changed' as const, id } };
+}
+
 const doc = { type: 'string', description: 'Title of a document connected to your room' };
 
 export const docTools: Tool[] = [
@@ -79,14 +90,14 @@ export const docTools: Tool[] = [
     async run(args, context) {
       const id = find(context, text(args, 'doc'));
       const body = text(args, 'text');
+      const before = await context.store.readDoc(id);
       // A rewrite that would lose most of what is there is refused, because a person asked to change one section
       // has been seen to write back only that section. A document they made in this turn is theirs to rewrite.
       if (args.replace !== true && !context.granted.has(id)) {
-        const loss = rewriteLoss(await context.store.readDoc(id), body);
+        const loss = rewriteLoss(before, body);
         if (loss) throw new Error(`not written: this would replace the whole document, and ${loss}. Change one section with replace_section, or add with append_doc; the rest is a colleague's or the founder's work.`);
       }
-      await context.store.replaceDoc(id, body);
-      return { text: `Wrote ${body.length} characters.`, effect: { kind: 'doc-changed', id } };
+      return save(context, id, before, body, `Wrote ${body.length} characters.`);
     },
   },
   {
@@ -104,10 +115,10 @@ export const docTools: Tool[] = [
     async run(args, context) {
       const id = find(context, text(args, 'doc'));
       const heading = text(args, 'heading', 200);
-      const swapped = replaceSection(await context.store.readDoc(id), heading, text(args, 'text'));
+      const before = await context.store.readDoc(id);
+      const swapped = replaceSection(before, heading, text(args, 'text'));
       if ('error' in swapped) throw new Error(swapped.error);
-      await context.store.replaceDoc(id, swapped.text);
-      return { text: `Replaced the section "${heading.replace(/^#+\s*/, '').trim()}".`, effect: { kind: 'doc-changed', id } };
+      return save(context, id, before, swapped.text, `Replaced the section "${heading.replace(/^#+\s*/, '').trim()}".`);
     },
   },
   {
@@ -118,8 +129,7 @@ export const docTools: Tool[] = [
       const id = find(context, text(args, 'doc'));
       const before = await context.store.readDoc(id);
       const added = text(args, 'text');
-      await context.store.replaceDoc(id, `${before.replace(/\s+$/, '')}${before.trim() ? '\n\n' : ''}${added}\n`);
-      return { text: `Added ${added.length} characters.`, effect: { kind: 'doc-changed', id } };
+      return save(context, id, before, `${before.replace(/\s+$/, '')}${before.trim() ? '\n\n' : ''}${added}\n`, `Added ${added.length} characters.`);
     },
   },
   {
