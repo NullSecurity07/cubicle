@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
@@ -71,6 +71,9 @@ describe('a backup', () => {
     expect(names).toEqual(['docs/brand.md', 'rooms/marketing.json', 'skills/ship-it.json', 'stage.json']);
     expect(['browsers/card-1/Cookies', '.index/trace/2026-09-20.jsonl', 'trash/old.json', '.cache/model.bin'].every(leaveOut)).toBe(true);
     expect(leaveOut('docs/brand.md')).toBe(false);
+    // Where this workspace's backups go is about this machine: a restored copy starts from the default.
+    expect(leaveOut('backup-to.json')).toBe(true);
+    expect(leaveOut('docs/backup-to.json')).toBe(false);
   });
 
   it('keeps five and lets the sixth go, newest first', async () => {
@@ -127,7 +130,22 @@ describe('putting one back', () => {
 });
 
 describe('backupDirOf', () => {
-  const OWN = backupDir({});
+  // A checkout of the app: the main one has a .git folder, a worktree or second checkout a .git file.
+  const checkout = async (main: boolean) => {
+    const root = await dir(main ? 'main-checkout' : 'worktree');
+    if (main) await mkdir(join(root, '.git')); else await writeFile(join(root, '.git'), 'gitdir: /elsewhere/.git/worktrees/x\n');
+    return root;
+  };
+  // The founder's own folder, under a home made for the test, holding one real backup already.
+  const ownerHome = async () => {
+    const home = await dir('home');
+    await write(join(home, 'Cubicle backups'), 'cubicle-2026-09-20-0900.tar.gz', 'theirs');
+    // Made days ago, so a daily backup there is due.
+    const old = (Date.now() - 3 * 86_400_000) / 1000;
+    await utimes(join(home, 'Cubicle backups', 'cubicle-2026-09-20-0900.tar.gz'), old, old);
+    return home;
+  };
+
   it('keeps a fake run beside its workspace, unless the machine names a folder', () => {
     expect(backupDirOf({ fake: true, workspace: '/w', root: '/r' }, {})).toBe('/w/backups');
     expect(backupDirOf({ fake: true, workspace: '/w', root: '/r' }, { STAGE_BACKUP_DIR: '/b' })).toBe('/b');
@@ -136,12 +154,18 @@ describe('backupDirOf', () => {
 
   it('sends a real run on any other workspace beside that workspace, never to the founder\'s own folder', async () => {
     const scratch = await dir('scratch-ws');
-    expect(backupDirOf({ fake: false, workspace: scratch, root: '/r' }, {})).toBe(join(scratch, 'backups'));
-    expect(backupDirOf({ fake: false, workspace: scratch, root: '/r' }, {})).not.toBe(OWN);
+    const root = await checkout(true);
+    expect(backupDirOf({ fake: false, workspace: scratch, root }, {}, true, '/home/founder')).toBe(join(scratch, 'backups'));
   });
 
-  it('keeps the founder\'s own folder for the app\'s own workspace', () => {
-    expect(backupDirOf({ fake: false, workspace: '/r/workspace', root: '/r' }, {})).toBe(OWN);
+  it('keeps the founder\'s own folder for the app\'s own workspace in the main checkout only', async () => {
+    const main = await checkout(true);
+    expect(backupDirOf({ fake: false, workspace: join(main, 'workspace'), root: main }, {}, true, '/home/founder')).toBe('/home/founder/Cubicle backups');
+    // A worktree or a second checkout run without STAGE_WORKSPACE is not the founder's app.
+    const tree = await checkout(false);
+    expect(backupDirOf({ fake: false, workspace: join(tree, 'workspace'), root: tree }, {}, true, '/home/founder')).toBe(join(tree, 'workspace', 'backups'));
+    // Nor is a folder that is no checkout at all.
+    expect(backupDirOf({ fake: false, workspace: '/r/workspace', root: '/r' }, {}, true, '/home/founder')).toBe('/r/workspace/backups');
   });
 
   it('takes the folder chosen for this workspace, and only for this one', async () => {
@@ -157,13 +181,24 @@ describe('backupDirOf', () => {
     expect(chosenBackupDir(one)).toBeNull();
   });
 
-  it('writes a scratch run\'s daily backup beside the scratch workspace and nothing into the founder\'s folder', async () => {
-    const scratch = await workspace();
-    const before = (await listBackups(OWN)).length;
-    const auto = autoBackup({ workspace: scratch, dir: () => backupDirOf({ fake: false, workspace: scratch, root: '/r' }, {}) });
-    expect((await auto.tick())?.made).toBeTruthy();
+  it('never writes a scratch or worktree run\'s daily backup into the founder\'s folder, and the main checkout\'s does', async () => {
+    const home = await ownerHome();
+    const owner = join(home, 'Cubicle backups');
+    const daily = async (workspace: string, root: string) => {
+      await write(workspace, 'stage.json', '{"rooms":[]}');
+      return autoBackup({ workspace, dir: () => backupDirOf({ fake: false, workspace, root }, {}, true, home) }).tick();
+    };
+    const scratch = await dir('scratch-ws');
+    expect((await daily(scratch, await checkout(true)))?.made).toBeTruthy();
+    const tree = await checkout(false);
+    expect((await daily(join(tree, 'workspace'), tree))?.made).toBeTruthy();
     expect(await listBackups(join(scratch, 'backups'))).toHaveLength(1);
-    expect(await listBackups(OWN)).toHaveLength(before);
+    expect(await listBackups(join(tree, 'workspace', 'backups'))).toHaveLength(1);
+    expect((await readdir(owner)).sort()).toEqual(['cubicle-2026-09-20-0900.tar.gz']);
+    // The control: the main checkout's own workspace does back up there.
+    const main = await checkout(true);
+    await daily(join(main, 'workspace'), main);
+    expect(await listBackups(owner)).toHaveLength(2);
   });
 });
 

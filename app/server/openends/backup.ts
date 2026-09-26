@@ -1,4 +1,4 @@
-import { createWriteStream, readFileSync } from 'node:fs';
+import { createWriteStream, readFileSync, statSync } from 'node:fs';
 import { access, constants, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
@@ -12,11 +12,11 @@ import { packTar, tarEntries } from './tar.ts';
 // index, caches, and the trash the app keeps for undoing things.
 export const KEEP = 5;
 const MADE = /^cubicle-(\d{4}-\d{2}-\d{2}-\d{4})\.tar\.gz$/;
-const AGAIN = [/^browsers(\/|$)/, /^\.index(\/|$)/, /^\.cache(\/|$)/, /^trash(\/|$)/, /^backups(\/|$)/, /(^|\/)node_modules(\/|$)/, /(^|\/)\.git(\/|$)/, /(^|\/)\.DS_Store$/];
+const AGAIN = [/^browsers(\/|$)/, /^\.index(\/|$)/, /^\.cache(\/|$)/, /^trash(\/|$)/, /^backups(\/|$)/, /(^|\/)node_modules(\/|$)/, /(^|\/)\.git(\/|$)/, /(^|\/)\.DS_Store$/, /^backup-to\.json$/];
 
 export const leaveOut = (path: string) => AGAIN.some((pattern) => pattern.test(path));
 // Where they go on this machine when nothing else is said: the founder's own folder, or STAGE_BACKUP_DIR.
-export const backupDir = (env: NodeJS.ProcessEnv = process.env) => env.STAGE_BACKUP_DIR || join(homedir(), 'Cubicle backups');
+export const backupDir = (env: NodeJS.ProcessEnv = process.env, home = homedir()) => env.STAGE_BACKUP_DIR || join(home, 'Cubicle backups');
 
 // The folder the founder chose for one workspace ("Back up to…" in Health), kept inside that workspace, so a choice
 // made for one workspace never sends another one's backups there.
@@ -40,12 +40,16 @@ export async function chooseBackupDir(workspace: string, dir: string | null): Pr
 // scratch run, a second company) keeps its backups beside it, in its own "backups": it has no business writing into
 // the founder's folder, and a scratch run once did.
 // `withChoice` false asks where they would go without the founder's choice: the default "Use the default" returns to.
-export const backupDirOf = (deps: { fake: boolean; workspace: string; root: string }, env: NodeJS.ProcessEnv = process.env, withChoice = true) => {
+// The founder's app runs from the main checkout, whose .git is a folder. A worktree or a second checkout has a .git
+// file (or none): a run from there is somebody working on the app, and its keep-five rule must never reach the
+// founder's own backups.
+const mainCheckout = (root: string) => { try { return statSync(join(root, '.git')).isDirectory(); } catch { return false; } };
+export const backupDirOf = (deps: { fake: boolean; workspace: string; root: string }, env: NodeJS.ProcessEnv = process.env, withChoice = true, home = homedir()) => {
   if (env.STAGE_BACKUP_DIR) return env.STAGE_BACKUP_DIR;
   const chosen = withChoice ? chosenBackupDir(deps.workspace) : null;
   if (chosen) return chosen;
-  const own = !deps.fake && resolve(deps.workspace) === resolve(deps.root, 'workspace');
-  return own ? backupDir(env) : join(deps.workspace, 'backups');
+  const own = !deps.fake && resolve(deps.workspace) === resolve(deps.root, 'workspace') && mainCheckout(deps.root);
+  return own ? backupDir(env, home) : join(deps.workspace, 'backups');
 };
 
 const stamp = (at: number) => {
