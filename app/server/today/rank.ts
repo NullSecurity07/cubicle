@@ -15,11 +15,14 @@ export type Signal = Pick<Attention, 'id' | 'title' | 'at' | 'who' | 'detail' | 
 // first, money second, a lead waiting third; suggestions, which wait politely, come last. Kinds added later without a
 // line here weigh DEFAULT.
 export const WEIGHTS: Record<string, { weight: number; label: string }> = {
+  // The partner's morning note is the day's first read, above everything else.
+  'morning-note': { weight: 200, label: 'From your partner' },
   approval: { weight: 100, label: 'Someone is stopped until you answer' },
   'run-approval': { weight: 95, label: 'A task is stopped until you answer' },
   'runway-low': { weight: 90, label: 'Cash is running short' },
   'lead-stale': { weight: 75, label: 'A lead is waiting on you' },
   'metric-alert': { weight: 70, label: 'A number to look at' },
+  'bet-check': { weight: 65, label: 'A bet is due for a check' },
   'proposed-decision': { weight: 60, label: 'A decision is yours to make' },
   'review-due': { weight: 55, label: 'A decision is due for a second look' },
   'key-rejected': { weight: 65, label: 'A model key was refused' },
@@ -29,6 +32,8 @@ export const WEIGHTS: Record<string, { weight: number; label: string }> = {
   'proposed-task': { weight: 35, label: 'A suggested task' },
   'proposed-target': { weight: 35, label: 'A suggested target' },
   'proposed-runway': { weight: 35, label: 'A suggested change to the runway' },
+  'proposed-bet': { weight: 35, label: 'A suggested bet' },
+  'proposed-plan': { weight: 35, label: 'A plan to put on the board' },
   'page-changed': { weight: 25, label: 'A watched page changed' },
   'proposed-source': { weight: 20, label: 'A suggested website' },
 };

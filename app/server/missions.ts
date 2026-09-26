@@ -1,3 +1,4 @@
+import { companyTemplate } from '../shared/partner.ts';
 import { seedDocs, seedStage, type ChatMessage, type Decision, type Mission, type Stage, type Task } from '../shared/model.ts';
 
 export type Facts = { stage: Stage; chats: Record<string, ChatMessage[]>; docs: Record<string, string>; decisions: Decision[]; tasks: Task[] };
@@ -5,10 +6,22 @@ export type Facts = { stage: Stage; chats: Record<string, ChatMessage[]>; docs: 
 const APPROVED = new Set(['send_email', 'run_code', 'code_task', 'code_reply', 'browse']);
 const wordsIn = (text: string) => new Set(text.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) ?? []);
 
+// What the founder wrote in a doc: no headings, and not the Decisions and Bets sections, which the app writes itself
+// once the partner keeps the company document. A decision line landing there is not the founder filling in the brief.
+const APP_SECTIONS = /^(decisions|bets)$/i;
+export function founderWords(text: string): string {
+  let skipping = false;
+  return text.split('\n').filter((line) => {
+    const heading = /^\s*#{1,6}\s+(.+?)\s*#*\s*$/.exec(line);
+    if (heading) { skipping = APP_SECTIONS.test(heading[1].trim()); return false; }
+    return !skipping;
+  }).join('\n');
+}
+
 // The first-run list. Every tick is read off the workspace: what the founder did shows, whatever was or was not clicked.
 export function missionsOf({ stage, chats, docs, decisions, tasks }: Facts): Mission[] {
-  const template = wordsIn(Object.values(seedDocs).join(' '));
-  const briefed = stage.docs.some((doc) => doc.pinned && [...wordsIn(docs[doc.id] ?? '')].filter((word) => !template.has(word)).length >= 8);
+  const template = wordsIn([...Object.values(seedDocs), companyTemplate()].join(' '));
+  const briefed = stage.docs.some((doc) => doc.pinned && [...wordsIn(founderWords(docs[doc.id] ?? ''))].filter((word) => !template.has(word)).length >= 8);
   const seedWires = new Set(seedStage.wires.map((wire) => `${wire.from}>${wire.to}`));
   const seedRooms = new Set(seedStage.rooms.map((room) => room.id));
   const acted = Object.values(chats).some((chat) => chat.some((message) => message.tools?.some((tool) => APPROVED.has(tool.name) && tool.ok === true)))
