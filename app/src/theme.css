@@ -126,14 +126,15 @@ body { font-family: 'Inter Variable', system-ui, sans-serif; color: var(--text);
 .setup .primary:disabled { opacity: 0.35; cursor: default; }
 
 .react-flow__panel.dock {
-  display: flex; gap: 4px; padding: 6px; margin-bottom: 18px; border-radius: 16px;
+  display: flex; align-items: center; gap: 4px; padding: 6px; margin-bottom: 18px; border-radius: 16px;
   border: 1px solid var(--card-border); background: var(--card-fill);
   -webkit-backdrop-filter: blur(18px) saturate(1.2); backdrop-filter: blur(18px) saturate(1.2);
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
 }
-.dock button { width: 40px; height: 40px; padding: 10px; border: 0; border-radius: 11px; background: transparent; color: var(--text); cursor: pointer; transition: background 0.15s, transform 0.1s; }
+.dock button { position: relative; width: 40px; height: 40px; padding: 10px; border: 0; border-radius: 11px; background: transparent; color: var(--text); cursor: pointer; transition: background 0.15s, transform 0.1s; }
 .dock button:hover { background: rgba(255, 255, 255, 0.1); }
 .dock button:active { transform: scale(0.92); }
+.dock button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 
 /* Handles: dots, seen on hover, on selection, and while a wire is being drawn. */
 .react-flow__handle.dot {
@@ -199,8 +200,8 @@ div.msg--assistant { white-space: normal; display: flex; flex-direction: column;
 @keyframes fresh { from { background: rgba(78, 140, 255, 0.16); } to { background: transparent; } }
 
 /* Dock: one ring per provider, today's free quota. */
-.quota { display: flex; align-items: center; margin-left: 2px; padding-left: 6px; border-left: 1px solid var(--card-border); }
-.dock .quota__rings { width: auto; display: flex; align-items: center; gap: 3px; padding: 10px 8px; }
+.quota { display: flex; align-items: center; }
+.dock .quota__rings { width: auto; height: auto; min-height: 40px; display: flex; align-items: center; gap: 3px; padding: 10px 8px; }
 .dock .ring { width: 18px; height: 18px; stroke-width: 2.6; stroke: var(--ok); transition: stroke 0.3s; }
 .ring circle { transition: stroke-dasharray 0.5s ease; }
 .ring .ring__track { stroke: rgba(255, 255, 255, 0.14); }
@@ -369,10 +370,17 @@ div.msg--user { position: relative; white-space: pre-wrap; }
 .dock__menu small { font-size: 11px; color: var(--muted); }
 /* A column of the menu: a quiet label in the same small capitals as a message's sender, then its rows. */
 .dock__group { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+/* Each hint on one line, and the menu as wide as its longest: a row that wraps doubles in height, and nineteen of
+   them would no longer fit a window beside the dock. */
+.dock .dock__menu[role="menu"] { width: max-content; max-width: calc(100vw - 110px); }
+.dock__menu[role="menu"] .dock__group { flex: none; }
+.dock__menu[role="menu"] small { white-space: nowrap; }
+.dock .dock__menu[role="menu"] button { padding: 5px 10px; }
+.dock__menu[role="menu"] b, .dock__menu[role="menu"] small { line-height: 1.3; }
 .dock__group--apps { border-left: 1px solid var(--card-border); padding-left: 6px; }
 .dock__menu h6 { margin: 2px 4px 4px; padding: 6px 6px 2px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--muted); }
 .dock__app h6 { margin-top: 0; padding-top: 4px; }
-.dock__app { width: 260px; flex-direction: column; gap: 8px; padding: 10px; }
+.dock .dock__app { width: 260px; flex-direction: column; align-items: stretch; gap: 8px; padding: 10px; }
 .dock__app label { display: flex; flex-direction: column; gap: 4px; padding: 0 2px; font-size: 11px; color: var(--muted); }
 .dock__app input { border: 1px solid var(--card-border); border-radius: 8px; padding: 6px 8px; outline: 0; background: rgba(0, 0, 0, 0.25); color: var(--text); font: inherit; font-size: 12.5px; }
 .dock__app input:focus { border-color: var(--focus); }
@@ -738,7 +746,58 @@ button.msg--learned:hover { color: var(--text); background: rgba(255, 255, 255, 
 .taskview__learn button:disabled { opacity: 0.45; cursor: default; }
 .taskview__learn span { font-size: 12px; line-height: 1.45; color: var(--muted); }
 
-.dock__gap { width: 1px; height: 22px; margin: 0 4px; background: var(--card-border); }
+/* The dock's three groups, make, see and now, split by a hairline: upright in a row, lying down in a column. */
+.dock__set { display: flex; align-items: center; gap: 4px; }
+.dock__gap { flex: none; width: 1px; height: 22px; margin: 0 4px; background: var(--card-border); }
+
+/* A dock on the side of the window: a column in the middle of that edge, clear of the cards' resize grips. xyflow
+   shifts its centred panels by its own 15px margin; this dock keeps its own margin and centres exactly. */
+.react-flow__panel.dock--vertical { margin: 18px; transform: translateY(-50%); }
+.dock--vertical, .dock--vertical .dock__set { flex-direction: column; }
+.dock--vertical .dock__gap { width: 22px; height: 1px; margin: 4px 0; }
+.dock--vertical .quota { position: relative; }
+.dock--vertical .quota__rings { flex-direction: column; width: 40px; padding: 9px 0; }
+.dock--vertical .ring { width: 17px; height: 17px; }
+/* The first-run list keeps its bottom-left corner; beside a left-hand dock it steps right, clear of the column. */
+.react-flow:has(.dock--left) .react-flow__panel.missions { margin-left: 86px; }
+
+/* Menus open away from the edge the dock sits on: beside a column, level with the button that opened them, and
+   upward from a row. useInView (Dock.tsx) nudges a side menu up or down by --shift so it stays whole in the window. */
+.dock--vertical .dock__menu, .dock--vertical .quota__detail { top: -6px; bottom: auto; transform: translateY(var(--shift, 0px)); max-height: calc(100vh - 24px); }
+.dock--right .dock__menu, .dock--right .quota__detail { left: auto; right: calc(100% + 20px); transform-origin: right top; }
+.dock--left .dock__menu, .dock--left .quota__detail { left: calc(100% + 20px); right: auto; transform-origin: left top; }
+.dock--bottom .dock__menu, .dock--bottom .quota__detail { transform-origin: center bottom; }
+.dock .dock__menu, .dock .quota__detail { animation: dock-menu-in 0.16s cubic-bezier(0.2, 0.8, 0.2, 1); }
+@keyframes dock-menu-in { from { opacity: 0; scale: 0.97; } }
+
+/* The name beside a button, after a short hover or at once on keyboard focus: a small pill, on the side away from the
+   edge, never under the pointer. It leaves at once, so passing along the dock does not leave a trail of names. */
+.dock__label {
+  position: absolute; z-index: 2; pointer-events: none; display: flex; align-items: center; gap: 7px; white-space: nowrap;
+  padding: 4px 9px; border-radius: 8px; border: 1px solid var(--card-border); background: rgba(16, 17, 20, 0.94);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4); color: var(--text); font-size: 12px; font-weight: 550; line-height: 16px;
+  opacity: 0; transition: opacity 0.12s, translate 0.12s;
+}
+.dock__label kbd { font: inherit; font-size: 11px; font-weight: 500; color: var(--muted); }
+.dock--right .dock__label { right: calc(100% + 16px); top: 50%; transform: translateY(-50%); translate: 4px 0; }
+.dock--left .dock__label { left: calc(100% + 16px); top: 50%; transform: translateY(-50%); translate: -4px 0; }
+.dock--bottom .dock__label { bottom: calc(100% + 16px); left: 50%; transform: translateX(-50%); translate: 0 4px; }
+.dock button:hover > .dock__label { opacity: 1; translate: 0 0; transition-delay: 0.25s; }
+.dock button:focus-visible > .dock__label { opacity: 1; translate: 0 0; }
+.dock button[aria-expanded="true"] > .dock__label { display: none; }
+
+/* A small lift under the pointer, toward the cards; a press still sinks the whole button. */
+.dock button > svg { transition: transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.dock--right button:hover > svg { transform: translateX(-2px) scale(1.06); }
+.dock--left button:hover > svg { transform: translateX(2px) scale(1.06); }
+.dock--bottom button:hover > svg { transform: translateY(-2px) scale(1.06); }
+
+/* The button of the view that is open is lit, with a dot on the edge that faces the cards. */
+.dock button.is-open { background: rgba(255, 255, 255, 0.08); }
+.dock button.is-open::before { content: ''; position: absolute; width: 4px; height: 4px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+.dock--right button.is-open::before { left: -5px; top: calc(50% - 2px); }
+.dock--left button.is-open::before { right: -5px; top: calc(50% - 2px); }
+.dock--bottom button.is-open::before { bottom: -5px; left: calc(50% - 2px); }
 .dock .dock__needs { position: relative; }
 .dock .dock__needs.is-waiting { color: var(--needs); }
 .dock__needs b { position: absolute; top: 3px; right: 2px; min-width: 15px; height: 15px; box-sizing: border-box; padding: 0 4px; border-radius: 8px; background: var(--needs); color: #17120a; font-size: 10px; font-weight: 700; line-height: 15px; text-align: center; font-variant-numeric: tabular-nums; }

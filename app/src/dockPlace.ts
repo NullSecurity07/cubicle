@@ -35,7 +35,7 @@ export function setDockPlace(place: DockPlace) {
 }
 
 // Another tab of the stage moving its dock moves this one too.
-const onStorage = (event: StorageEvent) => { if (event.key === KEY) { chosen = null; tell(); } };
+const onStorage = (change: StorageEvent) => { if (change.key === KEY) { chosen = null; tell(); } };
 
 function subscribe(watcher: () => void) {
   watchers.add(watcher);
