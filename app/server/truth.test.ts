@@ -18,6 +18,9 @@ describe('unreceiptedClaims', () => {
     expect(unreceiptedClaims('I have emailed the three investors.', [])).toEqual(['emailed']);
     expect(unreceiptedClaims('The post was published on LinkedIn and I scheduled the follow-up.', [])).toEqual(['published', 'scheduled']);
     expect(unreceiptedClaims("We've posted it this morning.", [])).toEqual(['posted']);
+    expect(unreceiptedClaims('We posted it this morning.', [])).toEqual(['posted']);
+    expect(unreceiptedClaims('We sent the deck to Maya.', [])).toEqual(['sent']);
+    expect(unreceiptedClaims('We scheduled the call for Friday.', [])).toEqual(['scheduled']);
     expect(unreceiptedClaims('I just updated the pricing doc.', [])).toEqual(['updated']);
   });
 

@@ -19,6 +19,9 @@ const VERBS = 'saved|wrote|written|updated|created|stored|recorded|sent|emailed|
 // updated" or "was created" says how things are or were ("updated weekly", "created in 2010"), so the passive counts
 // only when it says just now, or when its subject is a thing a person here makes: a file, a doc, an email, a post.
 const FIRST = new RegExp(`\\b(?:I(?:'ve| have| had)?(?:\\s+(?:just|now|already|also|then))?|we(?:'ve| have)(?:\\s+(?:just|now|already|also))?|we\\s+(?:just|now))\\s+(${VERBS})\\b`, 'gi');
+// A bare "we" counts when what follows is a thing done to something in hand ("we sent the deck", "we posted it"),
+// not a count of the company's history ("we sent 50 cold emails").
+const WE_DID = new RegExp(`\\bwe\\s+(${VERBS})(?=\\s+(?:it|this|that|them|the|your)\\b)`, 'gi');
 const PASSIVE = new RegExp(`\\b(?:has been|have been|is now|are now|was just|were just)(?:\\s+(?:just|now|already|also))?\\s+(${VERBS})\\b`, 'gi');
 const MADE = new RegExp(`\\b(?:file|doc|document|email|e-mail|mail|post|update|draft|note|message|deck|invite)s?\\s+(?:was|were|is|are)(?:\\s+(?:just|now|already|also))?\\s+(${VERBS})\\b`, 'gi');
 const OPENING = new RegExp(`(?:^|[.!?]\\s+|\\n\\s*)(${VERBS})\\s+(?:it|the|this|to|your|a|an|them|\`|")`, 'gi');
@@ -42,7 +45,7 @@ function sentenceAround(text: string, at: number): { before: string; rest: strin
 // The action verbs this reply claims as done that no working receipt of the same kind stands behind, in the order said.
 export function unreceiptedClaims(reply: string, receipts: Receipt[]): string[] {
   const found: { at: number; verb: string }[] = [];
-  for (const pattern of [FIRST, PASSIVE, MADE, OPENING]) {
+  for (const pattern of [FIRST, WE_DID, PASSIVE, MADE, OPENING]) {
     for (const match of reply.matchAll(pattern)) {
       const verb = match[1];
       const at = match.index + match[0].length - verb.length;
