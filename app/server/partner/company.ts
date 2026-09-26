@@ -74,13 +74,13 @@ export const decisionLine = (decision: Decision) => `- ${localDay(decision.decid
 // written so far, so a decision is never written twice however often this runs.
 export async function syncDecisions(store: CompanyStore, docId: string, all: Decision[], known: string[], changed: Changed = () => {}): Promise<string[]> {
   const held = new Set(known);
-  const fresh = all.filter((one) => one.status === 'decided' && !held.has(one.id)).sort((a, b) => (a.decidedAt ?? a.at) - (b.decidedAt ?? b.at));
-  if (!fresh.length) return known;
+  const decided = all.filter((one) => one.status === 'decided').sort((a, b) => (a.decidedAt ?? a.at) - (b.decidedAt ?? b.at));
   const text = await store.readDoc(docId);
-  // A line already there (the app stopped between writing it and noting it) is not written twice.
-  const lines = fresh.map(decisionLine).filter((line) => !text.includes(line));
+  // Every decided decision's line that is not in the text: new ones, one the app stopped before noting, and one a
+  // window saved its old text over. Nothing is written twice.
+  const lines = decided.map(decisionLine).filter((line) => !text.includes(line));
   if (lines.length) { await store.writeDoc(docId, addToSection(text, 'Decisions', lines)); changed(docId); }
-  return [...known, ...fresh.map((one) => one.id)];
+  return [...known, ...decided.filter((one) => !held.has(one.id)).map((one) => one.id)];
 }
 
 // The ledger as the Company document shows it: open bets first, then the ones that were checked, newest first.

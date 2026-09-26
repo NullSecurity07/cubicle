@@ -1,8 +1,9 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Room, Stage } from '../../shared/model.ts';
+import { COMPANY_LINE } from '../../shared/partner.ts';
 import type { Deps, Installed } from '../install.ts';
 import { companyDocOf } from '../partner/company.ts';
 import { stubDeps } from '../slice-stubs.ts';
@@ -77,6 +78,34 @@ describe('the partner slice: the Company document', () => {
     await again.route!({ method: 'POST' } as never, {} as never, '/api/partner/company');
     expect(companyDocOf(await deps.store.loadStage())).toMatchObject({ title: 'Company', pinned: true });
     await again.close!();
+  });
+
+  it('keeps the company line in the prompt for a renamed document, found by its recorded id', async () => {
+    const { deps, part } = await installed();
+    await deps.store.patchStage((stage) => { stage.docs.find((doc) => doc.id === 'company-brief')!.title = 'Flipside'; });
+    const turn = (content: string) => deps.seams.run('turn:before', { roomId: 'marketing', source: 'chat', query: 'hi', messages: [{ role: 'system', content }] });
+    expect((await turn('You are Maya.')).messages[0].content).toBe(`You are Maya.\n\n${COMPANY_LINE}`);
+    expect((await turn(`You are Maya.\n\n${COMPANY_LINE}`)).messages[0].content).toBe(`You are Maya.\n\n${COMPANY_LINE}`);
+    await deps.store.patchStage((stage) => { stage.docs = stage.docs.filter((doc) => doc.id !== 'company-brief'); });
+    expect((await turn('You are Maya.')).messages[0].content).toBe('You are Maya.');
+    await part.close!();
+  });
+
+  it('puts back a decision line a window saved its old text over, and forgets the recorded doc once partner.json is gone', async () => {
+    const { deps, part, workspace } = await installed();
+    await deps.decisions.record({ title: 'Price', chosen: 'Nine dollars' });
+    await part.tick!();
+    const written = await deps.store.readDoc('company-brief');
+    expect(written).toContain('Price: Nine dollars');
+    await deps.store.writeDoc('company-brief', written.replace(/^- .*Price: Nine dollars$/m, ''));
+    await part.tick!();
+    expect((await deps.store.readDoc('company-brief')).match(/Price: Nine dollars/g)).toHaveLength(1);
+    // A clean-up takes partner.json away: the next look finds nothing recorded, as on a first run.
+    await rm(join(workspace, 'partner.json'));
+    await deps.store.patchStage((stage) => { stage.docs.find((doc) => doc.id === 'company-brief')!.pinned = false; });
+    await part.tick!();
+    expect(await readFile(join(workspace, 'partner.json'), 'utf8').then((text) => JSON.parse(text).companyId).catch(() => undefined)).toBeUndefined();
+    await part.close!();
   });
 
   it('tells the window each time the app writes into the document', async () => {

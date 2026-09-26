@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { MorningNote, PlanProposal } from '../../shared/partner.ts';
 import { writeAtomic } from '../fsx.ts';
@@ -26,6 +26,8 @@ export function partnerState(workspace: string) {
   let held: PartnerState | null = null;
   let queue: Promise<unknown> = Promise.resolve();
   async function read(): Promise<PartnerState> {
+    // The file taken away (a check cleaning up, the founder starting over) takes what was held with it.
+    if (held && await access(path).then(() => false, () => true)) held = null;
     if (held) return held;
     try {
       const saved = JSON.parse(await readFile(path, 'utf8')) as Partial<PartnerState>;

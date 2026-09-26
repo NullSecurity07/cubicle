@@ -1,6 +1,6 @@
 import { isDay } from '../../shared/metrics.ts';
 import { newMessageId, type Attention, type Stage } from '../../shared/model.ts';
-import { isPlanDoc, parsePlan, PARTNER_CHANNEL, planTaskTitle, type Bet, type BetVerdict, type MorningNote, type PlanStep } from '../../shared/partner.ts';
+import { COMPANY_LINE, isPlanDoc, parsePlan, PARTNER_CHANNEL, planTaskTitle, type Bet, type BetVerdict, type MorningNote, type PlanStep } from '../../shared/partner.ts';
 import { localDay } from '../clock.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
 import { leadsFor } from '../leads/store.ts';
@@ -13,7 +13,7 @@ import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import type { ModelMessage } from '../prompt.ts';
 import { complete, promptSize } from '../providers.ts';
 import { route as routeModels } from '../router.ts';
-import type { Handler } from '../seams.ts';
+import { withSystem, type Handler } from '../seams.ts';
 import { newId, patchStageVia } from '../slice-kit.ts';
 import { speaker, text, type Tool } from '../tools/registry.ts';
 
@@ -260,6 +260,16 @@ export function createPartner(options: PartnerOptions = {}) {
       return next(payload);
     };
     const offSeam = deps.seams.on('tool:after', afterTool);
+    // The prompt finds the company document by its title. One the founder renamed is still the company's (it is
+    // found here by the id recorded for it), so the line saying it is the shared record is added here instead.
+    const beforeTurn: Handler<'turn:before'> = async (payload, next) => {
+      const system = payload.messages[0];
+      if (system?.role !== 'system' || system.content.includes(COMPANY_LINE)) return next(payload);
+      const { companyId } = await state.read();
+      const doc = companyId ? companyDocOf(await deps.store.loadStage(), companyId) : undefined;
+      return next(doc?.pinned ? withSystem(payload, COMPANY_LINE) : payload);
+    };
+    const offTurn = deps.seams.on('turn:before', beforeTurn);
 
     // Which bets were due at the last look, so a bet whose day has just come is said once, not every half minute.
     let due: Set<string> | null = null;
@@ -350,6 +360,7 @@ export function createPartner(options: PartnerOptions = {}) {
       async close() {
         offDecisions();
         offSeam();
+        offTurn();
         await syncing?.catch(() => {});
         await writing?.catch(() => {});
         await state.settled();
