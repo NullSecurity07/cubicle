@@ -31,6 +31,16 @@ describe('unreceiptedClaims', () => {
     expect(unreceiptedClaims('I scheduled a check every six hours.', [{ name: 'watch_page', ok: true }])).toEqual([]);
   });
 
+  it('takes a closed or proposed bet as the record and the schedule it is', () => {
+    expect(unreceiptedClaims("I've recorded the bet as worked.", [{ name: 'close_bet', ok: true }])).toEqual([]);
+    expect(unreceiptedClaims("I've scheduled a check on it for Friday.", [{ name: 'propose_bet', ok: true }])).toEqual([]);
+  });
+
+  it('does not count a write the doc guard held back', () => {
+    const held = { name: 'replace_section', ok: true, result: 'Not written: the verdict waits for "4. Founder-market fit", which is empty. ' };
+    expect(unreceiptedClaims('I wrote the verdict: STRONG.', [held])).toEqual(['wrote']);
+  });
+
   it('does not count a tool that failed, or one of another kind', () => {
     expect(unreceiptedClaims("I've saved the plan.", [failedWrite])).toEqual(['saved']);
     expect(unreceiptedClaims('I sent the deck to Maya.', [wrote])).toEqual(['sent']);

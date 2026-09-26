@@ -3,15 +3,15 @@
 // then, so the reply is read afterwards and the founder is told, in a line under it, what nothing backs. The model's
 // words are never taken away.
 
-export type Receipt = { name: string; ok?: boolean; effect?: unknown };
+export type Receipt = { name: string; ok?: boolean; effect?: unknown; result?: string };
 
 // Each kind of claimed action, and the tools whose working receipt confirms it.
-const WRITES = /write|create|append|replace|remember|retain|note_|add_|log_|edit_|make_|move_|score_|propose_|generate_|save|delegate|code_task|run_code/;
+const WRITES = /write|create|append|replace|remember|retain|note_|add_|log_|close_|edit_|make_|move_|score_|propose_|generate_|save|delegate|code_task|run_code/;
 const KINDS: { verbs: RegExp; tools: RegExp }[] = [
   { verbs: /^(saved|wrote|written|updated|created|stored|recorded)$/i, tools: WRITES },
   { verbs: /^(sent|emailed|mailed|messaged)$/i, tools: /send|mail|reach|telegram|ask_person|note_founder/ },
   { verbs: /^(posted|published)$/i, tools: /post|publish|send|reach|browse|edit_site|make_site/ },
-  { verbs: /^(scheduled|booked)$/i, tools: /watch|automation|schedule|repeat|propose_task|remind|nudge|delegate/ },
+  { verbs: /^(scheduled|booked)$/i, tools: /watch|automation|schedule|repeat|propose_|remind|nudge|delegate/ },
 ];
 const VERBS = 'saved|wrote|written|updated|created|stored|recorded|sent|emailed|mailed|messaged|posted|published|scheduled|booked';
 // "I saved", "I've just sent", "we have posted"; "it has been saved", "the draft was saved"; a sentence that opens with
@@ -58,7 +58,8 @@ export function unreceiptedClaims(reply: string, receipts: Receipt[]): string[] 
       found.push({ at, verb: verb.toLowerCase() });
     }
   }
-  const worked = receipts.filter((receipt) => receipt.ok);
+  // A write the doc guard held back comes back ok with "Not written: ...": nothing was written, so it backs no claim.
+  const worked = receipts.filter((receipt) => receipt.ok && !/^Not written\b/.test(receipt.result ?? ''));
   const claims = found.sort((a, b) => a.at - b.at).map((one) => one.verb)
     .filter((verb) => !worked.some((receipt) => KINDS.find((kind) => kind.verbs.test(verb))!.tools.test(receipt.name)));
   return [...new Set(claims)];
