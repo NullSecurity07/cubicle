@@ -121,7 +121,8 @@ export function suggest(input: string, known: Known, extra: Command[] = sliceCom
     else if (LIBRARY_NOTE.test(what)) found.push({ section: 'Do', label: 'Add a note from your library', hint: 'Pick one in Notes', action: { do: 'panel', name: 'library' } });
     else if (doc) found.push({ section: 'Do', label: doc[1] ? `Add a doc called "${sentence(typed.slice(typed.length - doc[1].length))}"` : 'Add a doc', action: { do: 'add', kind: 'doc', ...(doc[1] ? { data: { title: sentence(typed.slice(typed.length - doc[1].length)) } } : {}) } });
     else if (/^(person|someone|teammate|colleague)$/.test(what)) found.push({ section: 'Do', label: 'Add a person', action: { do: 'add', kind: 'room' } });
-    else found.push({ section: 'Do', label: `Add a person: ${sentence(what)}`, hint: 'You name them and write their brief', action: { do: 'add', kind: 'room', data: { role: sentence(what) } } });
+    // Words a slice answers to ("add partner") are that slice's to carry out, not a person to hire by that role.
+    else if (!extra.some((one) => one.when?.(low))) found.push({ section: 'Do', label: `Add a person: ${sentence(what)}`, hint: 'You name them and write their brief', action: { do: 'add', kind: 'room', data: { role: sentence(what) } } });
   }
 
   const opening = /^(?:focus|open|show|go to)\s+(?:on\s+)?(.+)$/.exec(low);

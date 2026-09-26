@@ -274,6 +274,8 @@ export function createPartner(options: PartnerOptions = {}) {
             deps.json(res, 200, { partner: partner ? { roomId: partner.id, name: partner.name } : null, companyId: companyDocOf(stage)?.id ?? null, morning: held.morning ?? null, bets: await bets() });
             return true;
           }
+          // The window put a partner and a Company doc down: the doc is given its sections, and its id handed back.
+          if (path === '/api/partner/company' && method === 'POST') { deps.json(res, 200, await ensureCompany(deps.store)); return true; }
           // "Morning note" from the command bar: today's, written now if there is none yet.
           if (path === '/api/partner/morning' && method === 'POST') {
             if (!partnerOf(await deps.store.loadStage())) { deps.json(res, 409, { error: 'Add your partner first: type "add partner".' }); return true; }

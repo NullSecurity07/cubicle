@@ -51,6 +51,17 @@ describe('the partner slice: the Company document', () => {
     expect((await deps.store.loadStage()).wires.filter((wire) => wire.from === 'p1')).toHaveLength(1);
     await part.close!();
   });
+
+  it('gives the Company doc the window put down its sections, when the window asks', async () => {
+    const answers: [number, unknown][] = [];
+    const { deps, part } = await installed({ fake: true, json: (_res, status, body) => { answers.push([status, body]); } });
+    const stage = await deps.store.loadStage();
+    await deps.store.saveStage({ ...stage, docs: [...stage.docs, { id: 'doc-x1', title: 'Company', pinned: true, x: 0, y: 0, w: 1, h: 1 }] });
+    await part.route!({ method: 'POST' } as never, {} as never, '/api/partner/company');
+    expect(answers.at(-1)).toEqual([200, { id: 'doc-x1', created: false }]);
+    expect(await deps.store.readDoc('doc-x1')).toContain('## Idea');
+    await part.close!();
+  });
 });
 
 const NINE = new Date('2026-09-27T09:00').getTime();
