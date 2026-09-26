@@ -1,13 +1,14 @@
 import { isDay } from '../../shared/metrics.ts';
 import { newMessageId, type Attention, type Stage } from '../../shared/model.ts';
-import { isCompanyTitle, isPlanDoc, parsePlan, type Bet, type BetVerdict, type MorningNote, type PlanStep } from '../../shared/partner.ts';
+import { isPlanDoc, parsePlan, PARTNER_CHANNEL, planTaskTitle, type Bet, type BetVerdict, type MorningNote, type PlanStep } from '../../shared/partner.ts';
 import { localDay } from '../clock.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
 import { leadsFor } from '../leads/store.ts';
 import { betDue, betsAttention, betsBook, closedLine, metricChoices, readMetric, type BetsBook } from '../partner/bets.ts';
 import { companyDocOf, ensureCompany, syncDecisions, writeBets } from '../partner/company.ts';
+import { hub } from '../events.ts';
 import { FAKE_MORNING, morningDue, morningMessage, writeMorning } from '../partner/morning.ts';
-import { addPlan, planAttention, stepsFrom, stepsKey } from '../partner/plans.ts';
+import { addPlan, planAttention, stepsFrom } from '../partner/plans.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import type { ModelMessage } from '../prompt.ts';
 import { complete, promptSize } from '../providers.ts';
@@ -88,15 +89,19 @@ export function betTools(book: BetsBook, workspace: string, changed: () => Promi
   ];
 }
 
-// A plan's steps put to the founder as one question. A proposal from the same doc that is still waiting is replaced,
-// and steps already offered from that doc are not offered again.
+// A plan's steps put to the founder as one question. Only steps never offered from that doc go in: after a yes, an
+// edit that adds one step offers that one step, so a second yes never puts the old ones on the board twice. A
+// proposal from the same doc that is still waiting takes the new steps in beside its own.
 export async function offerPlan(state: PartnerStateBook, input: { who: string; roomId: string; title: string; steps: PlanStep[]; docId?: string }, now: number): Promise<boolean> {
-  if (input.steps.length < 2) return false;
-  const key = stepsKey(input.steps);
   return state.change((held) => {
-    if (input.docId && held.offered?.[input.docId] === key) return false;
-    held.plans = [...held.plans.filter((one) => !input.docId || one.docId !== input.docId), { id: newId('plan-'), at: now, ...input }];
-    if (input.docId) held.offered = { ...held.offered, [input.docId]: key };
+    const docId = input.docId;
+    const before = docId && Array.isArray(held.offered?.[docId]) ? new Set(held.offered![docId]) : new Set<string>();
+    const fresh = input.steps.filter((step) => !before.has(planTaskTitle(step)));
+    // A new plan is worth a question from two steps; a plan already answered, from one new step.
+    if (!fresh.length || (!before.size && fresh.length < 2)) return false;
+    const waiting = docId ? held.plans.find((one) => one.docId === docId) : undefined;
+    held.plans = [...held.plans.filter((one) => one !== waiting), { id: newId('plan-'), at: now, ...input, steps: [...(waiting?.steps ?? []), ...fresh] }];
+    if (docId) held.offered = { ...held.offered, [docId]: [...before, ...fresh.map(planTaskTitle)] };
     return true;
   });
 }
@@ -131,7 +136,22 @@ export function createPartner(options: PartnerOptions = {}) {
     // The document is made at start on a real run. A fake run leaves the stage as the browser tests expect it unless
     // it is asked to (STAGE_PARTNER=1), or until a partner is added.
     const makeAtStart = !deps.fake || process.env.STAGE_PARTNER === '1';
-    if (makeAtStart) await ensureCompany(deps.store).catch((error: Error) => console.error(`partner: ${error.message}`));
+    // Every write the app makes into the document is said to the window, so an open card reads it again.
+    const changed = (docId: string) => hub.say(PARTNER_CHANNEL, { docChanged: docId });
+    // The document, the first time only: made or adopted once and recorded, never made again on a later start.
+    const adopt = async (id?: string) => {
+      const made = await ensureCompany(deps.store, id, changed);
+      await state.change((held) => { held.companyId = made.id; });
+      return made;
+    };
+    if (makeAtStart && !(await state.read()).companyId) await adopt().catch((error: Error) => console.error(`partner: ${error.message}`));
+    // The document as it is now: the recorded one if it is still on the stage (renamed or not), nothing once the
+    // founder took it away, and a pinned company doc by its title only while nothing has been recorded.
+    const companyNow = async (stage?: Stage) => {
+      const on = stage ?? await deps.store.loadStage();
+      const { companyId } = await state.read();
+      return companyId ? companyDocOf(on, companyId) : companyDocOf(on);
+    };
     // The morning turn spends a model call every day, so a fake run (the browser tests) only takes one when asked:
     // STAGE_PARTNER_MORNING=1, or the founder's own "morning note".
     const morningOnTick = !deps.fake || process.env.STAGE_PARTNER_MORNING === '1';
@@ -139,8 +159,8 @@ export function createPartner(options: PartnerOptions = {}) {
     const bets = (): Promise<Bet[]> => book.list();
     // A bet changed: the Company document's Bets section is written again from the ledger, and Needs you is told.
     const betsChanged = async () => {
-      const doc = companyDocOf(await deps.store.loadStage());
-      if (doc) await writeBets(deps.store, doc.id, await book.list());
+      const doc = await companyNow();
+      if (doc) await writeBets(deps.store, doc.id, await book.list(), changed);
       await deps.attention.refresh().catch(() => {});
     };
 
@@ -148,24 +168,28 @@ export function createPartner(options: PartnerOptions = {}) {
     let syncing: Promise<void> | null = null;
     const sync = () => (syncing ??= (async () => {
       try {
-        const doc = companyDocOf(await deps.store.loadStage());
+        const doc = await companyNow();
         if (!doc) return;
         const list = await deps.decisions.list();
-        await state.change(async (held) => { held.decided = await syncDecisions(deps.store, doc.id, list, held.decided); });
+        await state.change(async (held) => { held.decided = await syncDecisions(deps.store, doc.id, list, held.decided, changed); });
       } finally { syncing = null; }
     })());
     const offDecisions = deps.decisions.onChange(() => { void sync().catch(() => {}); });
 
-    // A partner on the stage owns the Company document: it is made if missing and wired to them, so they can write it.
+    // A partner on the stage owns the Company document: with none recorded yet it is made or adopted, and each
+    // partner is wired to it once. A wire the founder takes away later stays away; so does a document they removed.
     async function keepCompany() {
       const stage = await deps.store.loadStage();
       const partner = partnerOf(stage);
       if (!partner) return;
-      const { id } = await ensureCompany(deps.store);
+      const held = await state.read();
+      const id = held.companyId ? companyDocOf(stage, held.companyId)?.id : (await adopt()).id;
+      if (!id || held.wired?.includes(partner.id)) return;
       await patchStageVia(deps.store, (draft) => {
         if (draft.wires.some((wire) => (wire.from === partner.id && wire.to === id) || (wire.to === partner.id && wire.from === id))) return;
         draft.wires.push({ id: `${partner.id}-${id}`, from: partner.id, fromHandle: 'r', to: id, toHandle: 'l' });
       });
+      await state.change((draft) => { draft.wired = [...(draft.wired ?? []), partner.id]; });
     }
 
     // ------------------------------------------------------------ the morning turn
@@ -230,7 +254,7 @@ export function createPartner(options: PartnerOptions = {}) {
           const title = stage.docs.find((doc) => doc.id === effect.id)?.title ?? (effect.kind === 'doc-created' ? effect.title : '');
           const body = await deps.store.readDoc(effect.id);
           const who = stage.rooms.find((one) => one.id === roomId);
-          if (who && !isCompanyTitle(title) && isPlanDoc(title, body) && await offerPlan(state, { who: who.name, roomId, title, steps: parsePlan(body), docId: effect.id }, now())) await deps.attention.refresh();
+          if (who && effect.id !== (await companyNow(stage))?.id && isPlanDoc(title, body) && await offerPlan(state, { who: who.name, roomId, title, steps: parsePlan(body), docId: effect.id }, now())) await deps.attention.refresh();
         } catch (error) { console.error(`partner plan: ${(error as Error).message}`); }
       }
       return next(payload);
@@ -271,11 +295,16 @@ export function createPartner(options: PartnerOptions = {}) {
             const stage = await deps.store.loadStage();
             const partner = partnerOf(stage);
             const held = await state.read();
-            deps.json(res, 200, { partner: partner ? { roomId: partner.id, name: partner.name } : null, companyId: companyDocOf(stage)?.id ?? null, morning: held.morning ?? null, bets: await bets() });
+            deps.json(res, 200, { partner: partner ? { roomId: partner.id, name: partner.name } : null, companyId: (await companyNow(stage))?.id ?? null, morning: held.morning ?? null, bets: await bets() });
             return true;
           }
           // The window put a partner and a Company doc down: the doc is given its sections, and its id handed back.
-          if (path === '/api/partner/company' && method === 'POST') { deps.json(res, 200, await ensureCompany(deps.store)); return true; }
+          // Asked for outright ("add partner"), it is made again even after the founder removed it.
+          if (path === '/api/partner/company' && method === 'POST') {
+            const sent = await deps.body(req);
+            deps.json(res, 200, await adopt(typeof sent?.id === 'string' ? sent.id : undefined));
+            return true;
+          }
           // "Morning note" from the command bar: today's, written now if there is none yet.
           if (path === '/api/partner/morning' && method === 'POST') {
             if (!partnerOf(await deps.store.loadStage())) { deps.json(res, 409, { error: 'Add your partner first: type "add partner".' }); return true; }

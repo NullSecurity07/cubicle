@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { COMPANY_SECTIONS, companyTemplate, isCompanyTitle, morningText, parsePlan, planTaskTitle, readMorning } from './partner.ts';
+import { COMPANY_SECTIONS, companyTemplate, findCompanyDoc, isCompanyTitle, isPlanDoc, morningText, parsePlan, planTaskTitle, readMorning } from './partner.ts';
 
 // The shape the journey's 2-week plan came back in (Sam, 2026-09-26): a heading per week, a heading per day with
 // bullets under it, then KPIs and kill criteria that are not steps at all.
@@ -38,10 +38,18 @@ describe('the Company document', () => {
     expect(found).toEqual(['Idea', 'Customer', 'Numbers', 'Decisions', 'Bets', 'Open questions']);
   });
 
+  it('is the recorded one while it is there, else the first pinned one called so', () => {
+    const docs = [{ id: 'brand', title: 'Company', pinned: false }, { id: 'company-brief', title: 'Company brief', pinned: true }, { id: 'renamed', title: 'Our startup', pinned: true }];
+    expect(findCompanyDoc(docs)?.id).toBe('company-brief');
+    expect(findCompanyDoc(docs, 'renamed')?.id).toBe('renamed');
+    expect(findCompanyDoc(docs, 'gone')).toBeUndefined();
+  });
+
   it('is known by its title and nothing looser', () => {
     expect(isCompanyTitle('Company')).toBe(true);
     expect(isCompanyTitle(' company ')).toBe(true);
-    expect(isCompanyTitle('Company brief')).toBe(false);
+    expect(isCompanyTitle('Company brief')).toBe(true);
+    expect(isCompanyTitle('Company notes')).toBe(false);
   });
 });
 
@@ -67,6 +75,16 @@ describe('a plan read as steps', () => {
     ]);
   });
 
+  it('reads a bold day bullet with its steps nested under it, and phases', () => {
+    expect(parsePlan('- **Day 1**\n  - call five founders\n  - write the list\n- **Day 2:**\n  - send it\n- a note, not a day\n  - not a step')).toEqual([
+      { day: 'Day 1', text: 'call five founders' }, { day: 'Day 1', text: 'write the list' }, { day: 'Day 2', text: 'send it' },
+    ]);
+    expect(parsePlan('## Phase 1: validate\n- ten interviews')).toEqual([{ day: 'Phase 1: validate', text: 'ten interviews' }]);
+    expect(isPlanDoc('Launch plans', '')).toBe(true);
+    expect(isPlanDoc('Notes', '# Planning the launch')).toBe(true);
+    expect(isPlanDoc('Planet', '# Notes')).toBe(false);
+  });
+
   it('finds nothing in a document that has no days in it', () => {
     expect(parsePlan('# Notes\n\n- one idea\n- another idea')).toEqual([]);
   });
@@ -85,7 +103,21 @@ describe('the morning note', () => {
     expect(read).toEqual({ things: ['a', 'b', 'c'], risk: 'Running out of cash in May.', question: 'Raise now?' });
   });
 
+  it('reads labels however they are dressed, and leaves the My call line out', () => {
+    const shapes = [
+      '1. a\n2. b\n3. c\n- Risk: r\n- Question: q?',
+      '**1.** a\n**2.** b\n**3.** c\n**Risk:** r\n**Question:** q?',
+      'Three things:\n1. a\n2. b\n3. c\nBiggest risk: r\nQuestion for you: q?',
+      '1. a\n2. b\n3. c\nRisk: r\nQuestion: q?\n\nMy call: ship the page today.',
+      '1. a\n2. b\n3. c\nRisk: r\nQuestion: q?\n**My call:** ship it.',
+    ];
+    for (const reply of shapes) expect(readMorning(reply), reply).toEqual({ things: ['a', 'b', 'c'], risk: 'r', question: 'q?' });
+    // A thing that mentions a risk is still a thing.
+    expect(readMorning('- Risk of churn rises\n- b\nRisk: r\nQuestion: q?')).toEqual({ things: ['Risk of churn rises', 'b'], risk: 'r', question: 'q?' });
+  });
+
   it('refuses a reply without the shape', () => {
+    expect(readMorning('1. only one\nRisk: r\nQuestion: q?')).toBeNull();
     expect(readMorning('Good morning! Lots going on today.')).toBeNull();
     expect(readMorning('1. a\n2. b\n3. c\nRisk: x')).toBeNull();
   });

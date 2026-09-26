@@ -7,7 +7,6 @@ import { wired } from '../prompt.ts';
 // "add these N tasks to the board?", and a yes puts each on the board as a task to do.
 
 const SHOWN = 4;
-export const stepsKey = (steps: PlanStep[]) => steps.map(planTaskTitle).join('\n');
 
 // Steps handed over one per line by a person: a day at the front is kept as the day, anything else is the step.
 export function stepsFrom(lines: string[]): PlanStep[] {
@@ -16,7 +15,7 @@ export function stepsFrom(lines: string[]): PlanStep[] {
 
 export const planAttention = (plans: PlanProposal[]): Attention[] => plans.map((plan) => ({
   id: `proposed-plan:${plan.id}`, kind: 'proposed-plan', at: plan.at, who: plan.who, roomId: plan.roomId,
-  title: `Add these ${plan.steps.length} tasks to the board? (${plan.title})`,
+  title: `${plan.steps.length === 1 ? 'Add this task' : `Add these ${plan.steps.length} tasks`} to the board? (${plan.title})`,
   detail: `${plan.steps.slice(0, SHOWN).map(planTaskTitle).join('; ')}${plan.steps.length > SHOWN ? `; and ${plan.steps.length - SHOWN} more` : ''}.`,
 }));
 

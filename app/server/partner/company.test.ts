@@ -5,33 +5,48 @@ import { describe, expect, it } from 'vitest';
 import type { Decision } from '../../shared/model.ts';
 import type { Bet } from '../../shared/partner.ts';
 import { createStore } from '../store.ts';
-import { addToSection, betsSection, companyDocOf, decisionLine, ensureCompany, syncDecisions, writeBets } from './company.ts';
+import { addToSection, betsSection, companyDocOf, decisionLine, ensureCompany, placeOf, syncDecisions, withSections, writeBets } from './company.ts';
 
 const decided = (id: string, title: string, chosen: string, day: string): Decision => ({ id, title, status: 'decided', at: new Date(`${day}T09:00`).getTime(), decidedAt: new Date(`${day}T10:00`).getTime(), context: '', options: [], chosen });
 
 describe('the Company document', () => {
-  it('is put on the stage once, pinned, with the six sections, and found again after', async () => {
+  it('adopts the seeded Company brief: its id, title and text kept, the missing sections added, no second doc', async () => {
     const store = createStore(await mkdtemp(join(tmpdir(), 'company-')));
-    const first = await ensureCompany(store);
-    expect(first.created).toBe(true);
+    const brief = await (async () => { await store.loadStage(); return store.readDoc('company-brief'); })();
+    const changed: string[] = [];
+    expect(await ensureCompany(store, undefined, (id) => changed.push(id))).toEqual({ id: 'company-brief', created: false });
+    const text = await store.readDoc('company-brief');
+    expect(text.startsWith(brief.trimEnd())).toBe(true);
+    for (const name of ['Idea', 'Customer', 'Numbers', 'Decisions', 'Bets', 'Open questions']) expect(text).toContain(`## ${name}`);
+    expect(changed).toEqual(['company-brief']);
     const stage = await store.loadStage();
-    const doc = companyDocOf(stage)!;
-    expect(doc).toMatchObject({ id: first.id, title: 'Company', pinned: true });
-    expect(await store.readDoc(doc.id)).toContain('## Open questions');
-    const again = await ensureCompany(store);
-    expect(again).toEqual({ id: first.id, created: false });
-    expect((await store.loadStage()).docs.filter((one) => one.title === 'Company')).toHaveLength(1);
+    expect(stage.docs.filter((doc) => doc.pinned)).toHaveLength(1);
+    expect(stage.docs.find((doc) => doc.id === 'company-brief')?.title).toBe('Company brief');
+    // A second run changes nothing.
+    expect(await ensureCompany(store, undefined, (id) => changed.push(id))).toEqual({ id: 'company-brief', created: false });
+    expect(await store.readDoc('company-brief')).toBe(text);
+    expect(changed).toHaveLength(1);
   });
 
-  it('fills a Company doc the window made empty, and leaves a written one alone', async () => {
+  it('makes "Company" only when no pinned company doc exists, and adds only the sections a written doc lacks', async () => {
     const store = createStore(await mkdtemp(join(tmpdir(), 'company-')));
     const stage = await store.loadStage();
-    await store.saveStage({ ...stage, docs: [...stage.docs, { id: 'doc-abc', title: 'Company', pinned: true, x: 0, y: 0, w: 1, h: 1 }] });
-    expect(await ensureCompany(store)).toEqual({ id: 'doc-abc', created: false });
-    expect(await store.readDoc('doc-abc')).toContain('## Decisions');
-    await store.writeDoc('doc-abc', '# Company\n\nMine.');
-    await ensureCompany(store);
-    expect(await store.readDoc('doc-abc')).toBe('# Company\n\nMine.');
+    await store.saveStage({ ...stage, docs: stage.docs.filter((doc) => !doc.pinned) });
+    const made = await ensureCompany(store);
+    expect(made.created).toBe(true);
+    expect(companyDocOf(await store.loadStage())).toMatchObject({ id: made.id, title: 'Company', pinned: true });
+    expect(await store.readDoc(made.id)).toContain('## Open questions');
+    await store.writeDoc(made.id, '# Company\n\n## Idea\n\nMine.\n');
+    await ensureCompany(store, made.id);
+    expect(await store.readDoc(made.id)).toBe('# Company\n\n## Idea\n\nMine.\n\n## Customer\n\n## Numbers\n\n## Decisions\n\n## Bets\n\n## Open questions\n');
+    expect(withSections('')).toContain('# Company');
+  });
+
+  it('puts a new document right of everything on the stage, people and cards too', () => {
+    const box = { y: 0, w: 100, h: 100 };
+    const stage = { rooms: [{ ...box, x: 0 }], docs: [{ ...box, x: 200, pinned: true, y: 40 }], cards: [{ ...box, x: 900, w: 400 }], wires: [] } as never;
+    expect(placeOf(stage)).toEqual({ x: 1360, y: 40 });
+    expect(placeOf({ rooms: [], docs: [], cards: [], wires: [] })).toEqual({ x: 520, y: 40 });
   });
 
   it('adds lines at the end of one section, and makes the section when it is gone', () => {
@@ -49,8 +64,13 @@ describe('the Company document', () => {
       { id: 'd3', title: 'Raise now?', status: 'proposed', at: 1, context: '', options: ['a', 'b'] },
     ];
     expect(decisionLine(list[0])).toBe('- 2026-09-26 Newsletter first: Weekly curated newsletter, not a marketplace');
-    const known = await syncDecisions(store, id, list, []);
+    const told: string[] = [];
+    const known = await syncDecisions(store, id, list, [], (doc) => told.push(doc));
     expect(known).toEqual(['d1', 'd2']);
+    expect(told).toEqual([id]);
+    // Lost track of (the app stopped before noting them): the lines already there are not written twice.
+    expect(await syncDecisions(store, id, list, [], (doc) => told.push(doc))).toEqual(['d1', 'd2']);
+    expect(told).toEqual([id]);
     expect(await syncDecisions(store, id, list, known)).toEqual(known);
     const text = await store.readDoc(id);
     expect(text.match(/^- .+$/gm)).toEqual(['- 2026-09-20 Price: Nine dollars a month', '- 2026-09-26 Newsletter first: Weekly curated newsletter, not a marketplace']);

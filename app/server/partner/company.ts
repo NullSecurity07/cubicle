@@ -1,5 +1,5 @@
-import type { Decision, Doc, Stage } from '../../shared/model.ts';
-import { companyTemplate, COMPANY_TITLE, isCompanyTitle, VERDICT_WORDS, type Bet } from '../../shared/partner.ts';
+import type { Box, Decision, Doc, Stage } from '../../shared/model.ts';
+import { COMPANY_SECTIONS, companyTemplate, COMPANY_TITLE, findCompanyDoc, VERDICT_WORDS, type Bet } from '../../shared/partner.ts';
 import { DOC_SIZE } from '../../shared/frameworks.ts';
 import { localDay } from '../clock.ts';
 import type { Store } from '../store.ts';
@@ -10,30 +10,47 @@ import { headingKey, headings, replaceSection } from '../tools/sections.ts';
 // a copy of in the trash every time.
 
 type CompanyStore = Pick<Store, 'loadStage' | 'patchStage' | 'readDoc' | 'writeDoc'>;
+// Told after every write the app makes into the document, so an open Company card reads it again rather than saving
+// its old text over the new lines with the founder's next keystroke.
+export type Changed = (docId: string) => void;
 export const COMPANY_ID = 'company';
 
-export const companyDocOf = (stage: Stage): Doc | undefined => stage.docs.find((doc) => isCompanyTitle(doc.title));
+// The recorded one while it is there; with nothing recorded, the first pinned one called "Company" or "Company brief".
+export const companyDocOf = (stage: Stage, id?: string): Doc | undefined => findCompanyDoc(stage.docs, id);
 
-// Beside the documents already on the stage, level with the first pinned one.
-function placeOf(stage: Stage) {
-  const right = Math.max(0, ...stage.docs.map((doc) => doc.x + doc.w));
-  const top = stage.docs.find((doc) => doc.pinned)?.y ?? stage.docs[0]?.y ?? 40;
-  return stage.docs.length ? { x: right + 60, y: top } : { x: 520, y: 40 };
+// Right of everything already on the stage (people, documents and cards), level with the first pinned doc.
+export function placeOf(stage: Stage) {
+  const all: Box[] = [...stage.rooms, ...stage.docs, ...(stage.cards ?? [])];
+  if (!all.length) return { x: 520, y: 40 };
+  const right = Math.max(...all.map((one) => one.x + one.w));
+  const top = stage.docs.find((doc) => doc.pinned)?.y ?? Math.min(...all.map((one) => one.y));
+  return { x: right + 60, y: top };
 }
 
-// The document on the stage, made if it is not there, and given its sections if it is there but empty (the window
-// put it down with a new partner and has not written anything into it). A Company doc with words in it is left as is.
-export async function ensureCompany(store: CompanyStore): Promise<{ id: string; created: boolean }> {
+// The sections the document is missing, added at its end; the founder's own lines are never moved or rewritten.
+export function withSections(text: string): string {
+  if (!text.trim()) return companyTemplate();
+  const have = new Set(headings(text).map((one) => headingKey(one.title)));
+  const missing = COMPANY_SECTIONS.filter((name) => !have.has(headingKey(name)));
+  return missing.length ? `${text.replace(/\s+$/, '')}\n\n${missing.map((name) => `## ${name}`).join('\n\n')}\n` : text;
+}
+
+// The company's one document: the one named by `id` when it is on the stage, else the pinned "Company" or "Company
+// brief" the stage already has (adopted: its id, its title and its text kept), else a new "Company". Whichever it is
+// gets the sections it lacks.
+export async function ensureCompany(store: CompanyStore, id?: string, changed: Changed = () => {}): Promise<{ id: string; created: boolean }> {
   let made: string | null = null;
   const stage = await store.patchStage((draft) => {
-    if (companyDocOf(draft)) return;
-    const id = draft.docs.some((doc) => doc.id === COMPANY_ID) ? `${COMPANY_ID}-${Date.now().toString(36)}` : COMPANY_ID;
-    draft.docs.push({ id, title: COMPANY_TITLE, pinned: true, ...placeOf(draft), w: DOC_SIZE.w, h: DOC_SIZE.h + 160 });
-    made = id;
+    if (companyDocOf(draft, id) ?? companyDocOf(draft)) return;
+    const fresh = draft.docs.some((doc) => doc.id === COMPANY_ID) ? `${COMPANY_ID}-${Date.now().toString(36)}` : COMPANY_ID;
+    draft.docs.push({ id: fresh, title: COMPANY_TITLE, pinned: true, ...placeOf(draft), w: DOC_SIZE.w, h: DOC_SIZE.h + 160 });
+    made = fresh;
   });
-  const id = companyDocOf(stage)!.id;
-  if (!(await store.readDoc(id)).trim()) await store.writeDoc(id, companyTemplate());
-  return { id, created: made !== null };
+  const doc = (companyDocOf(stage, id) ?? companyDocOf(stage))!;
+  const before = await store.readDoc(doc.id);
+  const after = withSections(before);
+  if (after !== before) { await store.writeDoc(doc.id, after); changed(doc.id); }
+  return { id: doc.id, created: made !== null };
 }
 
 // Lines added at the end of one section, before the next heading of the same level or higher; the section is made at
@@ -55,11 +72,14 @@ export const decisionLine = (decision: Decision) => `- ${localDay(decision.decid
 
 // Every decided decision not yet written goes under Decisions as one dated line, oldest first. Hands back every id
 // written so far, so a decision is never written twice however often this runs.
-export async function syncDecisions(store: CompanyStore, docId: string, all: Decision[], known: string[]): Promise<string[]> {
+export async function syncDecisions(store: CompanyStore, docId: string, all: Decision[], known: string[], changed: Changed = () => {}): Promise<string[]> {
   const held = new Set(known);
   const fresh = all.filter((one) => one.status === 'decided' && !held.has(one.id)).sort((a, b) => (a.decidedAt ?? a.at) - (b.decidedAt ?? b.at));
   if (!fresh.length) return known;
-  await store.writeDoc(docId, addToSection(await store.readDoc(docId), 'Decisions', fresh.map(decisionLine)));
+  const text = await store.readDoc(docId);
+  // A line already there (the app stopped between writing it and noting it) is not written twice.
+  const lines = fresh.map(decisionLine).filter((line) => !text.includes(line));
+  if (lines.length) { await store.writeDoc(docId, addToSection(text, 'Decisions', lines)); changed(docId); }
   return [...known, ...fresh.map((one) => one.id)];
 }
 
@@ -75,10 +95,10 @@ export function betsSection(bets: Bet[]): string {
 }
 
 // The Bets section is the ledger's own: it is written whole from `bets.json` whenever a bet changes.
-export async function writeBets(store: CompanyStore, docId: string, bets: Bet[]) {
+export async function writeBets(store: CompanyStore, docId: string, bets: Bet[], changed: Changed = () => {}) {
   const text = await store.readDoc(docId);
   const body = betsSection(bets);
   const swapped = replaceSection(text, 'Bets', body);
   const next = 'text' in swapped ? swapped.text : addToSection(text, 'Bets', body ? body.split('\n') : []);
-  if (next !== text) await store.writeDoc(docId, next);
+  if (next !== text) { await store.writeDoc(docId, next); changed(docId); }
 }

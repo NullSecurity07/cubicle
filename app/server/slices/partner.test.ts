@@ -7,6 +7,7 @@ import type { Deps, Installed } from '../install.ts';
 import { companyDocOf } from '../partner/company.ts';
 import { stubDeps } from '../slice-stubs.ts';
 import { decisionAttention } from '../decisions.ts';
+import { hub } from '../events.ts';
 import { todayFive } from '../today/rank.ts';
 import partner, { createPartner, type PartnerOptions } from './partner.ts';
 
@@ -37,26 +38,68 @@ describe('the partner slice: the Company document', () => {
     await part.close!();
   });
 
-  it('leaves the stage alone at start in fake mode, and makes the document once a partner is on it, wired to them', async () => {
+  it('leaves the stage alone at start in fake mode, and adopts the Company brief once a partner is on it, wired once', async () => {
     const { deps, part } = await installed({ fake: true });
-    expect(companyDocOf(await deps.store.loadStage())).toBeUndefined();
+    await deps.store.loadStage();
+    const brief = await deps.store.readDoc('company-brief');
     await part.tick!();
-    expect(companyDocOf(await deps.store.loadStage())).toBeUndefined();
+    expect(await deps.store.readDoc('company-brief')).toBe(brief);
     await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
     await part.tick!();
     const stage = await deps.store.loadStage();
-    const doc = companyDocOf(stage)!;
-    expect(stage.wires.filter((wire) => wire.from === 'p1' && wire.to === doc.id)).toHaveLength(1);
+    expect(stage.docs.filter((doc) => doc.pinned).map((doc) => doc.id)).toEqual(['company-brief']);
+    expect(await deps.store.readDoc('company-brief')).toContain('## Open questions');
+    expect(stage.wires.filter((wire) => wire.from === 'p1' && wire.to === 'company-brief')).toHaveLength(1);
+    // The founder takes the wire away: it is not drawn again.
+    await deps.store.saveStage({ ...stage, wires: stage.wires.filter((wire) => wire.from !== 'p1') });
     await part.tick!();
-    expect((await deps.store.loadStage()).wires.filter((wire) => wire.from === 'p1')).toHaveLength(1);
+    await part.tick!();
+    expect((await deps.store.loadStage()).wires.filter((wire) => wire.from === 'p1')).toHaveLength(0);
     await part.close!();
+  });
+
+  it('keeps finding the document by its id after a rename, and does not make it again once the founder removed it', async () => {
+    const { deps, part } = await installed();
+    await deps.store.patchStage((stage) => { stage.docs.find((doc) => doc.id === 'company-brief')!.title = 'Flipside'; });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await deps.decisions.record({ title: 'Newsletter first', chosen: 'Weekly' });
+    await part.tick!();
+    expect(await deps.store.readDoc('company-brief')).toContain('Newsletter first: Weekly');
+    expect((await deps.store.loadStage()).docs.filter((doc) => doc.pinned)).toHaveLength(1);
+    // Removed: not made again by the tick, nor by a new start.
+    await deps.store.patchStage((stage) => { stage.docs = stage.docs.filter((doc) => doc.id !== 'company-brief'); stage.wires = stage.wires.filter((wire) => wire.to !== 'company-brief'); });
+    await part.tick!();
+    await part.close!();
+    const again = (await partner.install(deps)) as Installed;
+    await again.tick!();
+    expect((await deps.store.loadStage()).docs.filter((doc) => doc.pinned)).toHaveLength(0);
+    // "add partner" asks for it outright: then it is made again.
+    await again.route!({ method: 'POST' } as never, {} as never, '/api/partner/company');
+    expect(companyDocOf(await deps.store.loadStage())).toMatchObject({ title: 'Company', pinned: true });
+    await again.close!();
+  });
+
+  it('tells the window each time the app writes into the document', async () => {
+    const said: [string, unknown][] = [];
+    const before = hub.say;
+    hub.say = (channel, data) => { said.push([channel, data]); };
+    try {
+      const { deps, part } = await installed();
+      expect(said).toEqual([['partner', { docChanged: 'company-brief' }]]);
+      await deps.decisions.record({ title: 'Price', chosen: 'Nine dollars' });
+      await part.tick!();
+      expect(said.at(-1)).toEqual(['partner', { docChanged: 'company-brief' }]);
+      expect(said).toHaveLength(2);
+      await part.close!();
+    } finally { hub.say = before; }
   });
 
   it('gives the Company doc the window put down its sections, when the window asks', async () => {
     const answers: [number, unknown][] = [];
     const { deps, part } = await installed({ fake: true, json: (_res, status, body) => { answers.push([status, body]); } });
     const stage = await deps.store.loadStage();
-    await deps.store.saveStage({ ...stage, docs: [...stage.docs, { id: 'doc-x1', title: 'Company', pinned: true, x: 0, y: 0, w: 1, h: 1 }] });
+    await deps.store.saveStage({ ...stage, docs: [...stage.docs.filter((doc) => !doc.pinned), { id: 'doc-x1', title: 'Company', pinned: true, x: 0, y: 0, w: 1, h: 1 }] });
+    deps.body = async () => ({ id: 'doc-x1' });
     await part.route!({ method: 'POST' } as never, {} as never, '/api/partner/company');
     expect(answers.at(-1)).toEqual([200, { id: 'doc-x1', created: false }]);
     expect(await deps.store.readDoc('doc-x1')).toContain('## Idea');
@@ -105,6 +148,24 @@ describe('the partner slice: the morning note', () => {
     expect(asked).toBe(1);
     expect(await deps.store.readChat('p1')).toEqual([]);
     expect((await deps.attention.list()).some((one) => one.kind === 'morning-note')).toBe(false);
+    await part.close!();
+  });
+
+  it('waits half an hour after a model call that throws, and stops after three in a day', async () => {
+    let clock = NINE;
+    let asked = 0;
+    const { deps, part } = await installed({}, { now: () => clock, ask: async () => { asked += 1; throw new Error('429 too many requests'); } });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    for (let tick = 0; tick < 4; tick += 1) { await part.tick!(); clock += 30_000; }
+    expect(asked).toBe(1);
+    clock = NINE + 30 * 60_000;
+    await part.tick!();
+    clock = NINE + 60 * 60_000;
+    await part.tick!();
+    clock = NINE + 5 * 60 * 60_000;
+    await part.tick!();
+    expect(asked).toBe(3);
+    expect(await deps.store.readChat('p1')).toEqual([]);
     await part.close!();
   });
 
@@ -223,7 +284,13 @@ describe('the partner slice: plans become tasks', () => {
     expect((await deps.attention.list()).some((one) => one.kind === 'proposed-plan')).toBe(false);
     await deps.store.writeDoc('doc-plan', `${PLAN}\n### Wed 30 Sep (Day 3)\n- Post in r/SaaS\n`);
     await wrote('doc-plan');
-    expect((await deps.attention.list()).find((one) => one.kind === 'proposed-plan')?.title).toBe('Add these 4 tasks to the board? (Two weeks)');
+    // After the yes, one step added is offered alone, and a second yes never puts the old ones on the board twice.
+    const again = (await deps.attention.list()).find((one) => one.kind === 'proposed-plan')!;
+    expect(again).toMatchObject({ title: 'Add this task to the board? (Two weeks)', detail: 'Wed 30 Sep (Day 3): Post in r/SaaS.' });
+    await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/plans/${again.id.split(':')[1]}`);
+    const titles = (await deps.boards.list('board-1')).map((task) => task.title);
+    expect(titles).toHaveLength(4);
+    expect(new Set(titles).size).toBe(4);
     await part.close!();
   });
 

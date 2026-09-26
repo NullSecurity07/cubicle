@@ -2,10 +2,11 @@ import { useReactFlow } from '@xyflow/react';
 import { useEffect, useSyncExternalStore } from 'react';
 import type { UiSlice } from '..';
 import { DOC_SIZE } from '../../../shared/frameworks';
-import { COMPANY_TITLE, isCompanyTitle, PARTNER_BRIEF, PARTNER_ROLE } from '../../../shared/partner';
+import { COMPANY_TITLE, findCompanyDoc, PARTNER_BRIEF, PARTNER_CHANNEL, PARTNER_ROLE, type PartnerEvent } from '../../../shared/partner';
 import { NEW_SIZE, useAddCard } from '../../addCard';
 import { request, send } from '../../api';
 import { emit } from '../../bus';
+import { feed } from '../../feed';
 import { overlay } from '../../overlay/store';
 import { WIRE, type StageNode } from '../../stage';
 import { useFlushStage } from '../../sync';
@@ -54,7 +55,9 @@ function PartnerDesk() {
     if (held) { overlay.open({ kind: 'focus', id: held.id }); say({ text: `${String((held.data as { name?: string }).name || 'Your partner')} is already your partner.`, roomId: held.id }); return; }
     const centre = flow.screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
     const roomId = addCard('room', { name, role: PARTNER_ROLE, brief: PARTNER_BRIEF, partner: true }, centre);
-    const company = nodes.find((node) => node.type === 'doc' && isCompanyTitle(String((node.data as { title?: string }).title ?? '')));
+    // The stage's own company doc ("Company brief" on a fresh stage) is the partner's; a new one only when there is none.
+    const docs = nodes.filter((node) => node.type === 'doc').map((node) => ({ id: node.id, title: String((node.data as { title?: string }).title ?? ''), pinned: !!(node.data as { pinned?: boolean }).pinned }));
+    const company = findCompanyDoc(docs);
     const docId = company?.id ?? addCard('doc', { title: COMPANY_TITLE, pinned: true }, { x: centre.x + NEW_SIZE.room[0] / 2 + 80 + DOC_SIZE.w / 2, y: centre.y });
     flow.setEdges((current) => [...current, { id: `${roomId}-${docId}`, source: roomId, sourceHandle: 'r', target: docId, targetHandle: 'l', ...WIRE }]);
     void (async () => {
@@ -63,11 +66,14 @@ function PartnerDesk() {
       // Both new cards in view: the doc was put down last, so the view had glided to it and left the partner behind.
       void flow.fitView({ nodes: [{ id: roomId }, { id: docId }], duration: 400, padding: 0.25, maxZoom: 1 });
       await flush();
-      await request('/api/partner/company', send('POST', {}));
-      emit('effect', { kind: 'doc-changed', id: docId, roomId });
+      await request('/api/partner/company', send('POST', { id: docId }));
       say({ text: `${name} is your partner. The Company document is theirs to keep: start it with the idea.`, roomId });
     })().catch((error: Error) => say({ text: error.message, problem: true }));
   }, [asked, flow, addCard, flush]);
+
+  // The app wrote into the Company document (a decision, a bet, its sections): an open card reads it again, so the
+  // founder's next keystroke does not save the old text over the new lines.
+  useEffect(() => feed<PartnerEvent>(PARTNER_CHANNEL, (event) => { if (event.docChanged) emit('effect', { kind: 'doc-changed', id: event.docChanged, roomId: '' }); }), []);
 
   useEffect(() => {
     if (!now || now.text.endsWith('…')) return;

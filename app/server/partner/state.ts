@@ -12,8 +12,13 @@ export type PartnerState = {
   morningDone?: string;
   tries?: { day: string; count: number; last: number };
   plans: PlanProposal[];
-  // The steps last offered from each plan doc, so an edit that leaves them as they were does not ask again.
-  offered?: Record<string, string>;
+  // Every step already offered from each plan doc, by its task title: an edit offers only the steps that are new.
+  offered?: Record<string, string[]>;
+  // The company's one document once it is made or adopted, found by this id from then on. Gone from the stage, it
+  // is not made again until the founder adds a partner again.
+  companyId?: string;
+  // The partners already wired to it once: a wire the founder takes away is not drawn again.
+  wired?: string[];
 };
 
 export function partnerState(workspace: string) {

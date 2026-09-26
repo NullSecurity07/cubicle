@@ -32,7 +32,7 @@ export function morningDue(state: Pick<PartnerState, 'morning' | 'tries'>, now: 
 export const MORNING_ASK = 'Nobody asked you for this. It is your own daily look at the company, and the founder reads it first thing. '
   + 'Below is what changed since yesterday and the bets on record; the Company document is above. '
   + 'Use only these facts: name the number or the line each point rests on, and never invent one. '
-  + 'Reply in exactly this shape and nothing else, each line under thirty words:\n'
+  + 'Reply in exactly this shape and nothing else, each line under thirty words, with no "My call" line here:\n'
   + 'Three things that matter today:\n1. …\n2. …\n3. …\nRisk: one risk, and the fact it rests on\nQuestion: one question for the founder';
 
 // What goes to the model with the ask, from the stores themselves.
