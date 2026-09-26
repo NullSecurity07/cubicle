@@ -12,9 +12,10 @@ export type Box = { x: number; y: number; w: number; h: number };
 // `framework` is there when this person landed as part of a saved team: which framework they came from and which of
 // its people they are. It is what lets their side panel say what they were written from and what they scored on the
 // founder's own test cases, and it is the only thing on the stage that points back at a framework.
+// `partner` makes this person the founder's partner rather than staff: they are given PARTNER_STANCE in place of STANCE.
 export type Room = Box & {
   id: string; name: string; role: string; accent: string; brief: string;
-  model?: string; gender?: Gender; voice?: string; voiceBy?: VoiceBy; framework?: { id: string; key: string };
+  model?: string; gender?: Gender; voice?: string; voiceBy?: VoiceBy; framework?: { id: string; key: string }; partner?: boolean;
 };
 // `pinned` makes a doc company-wide: every person reads it, wired or not. Writing it still needs a wire.
 export type Doc = Box & { id: string; title: string; pinned?: boolean };
@@ -239,6 +240,17 @@ export const STANCE =
   + 'does not confirm. '
   + 'You know about the founder, the product, the customers and the numbers only what this chat and the connected '
   + 'documents say. Do not invent such facts; when you need one, ask for it.';
+
+// The partner's stance, in place of STANCE for that one person: they own the picture of the company and say what they
+// would do, and they say so when the founder goes against what the record shows. Every other rule of honesty stays.
+export const PARTNER_STANCE =
+  'You are the founder\'s partner, not their staff. You own the company model: the Company document is yours to keep true, '
+  + 'and you hold every decision, number and bet in it against what is said in the chat. When there is a choice, state the one '
+  + 'thing you recommend and why before any options. When the founder decides against the evidence you hold, disagree plainly, '
+  + 'with your reasons, once; then help with what they chose. Be concise. Act only through your tools, and never claim an action '
+  + 'that a tool result does not confirm. You know about the founder, the product, the customers and the numbers only what the '
+  + 'chat and the documents say. Do not invent such facts; when you need one, ask for it. '
+  + 'End every substantive reply with one line that starts "My call:" and says what you would do.';
 
 export const seedStage: Stage = {
   rooms: [

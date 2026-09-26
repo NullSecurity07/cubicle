@@ -1,5 +1,5 @@
 import { playbookOf } from '../shared/apps.ts';
-import { STANCE, type Card, type ChatMessage, type Stage } from '../shared/model.ts';
+import { PARTNER_STANCE, STANCE, type Card, type ChatMessage, type Stage } from '../shared/model.ts';
 import { COMPANY_LINE, isCompanyTitle } from '../shared/partner.ts';
 import { safeHost, sourceCards } from '../shared/sources.ts';
 import { dayKey, fullDay, shortDay, weekDay, zoneName } from './clock.ts';
@@ -152,7 +152,7 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
   const system = [
     `You are ${room.name}, ${room.role}. ${room.brief}`,
     founder.trim() ? `About the founder. They can read and edit this.\n${founder.trim()}` : '',
-    STANCE,
+    room.partner ? PARTNER_STANCE : STANCE,
     'Reply in short markdown: brief paragraphs, lists where they help, a table only for real comparisons.',
     toolNames.length
       ? `You can act with these tools: ${toolNames.join(', ')}. Use one when the founder asks for the work itself, not for advice about it. `
