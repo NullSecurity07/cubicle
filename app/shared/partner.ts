@@ -160,7 +160,9 @@ export function dueOf(label: string, today: string): string | undefined {
   if (iso) return iso[0];
   const dayMonth = /\b(\d{1,2})(?:\s*[–—-]\s*\d{1,2})?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/i.exec(label);
   const monthDay = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{1,2})\b/i.exec(label);
-  const [day, month] = dayMonth ? [Number(dayMonth[1]), MONTHS.indexOf(dayMonth[2].toLowerCase())] : monthDay ? [Number(monthDay[2]), MONTHS.indexOf(monthDay[1].toLowerCase())] : [0, -1];
+  // Whichever form comes first names the day: "Sep 28 – 2 Oct" is Sep 28, "28–29 Sep" the 28th.
+  const useMonthDay = !!monthDay && (!dayMonth || monthDay.index < dayMonth.index);
+  const [day, month] = useMonthDay ? [Number(monthDay![2]), MONTHS.indexOf(monthDay![1].toLowerCase())] : dayMonth ? [Number(dayMonth[1]), MONTHS.indexOf(dayMonth[2].toLowerCase())] : [0, -1];
   if (month < 0 || day < 1 || day > 31) return undefined;
   const now = new Date(`${today}T12:00:00`);
   const options = [-1, 0, 1].map((shift) => new Date(now.getFullYear() + shift, month, day, 12));

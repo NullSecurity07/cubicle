@@ -43,6 +43,15 @@ const CARD_WORDS: [RegExp, Extract<Action, { do: 'add' }>['kind'], string, strin
 // A note from the library is picked in Notes, the way the dock's own button does it: the card is only which note.
 const LIBRARY_NOTE = /^((a )?note from (the |my )?library|library( note)?)$/;
 const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+const NOT_NAMES = /^(who|for|to|that|with|in|on|and|as|from|at|of)$/i;
+// The name in "add a person called Lena Ortiz" or "add a person Lena", as typed; nothing when the words are a role.
+function personName(typed: string): string | undefined {
+  const after = /\b(?:person|someone|teammate|colleague)\s+(.+)$/i.exec(typed)?.[1].trim();
+  if (!after) return undefined;
+  const called = /^(?:called|named)\s+(.+)$/i.exec(after)?.[1].trim();
+  if (called) return sentence(called).slice(0, 40);
+  return /^\p{Lu}[\p{L}'-]*$/u.test(after) && !NOT_NAMES.test(after) ? after : undefined;
+}
 // The bar's own commands. `words` is what, typed in full, asks for one outright; `say` is how the cheatsheet shows it.
 // `quiet` ones wait to be asked: they are not listed on an empty bar, where they would only crowd the views.
 type Starter = Suggestion & { words?: RegExp; say?: string[]; quiet?: true };
@@ -121,9 +130,10 @@ export function suggest(input: string, known: Known, extra: Command[] = sliceCom
     else if (LIBRARY_NOTE.test(what)) found.push({ section: 'Do', label: 'Add a note from your library', hint: 'Pick one in Notes', action: { do: 'panel', name: 'library' } });
     else if (doc) found.push({ section: 'Do', label: doc[1] ? `Add a doc called "${sentence(typed.slice(typed.length - doc[1].length))}"` : 'Add a doc', action: { do: 'add', kind: 'doc', ...(doc[1] ? { data: { title: sentence(typed.slice(typed.length - doc[1].length)) } } : {}) } });
     else if (/^(person|someone|teammate|colleague)$/.test(what)) found.push({ section: 'Do', label: 'Add a person', action: { do: 'add', kind: 'room' } });
-    // "add a person Lena", "add a person called Lena": a person with that name, never one whose role is "Person lena".
-    else if (/^(?:person|someone|teammate|colleague)\s+(?:called\s+|named\s+)?\S/.test(what)) {
-      const name = sentence(typed.replace(/^.*?\b(?:person|someone|teammate|colleague)\s+(?:called\s+|named\s+)?/i, '').trim());
+    // "add a person called Lena", or one capitalised word after it ("add a person Lena"): a person with that name.
+    // Anything else ("someone who does SEO", "a teammate for marketing") is the role, as before.
+    else if (personName(typed)) {
+      const name = personName(typed)!;
       found.push({ section: 'Do', label: `Add ${name}`, hint: 'A person; you write their role and brief', action: { do: 'add', kind: 'room', data: { name } } });
     }
     // Words a slice answers to ("add partner") are that slice's to carry out, not a person to hire by that role.

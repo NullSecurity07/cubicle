@@ -107,6 +107,7 @@ describe('a plan read as steps', () => {
     expect(dueOf('Day 3', '2026-09-26')).toBeUndefined();
     expect(dueOf('Mon', '2026-09-26')).toBeUndefined();
     expect(dueOf('Sep 28', '2026-09-26')).toBe('2026-09-28');
+    expect(dueOf('Sep 28 – 2 Oct', '2026-09-26')).toBe('2026-09-28');
     expect(dueOf('Mon 4 Jan', '2026-12-28')).toBe('2027-01-04');
     expect(dueOf('2026-10-02', '2026-09-26')).toBe('2026-10-02');
     expect(planTaskTitle({ day: 'Mon 28 Sep', text: 'Mon 28 Sep: call Ana' })).toBe('Mon 28 Sep: call Ana');
