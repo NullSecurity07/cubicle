@@ -70,8 +70,8 @@ test('the built-in team is scored against the founder\'s own cases, and every pe
 
   // The score is on the framework now, and it is not amber: the note is the one it was built from and the model
   // that scored it is the one still set up here.
-  // Fourteen, not thirteen: one of the founder's cases names two people, and both of them answered it.
-  await expect(built.locator('.score')).toContainText('14 tests');
+  // Fifteen, not fourteen: one of the founder's cases names two people, and both of them answered it.
+  await expect(built.locator('.score')).toContainText('15 tests');
   expect(await built.locator('.score').getAttribute('data-stale')).toBe(null);
 
   // Placed, and then one of the five is asked to fill the window.
@@ -82,12 +82,12 @@ test('the built-in team is scored against the founder\'s own cases, and every pe
   await judge.locator('.card__header').hover();
   await judge.getByRole('button', { name: 'Focus' }).click();
 
-  // Their own panel says where they came from and what they were worth, on their own three cases rather than on
+  // Their own panel says where they came from and what they were worth, on their own four cases rather than on
   // everything the framework was asked.
   const side = page.locator('.focus__sheet .side');
   await expect(side).toBeVisible();
   await expect(side.locator('.side__from')).toContainText(`Built from “${NOTE}”`);
-  await expect(side.locator('.side__from')).toContainText('on 3 tests');
+  await expect(side.locator('.side__from')).toContainText('on 4 tests');
   await page.keyboard.press('Escape');
 });
 
