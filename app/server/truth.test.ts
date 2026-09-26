@@ -114,6 +114,8 @@ describe('unsourcedFigures', () => {
     expect(unsourcedFigures('That is 15-25 days of work.', [])).toEqual(['15-25 days']);
     expect(unsourcedFigures('They spend 12 hours per week on invoices.', [])).toEqual(['12 hours']);
     expect(unsourcedFigures('Reply within 24 hours and run it 30 days.', [])).toEqual([]);
+    expect(unsourcedFigures('Within 24 hours a customer writes in.', [])).toEqual([]);
+    expect(unsourcedFigures('They spend 12 hours/week on invoices.', [])).toEqual(['12 hours']);
     expect(unsourcedFigures('They spend 12 hours per week on invoices.', ['survey: 12 hours a week'])).toEqual([]);
   });
 
@@ -152,6 +154,8 @@ describe('checkReply', () => {
     expect(checkReply({ reply: 'At $29 a month we break even.', receipts: [], sources: ['What price?', earlier] }))
       .toEqual(['Unsourced figures: $29 (not found in anything this turn read).']);
     expect(checkReply({ reply: 'At $29 a month we break even.', receipts: [], sources: ['Price: $29', earlier] })).toEqual([]);
+    const both = 'Churn is 2% and 32% of trials convert.\n\nUnsourced figures: 2% (not found in anything this turn read).';
+    expect(checkReply({ reply: '32% of trials convert.', receipts: [], sources: ['How do trials do?', both] })).toEqual([]);
   });
 
   it('gives the founder-visible lines, one per kind of problem', () => {

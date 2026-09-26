@@ -75,8 +75,8 @@ const UNITS = 'users|customers|clients|signups|sign-ups|subscribers|downloads|vi
 // are not figures here.
 const FIGURE = new RegExp(String.raw`[$€£]\s?${AMOUNT}\s?(k|mm|m|bn|b|thousand|million|billion)?\b|${AMOUNT}\s?(%|percent\b)|${AMOUNT}\s?(k|m|x|×)?\s?(${UNITS})\b|${AMOUNT}(x|×)(?![\w])`, 'gi');
 // Hours, days and weeks are nearly always advice ("reply within 24 hours"), so they count only as a range ("20–40
-// hours") or a rate ("12 hours per week"), which is a claim about the world that has to come from somewhere.
-const SPAN = new RegExp(String.raw`${AMOUNT}(?:\s?(?:–|—|-|to)\s?${AMOUNT})?\s?(hours|days|weeks)\b(?=(\s+(?:per|a|an|each|every)\b)?)`, 'gi');
+// hours") or a rate ("12 hours per week", "12 hours/week"; not "a", which is as often "within 24 hours a customer"), which is a claim about the world that has to come from somewhere.
+const SPAN = new RegExp(String.raw`${AMOUNT}(?:\s?(?:–|—|-|to)\s?${AMOUNT})?\s?(hours|days|weeks)\b(?=(\s*\/\s*\w|\s+per\b)?)`, 'gi');
 const ANY = new RegExp(String.raw`${AMOUNT}\s?(k|mm|m|bn|b|thousand|million|billion)?\b`, 'gi');
 
 const valueOf = (whole: string, fraction: string | undefined, scale?: string) => Number(`${whole.replace(/,/g, '')}${fraction ?? ''}`) * (scale ? SCALE[scale.toLowerCase()] ?? 1 : 1);
@@ -88,7 +88,9 @@ const exactness = (value: number) => String(Number(Math.abs(value).toPrecision(1
 const FLAG_LINE = /^(?:Unconfirmed: this reply claims|Unsourced figures: ).*$/gm;
 function withoutFlagged(source: string): string {
   const named = [...source.matchAll(/^Unsourced figures: (.+?) \(not found/gm)].flatMap((match) => match[1].split(', '));
-  return named.reduce((kept, label) => kept.split(label).join(''), source.replace(FLAG_LINE, ''));
+  // Taken out whole only: a flagged "2%" must not eat the end of a real "32%".
+  const whole = (label: string) => new RegExp(`(?<![\\d.,])${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\d])`, 'g');
+  return named.reduce((kept, label) => kept.replace(whole(label), ''), source.replace(FLAG_LINE, ''));
 }
 
 // Every figure in the reply whose value appears in none of the inputs of this turn: what the founder said, the history
