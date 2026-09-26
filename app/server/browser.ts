@@ -188,8 +188,15 @@ const OUTWARD = /^(send|reply|forward|post|publish|tweet|submit|share|comment|pa
 // A cookie banner is not the founder speaking to anyone, whatever its button starts with.
 const COOKIE = /cookie/i;
 const MAIL_HOSTS = /(^|\.)(mail\.google\.com|outlook\.live\.com|outlook\.office\.com|outlook\.office365\.com|mail\.proton\.me|mail\.yahoo\.com|app\.fastmail\.com|mail\.zoho\.com|app\.tuta\.com)$/;
-// The accessible name of a ref in a snapshot line such as `- button "Send" [ref=e44]`: '' for an element without one, null for a ref that is not on the page.
-export const nameOfRef = (tree: string, ref: string) => { const found = new RegExp(`^\\s*- \\w+(?: "((?:[^"\\\\]|\\\\.)*)")?[^\\n]*\\[ref=${ref.replace(/^@/, '')}\\]`, 'm').exec(tree); return found ? found[1] ?? '' : null; };
+// The role and accessible name of a ref in a snapshot line such as `- button "Send" [ref=e44]`: '' for an element
+// without a name, null for a ref that is not on the page.
+export const elementOfRef = (tree: string, ref: string) => { const found = new RegExp(`^\\s*- (\\w+)(?: "((?:[^"\\\\]|\\\\.)*)")?[^\\n]*\\[ref=${ref.replace(/^@/, '')}\\]`, 'm').exec(tree); return found ? { role: found[1], name: found[2] ?? '' } : null; };
+export const nameOfRef = (tree: string, ref: string) => elementOfRef(tree, ref)?.name ?? null;
+// On an app card, the founder's own account, a click goes ahead without asking only when it plainly reads: moving to
+// another page, a tab, a search box or a field, or a button that shows more, filters or sorts. Anything else could
+// act as the founder, whatever it is called or when it is called nothing at all.
+const READ_ROLES = new Set(['link', 'tab', 'searchbox', 'textbox', 'combobox', 'option', 'heading', 'treeitem']);
+const READ_NAMES = /^(search|show|see|view|more|less|load more|expand|collapse|next|previous|back|close|dismiss|sort|filters?|all filters)\b|\bfilters?\b/i;
 
 // `direct` readers know a site's feed or API and go first; `fallback` readers are asked, in order, when the local browser got nothing.
 type Readers = { direct: Reader[]; fallback: Reader[] };
@@ -199,6 +206,8 @@ export function createBrowser(run: Runner, readers: Readers = { direct: [], fall
   // The founder's own Chrome per profile folder while it is open, so a second press does not start another.
   const hands = new Map<string, { done: Promise<void>; end: () => void }>();
   const seen = new Map<string, { tree: string; address: string }>();
+  // What was last typed in each session, and into what: the question before a step that could send it shows it.
+  const typed = new Map<string, { field: string; text: string }>();
   // Each session is a Chrome tab set with its own memory; only a few run at once, the rest wait their turn.
   let active = 0;
   const waiting: (() => void)[] = [];
@@ -326,6 +335,8 @@ export function createBrowser(run: Runner, readers: Readers = { direct: [], fall
         const address = (await go(session, ['get', 'url']).catch(() => '')).trim();
         if (address && !/^about:/.test(address)) webUrl(address);
         const tree = (await go(session, ['snapshot', '-i'])).trim();
+        // The field is named from the page as it was when it was filled: the tree this step was taken on.
+        if (action === 'fill') typed.set(session, { field: nameOfRef(seen.get(session)?.tree ?? tree, ref()) ?? '', text: input.text ?? '' });
         seen.set(session, { tree, address });
         const title = (await go(session, ['get', 'title']).catch(() => '')).trim();
         if (walled(title, tree.length < 1200 ? tree : '')) return `Now at ${address}\n${WALL_NOTE} ${CARD_WALL_NOTE}`;
@@ -333,19 +344,34 @@ export function createBrowser(run: Runner, readers: Readers = { direct: [], fall
       });
     },
     // The question for the founder when a step would send, publish, pay or delete; null when the step is plain browsing.
-    // An app card is named by its app, which the founder knows better than a host name.
+    // An app card is named by its app, which the founder knows better than a host name. An app card (`appName` given)
+    // is the founder's own account, signed in: there Enter always asks, and so does any click that is not plainly
+    // reading. Elsewhere, only webmail's Enter and clicks named like sending ask.
     async outward(session: string, action: string, input: { ref?: string; key?: string }, launch?: Launch, appName?: string): Promise<string | null> {
       let page = seen.get(session);
       const host = (() => { try { return new URL(page?.address ?? '').hostname; } catch { return ''; } })();
       const where = appName || host || 'this page';
-      if (action === 'press') return /enter/i.test(input.key ?? '') && MAIL_HOSTS.test(host) ? `Press ${input.key} on ${where}? In webmail this can send the message.` : null;
+      const own = !!appName;
+      const last = typed.get(session);
+      const shows = last?.text.trim() ? ` What was typed last${last.field ? ` into "${last.field}"` : ''}: "${last.text.trim().slice(0, 400)}".` : '';
+      if (action === 'press') {
+        if (!/enter/i.test(input.key ?? '')) return null;
+        if (own) return `Press ${input.key} on ${where}? In a message or a post box this sends it as you.${shows}`;
+        return MAIL_HOSTS.test(host) ? `Press ${input.key} on ${where}? In webmail this can send the message.${shows}` : null;
+      }
       if (action !== 'click' || !input.ref) return null;
       if (!page) { const tree = await run(session, ['snapshot', '-i'], launch).catch(() => ''); page = { tree, address: '' }; }
-      const name = nameOfRef(page.tree, input.ref);
-      if (name === null) return `Click ${input.ref} on ${where}? I could not read what that element is.`;
-      // An icon with no name could be anything; inside webmail that is reason enough to ask.
-      if (!name.trim()) return MAIL_HOSTS.test(host) ? `Click an unnamed button (${input.ref}) on ${where}? Look at the browser card first.` : null;
-      return OUTWARD.test(name.trim()) && !COOKIE.test(name) ? `Click "${name}" on ${where}? Look at the browser card first: it shows exactly what will go out.` : null;
+      const element = elementOfRef(page.tree, input.ref);
+      if (element === null) return `Click ${input.ref} on ${where}? I could not read what that element is.`;
+      const name = element.name.trim();
+      // An icon with no name could be anything; inside webmail or on the founder's own account that is reason enough to ask.
+      if (!name) {
+        if (own && READ_ROLES.has(element.role)) return null;
+        return own || MAIL_HOSTS.test(host) ? `Click an unnamed ${element.role} (${input.ref}) on ${where}? Look at the browser card first.${shows}` : null;
+      }
+      if (OUTWARD.test(name) && !COOKIE.test(name)) return `Click "${name}" on ${where}? Look at the browser card first: it shows exactly what will go out.${shows}`;
+      if (!own || COOKIE.test(name) || READ_ROLES.has(element.role) || READ_NAMES.test(name)) return null;
+      return `Click "${name}" on ${where}? On your own account a click can act as you. Look at the browser card first.${shows}`;
     },
     // Where a browser card can watch its session live. Opens the session if nobody has used it yet.
     // An app card that has to be started opens on its own site, so Sign in shows the founder the page to sign in on.
@@ -371,7 +397,7 @@ export function createBrowser(run: Runner, readers: Readers = { direct: [], fall
     where: (session: string) => run(session, ['get', 'url']).then((printed) => printed.trim() || null, () => null),
     // What the session last looked like goes with it: it is only there to say what changed since, and a session
     // opened again under the same name starts from a new page.
-    close: (session: string) => { seen.delete(session); return run(session, ['close']).then(() => {}, () => {}); },
+    close: (session: string) => { seen.delete(session); typed.delete(session); return run(session, ['close']).then(() => {}, () => {}); },
     // The caller closes the card's session first: a second Chrome on the same folder would only hand the address to it.
     byHand(profile: string, home: string): Promise<void> {
       const open = hands.get(profile);

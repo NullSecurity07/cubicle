@@ -258,6 +258,30 @@ describe('app cards', () => {
     // Without an app name the host is named, as before.
     expect(await browser.outward('card-a', 'click', { ref: 'e1' })).toContain('on www.linkedin.com?');
   });
+  // An app card is the founder's own account: whatever is not plainly reading waits for a yes, and says what was typed.
+  it('asks before Enter in a LinkedIn message box, and shows what would be sent', async () => {
+    const tree = '- textbox "Write a message…" [ref=e1]\n- button [ref=e2]\n- link "Ada Lovelace" [ref=e3]\n';
+    const runner: Runner = async (_s, args) => (args[0] === 'snapshot' ? tree : args[0] === 'get' && args[1] === 'url' ? 'https://www.linkedin.com/messaging/thread/1/\n' : '✓\n');
+    const browser = createBrowser(runner);
+    await browser.act('card-li', 'fill', { ref: 'e1', text: 'Hi Ada, fancy a coffee?' });
+    const asked = await browser.outward('card-li', 'press', { key: 'Enter' }, undefined, 'LinkedIn');
+    expect(asked).toMatch(/^Press Enter on LinkedIn\?/);
+    expect(asked).toContain('"Hi Ada, fancy a coffee?"');
+    // Outside an app card and outside webmail, Enter is still plain browsing.
+    await browser.act('card-plain', 'look', {});
+    expect(await browser.outward('card-plain', 'press', { key: 'Enter' })).toBeNull();
+  });
+  it('asks before a click on an unnamed icon on an app card, and lets a profile link, a tab and a filter through', async () => {
+    const tree = '- button [ref=e1]\n- link "Ada Lovelace" [ref=e2]\n- tab "Posts" [ref=e3]\n- button "All filters" [ref=e4]\n- searchbox "Search" [ref=e5]\n- button "Save" [ref=e6]\n- button "Show more results" [ref=e7]\n- link "Message" [ref=e8]\n';
+    const runner: Runner = async (_s, args) => (args[0] === 'snapshot' ? tree : args[0] === 'get' && args[1] === 'url' ? 'https://www.linkedin.com/search/results/people/\n' : '✓\n');
+    const browser = createBrowser(runner);
+    await browser.act('card-li', 'look', {});
+    expect(await browser.outward('card-li', 'click', { ref: 'e1' }, undefined, 'LinkedIn')).toMatch(/unnamed button \(e1\) on LinkedIn/);
+    for (const ref of ['e2', 'e3', 'e4', 'e5', 'e7']) expect(await browser.outward('card-li', 'click', { ref }, undefined, 'LinkedIn')).toBeNull();
+    // A button the old list of words did not know is asked about all the same, and so is a link that sends.
+    expect(await browser.outward('card-li', 'click', { ref: 'e6' }, undefined, 'LinkedIn')).toMatch(/^Click "Save" on LinkedIn\?/);
+    expect(await browser.outward('card-li', 'click', { ref: 'e8' }, undefined, 'LinkedIn')).toMatch(/^Click "Message"/);
+  });
   it('pauses before a step only when a pace is given', async () => {
     const stamps: number[] = [];
     const runner: Runner = async (_s, args) => { if (args[0] === 'click') stamps.push(Date.now()); return args[0] === 'snapshot' ? '- button "Ok" [ref=e1]\n' : '✓\n'; };
