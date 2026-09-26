@@ -31,7 +31,7 @@ test.beforeEach(async ({ page }) => {
 });
 test.afterEach(async ({ page }) => {
   await page.goto('about:blank');
-  await page.request.put('/api/stage', { data: { ...held, rev: undefined } });
+  await page.request.put('/api/stage', { data: held });
   expect(broke).toEqual([]);
 });
 
@@ -62,6 +62,10 @@ test('a save that does not land says so on the canvas until one does', async ({ 
   await page.route('**/api/stage', (route) => (route.request().method() === 'PUT' ? route.abort() : route.continue()));
   await drag(page, 'marketing', 120);
   await expect(page.locator('.stage__unsaved')).toContainText('Not saved');
+  // Still down for the first try again, which fails the same way: a second try has to follow it all the same.
+  let puts = 0;
+  page.on('request', (request) => { if (request.method() === 'PUT' && request.url().endsWith('/api/stage')) puts += 1; });
+  await expect.poll(() => puts, { timeout: 8_000 }).toBeGreaterThan(0);
   const before = await at('marketing', page);
   await page.unroute('**/api/stage');
   await expect(page.locator('.stage__unsaved')).toHaveCount(0, { timeout: 10_000 });

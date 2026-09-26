@@ -56,3 +56,17 @@ describe('a save over a stage that moved on', () => {
     expect(out.merged).toBeUndefined();
   });
 });
+
+describe('a save that came back refused while the founder kept working', () => {
+  it('keeps what they did meanwhile on top of the stage it was put together with', () => {
+    // The save set out with the first person moved; while it was out the founder dragged the second and added a card.
+    const sent: Stage = { ...structuredClone(base), rooms: [{ ...base.rooms[0], x: 500 }, base.rooms[1]] };
+    const live: Stage = { ...structuredClone(sent), rooms: [sent.rooms[0], { ...base.rooms[1], x: 700 }], cards: [{ id: 'note-2', kind: 'note', text: 'new', x: 0, y: 0, w: 200, h: 200 }] };
+    // What the save put together with the other window's stage, which added a note of its own.
+    const merged: Stage = { ...structuredClone(sent), cards: [{ id: 'note-1', kind: 'note', text: 'hi', x: 0, y: 0, w: 200, h: 200 }], rev: 9 };
+    const shown = mergeStage(sent, live, merged);
+    expect(shown.rooms.map((one) => one.x)).toEqual([500, 700]);
+    expect(shown.cards!.map((one) => one.id)).toEqual(['note-1', 'note-2']);
+    expect(shown.rev).toBe(9);
+  });
+});

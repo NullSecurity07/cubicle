@@ -38,6 +38,7 @@ function Canvas({ stage }: { stage: Stage }) {
   const base = useRef(stage);
   // Why the canvas as it is now is not on disk, while it is not. Cleared by the next save that lands.
   const [unsaved, setUnsaved] = useState('');
+  const [failures, setFailures] = useState(0);
   // The save on its way, if one is: a caller that flushes while the same stage is still being put waits for that put
   // rather than being told "saved" at once, so a card added a moment ago is known to the server before its first read.
   const saving = useRef<Promise<void>>(Promise.resolve());
@@ -82,12 +83,20 @@ function Canvas({ stage }: { stage: Stage }) {
         const out = await saveOver(base.current, stage, putStage);
         // Only ever forward: the stage may have moved on again, and this window heard it, while this save was out.
         if ((out.base.rev ?? 0) > (base.current.rev ?? 0)) base.current = out.base;
-        if (out.merged) { lastSaved.current = out.saved ? JSON.stringify({ ...out.merged, rev: undefined }) : ''; show(out.merged); }
+        if (out.merged) {
+          // Put together once more with the canvas as it is now, not as it was when this save set out: whatever the
+          // founder did while the save was out (a drag, a new card) stays, and the next save carries it.
+          const shown = mergeStage(stage, fromFlow(latest.current.nodes, latest.current.edges), out.merged);
+          lastSaved.current = out.saved && sameStage(shown, out.merged) ? JSON.stringify({ ...out.merged, rev: undefined }) : '';
+          show(shown);
+        }
         if (!out.saved) throw new Error('the stage kept changing in another window');
         setUnsaved('');
+        setFailures(0);
       } catch (error) {
         lastSaved.current = '';
         setUnsaved((error as Error).message || 'the server did not answer');
+        setFailures((count) => count + 1);
         throw error;
       }
     });
@@ -98,12 +107,13 @@ function Canvas({ stage }: { stage: Stage }) {
     const timer = setTimeout(() => save().catch(() => {}), 400);
     return () => clearTimeout(timer);
   }, [nodes, edges, save]);
-  // A save that did not land is tried again every few seconds until one does, changed canvas or not.
+  // A save that did not land is tried again every few seconds until one does, changed canvas or not. Keyed on the
+  // count of failures, not the message: the same failure twice running still has to set the next try going.
   useEffect(() => {
-    if (!unsaved) return;
+    if (!failures) return;
     const timer = setTimeout(() => save().catch(() => {}), 5000);
     return () => clearTimeout(timer);
-  }, [unsaved, save]);
+  }, [failures, save]);
 
   // Another window saved, or a person put something on the stage: this window takes it in as it happens, keeping
   // whatever the founder has changed here and not yet saved, and then saves that on top of it.
