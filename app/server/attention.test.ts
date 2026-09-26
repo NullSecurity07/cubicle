@@ -179,6 +179,13 @@ describe('a key the provider refuses', () => {
     expect(await attention.list()).toHaveLength(2);
   });
 
+  it('lets the founder dismiss a refused-key item', async () => {
+    const attention = createAttention(await mkdtemp(join(tmpdir(), 'attention-')));
+    await attention.raise({ id: 'key-rejected:GROQ_API_KEY:1', kind: 'key-rejected', title: 'Groq key rejected; fix it in Keys', at: Date.now() });
+    await attention.dismiss('key-rejected:GROQ_API_KEY:1');
+    expect(await attention.list()).toHaveLength(0);
+  });
+
   it('does not bring a refused key back from the last run: a new key only takes effect on a start', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'attention-'));
     const first = createAttention(dir);
