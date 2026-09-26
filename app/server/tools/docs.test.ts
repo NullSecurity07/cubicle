@@ -60,4 +60,20 @@ describe('doc tools', () => {
     expect((await call('replace_section', { doc: 'Brand doc', heading: 'Build', text: 'x' })).text).toMatch(/no connected document/);
     expect(await store.readDoc('brand-doc')).toBe(PLAN);
   });
+
+  it('reads a pinned doc nobody wired, as the prompt says every person does, and still refuses an unpinned one', async () => {
+    const { store, call, context } = await setup();
+    await store.replaceDoc('company-brief', '# Company brief\n\nFlipside: a weekly list of small SaaS for sale.');
+    context.roomId = 'build';
+    expect(context.stage.docs.find((doc) => doc.id === 'company-brief')?.pinned).toBe(true);
+    const pinned = await call('read_doc', { doc: 'Company brief' });
+    expect(pinned).toMatchObject({ ok: true });
+    expect(pinned.text).toContain('Flipside');
+    const unpinned = await call('read_doc', { doc: 'Brand doc' });
+    expect(unpinned.ok).toBe(false);
+    expect(unpinned.text).toMatch(/no connected document/);
+    const write = await call('append_doc', { doc: 'Company brief', text: 'More.' });
+    expect(write.ok).toBe(false);
+    expect(write.text).toMatch(/pinned company document: you can read it, but writing to it needs a wire/);
+  });
 });

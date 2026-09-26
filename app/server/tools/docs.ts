@@ -1,5 +1,5 @@
 import type { Box, Stage } from '../../shared/model.ts';
-import { wiredDocIds } from '../prompt.ts';
+import { readableDocIds, wiredDocIds } from '../prompt.ts';
 import { replaceSection, rewriteLoss } from './sections.ts';
 import { text, type Tool, type ToolContext } from './registry.ts';
 
@@ -34,19 +34,24 @@ const docOnStage = (roomId: string, id: string, title: string) => (stage: Stage)
   stage.wires.push({ id: `${roomId}-${id}`, from: roomId, fromHandle: 'r', to: id, toHandle: 'l' });
 };
 
-// Docs this person may touch, by title: the wired ones plus any made during this turn.
-function reachable(context: ToolContext) {
+// Docs this person may touch, by title: the wired ones plus any made during this turn. Reading also reaches every
+// pinned doc, because the prompt tells each person those are company documents they all read; a read_doc that
+// refused one made a person say the brief it had in front of it did not exist. Writing a pinned doc still needs a wire.
+function reachable(context: ToolContext, reading: boolean) {
   const docs = new Map<string, string>();
-  for (const id of wiredDocIds(context.stage, context.roomId)) docs.set(id, context.stage.docs.find((doc) => doc.id === id)!.title);
+  const ids = reading ? readableDocIds(context.stage, context.roomId) : wiredDocIds(context.stage, context.roomId);
+  for (const id of ids) docs.set(id, context.stage.docs.find((doc) => doc.id === id)!.title);
   for (const [id, title] of context.granted) docs.set(id, title);
   return docs;
 }
 
-function find(context: ToolContext, wanted: string) {
-  const docs = reachable(context);
+function find(context: ToolContext, wanted: string, reading = false) {
+  const docs = reachable(context, reading);
   const key = wanted.trim().toLowerCase();
   const hits = [...docs].filter(([id, title]) => id === key || title.trim().toLowerCase() === key);
   if (hits.length === 1) return hits[0][0];
+  const pinned = !reading && context.stage.docs.find((one) => one.pinned && (one.id === key || one.title.trim().toLowerCase() === key));
+  if (!hits.length && pinned) throw new Error(`"${pinned.title}" is a pinned company document: you can read it, but writing to it needs a wire from the founder.`);
   const titles = [...docs.values()].map((title) => `"${title}"`).join(', ') || 'none';
   throw new Error(hits.length ? `more than one connected document is called "${wanted}"` : `no connected document is called "${wanted}". Connected: ${titles}. Ask the founder to draw a wire to it.`);
 }
@@ -56,9 +61,9 @@ const doc = { type: 'string', description: 'Title of a document connected to you
 export const docTools: Tool[] = [
   {
     name: 'read_doc',
-    description: 'Read the current text of a connected document. Its text is already in your context; use this only to check it again after a change.',
+    description: 'Read the current text of a connected or pinned document. Its text is already in your context; use this only to check it again after a change.',
     parameters: { type: 'object', properties: { doc }, required: ['doc'] },
-    run: async (args, context) => ({ text: (await context.store.readDoc(find(context, text(args, 'doc')))) || '(empty)' }),
+    run: async (args, context) => ({ text: (await context.store.readDoc(find(context, text(args, 'doc'), true))) || '(empty)' }),
   },
   {
     name: 'write_doc',
