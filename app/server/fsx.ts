@@ -1,11 +1,16 @@
-import { mkdir, readdir, rename, stat, writeFile } from 'node:fs/promises';
+import { mkdir, open, readdir, rename, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 // A file written whole or not at all: to a side file first, then renamed over the old one, so a reader never sees half.
 export async function writeAtomic(path: string, text: string | Buffer, options: { mkdir?: boolean } = {}) {
   if (options.mkdir) await mkdir(dirname(path), { recursive: true });
-  await writeFile(`${path}.tmp`, text);
+  // The bytes are pushed to the disk before the rename, and the folder after it: without that, a power cut soon after
+  // can leave the new name pointing at an empty file, which is worse than the old one.
+  const file = await open(`${path}.tmp`, 'w');
+  try { await file.writeFile(text); await file.sync(); } finally { await file.close(); }
   await rename(`${path}.tmp`, path);
+  const folder = await open(dirname(path), 'r').catch(() => null);
+  if (folder) { try { await folder.sync(); } catch { /* not every system lets a folder be synced */ } finally { await folder.close(); } }
 }
 
 // What a folder of small files says, read once and kept while nothing changes. Whatever this process writes drops it

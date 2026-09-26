@@ -1,4 +1,4 @@
-import type { Card, Doc, Room, Wire } from './model.ts';
+import type { Card, Doc, DocRules, Room, Wire } from './model.ts';
 
 // A framework is a team the founder does not have to build twice: people with their briefs, the docs they share, the
 // cards they need and the wires between them, kept as one file and placed on the stage in one press. Nothing in here
@@ -15,7 +15,7 @@ type Unplaced<T> = T extends unknown ? Omit<T, 'id' | 'x' | 'y'> : never;
 export type RoomSpec = { key: string } & Unplaced<Room>;
 // A doc carries the words it starts with. Its size is optional because most docs are happy at the usual size, and a
 // framework whose shared doc is the thing everybody writes into wants a bigger one.
-export type DocSpec = { key: string; title: string; text: string; pinned?: boolean; w?: number; h?: number };
+export type DocSpec = { key: string; title: string; text: string; pinned?: boolean; rules?: DocRules; w?: number; h?: number };
 export type CardSpec = { key: string } & Unplaced<Card>;
 // Keys, not ids: a wire inside a framework is "the judge talks to the pain validator", whoever they turn out to be.
 export type WireSpec = { from: string; to: string };

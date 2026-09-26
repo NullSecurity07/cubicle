@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { ToolEvent } from '../shared/model.ts';
 import { runTurn, SAY_SOMETHING } from './loop.ts';
+import { CALL_THE_TOOL, HELD_BACK } from './truth.ts';
 import type { ModelMessage } from './prompt.ts';
 import type { ModelClient, ModelTurn } from './providers.ts';
 import { createSeams, type Payloads, type Seams } from './seams.ts';
@@ -122,7 +123,7 @@ describe('runTurn', () => {
       events: { token: () => {}, tool: () => {}, notice: (text) => notices.push(text) },
     });
     expect(result.provider).toBe('script');
-    expect(notices).toEqual(['gemini could not answer (free limit reached), so script answers.']);
+    expect(notices).toEqual(['gemini could not answer (busy for now), so script answers.']);
     expect(usage.hot(broken, 10)).toBe(true);
     void run;
   });
@@ -346,5 +347,86 @@ describe('runTurn with seams', () => {
       expect((await run(client)).text).toBe('No files yet.');
       expect(asked.some((one) => one.last === SAY_SOMETHING)).toBe(false);
     });
+  });
+});
+
+describe('runTurn, the truth net', () => {
+  const turn = async (client: ModelClient, messages: ModelMessage[] = [{ role: 'user', content: 'go' }]) => {
+    const store = createStore(await mkdtemp(join(tmpdir(), 'loop-')));
+    const notices: string[] = [];
+    let said = '';
+    const reply = await runTurn({
+      messages, tools: [...fileTools], clients: [client], usage: createUsage(null),
+      context: { stage: await store.loadStage(), roomId: 'build', store, granted: new Map() },
+      events: { token: (token) => { said += token; }, tool: () => {}, notice: (text) => notices.push(text) },
+    });
+    return { reply, notices, said };
+  };
+  // A model that records the last thing it was asked, then plays back a script.
+  const recording = (steps: (string | { name: string; args: unknown }[] | ModelTurn)[]) => {
+    const asked: string[] = [];
+    const client: ModelClient = {
+      ...scripted([]),
+      async step(messages, { onToken }): Promise<ModelTurn> {
+        asked.push(String(messages.at(-1)?.content ?? ''));
+        const next = steps.shift() ?? 'done';
+        if (typeof next === 'string') { onToken(next); return { text: '', calls: [] }; }
+        if (!Array.isArray(next)) { onToken(next.text); return { ...next, text: '' }; }
+        return { text: '', calls: next.map((call, index) => ({ id: `c${asked.length}-${index}`, name: call.name, args: JSON.stringify(call.args) })) };
+      },
+    };
+    return { client, asked };
+  };
+
+  it('marks a save no tool made, keeps the words, and tells the window', async () => {
+    const { reply, notices, said } = await turn(scripted(["Here is the update. I've saved it as january-update.md."]));
+    expect(reply.text).toBe("Here is the update. I've saved it as january-update.md.\n\nUnconfirmed: this reply claims an action no tool confirmed (saved).");
+    expect(said).toBe(reply.text);
+    expect(notices.at(-1)).toMatch(/^Unconfirmed: /);
+    expect(reply.flags).toEqual(['Unconfirmed: this reply claims an action no tool confirmed (saved).']);
+  });
+
+  it('lets a save stand when a write worked this turn', async () => {
+    const { reply, notices } = await turn(scripted([[{ name: 'write_file', args: { path: 'plan.md', text: 'x' } }], 'I saved it as plan.md.']));
+    expect(reply.text).toBe('I saved it as plan.md.');
+    expect(notices).toEqual([]);
+  });
+
+  it('flags a figure nothing gave it, and not one quoted from a wired doc or a tool result', async () => {
+    const wired: ModelMessage[] = [{ role: 'system', content: '## Doc: Numbers\nMRR $22,000, churn 2.3%' }, { role: 'user', content: 'how are we doing?' }];
+    expect((await turn(scripted(['MRR is $22,000 and churn is 2.3%.']), wired)).reply.text).toBe('MRR is $22,000 and churn is 2.3%.');
+    expect((await turn(scripted(['MRR is $22,000 and we should charge $29.']), wired)).reply.text).toMatch(/\n\nUnsourced figures: \$29 \(not found/);
+    const read = scripted([[{ name: 'write_file', args: { path: 'late.md', text: '34% pay late' } }], [{ name: 'read_file', args: { path: 'late.md' } }], 'The note says 34% pay late.']);
+    expect((await turn(read)).reply.text).toBe('The note says 34% pay late.');
+  });
+
+  it('asks once more when the tool call came back written as text, and keeps the leak out of the reply', async () => {
+    const { client, asked } = recording(['<tool_call><function=ask_founder>\n<parameter=question>What price?</parameter></function></tool_call>', [{ name: 'list_files', args: {} }], 'No files yet.']);
+    const { reply } = await turn(client);
+    expect(asked[1]).toBe(CALL_THE_TOOL);
+    expect(reply.tools.map((tool) => tool.name)).toEqual(['list_files']);
+    expect(reply.text).toBe('No files yet.');
+  });
+
+  it('holds back a raw JSON call written twice, with a clean line instead', async () => {
+    const json = '{"name": "ask_founder", "arguments": {"question": "What price?"}}';
+    const { client, asked } = recording([json, json]);
+    const { reply } = await turn(client);
+    expect(asked).toHaveLength(2);
+    expect(reply.text).toBe(HELD_BACK);
+    expect(reply.text).not.toContain('ask_founder');
+  });
+
+  it('says a reply the stream broke off is cut short, and lists what the tools did', async () => {
+    const { client } = recording([[{ name: 'list_files', args: {} }], { text: 'The plan has three par', calls: [], cut: true, broke: 'socket hang up' }]);
+    const { reply } = await turn(client);
+    expect(reply.text).toMatch(/^The plan has three par\n\n\(reply cut short: socket hang up\)\n\nThe reply broke off after these steps, so here is what they said:\n\n- list files: worked/);
+  });
+
+  it('says a reply cut short with no tools, without the length-limit notice', async () => {
+    const { client } = recording([{ text: 'The plan has three par', calls: [], cut: true, broke: 'terminated' }]);
+    const { reply, notices } = await turn(client);
+    expect(reply.text).toBe('The plan has three par\n\n(reply cut short: terminated)');
+    expect(notices.join(' ')).not.toMatch(/length limit/);
   });
 });

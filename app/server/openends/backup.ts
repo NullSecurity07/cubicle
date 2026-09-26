@@ -1,7 +1,7 @@
 import { createWriteStream } from 'node:fs';
-import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { access, constants, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join, resolve, sep } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { createGzip, gunzipSync } from 'node:zlib';
 import type { Backup } from '../../shared/openends.ts';
@@ -57,6 +57,50 @@ export async function makeBackup(options: { workspace: string; dir?: string; now
   for (const one of old) await rm(join(dir, one.file), { force: true });
   const where = await stat(done);
   return { backup: { file, at: where.mtimeMs, bytes: where.size }, dropped: old.length, problems };
+}
+
+// Could a backup be written there right now? Asked without writing anything: the folder itself if it is there, or the
+// nearest folder above it that is, since a backup makes the rest. A drive that is not plugged in says no here.
+export async function canWrite(dir: string): Promise<boolean> {
+  let at = resolve(dir);
+  for (;;) {
+    const found = await stat(at).catch((error: NodeJS.ErrnoException) => (error.code === 'ENOENT' ? null : undefined));
+    if (found === undefined) return false;
+    if (found) return found.isDirectory() && (await access(at, constants.W_OK).then(() => true, () => false));
+    const up = dirname(at);
+    if (up === at) return false;
+    at = up;
+  }
+}
+
+// A backup is due when the newest is a day old, or when there is none.
+export const DUE_AFTER = 86_400_000;
+// One that failed (the drive unplugged, the disk full) is tried again an hour later, not on every tick.
+const RETRY_AFTER = 3_600_000;
+
+// The backup nobody has to remember. Asked on the half-minute tick; it makes one only when one is due, with the same
+// makeBackup and the same five kept as the button in Health.
+export function autoBackup(options: { workspace: string; dir: () => string; now?: () => number; log?: (line: string) => void }) {
+  const { workspace, dir, now = Date.now, log = (line) => console.log(line) } = options;
+  let failedAt = -Infinity;
+  return {
+    async tick(): Promise<{ made?: Awaited<ReturnType<typeof makeBackup>>; problem?: string } | null> {
+      if (now() - failedAt < RETRY_AFTER) return null;
+      const where = dir();
+      const newest = (await listBackups(where))[0];
+      if (newest && now() - newest.at < DUE_AFTER) return null;
+      try {
+        const made = await makeBackup({ workspace, dir: where, now });
+        failedAt = -Infinity;
+        return { made };
+      } catch (error) {
+        failedAt = now();
+        const problem = (error as Error).message;
+        log(`the daily backup to ${where} failed: ${problem}`);
+        return { problem };
+      }
+    },
+  };
 }
 
 // Where an entry in an archive is allowed to land: inside the new folder, under its own name, and nowhere else.

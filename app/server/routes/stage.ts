@@ -11,7 +11,13 @@ import { browserSession } from '../tools/web.ts';
 export function stageRoutes(deps: { store: Store; events: ReturnType<typeof createEvents>; browser: Pick<Browser, 'close'>; attention: Pick<AttentionBook, 'refresh'>; approvals: Approvals }): Route {
   const { store, events, browser, attention, approvals } = deps;
   return async (req, res, path) => {
-    if (path === '/api/stage' && req.method === 'GET') return answer(res, 200, await store.loadStage());
+    // The revision goes in the ETag header, never the body, so a stage read by a script is plain data it can put back
+    // as it is. A stage saved before revisions were counted is at 0.
+    if (path === '/api/stage' && req.method === 'GET') {
+      const { rev, ...stage } = await store.loadStage();
+      res.setHeader('etag', `"${rev ?? 0}"`);
+      return answer(res, 200, stage);
+    }
     // One connection for the whole window, carrying every feed below it under its own channel name. The comment on
     // opening, and the pulse, are the rooms feed's for the rooms feed's reasons: a window knows it is listening
     // before the first word arrives, and it can tell a feed that has gone quiet from one that has died.
@@ -27,16 +33,19 @@ export function stageRoutes(deps: { store: Store; events: ReturnType<typeof crea
     }
     if (path === '/api/stage' && req.method === 'PUT') {
       // In turn with every change made here, and keeping whatever one of those put down that this window has not heard of.
-      const { before, next } = await store.putStage((await body(req)) as Stage);
-      // The window's one feed follows the stage: a board card put down here is live before this answer goes back.
-      events.restage(next);
+      // A window that saves over a stage it has not seen is told so, with the stage as it is now, and saves again.
+      // The store tells the events feed about every stage it saves, so every other window hears of this one.
+      // Only a window sends If-Match, with the revision it last saw; a save without one is taken whole, as ever.
+      const match = /^"?(\d+)"?$/.exec(String(req.headers['if-match'] ?? '').trim());
+      const { before, next, stale } = await store.putStage((await body(req)) as Stage, match ? Number(match[1]) : undefined);
+      if (stale) { const { rev, ...stage } = before; return answer(res, 409, { error: 'the stage changed in another window', stage, rev: rev ?? 0 }); }
       // A browser or source card that left the stage takes its Chrome session with it. No other card has one, and
       // closing a session nobody opened still starts a process to say so.
       for (const card of before.cards ?? []) {
         if ((card.kind === 'browser' || card.kind === 'source') && !next.cards?.some((kept) => kept.id === card.id)) void browser.close(browserSession(card.id));
       }
       if ((before.cards ?? []).length !== (next.cards ?? []).length) void attention.refresh();
-      return answer(res, 200, { ok: true });
+      return answer(res, 200, { ok: true, rev: next.rev });
     }
     const asked = /^\/api\/approvals\/([\w.:-]{1,120})$/.exec(path)?.[1];
     if (asked && req.method === 'POST') {

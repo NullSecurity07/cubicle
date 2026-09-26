@@ -126,10 +126,10 @@ describe('one live connection carrying every feed', () => {
     window.since();
     events.restage(stageOf('one', 'later'));
     boards.tell('later', { tasks: [task('Ring the printer')] });
-    expect(window.since()).toEqual([{ channel: 'board:later', data: { tasks: [task('Ring the printer')] } }]);
+    expect(window.since()).toEqual([{ channel: 'stage', data: stageOf('one', 'later') }, { channel: 'board:later', data: { tasks: [task('Ring the printer')] } }]);
     events.restage(stageOf('later'));
     boards.tell('one', { tasks: [] });
-    expect(window.since()).toEqual([]);
+    expect(window.since()).toEqual([{ channel: 'stage', data: stageOf('later') }]);
   });
 
   it('a window that went away mid-write never silences the ones that are still here', async () => {

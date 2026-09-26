@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Slice } from '../install.ts';
-import { backupDirOf, listBackups, makeBackup } from '../openends/backup.ts';
+import { autoBackup, backupDirOf, listBackups, makeBackup } from '../openends/backup.ts';
 import { checkAll, outsideHealth } from '../openends/health.ts';
 import { coderHealth } from '../opencode/server.ts';
 import { createInsights } from '../openends/insights.ts';
@@ -21,6 +21,9 @@ export default {
   async install(deps) {
     // Asked each time: the founder may point backups somewhere else (Health, "Back up to…") while the app runs.
     const dirOf = () => backupDirOf(deps);
+    // The daily backup, off the half-minute tick. A check run's workspace is thrown away, so it only backs up when
+    // the run asks for it.
+    const daily = !deps.fake || process.env.STAGE_AUTO_BACKUP === '1' ? autoBackup({ workspace: deps.workspace, dir: dirOf }) : null;
     const safe = createSafeBook(deps.workspace);
     const { entries, problem } = await loadEntries(deps.workspace);
     // A file the founder wrote wrong is one row on the screen, never a start that fails.
@@ -90,6 +93,7 @@ export default {
         }
         return false;
       },
+      async tick() { await daily?.tick(); },
       async close() {
         outsideHealth.now = outsideBefore;
         for (const one of connections) await one.rpc?.close().catch(() => {});

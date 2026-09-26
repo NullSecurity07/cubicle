@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { resolve } from 'node:path';
 import { isHeaded, type Stage } from '../shared/model.ts';
 import { createApprovals } from './approvals.ts';
-import { boardAttention, createAttention } from './attention.ts';
+import { boardAttention, createAttention, keyAttention } from './attention.ts';
 import { createBoards } from './boards.ts';
 import { createBrowser, dnsResolve, fakeHand, fakeRunner, jinaReader, realRunner } from './browser.ts';
 import { createChat } from './chat.ts';
@@ -37,6 +37,7 @@ import { createRuns, desktopNotify } from './runs.ts';
 import { createSeams } from './seams.ts';
 import { createSkills } from './skills.ts';
 import { createSources, sourceAttention } from './sources.ts';
+import { guardProcess } from './restart.ts';
 import { readStatic } from './static.ts';
 import { createStore } from './store.ts';
 import { decisionTools } from './tools/decisions.ts';
@@ -57,6 +58,9 @@ import { createPromptFor } from './turn-prompt.ts';
 import { createUsage } from './usage.ts';
 import { wireStudios } from './wiring/studios.ts';
 
+// First of all: a promise nobody caught is written down and the app goes on; a throw nobody caught ends it with a
+// failure, which dev.mjs starts again.
+guardProcess();
 const root = resolve(import.meta.dirname, '../..');
 try { process.loadEnvFile(resolve(root, '.env')); } catch { /* no .env: only the fake model will work */ }
 
@@ -72,7 +76,9 @@ const workspace = process.env.STAGE_WORKSPACE ?? resolve(root, 'workspace');
 // Every open window hears what every other writer did, through the store: a message written anywhere at all reaches
 // the canvas, whether the founder typed it here, sent it from their phone or a colleague put it there.
 const roomFeed = createRoomFeed();
-const store = createStore(workspace, (roomId) => roomFeed.tell({ roomId, chat: 'changed' }));
+// The events feed is made further down, once everything it listens to is; until then a saved stage has nobody to tell.
+let restage: (stage: Stage) => void = () => {};
+const store = createStore(workspace, (roomId) => roomFeed.tell({ roomId, chat: 'changed' }), (stage) => restage(stage));
 const usage = createUsage(resolve(workspace, 'usage.json'));
 await usage.load();
 const browser = fake ? createBrowser(fakeRunner, undefined, undefined, fakeHand) : createBrowser(realRunner(), { direct: [redditFeed(), stackExchange()], fallback: process.env.STAGE_NO_READER === '1' ? [] : [jinaReader, archiveCopy()] }, dnsResolve);
@@ -87,6 +93,8 @@ const memory = createMemory(store, async (messages) => {
 const boards = createBoards(workspace);
 // One list of everything that waits for the founder; boards report into it, approvals are held in it while they wait.
 const attention = createAttention(workspace);
+// A key the provider refuses is said once in Needs you, and goes from there when that key answers again.
+keyAttention(usage, attention);
 attention.source(boardAttention(store, boards));
 boards.onChange(() => { void attention.refresh(); });
 // The studio cards: one job per card, the files in the shared files folder, the rest beside the stage.
@@ -104,6 +112,7 @@ const founder = createFounder(workspace);
 // The one live connection a window holds: every feed below still answers on its own address for scripts and checks,
 // but the page hears all of them through this.
 const events = createEvents({ attention, skills, rooms: roomFeed, media, boards, stage: () => store.loadStage() });
+restage = (stage) => events.restage(stage);
 // Search by meaning over everything the workspace holds. The model runs inside this process; its file is fetched once.
 const recall = createRecall({ dir: workspace, embed: fake ? wordEmbedder : localEmbedder(resolve(root, 'app/.cache/recall')), gather: gatherPieces(store, decisions, (roomId) => memory.read(roomId), skills) });
 // Bring the saved vectors up to date shortly after start, so the first search does not wait for it.

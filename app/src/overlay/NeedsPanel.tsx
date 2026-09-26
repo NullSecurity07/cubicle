@@ -7,6 +7,7 @@ import { Approval, asked } from '../nodes/Approval';
 import { CoderAsk } from '../nodes/CoderAsk';
 import { MetricsNeed } from '../nodes/MetricsNeed';
 import { LeadNudgeNeed } from '../nodes/LeadNudge';
+import { PartnerNeed } from '../slices/partner/PartnerNeed';
 import { ago, since, useAttention, WHAT } from './attention';
 import { PanelShell } from './PanelShell';
 import { overlay, showDecision } from './store';
@@ -80,6 +81,7 @@ export function NeedsPanel() {
                 </>}
                 <MetricsNeed entry={entry} attempt={attempt} />
                 <LeadNudgeNeed entry={entry} attempt={attempt} />
+                <PartnerNeed entry={entry} attempt={attempt} />
                 {entry.decisionId && <button type="button" className="primary" onClick={() => { showDecision(entry.decisionId!); overlay.open({ kind: 'panel', name: 'decisions' }); }}>{entry.kind === 'review-due' ? 'Look at it' : 'Decide'}</button>}
                 {(entry.lapsed || entry.kind === 'run-failed' || entry.kind === 'missed' || entry.kind === 'review-due' || entry.kind === 'page-changed') && <button type="button" onClick={() => attempt(dismissAttention(entry.id))}>Dismiss</button>}
                 {entry.lapsed && entry.roomId && <button type="button" className="primary" onClick={() => ask(entry, said)}>Ask {entry.who ?? 'them'} again</button>}

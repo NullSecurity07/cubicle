@@ -2,7 +2,7 @@ import { mkdtemp, readdir, writeFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Check } from '../../shared/openends.ts';
 import type { Installed } from '../install.ts';
 import { outsideHealth } from '../openends/health.ts';
@@ -11,7 +11,7 @@ import slice from './openends.ts';
 
 const root = resolve(import.meta.dirname, '../../..');
 let part: Installed | null = null;
-afterEach(async () => { await part?.close?.(); part = null; });
+afterEach(async () => { await part?.close?.(); part = null; vi.unstubAllEnvs(); });
 
 async function setup(files: Record<string, string> = {}) {
   const workspace = await mkdtemp(join(tmpdir(), 'openends-'));
@@ -42,6 +42,18 @@ describe('the openends slice', () => {
     expect(made!.body.dir).toBe(join(workspace, 'backups'));
     expect((await readdir(join(workspace, 'backups'))).filter((name) => name.endsWith('.tar.gz'))).toHaveLength(1);
     expect(await call('/api/nothing-here')).toBeNull();
+  });
+
+  it('backs up by itself on the tick once one is due, and leaves a throwaway check run alone unless asked', async () => {
+    const quiet = await setup();
+    await part!.tick!();
+    expect(await readdir(join(quiet.workspace, 'backups')).catch(() => [])).toHaveLength(0);
+    await part!.close!();
+    vi.stubEnv('STAGE_AUTO_BACKUP', '1');
+    const { workspace } = await setup();
+    await part!.tick!();
+    await part!.tick!();
+    expect((await readdir(join(workspace, 'backups'))).filter((name) => name.endsWith('.tar.gz'))).toHaveLength(1);
   });
 
   it('names a broken mcp.json as one row, shows it on the dashboard\'s health too, and lets go on close', async () => {

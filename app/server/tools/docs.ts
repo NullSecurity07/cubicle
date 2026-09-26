@@ -1,7 +1,11 @@
-import type { Box, Stage } from '../../shared/model.ts';
-import { wiredDocIds } from '../prompt.ts';
+import { readFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import type { Framework } from '../../shared/frameworks.ts';
+import type { Box, DocRules, Stage } from '../../shared/model.ts';
+import { readableDocIds, wiredDocIds } from '../prompt.ts';
 import { replaceSection, rewriteLoss } from './sections.ts';
 import { text, type Tool, type ToolContext } from './registry.ts';
+import { guardWrite } from './verdict.ts';
 
 // A new doc card's size, and the gap kept round it: the same the window uses when it places one.
 const [WIDTH, HEIGHT, GAP] = [340, 300, 40];
@@ -34,21 +38,58 @@ const docOnStage = (roomId: string, id: string, title: string) => (stage: Stage)
   stage.wires.push({ id: `${roomId}-${id}`, from: roomId, fromHandle: 'r', to: id, toHandle: 'l' });
 };
 
-// Docs this person may touch, by title: the wired ones plus any made during this turn.
-function reachable(context: ToolContext) {
+// Docs this person may touch, by title: the wired ones plus any made during this turn. Reading also reaches every
+// pinned doc, because the prompt tells each person those are company documents they all read; a read_doc that
+// refused one made a person say the brief it had in front of it did not exist. Writing a pinned doc still needs a wire.
+function reachable(context: ToolContext, reading: boolean) {
   const docs = new Map<string, string>();
-  for (const id of wiredDocIds(context.stage, context.roomId)) docs.set(id, context.stage.docs.find((doc) => doc.id === id)!.title);
+  const ids = reading ? readableDocIds(context.stage, context.roomId) : wiredDocIds(context.stage, context.roomId);
+  for (const id of ids) docs.set(id, context.stage.docs.find((doc) => doc.id === id)!.title);
   for (const [id, title] of context.granted) docs.set(id, title);
   return docs;
 }
 
-function find(context: ToolContext, wanted: string) {
-  const docs = reachable(context);
+function find(context: ToolContext, wanted: string, reading = false) {
+  const docs = reachable(context, reading);
   const key = wanted.trim().toLowerCase();
   const hits = [...docs].filter(([id, title]) => id === key || title.trim().toLowerCase() === key);
   if (hits.length === 1) return hits[0][0];
+  const pinned = !reading && context.stage.docs.find((one) => one.pinned && (one.id === key || one.title.trim().toLowerCase() === key));
+  if (!hits.length && pinned) throw new Error(`"${pinned.title}" is a pinned company document: you can read it, but writing to it needs a wire from the founder.`);
   const titles = [...docs.values()].map((title) => `"${title}"`).join(', ') || 'none';
   throw new Error(hits.length ? `more than one connected document is called "${wanted}"` : `no connected document is called "${wanted}". Connected: ${titles}. Ask the founder to draw a wire to it.`);
+}
+
+// A team placed before its doc carried rules still has people who say which team they came from. The rules are
+// taken from that team as it ships, by the doc's title, each time and never saved: a miss is a doc with no rules, as
+// before. Read once per team.
+const SHIPPED = resolve(import.meta.dirname, '../../frameworks');
+const shipped = new Map<string, Promise<Framework | null>>();
+const shippedTeam = (id: string) => {
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(id)) return Promise.resolve(null);
+  if (!shipped.has(id)) shipped.set(id, readFile(join(SHIPPED, id, 'framework.json'), 'utf8').then((raw) => JSON.parse(raw) as Framework).catch(() => null));
+  return shipped.get(id)!;
+};
+
+async function rulesOf(stage: Stage, id: string): Promise<DocRules | undefined> {
+  const doc = stage.docs.find((one) => one.id === id);
+  if (!doc || doc.rules) return doc?.rules;
+  const teams = new Set(stage.rooms.filter((room) => room.framework && wiredDocIds(stage, room.id).includes(id)).map((room) => room.framework!.id));
+  for (const team of teams) {
+    const spec = (await shippedTeam(team))?.docs.find((one) => one.title.trim().toLowerCase() === doc.title.trim().toLowerCase());
+    if (spec?.rules?.framework === team) return spec.rules;
+  }
+  return undefined;
+}
+
+// Every write goes through here. A team's shared doc carries rules for whose each section is and when its verdict may
+// stand, so what is saved may be the writer's words with a stale mark or a "not assessed" verdict put in.
+async function save(context: ToolContext, id: string, before: string, after: string, done: string) {
+  const rules = await rulesOf(context.stage, id);
+  const guarded = rules ? guardWrite({ rules, stage: context.stage, docId: id, writerId: context.roomId, before, after, now: Date.now() }) : { text: after };
+  await context.store.replaceDoc(id, guarded.text);
+  const said = guarded.held ? guarded.note! : [done, guarded.note].filter(Boolean).join(' ');
+  return { text: said, effect: { kind: 'doc-changed' as const, id } };
 }
 
 const doc = { type: 'string', description: 'Title of a document connected to your room' };
@@ -56,9 +97,9 @@ const doc = { type: 'string', description: 'Title of a document connected to you
 export const docTools: Tool[] = [
   {
     name: 'read_doc',
-    description: 'Read the current text of a connected document. Its text is already in your context; use this only to check it again after a change.',
+    description: 'Read the current text of a connected or pinned document. Its text is already in your context; use this only to check it again after a change.',
     parameters: { type: 'object', properties: { doc }, required: ['doc'] },
-    run: async (args, context) => ({ text: (await context.store.readDoc(find(context, text(args, 'doc')))) || '(empty)' }),
+    run: async (args, context) => ({ text: (await context.store.readDoc(find(context, text(args, 'doc'), true))) || '(empty)' }),
   },
   {
     name: 'write_doc',
@@ -74,14 +115,14 @@ export const docTools: Tool[] = [
     async run(args, context) {
       const id = find(context, text(args, 'doc'));
       const body = text(args, 'text');
+      const before = await context.store.readDoc(id);
       // A rewrite that would lose most of what is there is refused, because a person asked to change one section
       // has been seen to write back only that section. A document they made in this turn is theirs to rewrite.
       if (args.replace !== true && !context.granted.has(id)) {
-        const loss = rewriteLoss(await context.store.readDoc(id), body);
+        const loss = rewriteLoss(before, body);
         if (loss) throw new Error(`not written: this would replace the whole document, and ${loss}. Change one section with replace_section, or add with append_doc; the rest is a colleague's or the founder's work.`);
       }
-      await context.store.replaceDoc(id, body);
-      return { text: `Wrote ${body.length} characters.`, effect: { kind: 'doc-changed', id } };
+      return save(context, id, before, body, `Wrote ${body.length} characters.`);
     },
   },
   {
@@ -99,10 +140,10 @@ export const docTools: Tool[] = [
     async run(args, context) {
       const id = find(context, text(args, 'doc'));
       const heading = text(args, 'heading', 200);
-      const swapped = replaceSection(await context.store.readDoc(id), heading, text(args, 'text'));
+      const before = await context.store.readDoc(id);
+      const swapped = replaceSection(before, heading, text(args, 'text'));
       if ('error' in swapped) throw new Error(swapped.error);
-      await context.store.replaceDoc(id, swapped.text);
-      return { text: `Replaced the section "${heading.replace(/^#+\s*/, '').trim()}".`, effect: { kind: 'doc-changed', id } };
+      return save(context, id, before, swapped.text, `Replaced the section "${heading.replace(/^#+\s*/, '').trim()}".`);
     },
   },
   {
@@ -113,8 +154,7 @@ export const docTools: Tool[] = [
       const id = find(context, text(args, 'doc'));
       const before = await context.store.readDoc(id);
       const added = text(args, 'text');
-      await context.store.replaceDoc(id, `${before.replace(/\s+$/, '')}${before.trim() ? '\n\n' : ''}${added}\n`);
-      return { text: `Added ${added.length} characters.`, effect: { kind: 'doc-changed', id } };
+      return save(context, id, before, `${before.replace(/\s+$/, '')}${before.trim() ? '\n\n' : ''}${added}\n`, `Added ${added.length} characters.`);
     },
   },
   {

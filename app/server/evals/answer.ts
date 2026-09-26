@@ -9,6 +9,7 @@ import { promptSize, type ModelClient } from '../providers.ts';
 import type { createRecall } from '../recall.ts';
 import { route } from '../router.ts';
 import type { Store } from '../store.ts';
+import { withoutFlags } from '../truth.ts';
 import { JUDGE_CHUNKS } from './score.ts';
 
 // Putting one question to one person, on a stage that exists only for the length of the answer. The forge does this
@@ -74,5 +75,6 @@ export async function answerCase(asked: {
     context: { stage, roomId, store: asked.store, granted: new Map() },
     events: { token: () => {}, tool: () => {} },
   });
-  return { text: reply.text, ...(reply.provider ? { provider: reply.provider } : {}) };
+  // The judge grades the person's words; the truth net's lines under them are for the founder, not the score.
+  return { text: withoutFlags(reply.text, reply.flags), ...(reply.provider ? { provider: reply.provider } : {}) };
 }

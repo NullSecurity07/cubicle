@@ -1,0 +1,353 @@
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import type { Room, Stage } from '../../shared/model.ts';
+import { COMPANY_LINE, companyLine } from '../../shared/partner.ts';
+import type { Deps, Installed } from '../install.ts';
+import { companyDocOf } from '../partner/company.ts';
+import { partnerState } from '../partner/state.ts';
+import { stubDeps } from '../slice-stubs.ts';
+import { decisionAttention } from '../decisions.ts';
+import { hub } from '../events.ts';
+import { todayFive } from '../today/rank.ts';
+import partner, { createPartner, type PartnerOptions } from './partner.ts';
+
+const ROOT = resolve(import.meta.dirname, '../../..');
+const room = (id: string, name: string, extra: Partial<Room> = {}): Room => ({ id, name, role: 'x', accent: '#fff', brief: '', x: 0, y: 0, w: 1, h: 1, ...extra });
+
+// A throwaway workspace with the real stores, and the slice installed on it. `fake: false` is a real run's start.
+async function installed(extra: Partial<Deps> = {}, options?: PartnerOptions) {
+  const workspace = await mkdtemp(join(tmpdir(), 'partner-'));
+  const deps = { ...stubDeps(workspace, ROOT), fake: false, ...extra } as Deps;
+  const part = (await (options ? createPartner(options) : partner.install)(deps)) as Installed;
+  return { deps, part, workspace };
+}
+const withRooms = async (deps: Deps, rooms: Room[]) => { const stage = await deps.store.loadStage(); await deps.store.saveStage({ ...stage, rooms: [...stage.rooms, ...rooms] } as Stage); };
+
+describe('the partner slice: the Company document', () => {
+  it('puts the Company document on the stage at start, pinned, and writes decided decisions into it once', async () => {
+    const { deps, part } = await installed();
+    const doc = companyDocOf(await deps.store.loadStage())!;
+    expect(doc.pinned).toBe(true);
+    await deps.decisions.record({ title: 'Newsletter first', chosen: 'A weekly curated newsletter' });
+    await deps.decisions.propose({ title: 'Raise now?', options: ['yes', 'no'] });
+    await part.tick!();
+    await part.tick!();
+    const text = await deps.store.readDoc(doc.id);
+    expect(text.match(/Newsletter first: A weekly curated newsletter/g)).toHaveLength(1);
+    expect(text).not.toContain('Raise now?');
+    await part.close!();
+  });
+
+  it('leaves the stage alone at start in fake mode, and adopts the Company brief once a partner is on it, wired once', async () => {
+    const { deps, part } = await installed({ fake: true });
+    await deps.store.loadStage();
+    const brief = await deps.store.readDoc('company-brief');
+    await part.tick!();
+    expect(await deps.store.readDoc('company-brief')).toBe(brief);
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    const stage = await deps.store.loadStage();
+    expect(stage.docs.filter((doc) => doc.pinned).map((doc) => doc.id)).toEqual(['company-brief']);
+    expect(await deps.store.readDoc('company-brief')).toContain('## Open questions');
+    expect(stage.wires.filter((wire) => wire.from === 'p1' && wire.to === 'company-brief')).toHaveLength(1);
+    // The founder takes the wire away: it is not drawn again.
+    await deps.store.saveStage({ ...stage, wires: stage.wires.filter((wire) => wire.from !== 'p1') });
+    await part.tick!();
+    await part.tick!();
+    expect((await deps.store.loadStage()).wires.filter((wire) => wire.from === 'p1')).toHaveLength(0);
+    await part.close!();
+  });
+
+  it('keeps finding the document by its id after a rename, and does not make it again once the founder removed it', async () => {
+    const { deps, part } = await installed();
+    await deps.store.patchStage((stage) => { stage.docs.find((doc) => doc.id === 'company-brief')!.title = 'Flipside'; });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await deps.decisions.record({ title: 'Newsletter first', chosen: 'Weekly' });
+    await part.tick!();
+    expect(await deps.store.readDoc('company-brief')).toContain('Newsletter first: Weekly');
+    expect((await deps.store.loadStage()).docs.filter((doc) => doc.pinned)).toHaveLength(1);
+    // Removed: not made again by the tick, nor by a new start.
+    await deps.store.patchStage((stage) => { stage.docs = stage.docs.filter((doc) => doc.id !== 'company-brief'); stage.wires = stage.wires.filter((wire) => wire.to !== 'company-brief'); });
+    await part.tick!();
+    await part.close!();
+    const again = (await partner.install(deps)) as Installed;
+    await again.tick!();
+    expect((await deps.store.loadStage()).docs.filter((doc) => doc.pinned)).toHaveLength(0);
+    // "add partner" asks for it outright: then it is made again.
+    await again.route!({ method: 'POST' } as never, {} as never, '/api/partner/company');
+    expect(companyDocOf(await deps.store.loadStage())).toMatchObject({ title: 'Company', pinned: true });
+    await again.close!();
+  });
+
+  it('keeps the company line in the prompt for a renamed document, found by its recorded id', async () => {
+    const { deps, part } = await installed();
+    await deps.store.patchStage((stage) => { stage.docs.find((doc) => doc.id === 'company-brief')!.title = 'Flipside'; });
+    const turn = (content: string) => deps.seams.run('turn:before', { roomId: 'marketing', source: 'chat', query: 'hi', messages: [{ role: 'system', content }] });
+    expect((await turn('You are Maya.')).messages[0].content).toBe(`You are Maya.\n\n${companyLine('Flipside')}`);
+    expect(companyLine('Flipside')).toBe('The "Flipside" document is the shared record; when the chat and it disagree, say so.');
+    expect((await turn(`You are Maya.\n\n${COMPANY_LINE}`)).messages[0].content).toBe(`You are Maya.\n\n${COMPANY_LINE}`);
+    await deps.store.patchStage((stage) => { stage.docs = stage.docs.filter((doc) => doc.id !== 'company-brief'); });
+    expect((await turn('You are Maya.')).messages[0].content).toBe('You are Maya.');
+    await part.close!();
+  });
+
+  it('puts back a decision line a window saved its old text over, and forgets the recorded doc once partner.json is gone', async () => {
+    const { deps, part, workspace } = await installed();
+    await deps.decisions.record({ title: 'Price', chosen: 'Nine dollars' });
+    await part.tick!();
+    const written = await deps.store.readDoc('company-brief');
+    expect(written).toContain('Price: Nine dollars');
+    await deps.store.writeDoc('company-brief', written.replace(/^- .*Price: Nine dollars$/m, ''));
+    await part.tick!();
+    expect((await deps.store.readDoc('company-brief')).match(/Price: Nine dollars/g)).toHaveLength(1);
+    // A clean-up takes partner.json away: the next look finds nothing recorded, as on a first run.
+    await rm(join(workspace, 'partner.json'));
+    await deps.store.patchStage((stage) => { stage.docs.find((doc) => doc.id === 'company-brief')!.pinned = false; });
+    await part.tick!();
+    expect(await readFile(join(workspace, 'partner.json'), 'utf8').then((text) => JSON.parse(text).companyId).catch(() => undefined)).toBeUndefined();
+    await part.close!();
+  });
+
+  it('keeps the state it holds in a fresh workspace until a file that existed is taken away', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'partner-state-'));
+    const book = partnerState(workspace);
+    const first = await book.read();
+    first.decided.push('held in memory');
+    expect(await book.read()).toBe(first);
+    await book.change((held) => { held.companyId = 'company-brief'; });
+    expect((await book.read()).decided).toEqual(['held in memory']);
+    await rm(join(workspace, 'partner.json'));
+    expect(await book.read()).toEqual({ decided: [], plans: [] });
+  });
+
+  it('tells the window each time the app writes into the document', async () => {
+    const said: [string, unknown][] = [];
+    const before = hub.say;
+    hub.say = (channel, data) => { said.push([channel, data]); };
+    try {
+      const { deps, part } = await installed();
+      expect(said).toEqual([['partner', { docChanged: 'company-brief' }]]);
+      await deps.decisions.record({ title: 'Price', chosen: 'Nine dollars' });
+      await part.tick!();
+      expect(said.at(-1)).toEqual(['partner', { docChanged: 'company-brief' }]);
+      expect(said).toHaveLength(2);
+      await part.close!();
+    } finally { hub.say = before; }
+  });
+
+  it('gives the Company doc the window put down its sections, when the window asks', async () => {
+    const answers: [number, unknown][] = [];
+    const { deps, part } = await installed({ fake: true, json: (_res, status, body) => { answers.push([status, body]); } });
+    const stage = await deps.store.loadStage();
+    await deps.store.saveStage({ ...stage, docs: [...stage.docs.filter((doc) => !doc.pinned), { id: 'doc-x1', title: 'Company', pinned: true, x: 0, y: 0, w: 1, h: 1 }] });
+    deps.body = async () => ({ id: 'doc-x1' });
+    await part.route!({ method: 'POST' } as never, {} as never, '/api/partner/company');
+    expect(answers.at(-1)).toEqual([200, { id: 'doc-x1', created: false }]);
+    expect(await deps.store.readDoc('doc-x1')).toContain('## Idea');
+    await part.close!();
+  });
+});
+
+const NINE = new Date('2026-09-27T09:00').getTime();
+const SHAPED = 'Three things that matter today:\n1. Ship the landing page.\n2. Email the five replied leads.\n3. Log the signups.\nRisk: pre-orders are 3 of 17.\nQuestion: Keep $9?';
+
+describe('the partner slice: the morning note', () => {
+  it('writes the note once a day on the tick, into the partner\'s chat, Needs you and first in Today\'s five', async () => {
+    let clock = NINE;
+    let asked = 0;
+    const answers: [number, unknown][] = [];
+    const { deps, part } = await installed({ json: (_res, status, body) => { answers.push([status, body]); } }, { now: () => clock, ask: async () => { asked += 1; return SHAPED; } });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    deps.attention.source(decisionAttention(deps.decisions));
+    await deps.decisions.propose({ title: 'Raise now?', options: ['yes', 'no'] });
+    await part.tick!();
+    await part.tick!();
+    expect(asked).toBe(1);
+    const chat = await deps.store.readChat('p1');
+    expect(chat).toHaveLength(1);
+    expect(chat[0].text).toContain('Three things that matter today:\n1. Ship the landing page.');
+    const needs = (await deps.attention.list()).find((one) => one.kind === 'morning-note')!;
+    expect(needs).toMatchObject({ id: 'morning-note:2026-09-27', who: 'Sam', roomId: 'p1', title: 'Morning note: Ship the landing page.' });
+    const five = await todayFive(deps, clock);
+    expect(five[0]).toMatchObject({ kind: 'morning-note', reason: expect.stringContaining('From your partner') });
+    expect(five.some((one) => one.kind === 'proposed-decision')).toBe(true);
+    // Read: it leaves Needs you. The next day brings the next one.
+    await part.route!({ method: 'POST' } as never, {} as never, '/api/partner/morning/done');
+    expect((await deps.attention.list()).some((one) => one.kind === 'morning-note')).toBe(false);
+    clock = NINE + 86_400_000;
+    await part.tick!();
+    expect(asked).toBe(2);
+    await part.close!();
+  });
+
+  it('posts nothing when the reply loses its shape, and waits before it tries again', async () => {
+    let asked = 0;
+    const { deps, part } = await installed({}, { now: () => NINE, ask: async () => { asked += 1; return 'Good morning!'; } });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    await part.tick!();
+    expect(asked).toBe(1);
+    expect(await deps.store.readChat('p1')).toEqual([]);
+    expect((await deps.attention.list()).some((one) => one.kind === 'morning-note')).toBe(false);
+    await part.close!();
+  });
+
+  it('waits half an hour after a model call that throws, and stops after three in a day', async () => {
+    let clock = NINE;
+    let asked = 0;
+    const { deps, part } = await installed({}, { now: () => clock, ask: async () => { asked += 1; throw new Error('429 too many requests'); } });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    for (let tick = 0; tick < 4; tick += 1) { await part.tick!(); clock += 30_000; }
+    expect(asked).toBe(1);
+    clock = NINE + 30 * 60_000;
+    await part.tick!();
+    clock = NINE + 60 * 60_000;
+    await part.tick!();
+    clock = NINE + 5 * 60 * 60_000;
+    await part.tick!();
+    expect(asked).toBe(3);
+    expect(await deps.store.readChat('p1')).toEqual([]);
+    await part.close!();
+  });
+
+  it('never runs on the tick of a fake run unless asked, and writes when the founder asks for it', async () => {
+    let asked = 0;
+    const answers: [number, unknown][] = [];
+    const { deps, part } = await installed({ fake: true, json: (_res, status, body) => { answers.push([status, body]); } }, { now: () => NINE, ask: async () => { asked += 1; return SHAPED; } });
+    await part.route!({ method: 'POST' } as never, {} as never, '/api/partner/morning');
+    expect(answers.at(-1)?.[0]).toBe(409);
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    expect(asked).toBe(0);
+    await part.route!({ method: 'POST' } as never, {} as never, '/api/partner/morning');
+    expect(asked).toBe(1);
+    expect(answers.at(-1)).toEqual([200, expect.objectContaining({ day: '2026-09-27', things: ['Ship the landing page.', 'Email the five replied leads.', 'Log the signups.'] })]);
+    await part.close!();
+  });
+
+  it('has no partner, no note', async () => {
+    let asked = 0;
+    const { part } = await installed({}, { now: () => NINE, ask: async () => { asked += 1; return SHAPED; } });
+    await part.tick!();
+    expect(asked).toBe(0);
+    await part.close!();
+  });
+});
+
+describe('the partner slice: the bets ledger', () => {
+  it('takes a proposed bet through Needs you onto the Company document, and lets only the partner close it on its day', async () => {
+    let clock = new Date('2026-09-26T10:00').getTime();
+    const told: string[] = [];
+    const answers: [number, unknown][] = [];
+    const { deps, part, workspace } = await installed({ notify: (title) => { told.push(title); }, json: (_res, status, body) => { answers.push([status, body]); } }, { now: () => clock, ask: async () => SHAPED });
+    await mkdir(join(workspace, 'metrics'), { recursive: true });
+    await writeFile(join(workspace, 'metrics', 'metrics-1.json'), JSON.stringify({ updatedAt: 0, metrics: [{ key: 'signups', label: 'Signups', unit: '', better: 'up', points: [{ at: '2026-09-20', value: 4, from: 'founder' }] }] }));
+    const stage = await deps.store.loadStage();
+    await deps.store.saveStage({ ...stage, rooms: [...stage.rooms, room('p1', 'Sam', { partner: true })], cards: [{ id: 'metrics-1', kind: 'metrics', x: 0, y: 0, w: 1, h: 1 }] });
+    const tool = (name: string) => part.tools!.find((one) => one.name === name)!;
+    const as = async (roomId: string) => ({ stage: await deps.store.loadStage(), roomId, store: deps.store, granted: new Map() }) as never;
+
+    await expect(tool('propose_bet').run({ what: 'Post in r/SaaS', hypothesis: 'founders sign up', metric: 'mrr', target: 20, check_date: '2026-10-03' }, await as('marketing'))).rejects.toThrow('Measure it by one of: signups');
+    await expect(tool('propose_bet').run({ what: 'x', hypothesis: 'y', metric: 'signups', target: 20, check_date: '2026-09-01' }, await as('marketing'))).rejects.toThrow('before today');
+    const said = await tool('propose_bet').run({ what: 'Post in r/SaaS', hypothesis: 'founders sign up', metric: 'signups', target: 20, check_date: '2026-10-03' }, await as('marketing'));
+    expect(said.text).toContain('It waits in Needs you');
+    const proposal = (await deps.attention.list()).find((one) => one.kind === 'proposed-bet')!;
+    expect(proposal).toMatchObject({ who: 'Maya', title: 'Post in r/SaaS' });
+
+    // Answered as the window does, with accept.
+    deps.body = async () => ({ accept: true });
+    await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/bets/${proposal.id.split(':')[1]}`);
+    const company = companyDocOf(await deps.store.loadStage())!;
+    expect(await deps.store.readDoc(company.id)).toContain('## Bets\n\n- Open: Post in r/SaaS. signups to 20 by 2026-10-03');
+
+    // Staff are never offered close_bet; the partner is, and cannot use it before the day.
+    const names = (roomId: string) => part.offer!(part.tools!, { rooms: [room('p1', 'Sam', { partner: true }), room('marketing', 'Maya')], docs: [], wires: [] }, roomId).map((one) => one.name);
+    expect(names('marketing')).toEqual(['propose_bet']);
+    expect(names('p1')).toEqual(['propose_bet', 'close_bet']);
+    await expect(tool('close_bet').run({ bet: 'Post in r/SaaS', verdict: 'worked' }, await as('marketing'))).rejects.toThrow('only the founder or the partner');
+    await expect(tool('close_bet').run({ bet: 'Post in r/SaaS', verdict: 'worked' }, await as('p1'))).rejects.toThrow('checked on 2026-10-03');
+
+    // The day comes: the tick says so once, Needs you shows the number read from the card.
+    await part.tick!();
+    clock = new Date('2026-10-03T10:00').getTime();
+    await part.tick!();
+    await part.tick!();
+    expect(told.filter((one) => one === 'A bet is due for a check')).toHaveLength(1);
+    expect((await deps.attention.list()).find((one) => one.kind === 'bet-check')?.detail).toBe('The target was 20 by 2026-10-03. Now: Signups is 4 (2026-09-20), read from the Metrics card.');
+    const closed = await tool('close_bet').run({ bet: 'r/saas', verdict: 'did-not', note: 'only 4 came' }, await as('p1'));
+    expect(closed.text).toBe('Closed "Post in r/SaaS": it did not work; signups was 4 against 20. (Signups is 4 (2026-09-20), read from the Metrics card.)');
+    expect((await deps.attention.list()).some((one) => one.kind === 'bet-check')).toBe(false);
+    expect(await deps.store.readDoc(company.id)).toContain('- Did not work: Post in r/SaaS. signups was 4 against 20 (checked 2026-10-03). only 4 came');
+    await part.close!();
+  });
+
+  it('lets the founder say how a due bet went from Needs you', async () => {
+    const answers: [number, unknown][] = [];
+    const { deps, part } = await installed({ json: (_res, status, body) => { answers.push([status, body]); } }, { now: () => new Date('2026-10-05T10:00').getTime(), ask: async () => SHAPED });
+    const stage = await deps.store.loadStage();
+    await deps.store.saveStage({ ...stage, cards: [{ id: 'leads-1', kind: 'leads', x: 0, y: 0, w: 1, h: 1 }] });
+    const bet = await part.tools!.find((one) => one.name === 'propose_bet')!.run({ what: 'Cold email 30', hypothesis: 'five reply', metric: 'leads:replied', target: 5, check_date: '2026-10-05' }, { stage: await deps.store.loadStage(), roomId: 'marketing', store: deps.store, granted: new Map() } as never);
+    expect(bet.text).toContain('Cold email 30');
+    const id = (await deps.attention.list()).find((one) => one.kind === 'proposed-bet')!.id.split(':')[1];
+    deps.body = async () => ({ accept: true });
+    await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/bets/${id}`);
+    deps.body = async () => ({ verdict: 'worked' });
+    await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/bets/${id}/close`);
+    expect(answers.at(-1)).toEqual([200, expect.objectContaining({ status: 'closed', result: expect.objectContaining({ verdict: 'worked', value: 0, by: 'Founder' }) })]);
+    await part.close!();
+  });
+});
+
+describe('the partner slice: plans become tasks', () => {
+  const PLAN = '# Flipside: 2-week plan\n\n### Mon 28 Sep (Day 1)\n- Draft the landing page\n- Set up the pre-order form\n\n### Tue 29 Sep (Day 2)\n- List 30 projects\n\n## KPIs\n- Revenue >= $150\n';
+
+  it('offers a plan doc\'s steps once, and puts them on the board on the founder\'s yes', async () => {
+    const answers: [number, unknown][] = [];
+    const { deps, part } = await installed({ fake: true, json: (_res, status, body) => { answers.push([status, body]); } });
+    const stage = await deps.store.loadStage();
+    await deps.store.saveStage({ ...stage, docs: [...stage.docs, { id: 'doc-plan', title: 'Two weeks', x: 0, y: 0, w: 1, h: 1 }, { id: 'doc-notes', title: 'Notes', x: 0, y: 0, w: 1, h: 1 }], cards: [{ id: 'board-1', kind: 'board', x: 0, y: 0, w: 1, h: 1 }] });
+    await deps.store.writeDoc('doc-plan', PLAN);
+    await deps.store.writeDoc('doc-notes', '# Notes\n\n### Mon 28 Sep\n- a\n- b\n');
+    const wrote = (id: string, kind: 'doc-created' | 'doc-changed' = 'doc-changed') => deps.seams.run('tool:after', { roomId: 'marketing', event: { id: 'e', name: 'write_doc', args: {}, ok: true, effect: kind === 'doc-created' ? { kind, id, title: 'x' } : { kind, id } } });
+    await wrote('doc-notes');
+    await wrote('doc-plan', 'doc-created');
+    await wrote('doc-plan');
+    const offered = (await deps.attention.list()).filter((one) => one.kind === 'proposed-plan');
+    expect(offered).toHaveLength(1);
+    expect(offered[0]).toMatchObject({ who: 'Maya', roomId: 'marketing', title: 'Add these 3 tasks to the board? (Two weeks)' });
+    deps.body = async () => ({ accept: true });
+    await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/plans/${offered[0].id.split(':')[1]}`);
+    expect(answers.at(-1)).toEqual([200, { ok: true, boardId: 'board-1', added: 3 }]);
+    expect((await deps.boards.list('board-1')).map((task) => task.title)).toEqual(['Mon 28 Sep (Day 1): Draft the landing page', 'Mon 28 Sep (Day 1): Set up the pre-order form', 'Tue 29 Sep (Day 2): List 30 projects']);
+    expect((await deps.attention.list()).some((one) => one.kind === 'proposed-plan')).toBe(false);
+    // The same steps written again are not asked again; changed steps are.
+    await wrote('doc-plan');
+    expect((await deps.attention.list()).some((one) => one.kind === 'proposed-plan')).toBe(false);
+    await deps.store.writeDoc('doc-plan', `${PLAN}\n### Wed 30 Sep (Day 3)\n- Post in r/SaaS\n`);
+    await wrote('doc-plan');
+    // After the yes, one step added is offered alone, and a second yes never puts the old ones on the board twice.
+    const again = (await deps.attention.list()).find((one) => one.kind === 'proposed-plan')!;
+    expect(again).toMatchObject({ title: 'Add this task to the board? (Two weeks)', detail: 'Wed 30 Sep (Day 3): Post in r/SaaS.' });
+    await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/plans/${again.id.split(':')[1]}`);
+    const titles = (await deps.boards.list('board-1')).map((task) => task.title);
+    expect(titles).toHaveLength(4);
+    expect(new Set(titles).size).toBe(4);
+    await part.close!();
+  });
+
+  it('offers steps a person hands over with propose_tasks, only with a board on the stage', async () => {
+    const { deps, part } = await installed({ fake: true });
+    const tool = part.tools!.find((one) => one.name === 'propose_tasks')!;
+    const stage = await deps.store.loadStage();
+    expect(part.offer!(part.tools!, stage, 'marketing').map((one) => one.name)).not.toContain('propose_tasks');
+    const withBoard = { ...stage, cards: [{ id: 'board-1', kind: 'board' as const, x: 0, y: 0, w: 1, h: 1 }] };
+    expect(part.offer!(part.tools!, withBoard, 'marketing').map((one) => one.name)).toContain('propose_tasks');
+    await expect(tool.run({ title: 'x', steps: ['one'] }, { stage: withBoard, roomId: 'marketing' } as never)).rejects.toThrow('two or more');
+    const said = await tool.run({ title: 'Launch week', steps: ['Day 1: ship', 'Day 2: post'] }, { stage: withBoard, roomId: 'marketing' } as never);
+    expect(said.text).toContain('Offered 2 tasks');
+    expect((await deps.attention.list()).find((one) => one.kind === 'proposed-plan')?.detail).toBe('Day 1: ship; Day 2: post.');
+    await part.close!();
+  });
+});

@@ -69,8 +69,12 @@ function rank(clients: ModelClient[], usage: UsageBook, want: Want) {
   }
   const order = [...settle(pool.filter(roomy)), ...settle(pool.filter((client) => !roomy(client)))];
   const first = settle(pool)[0];
-  // One that is only busy with another request for a moment is not near any limit, and nothing is said.
+  // One that is only busy with another request for a moment is not near any limit, and nothing is said. Otherwise
+  // the founder hears which wall it was: a refused key, the day's quota (what the dashboard's "left" counts) or only
+  // this minute, so the notice never says "limit" while the dashboard says most of the day is left.
+  const why = !first ? '' : usage.dead?.(first.name) ? 'refused its key' : usage.left(first) <= FLOOR ? "has used today's free quota" : 'is busy this minute';
   const notice = order[0] && first && order[0] !== first && !first.busy?.()
-    ?`${title(first.name)} is near its free limit, so ${title(order[0].name)} answers for now.` : undefined;
+    ? why === 'refused its key' ? `${title(providerOf(first.name))}'s key was refused, so ${title(providerOf(order[0].name))} answers. Fix it in Keys.`
+      : `${title(first.name)} ${why}, so ${title(order[0].name)} answers for now.` : undefined;
   return { order, notice };
 }

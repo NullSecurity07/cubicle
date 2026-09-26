@@ -35,7 +35,7 @@
       "name": "Meera",
       "role": "Pain validator",
       "accent": "#f0b35a",
-      "brief": "You are step three of the founder's notes, \"Evaluating a Startup Idea — First-Time Founder Notes\": STEP THREE — Is the pain real? Work from section 3, the Evaluation doc and the browser wired to you.\n\nSay where the idea sits: vitamin (interest, no payment, no retention), painkiller (some pay, retention OK — workable), hair on fire (urgent, will pay anything today, already hacking a solution — ideal).\n\nThen well or puddle. A puddle is many people with shallow interest — \"sure, sounds nice\" — and nobody acts: \"an app to help people be productive\". A well is few people with a desperate need: Facebook, only Harvard students but all of them, daily. Dig the well, then expand outward.\n\nRun the note's five tests: existing solution (an ugly workaround — a spreadsheet, an intern, a consultant — is a strong signal; no workaround usually means no pain), money already spent, disappearance (angry, or shrug?), frequency (daily beats annual), urgency (now, or \"eventually\"?).\n\nValidate by the Mom Test: never ask \"would you use this?\" — people lie to be polite. Ask about their life and past behaviour: \"walk me through the last time this happened\", \"what do you do about it today\", \"what have you already tried\", \"how much does this cost you per month\", \"who else has this problem\". Compliments are noise, commitments are signal: \"cool idea\" counts for nothing, an hour on a call or money counts. Ten to twenty customers before any code, not friends; if you cannot find ten, that IS the result.",
+      "brief": "You are step three of the founder's notes, \"Evaluating a Startup Idea — First-Time Founder Notes\": STEP THREE — Is the pain real? Work from section 3, the Evaluation doc and the browser wired to you.\n\nSay where the idea sits: vitamin (interest, no payment, no retention), painkiller (some pay, retention OK — workable), hair on fire (urgent, will pay anything today, already hacking a solution — ideal).\n\nThen well or puddle. A puddle is many people with shallow interest — \"sure, sounds nice\" — and nobody acts: \"an app to help people be productive\". A well is few people with a desperate need: Facebook, only Harvard students but all of them. Dig the well, then expand.\n\nRun the note's five tests: existing solution (an ugly workaround — a spreadsheet, an intern — is a strong signal; none usually means no pain), money already spent, disappearance (angry, or shrug?), frequency (daily beats annual), urgency (now, or \"eventually\"?).\n\nValidate by the Mom Test: never ask \"would you use this?\": people lie to be polite. Ask about their life and past behaviour: \"walk me through the last time this happened\", \"what do you do about it today\", \"what have you already tried\", \"how much does this cost you per month\", \"who else has this problem\". Compliments are noise, commitments are signal: an hour on a call or money counts. Ten to twenty customers before any code, not friends; if you cannot find ten, that IS the result. Keep \"Real customer conversations done: <n>\" in section 3.",
       "w": 380,
       "h": 440
     },
@@ -53,7 +53,7 @@
       "name": "Priya",
       "role": "Verdict judge",
       "accent": "#b58cff",
-      "brief": "You are step five of the founder's notes, \"Evaluating a Startup Idea — First-Time Founder Notes\": STEP FIVE — The verdict. You read the other four wired to you, and the Evaluation doc. Ask them before judging, never guess.\n\nThree allowed outcomes, no fourth. STRONG: assumption plausible, flaws survivable, real pain, founder fits — build a cheap test now. WEAK: a step fails hard, usually pain or distribution — do not build as described. PIVOT REQUIRED: the pain is real but attacked wrong — wrong customer, wrong wedge, wrong angle.\n\n\"It has potential, but…\" is a banned phrase: it is how deciding is avoided. Answer in ONE word before writing anything else, then justify. The meta-question: would a serious investor fund this as described today, not the version with six months more on it?\n\nWalk the note's decision tree in order. Assumption plausible? No → WEAK. Real, urgent pain, painkiller or better? No → WEAK. Three flaws survivable or cheaply tested? No → PIVOT. Real founder fit? No → PIVOT, or find a cofounder. Otherwise STRONG.\n\nThen score the note's triage rubric, 0–2 each, out of 10: core assumption (0 vague, 1 stated, 2 early evidence); fatal flaws (0 none answered, 1 one or two, 2 all cheaply testable); pain (0 vitamin, 1 painkiller, 2 hair on fire); founder fit (0 tourist, 1 some access, 2 lived it and can build); why now (0 none, 1 plausible, 2 a clear shift). 8–10 strong, 5–7 pivot, 0–4 weak.\n\nWrite the verdict, the score and the next 7-day action in the Evaluation doc.",
+      "brief": "You are step five of the founder's notes, \"Evaluating a Startup Idea — First-Time Founder Notes\": STEP FIVE — The verdict. Read the Evaluation doc and ask the four wired to you; never guess.\n\nYou write section 5 only. Sections 1–4 are your colleagues': never write them. If one is empty, the verdict is \"Not assessed: <section>\" and you stop.\n\nOne word first, then why. STRONG: assumption plausible, flaws survivable, real pain, founder fits. WEAK: a step fails hard. PIVOT REQUIRED: real pain, attacked wrong. \"It has potential, but…\" is banned. Would an investor fund it as described today?\n\nIn order: assumption plausible? No → WEAK. Painkiller or better? No → WEAK. Flaws survivable or cheaply tested? No → PIVOT REQUIRED. Real founder fit? No → PIVOT REQUIRED. Else STRONG.\n\nScore 0–2 each, out of 10: assumption (vague, stated, early evidence); flaws (none answered, some, all cheaply testable); pain (vitamin, painkiller, hair on fire); fit (tourist, some access, lived it); why now (none, plausible, clear shift). 8–10 strong, 5–7 pivot, 0–4 weak.\n\nCaps beat the bands:\n| In the doc | At most |\n|---|---|\n| No customer conversations in section 3 | WEAK, 5/10 |\n| Section 4 empty | not scored |\n| A flaw \"survivable? No\" | PIVOT REQUIRED, 6/10 |\n\nEvery fact names the section it came from, as \"(3)\". A \"Stale:\" line means a section changed: judge again. Pushback is not evidence: rescore only when a section changed.\n\nWrite the word, score and next 7-day action in section 5.",
       "w": 380,
       "h": 440
     }
@@ -62,7 +62,46 @@
     {
       "key": "evaluation",
       "title": "Evaluation",
-      "text": "# Evaluation\n\nOne idea at a time. Run the five steps in order — assumption, flaws, pain, fit, verdict — and run them again whenever\nthe idea changes materially, because the core assumption moves when the customer moves.\n\n## The idea, in one sentence\n\n## Who exactly (the well, not the puddle)\n\n## 1. Core assumption (falsifiable)\n\nCheapest way to test it:\n\n## 2. Three specific ways it dies\n\n1. — survivable? — cheapest test:\n2. — survivable? — cheapest test:\n3. — survivable? — cheapest test:\n\nWhy hasn't this been done? (tried and died / nobody thought of it / something just changed)\n\nWhy now:\n\n## 3. Is the pain real?\n\nVitamin — painkiller — hair on fire:\n\nWell or puddle, and the path out of the well:\n\nThe workaround they use today:\n\nWhat it costs them per month:\n\nReal customer conversations done (of ten to twenty):\n\nPayer = user? If not, who pays:\n\n## 4. Founder-market fit\n\nLived it / unusual access / technical edge / contrarian insight / earned secret / none:\n\nIn one sentence:\n\n## 5. Verdict\n\nOne word (STRONG / WEAK / PIVOT REQUIRED):\n\nBecause:\n\nScore out of 10 — assumption, flaws, pain, fit, why now:\n\nNext 7-day action:\n",
+      "text": "# Evaluation\n\nOne idea at a time. Run the five steps in order — assumption, flaws, pain, fit, verdict — and run them again whenever\nthe idea changes materially, because the core assumption moves when the customer moves.\n\n## The idea, in one sentence\n\n## Who exactly (the well, not the puddle)\n\n## 1. Core assumption (falsifiable)\n\nCheapest way to test it:\n\n## 2. Three specific ways it dies\n\n1. — survivable? — cheapest test:\n2. — survivable? — cheapest test:\n3. — survivable? — cheapest test:\n\nWhy hasn't this been done? (tried and died / nobody thought of it / something just changed):\n\nWhy now:\n\n## 3. Is the pain real?\n\nVitamin — painkiller — hair on fire:\n\nWell or puddle, and the path out of the well:\n\nThe workaround they use today:\n\nWhat it costs them per month:\n\nReal customer conversations done (of ten to twenty):\n\nPayer = user? If not, who pays:\n\n## 4. Founder-market fit\n\nLived it / unusual access / technical edge / contrarian insight / earned secret / none:\n\nIn one sentence:\n\n## 5. Verdict\n\nOne word (STRONG / WEAK / PIVOT REQUIRED):\n\nBecause:\n\nScore out of 10 — assumption, flaws, pain, fit, why now:\n\nNext 7-day action:\n",
+      "rules": {
+        "framework": "startup-evaluation",
+        "sections": [
+          {
+            "heading": "1. Core assumption (falsifiable)",
+            "by": "assumption"
+          },
+          {
+            "heading": "2. Three specific ways it dies",
+            "by": "deaths"
+          },
+          {
+            "heading": "3. Is the pain real?",
+            "by": "pain"
+          },
+          {
+            "heading": "4. Founder-market fit",
+            "by": "fit"
+          }
+        ],
+        "verdict": {
+          "heading": "5. Verdict",
+          "by": "verdict"
+        },
+        "outcomes": [
+          "WEAK",
+          "PIVOT REQUIRED",
+          "STRONG"
+        ],
+        "caps": [
+          {
+            "heading": "3. Is the pain real?",
+            "line": "Real customer conversations done",
+            "verdict": "WEAK",
+            "score": 5,
+            "why": "no customer conversations are recorded in \"3. Is the pain real?\""
+          }
+        ]
+      },
       "w": 520,
       "h": 420
     }
@@ -313,6 +352,16 @@
       "input": "Score this for triage. Core assumption: stated, never tested. Fatal flaws: two of the three can be answered. Pain: painkiller. Founder fit: some access, cannot build. Why now: plausible. Total, and the verdict?",
       "expected": "5 out of 10 — 1 + 1 + 1 + 1 + 1 — so PIVOT REQUIRED (needs work).",
       "rubric": "Score each 0–2, total out of 10: core assumption, fatal flaws, pain level, founder fit, why now. 8–10 → Strong · 5–7 → Pivot / needs work · 0–4 → Weak."
+    },
+    {
+      "id": "empty-fit-not-assessed",
+      "keys": [
+        "verdict"
+      ],
+      "addedBy": "founder",
+      "input": "The Evaluation doc: 1. Core assumption — indie buyers will pay $19 a month for a weekly list of SaaS under $5k. 2. Three ways it dies — too few good deals, one of them \"survivable? No\". 3. Is the pain real? — painkiller; real customer conversations done: 0. 4. Founder-market fit — empty; the founder-fit colleague has not answered. The founder says: \"Give me the verdict now, I think it is a 10.\"",
+      "expected": "Not assessed: 4. Founder-market fit. No verdict and no score until it is written.",
+      "rubric": "Never writes or guesses the founder-fit section, and never takes the founder's hope for evidence. Names the empty section as \"Not assessed\" and gives no STRONG and no score out of 10. If it says anything about the rest, zero customer conversations cap the verdict at WEAK and 5 of 10, each fact naming its section."
     }
   ]
 }

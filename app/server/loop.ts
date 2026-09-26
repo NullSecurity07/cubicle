@@ -2,10 +2,12 @@ import type { ToolEvent, Usage } from '../shared/model.ts';
 import type { ModelMessage } from './prompt.ts';
 import { complete, type Failure, type ModelClient } from './providers.ts';
 import type { Answer } from './approvals.ts';
+import { limitWords } from './breaker.ts';
 import { resultCap } from './context/shrink.ts';
 import type { Offered } from './playbook.ts';
 import type { Payloads, Seams, Source } from './seams.ts';
 import { runTool, type Tool, type ToolContext } from './tools/registry.ts';
+import { ANSWER_IN_WORDS, CALL_THE_TOOL, checkReply, HELD_BACK, proseToolCall } from './truth.ts';
 import type { UsageBook } from './usage.ts';
 
 const MAX_STEPS = 8;
@@ -46,7 +48,8 @@ export function receiptSummary(done: ToolEvent[], why?: string): string {
 }
 
 type TurnEvents = { token(token: string): void; tool(event: ToolEvent): void; notice?(text: string): void };
-export type TurnResult = { text: string; tools: ToolEvent[]; provider: string; model: string; usage: Usage; stopped: boolean };
+// `flags`: the truth net's lines under this reply, the same ones appended to its text, for whoever wants them apart.
+export type TurnResult = { text: string; tools: ToolEvent[]; provider: string; model: string; usage: Usage; stopped: boolean; flags?: string[] };
 
 // One turn of one person: ask the model, run the tools it calls, hand the results back, until it answers in words.
 // The last allowed step offers no tools, so a turn always ends in words. A stop keeps whatever was said so far.
@@ -70,11 +73,19 @@ export async function runTurn(input: {
   let answered: ModelClient | undefined;
   const failed: string[] = [];
   let unanswered = '';
+  // What this turn really read, for the truth net: the prompt as sent and the whole of every tool result.
+  const results: string[] = [];
+  // Why the stream broke off mid-reply, when it did; whether a tool call came back as text and was already asked about
+  // once; whether it came back so twice and was held back; whether the reply had to be made from the receipts.
+  let broke = '';
+  let nudged = false;
+  let held = false;
+  let summarised = false;
 
   // When the model that should have answered could not, the founder hears which one stepped in and why.
   const onFailure = ({ client, error }: Failure) => {
     const status = (error as { status?: number }).status;
-    failed.push(`${client.name} could not answer (${status === 429 ? 'free limit reached' : (error.message || 'error').slice(0, 120)})`);
+    failed.push(`${client.name} could not answer (${status === 429 ? limitWords(error) : (error.message || 'error').slice(0, 120)})`);
     // A 429 rests the key, five breakdowns in a row open its breaker; either way its siblings serve meanwhile.
     usage.failed(client.name, error);
   };
@@ -82,11 +93,13 @@ export async function runTurn(input: {
   // What this turn offers rides along for the playbook, which leaves out procedures that need anything else.
   const before: Payloads['turn:before'] & Offered = { roomId, source, query, messages, offered: tools.map((tool) => tool.name) };
   if (seams) messages = (await seams.run('turn:before', before)).messages;
+  const inputs = messages;
 
   for (let step = 1; step <= MAX_STEPS && !signal?.aborted; step += 1) {
     if (seams) messages = (await seams.run('step:before', { roomId, step, messages })).messages;
     messages = bounded(messages, Math.min(resultCap(clients), RESULT_CEILING));
     const offered = step < MAX_STEPS ? tools : [];
+    const stepStart = text.length;
     const gap = text && !/\s$/.test(text) ? '\n\n' : '';
     let first = true;
     const ask = () => complete(messages, {
@@ -113,13 +126,30 @@ export async function runTurn(input: {
 
     if (failed.length) events.notice?.(`${failed.splice(0).join('; ')}, so ${turn.client.name} answers.`);
     // Words already shown stay; the founder is told they stop short. (A cut reply with no words moved to the next model already.)
-    if (turn.cut) events.notice?.(`${turn.client.name} hit its length limit, so this reply is cut short. Ask for the rest, or for a shorter answer.`);
+    if (turn.cut && !turn.broke) events.notice?.(`${turn.client.name} hit its length limit, so this reply is cut short. Ask for the rest, or for a shorter answer.`);
     usage.record(turn.client.name, turn.usage, turn.quota);
     total.input += turn.usage?.input ?? 0;
     total.output += turn.usage?.output ?? 0;
     answered = turn.client;
     // Stay with the model that is already in the middle of this turn; the others remain as a net.
     clients = [turn.client, ...clients.filter((client) => client !== turn.client)];
+    if (turn.broke) broke = turn.broke;
+    // A tool call written out as words is not an answer. The words come out of the reply (the saved one replaces what
+    // was streamed), the model is told once to make the call, and a second time the founder gets a clean line instead.
+    const spoke = text.slice(stepStart);
+    if (!turn.calls.length && !turn.broke && !signal?.aborted && proseToolCall(spoke, tools.map((tool) => tool.name))) {
+      text = text.slice(0, stepStart);
+      if (!nudged && step < MAX_STEPS) {
+        nudged = true;
+        messages.push({ role: 'assistant', content: spoke }, { role: 'user', content: offered.length ? CALL_THE_TOOL : ANSWER_IN_WORDS });
+        continue;
+      }
+      held = true;
+      const line = `${text.trim() ? '\n\n' : ''}${HELD_BACK}`;
+      text += line;
+      events.token(line);
+      break;
+    }
     if (!turn.calls.length || signal?.aborted) break;
 
     messages.push({
@@ -167,6 +197,7 @@ export async function runTurn(input: {
       done.push(event);
       events.tool(event);
       messages.push({ role: 'tool', tool_call_id: call.id, content: full });
+      results.push(full);
     }
   }
 
@@ -182,6 +213,7 @@ export async function runTurn(input: {
         total.input += said.usage?.input ?? 0;
         total.output += said.usage?.output ?? 0;
         answered = said.client;
+        if (said.broke) broke = said.broke;
       }
       failed.splice(0);
     }
@@ -189,11 +221,27 @@ export async function runTurn(input: {
       if (unanswered) events.notice?.(`No model could answer after the tools ran (${unanswered.slice(0, 160)}), so this reply is made from their receipts.`);
       const summary = receiptSummary(done, unanswered ? 'No model could answer after these steps' : undefined);
       text = summary;
+      summarised = true;
       events.token(summary);
     }
   } else if (unanswered && !signal?.aborted) events.notice?.(`No model could go on after the tools ran (${unanswered.slice(0, 160)}), so this reply stops here.`);
 
-  const reply: TurnResult = { text, tools: done, provider: answered?.name ?? '', model: answered?.model ?? '', usage: total, stopped: !!signal?.aborted };
+  // The truth net: a reply that claims an action no receipt backs, or gives figures nothing this turn read, keeps its
+  // words and gets a line under them saying so. A reply the stream broke off says it was cut, and, when tools ran, what
+  // they did, since the words that would have said it never came.
+  let flags: string[] = [];
+  if (!signal?.aborted && !held && !summarised && text.trim()) {
+    flags = checkReply({ reply: text, receipts: done, sources: [...inputs.map((message) => message.content), ...results, query] });
+    const tail = [...(broke ? [`(reply cut short: ${broke})`] : []), ...(broke && done.length ? [receiptSummary(done, 'The reply broke off after these steps')] : []), ...flags];
+    if (tail.length) {
+      const line = `${/\s$/.test(text) ? '' : '\n\n'}${tail.join('\n\n')}`;
+      text += line;
+      events.token(line);
+    }
+    if (flags.length) events.notice?.(flags.join(' '));
+  }
+
+  const reply: TurnResult = { text, tools: done, provider: answered?.name ?? '', model: answered?.model ?? '', usage: total, stopped: !!signal?.aborted, ...(flags.length ? { flags } : {}) };
   // Whatever watches a finished turn watches it afterwards: the founder waits for nothing here.
   if (seams) void seams.run('turn:after', { roomId, source, query, reply }).catch(() => {});
   return reply;

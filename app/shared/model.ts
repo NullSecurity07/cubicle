@@ -12,12 +12,20 @@ export type Box = { x: number; y: number; w: number; h: number };
 // `framework` is there when this person landed as part of a saved team: which framework they came from and which of
 // its people they are. It is what lets their side panel say what they were written from and what they scored on the
 // founder's own test cases, and it is the only thing on the stage that points back at a framework.
+// `partner` makes this person the founder's partner rather than staff: they are given PARTNER_STANCE in place of STANCE.
 export type Room = Box & {
   id: string; name: string; role: string; accent: string; brief: string;
-  model?: string; gender?: Gender; voice?: string; voiceBy?: VoiceBy; framework?: { id: string; key: string };
+  model?: string; gender?: Gender; voice?: string; voiceBy?: VoiceBy; framework?: { id: string; key: string }; partner?: boolean;
 };
 // `pinned` makes a doc company-wide: every person reads it, wired or not. Writing it still needs a wire.
-export type Doc = Box & { id: string; title: string; pinned?: boolean };
+// `rules` ride on a built-in team's shared doc, so what its briefs ask can be held to in code: whose each section is
+// (by the framework key of the person placed for it), which section is the verdict, the sections it waits on, and
+// the caps evidence puts on it. `outcomes` lists the verdict words from lowest to highest. See server/tools/verdict.ts.
+export type DocRules = {
+  framework: string; sections: { heading: string; by: string }[]; verdict: { heading: string; by: string };
+  outcomes?: string[]; caps?: { heading: string; line: string; verdict: string; score: number; why: string }[];
+};
+export type Doc = Box & { id: string; title: string; pinned?: boolean; rules?: DocRules };
 // Resource cards that are not docs. `browser` is a live browser a wired person can drive; `project` is the coder card, a running OpenCode in one code folder that the founder or a wired person drives; `board` holds tasks that wired people may propose and the founder runs.
 // A coder card keeps the `model` the founder picked (`provider/model`, absent for the default) and the `session` it is in, so the same conversation carries on after a restart.
 // `headed` shows the card's Chrome as a real window, for the founder to sign in or pass a human check by hand.
@@ -139,7 +147,10 @@ export type BoardEvent = { tasks: Task[] } | { effect: ToolEffect; roomId: strin
 // One thing waiting for the founder. `lapsed`: the approval belonged to a turn that ended with the app; it can only be asked again.
 export type AttentionKind = 'approval' | 'run-approval' | 'proposed-task' | 'proposed-decision' | 'run-failed' | 'missed' | 'review-due' | 'proposed-source' | 'page-changed'
   | 'lead-stale'
-  | 'metric-alert' | 'proposed-target' | 'runway-low' | 'proposed-runway';
+  | 'metric-alert' | 'proposed-target' | 'runway-low' | 'proposed-runway'
+  | 'key-rejected'
+  // The partner's: the morning note, a bet to check or to take on, and a plan's steps to put on the board.
+  | 'morning-note' | 'bet-check' | 'proposed-bet' | 'proposed-plan';
 export type Attention = {
   id: string; kind: AttentionKind; title: string; detail?: string; at: number; who?: string;
   roomId?: string; cardId?: string; taskId?: string; decisionId?: string; event?: ToolEvent; lapsed?: boolean;
@@ -196,7 +207,11 @@ export function studioBehind(stage: { wires?: Wire[]; cards?: Card[] }, cardId: 
   return (stage.cards ?? []).find((card) => card.kind === 'imagegen' && ends.has(card.id))?.id ?? null;
 }
 export type Wire = { id: string; from: string; fromHandle: string; to: string; toHandle: string };
-export type Stage = { rooms: Room[]; docs: Doc[]; wires: Wire[]; cards?: Card[] };
+// `rev` counts the saves: the server adds one on every save, and a window sends back the one it last saw, so a save
+// made over a stage somebody else has changed since is refused rather than taking their change away.
+export type Stage = { rooms: Room[]; docs: Doc[]; wires: Wire[]; cards?: Card[]; rev?: number };
+// The feed channel every window hears the stage on, as saved, after every save.
+export const STAGE_CHANNEL = 'stage';
 export type Usage = { input: number; output: number };
 // A note a person kept after a conversation without being asked to carries this mark, so the founder can tell those
 // lines from the ones they asked for and throw a wrong one out. `MEMORY_CHANNEL` says a room's memory changed when no
@@ -239,6 +254,17 @@ export const STANCE =
   + 'does not confirm. '
   + 'You know about the founder, the product, the customers and the numbers only what this chat and the connected '
   + 'documents say. Do not invent such facts; when you need one, ask for it.';
+
+// The partner's stance, in place of STANCE for that one person: they own the picture of the company and say what they
+// would do, and they say so when the founder goes against what the record shows. Every other rule of honesty stays.
+export const PARTNER_STANCE =
+  'You are the founder\'s partner, not their staff. You own the company model: the Company document is yours to keep true, '
+  + 'and you hold every decision, number and bet in it against what is said in the chat. When there is a choice, state the one '
+  + 'thing you recommend and why before any options. When the founder decides against the evidence you hold, disagree plainly, '
+  + 'with your reasons, once; then help with what they chose. Be concise. Act only through your tools, and never claim an action '
+  + 'that a tool result does not confirm. You know about the founder, the product, the customers and the numbers only what the '
+  + 'chat and the documents say. Do not invent such facts; when you need one, ask for it. '
+  + 'End every substantive reply with one line that starts "My call:" and says what you would do.';
 
 export const seedStage: Stage = {
   rooms: [

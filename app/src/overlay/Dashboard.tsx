@@ -1,6 +1,6 @@
 import { useJumpTo } from '../flow';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import type { DashMedia, DashNeed, DashTask, DashTeam, Dashboard as Board } from '../../shared/dashboard';
+import { backupLate, type DashMedia, type DashNeed, type DashTask, type DashTeam, type Dashboard as Board } from '../../shared/dashboard';
 import { LEAD_STAGES, STAGE_NAMES } from '../../shared/leads';
 import { fileUrl, getDashboard, watchDashboard } from '../api';
 import { emit } from '../bus';
@@ -296,9 +296,9 @@ export function Dashboard() {
               <div className="dash__group">
                 <div className="dash__head"><h4>Health</h4><button type="button" className="dash__link" onClick={() => panel('health')}>Open Health</button></div>
                 {board.backup && (
-                  <p className={`dash__backup${!board.backup.at || Date.now() - board.backup.at > 7 * 86_400_000 ? ' is-late' : ''}`} title={board.backup.dir}>
-                    {board.backup.at ? `Last backup ${new Date(board.backup.at).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}` : 'Nothing backed up yet'}
-                    <span> · to {board.backup.dir}</span>
+                  <p className={`dash__backup${backupLate(board.backup, Date.now()) ? ' is-late' : ''}`} title={board.backup.dir}>
+                    {board.backup.at ? `Last backup ${new Date(board.backup.at).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : 'Nothing backed up yet'}
+                    <span> · {board.backup.writable === false ? `cannot write to ${board.backup.dir}` : `to ${board.backup.dir}`}</span>
                   </p>
                 )}
                 {board.health.length ? (

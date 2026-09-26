@@ -26,6 +26,12 @@ describe('missions', () => {
     expect(done({ ...fresh, stage, docs: { mine: 'We make calm scheduling software for solo founders who are drowning in tools, and we charge per seat.' } })).toEqual(['brief']);
   });
 
+  it('does not count the sections and lines the partner writes into the adopted brief', () => {
+    const adopted = `${seedDocs['company-brief']}\n## Idea\n\n## Customer\n\n## Numbers\n\n## Decisions\n\n- 2026-09-26 Newsletter first vs marketplace first: Weekly curated newsletter of abandoned projects\n\n## Bets\n\n- Open: Post in r/SaaS. signups to 20 by 2026-10-03 (made 2026-09-26)\n\n## Open questions\n`;
+    expect(done({ ...fresh, docs: { ...seedDocs, 'company-brief': adopted } })).toEqual([]);
+    expect(done({ ...fresh, docs: { ...seedDocs, 'company-brief': adopted.replace('## Idea\n', '## Idea\n\nA weekly paid list of abandoned side projects under five thousand dollars.\n') } })).toEqual(['brief']);
+  });
+
   it('a wire the founder drew and a person the founder added count; what the stage came with does not', () => {
     expect(done({ ...fresh, stage: { ...seedStage, wires: [...seedStage.wires, { id: 'w', from: 'build', fromHandle: 'r', to: 'company-brief', toHandle: 'l' }] } })).toEqual(['wire']);
     expect(done({ ...fresh, stage: { ...seedStage, rooms: [...seedStage.rooms, { id: 'room-x', name: '', role: '', accent: '#fff', brief: '', x: 0, y: 0, w: 1, h: 1 }] } })).toEqual([]);

@@ -1,5 +1,5 @@
 import type { ServerResponse } from 'node:http';
-import { newMessageId, newTurnId, type Attachment, type ChatEvent, type ChatVia, type Stage } from '../shared/model.ts';
+import { newMessageId, newTurnId, type Attachment, type ChatEvent, type ChatVia, type Stage, type ToolEvent } from '../shared/model.ts';
 import { askFounder, type Approvals } from './approvals.ts';
 import type { AttentionBook } from './attention.ts';
 import { json } from './http.ts';
@@ -9,10 +9,12 @@ import type { Offered } from './playbook.ts';
 import { complete, promptSize, type ModelClient } from './providers.ts';
 import type { RoomFeed } from './rooms-feed.ts';
 import { route } from './router.ts';
+import type { ModelMessage } from './prompt.ts';
 import type { Payloads, Seams } from './seams.ts';
 import type { Store } from './store.ts';
 import type { Consult } from './tools/team.ts';
 import type { Tool } from './tools/registry.ts';
+import { ANSWER_IN_WORDS, HELD_BACK, proseToolCall } from './truth.ts';
 import type { PromptFor } from './turn-prompt.ts';
 import type { UsageBook } from './usage.ts';
 
@@ -44,8 +46,16 @@ export function createChat(deps: Deps) {
       messages = (await seams.run('turn:before', before)).messages;
     }
     const { order } = route(clients, usage, { pinned: target.model, promptChars: promptSize(messages), tools: false });
-    const reply = await complete(messages, { onToken: () => {}, signal }, order);
+    // The same road a turn takes: a key that is resting is passed over, and a key that fails is rested.
+    const ask = (these: ModelMessage[]) => complete(these, { onToken: () => {}, signal }, order, ({ client, error }) => usage.failed(client.name, error), (client) => usage.admit(client.name));
+    let reply = await ask(messages);
     usage.record(reply.client.name, reply.usage, reply.quota);
+    // A tool call written as text would land in the asker's reasoning as if it were the answer: asked once more, then held back.
+    if (proseToolCall(reply.text)) {
+      reply = await ask([...messages, { role: 'assistant', content: reply.text }, { role: 'user', content: ANSWER_IN_WORDS }]);
+      usage.record(reply.client.name, reply.usage, reply.quota);
+      if (proseToolCall(reply.text)) reply = { ...reply, text: HELD_BACK };
+    }
     await store.appendChat(toRoomId, { id: newMessageId(), role: 'assistant', text: reply.text, at: Date.now(), provider: reply.client.name, model: reply.client.model, usage: reply.usage });
     return reply.text;
   };
@@ -78,6 +88,16 @@ export function createChat(deps: Deps) {
       const { order, notice } = route(clients, usage, { pinned: room.model, promptChars: promptSize(messages), tools: true, vision });
       if (vision && !order[0]?.vision) send({ notice: 'No model that can see images is set up (Gemini can), so the picture is described to the model only by its file name.' });
       if (notice) send({ notice });
+      // The reply is kept as it stands after every step a tool finishes, marked stopped, and the finished reply is
+      // written over it under the same id: a restart mid-turn keeps what was said and done, not nothing.
+      const replyId = newMessageId();
+      const kept = { text: '', tools: [] as ToolEvent[], writes: Promise.resolve() };
+      const keepSoFar = (tool: ToolEvent) => {
+        if (tool.ok === undefined) return;
+        kept.tools = [...kept.tools.filter((one) => one.id !== tool.id), tool];
+        const draft = { id: replyId, role: 'assistant' as const, text: kept.text, at: Date.now(), tools: kept.tools, stopped: true };
+        kept.writes = kept.writes.then(() => store.putMessage(roomId, draft)).catch(() => {});
+      };
       const reply = await runTurn({
         messages, tools: mine, clients: order, usage, signal: stop.signal, seams, source: 'chat', query: text,
         // Listened for before it is shown, so an answer given while Needs you is still being written is heard.
@@ -85,16 +105,17 @@ export function createChat(deps: Deps) {
         context: { stage, roomId, store, granted: new Map() },
         // Both roads at once: the window that asked, and every window that is only watching.
         events: {
-          token: (token) => { send({ token }); roomFeed.tell({ roomId, turn, token }); },
-          tool: (tool) => { send({ tool }); roomFeed.tell({ roomId, turn, tool }); },
+          token: (token) => { kept.text += token; send({ token }); roomFeed.tell({ roomId, turn, token }); },
+          tool: (tool) => { keepSoFar(tool); send({ tool }); roomFeed.tell({ roomId, turn, tool }); },
           notice: (text) => send({ notice: text }),
         },
       });
       const message = {
-        id: newMessageId(), role: 'assistant' as const, text: reply.text, at: Date.now(), provider: reply.provider, model: reply.model,
+        id: replyId, role: 'assistant' as const, text: reply.text, at: Date.now(), provider: reply.provider, model: reply.model,
         usage: reply.usage, ...(reply.tools.length ? { tools: reply.tools } : {}), ...(reply.stopped ? { stopped: true } : {}),
       };
-      if (reply.text.trim() || reply.tools.length) await store.appendChat(roomId, message);
+      await kept.writes;
+      if (reply.text.trim() || reply.tools.length || kept.tools.length) await store.putMessage(roomId, message);
       send({ done: true, message });
       // Older talk folds into the person's memory after the reply, never in the founder's way.
       void memory.fold(roomId).catch(() => {});

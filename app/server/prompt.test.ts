@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { preset } from '../shared/apps.ts';
-import { STANCE, seedStage, type ChatMessage, type Stage } from '../shared/model.ts';
+import { PARTNER_STANCE, STANCE, seedStage, type ChatMessage, type Stage } from '../shared/model.ts';
+import { COMPANY_LINE } from '../shared/partner.ts';
 import { buildMessages, colleagueIds, readableDocIds, todayBlock, wiredDocIds } from './prompt.ts';
 
 const docs = { 'brand-doc': 'We sell calm.', other: 'SECRET' };
@@ -252,5 +253,24 @@ describe('source websites', () => {
     const system = buildMessages(cards, 'marketing', {}, [], ['search_source'])[0].content as string;
     expect(system).toContain('Websites the founder trusts. Search inside one with search_source when its description fits the question, then read the pages with web_fetch:\n- indiehackers.com: founder interviews (connected to you: try it first)\n- Startups RIP (startups.rip): startup case studies');
     expect(buildMessages(stage, 'marketing', {}, [], ['search_source'])[0].content).not.toContain('Websites the founder trusts');
+  });
+
+  it('tells every person that the Company document is the shared record, once it is on the stage', () => {
+    const withCompany: Stage = { ...stage, docs: [...stage.docs, { id: 'company', title: 'Company', pinned: true, x: 0, y: 0, w: 1, h: 1 }] };
+    const system = buildMessages(withCompany, 'build', { company: '# Company\n\n## Idea\n\nA weekly list.' }, [])[0].content as string;
+    expect(system).toContain(COMPANY_LINE);
+    expect(system).toContain('A weekly list.');
+    expect(buildMessages(stage, 'build', {}, [])[0].content).not.toContain(COMPANY_LINE);
+  });
+
+  it('gives a partner the partner stance in place of the staff one, and everybody else the staff one', () => {
+    const withPartner: Stage = { ...stage, rooms: [...stage.rooms, { id: 'partner', name: 'Sam', role: 'Partner', accent: '#fff', brief: 'You hold the company.', partner: true, x: 0, y: 0, w: 1, h: 1 }] };
+    const partner = buildMessages(withPartner, 'partner', {}, [])[0].content as string;
+    expect(partner).toContain(PARTNER_STANCE);
+    expect(partner).not.toContain('you do not run the company');
+    expect(partner).toContain('My call:');
+    const staff = buildMessages(withPartner, 'build', {}, [])[0].content as string;
+    expect(staff).toContain(STANCE);
+    expect(staff).not.toContain(PARTNER_STANCE);
   });
 });

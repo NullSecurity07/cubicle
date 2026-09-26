@@ -1,4 +1,4 @@
-import type { Attention, BoardEvent, MediaEvent, RoomEvent, Skill, SkillEvent, Stage, Task } from '../shared/model.ts';
+import { STAGE_CHANNEL, type Attention, type BoardEvent, type MediaEvent, type RoomEvent, type Skill, type SkillEvent, type Stage, type Task } from '../shared/model.ts';
 
 // Everything a window listens to, on one connection. A browser allows about six connections to a site, and a live
 // feed holds one for as long as the window is open: with the founder's four boards on the stage the old page held
@@ -55,8 +55,9 @@ export function createEvents(deps: Deps) {
   return {
     watching: () => windows.size,
     // The stage as it has just been saved: a board card put down while the window is open starts flowing at once,
-    // and one taken away goes quiet, without anybody reopening anything.
-    restage(stage: Stage) { onStage = boardsOn(stage); },
+    // and one taken away goes quiet, without anybody reopening anything. Every window is told the stage too, with its
+    // revision, so one that did not make the change takes it in and saves on top of it rather than over it.
+    restage(stage: Stage) { onStage = boardsOn(stage); tell(STAGE_CHANNEL, stage); },
     // A window joining is sent what each of the old feeds sent on opening, so it is whole the moment it arrives,
     // and then everything as it happens. What comes back stops it listening.
     // It is listening from the very start, because reading the openings takes a moment and whatever changed in that
