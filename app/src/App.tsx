@@ -135,8 +135,11 @@ function Canvas({ stage }: { stage: Stage }) {
     const [width, height] = NEW_SIZE.doc;
     const beside = { x: room.position.x + (room.width ?? 380) + 80, y: room.position.y };
     const position = freeSpot(latest.current.nodes, beside, width, height);
-    setNodes((current) => [...current, { id: effect.id, type: 'doc', position, width, height, data: { title: effect.title }, ...CARD }]);
-    setEdges((current) => [...current, { id: `${effect.roomId}-${effect.id}`, source: effect.roomId, sourceHandle: 'r', target: effect.id, targetHandle: 'l', ...WIRE }]);
+    // Checked again as each change lands: the stage feed may bring the same doc and wire in the same moment, and a
+    // check made before that change is drawn would put a second copy of the wire on the canvas, and then on disk.
+    const wire = `${effect.roomId}-${effect.id}`;
+    setNodes((current) => (current.some((node) => node.id === effect.id) ? current : [...current, { id: effect.id, type: 'doc', position, width, height, data: { title: effect.title }, ...CARD }]));
+    setEdges((current) => (current.some((edge) => edge.id === wire) ? current : [...current, { id: wire, source: effect.roomId, sourceHandle: 'r', target: effect.id, targetHandle: 'l', ...WIRE }]));
   }), [setNodes, setEdges]);
 
   return (
