@@ -77,14 +77,17 @@ describe('doc tools', () => {
     expect(write.text).toMatch(/pinned company document: you can read it, but writing to it needs a wire/);
   });
 
-  it('refuses to add a top-level section that is already there, and lets a sub-heading repeat', async () => {
+  it('lets a plain doc repeat a heading, as a running log does', async () => {
     const { store, call } = await setup();
-    const again = await call('append_doc', { doc: 'Brand doc', text: '## Review\n\nMore notes.' });
-    expect(again.ok).toBe(false);
-    expect(again.text).toMatch(/"Review" is already a section of this document; change it with replace_section/);
-    expect(await store.readDoc('brand-doc')).toBe(PLAN);
-    expect((await call('replace_section', { doc: 'Brand doc', heading: 'Build', text: '## Research\n\nx' })).ok).toBe(false);
-    expect((await call('append_doc', { doc: 'Brand doc', text: '### Monday\n\na' })).ok).toBe(true);
-    expect((await call('append_doc', { doc: 'Brand doc', text: '### Monday\n\nb' })).ok).toBe(true);
+    expect((await call('append_doc', { doc: 'Brand doc', text: '## Monday\n\na' })).ok).toBe(true);
+    expect((await call('append_doc', { doc: 'Brand doc', text: '## Monday\n\nb' })).ok).toBe(true);
+    expect((await call('append_doc', { doc: 'Brand doc', text: '## Review\n\nMore notes.' })).ok).toBe(true);
+    expect((await store.readDoc('brand-doc')).match(/^## Monday$/gm)).toHaveLength(2);
+  });
+
+  it('points a person to write_doc when a section to replace is there twice', async () => {
+    const { store, call } = await setup();
+    await store.replaceDoc('brand-doc', `${PLAN}\n## Build\n\nAgain\n`);
+    expect((await call('replace_section', { doc: 'Brand doc', heading: 'Build', text: 'x' })).text).toMatch(/more than one heading is called "Build".*write_doc/);
   });
 });

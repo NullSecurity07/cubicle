@@ -86,7 +86,9 @@ async function rulesOf(stage: Stage, id: string): Promise<DocRules | undefined> 
 // stand, so what is saved may be the writer's words with a stale mark or a "not assessed" verdict put in.
 async function save(context: ToolContext, id: string, before: string, after: string, done: string) {
   const rules = await rulesOf(context.stage, id);
-  const twice = addedTwice(before, after, rules ? [...rules.sections, rules.verdict].map((one) => one.heading) : []);
+  // Only a team doc's own sections are kept to one copy, where a second would slip past the checks; a plain doc such
+  // as a running log repeats "## Monday" on purpose.
+  const twice = rules ? addedTwice(before, after, [...rules.sections, rules.verdict].map((one) => one.heading)) : null;
   if (twice) throw new Error(`not written: "${twice}" is already a section of this document; change it with replace_section instead of adding it again.`);
   const guarded = rules ? guardWrite({ rules, stage: context.stage, docId: id, writerId: context.roomId, before, after, now: Date.now() }) : { text: after };
   await context.store.replaceDoc(id, guarded.text);

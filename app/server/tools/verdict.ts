@@ -30,10 +30,14 @@ function copies(text: string, heading: string): { at: number; end: number }[] {
 // The text under a heading, up to the next heading of the same or a higher level, every copy's in order; null when
 // there is no such heading.
 export function sectionBody(text: string, heading: string): string | null {
-  const found = copies(text, heading);
-  if (!found.length) return null;
+  const found = bodies(text, heading);
+  return found.length ? found.filter(Boolean).join('\n\n') : null;
+}
+
+// Each copy's text on its own.
+function bodies(text: string, heading: string): string[] {
   const lines = text.split('\n');
-  return found.map(({ at, end }) => lines.slice(at + 1, end).join('\n').trim()).filter(Boolean).join('\n\n');
+  return copies(text, heading).map(({ at, end }) => lines.slice(at + 1, end).join('\n').trim());
 }
 
 // The same document with the text under one heading swapped, the heading and every other line kept as they were.
@@ -153,7 +157,11 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
   const verdictBefore = sectionBody(before, verdictAt);
   if (changed(verdictAt)) {
     // A verdict written anew answers every stale mark on the old one.
-    const fresh = (sectionBody(after, verdictAt) ?? '').split('\n').filter((line) => !STALE.test(line.trim())).join('\n').trim();
+    // Where a doc holds two copies, the verdict is the copy that was written just now: an old copy's words left
+    // standing beside it would say STRONG 10/10 under a new WEAK.
+    const was = new Set(bodies(before, verdictAt));
+    const written = bodies(after, verdictAt).filter((one) => !was.has(one));
+    const fresh = (written.length ? written.join('\n\n') : sectionBody(after, verdictAt) ?? '').split('\n').filter((line) => !STALE.test(line.trim())).join('\n').trim();
     after = withBody(after, verdictAt, fresh);
     if (filled(fresh).length) {
       const empty = rules.sections.filter(({ heading }) => sectionBody(after, heading) !== null && !filled(sectionBody(after, heading)).length);

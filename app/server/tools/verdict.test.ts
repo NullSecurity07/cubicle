@@ -291,6 +291,13 @@ describe('a second copy of a section', () => {
     expect(held.text.match(/^## 5\. Verdict$/gm)).toHaveLength(1);
     expect(sectionBody(held.text, '5. Verdict')).toMatch(/^Not assessed: 4\. Founder-market fit/);
     expect(held.text).not.toMatch(/10\/10/);
+    // With the fit filled, a whole rewrite of the first copy is the verdict; the old second copy's words go.
+    const full = twice.replace('## 4. Founder-market fit\n\nLived it', `## 4. Founder-market fit\n\n${'In one sentence: sold one extension.'}\n\nLived it`);
+    const old = `${full}STRONG\n\nScore: 10/10\n`;
+    const rewritten = guardWrite({ rules, stage, docId: 'evaluation', writerId: 'verdict', before: old, after: old.replace('## 5. Verdict\n\nOne word', '## 5. Verdict\n\nWEAK (3)\n\nScore: 3/10\n\nOne word'), now: Date.now() });
+    expect(rewritten.text.match(/^## 5\. Verdict$/gm)).toHaveLength(1);
+    expect(sectionBody(rewritten.text, '5. Verdict')).toContain('WEAK (3)');
+    expect(rewritten.text).not.toMatch(/^STRONG$|10\/10/m);
     // And a colleague may not write into the second copy either.
     expect(() => guard('pain', `${twice}STRONG\n`)).toThrow(/is Priya's section/);
     // Every copy's words count: a colleague's section filled in its second copy is filled.

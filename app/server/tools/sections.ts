@@ -43,7 +43,7 @@ export function replaceSection(text: string, heading: string, body: string): { t
   const hits = all.filter((one) => headingKey(one.title) === key);
   const listed = all.map((one) => `"${one.title}"`).join(', ') || 'none';
   if (!hits.length) return { error: `no heading "${heading.replace(/^#+\s*/, '').trim()}" in this document. Its headings: ${listed}. To add a new section, use append_doc.` };
-  if (hits.length > 1) return { error: `more than one heading is called "${hits[0].title}", so it is not clear which to change. Its headings: ${listed}.` };
+  if (hits.length > 1) return { error: `more than one heading is called "${hits[0].title}", so it is not clear which to change. Its headings: ${listed}. Rewrite the whole document with write_doc, keeping one of them.` };
   const [hit] = hits;
   const next = all.find((one) => one.line > hit.line && one.level <= hit.level);
   const lines = text.split('\n');
@@ -57,17 +57,15 @@ export function replaceSection(text: string, heading: string, body: string): { t
   return { text: `${head}\n\n${fresh ? `${fresh}\n` : ''}${tail ? `\n${tail}` : ''}`.replace(/\n{3,}$/, '\n\n') };
 }
 
-// A heading this write adds a second copy of, or null. Only sections that already exist count, and only top-level ones
-// (# and ##) or the ones named in `also`: a sub-heading such as "### Monday" repeats under each week on purpose. A
-// second "## 5. Verdict" appended at the end is how a judge once wrote a verdict the checks on the first never saw.
-export function addedTwice(before: string, after: string, also: string[] = []): string | null {
-  const named = new Set(also.map(headingKey));
+// One of `named` that this write adds a second copy of, or null. A second "## 5. Verdict" appended at the end is how a
+// judge once wrote a verdict the checks on the first never saw.
+export function addedTwice(before: string, after: string, named: string[]): string | null {
+  const keys = new Set(named.map(headingKey));
   const count = (text: string) => {
     const seen = new Map<string, { title: string; times: number }>();
     for (const one of headings(text)) {
       const key = headingKey(one.title);
-      if (one.level > 2 && !named.has(key)) continue;
-      seen.set(key, { title: one.title, times: (seen.get(key)?.times ?? 0) + 1 });
+      if (keys.has(key)) seen.set(key, { title: one.title, times: (seen.get(key)?.times ?? 0) + 1 });
     }
     return seen;
   };

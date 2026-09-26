@@ -17,6 +17,8 @@ const LABELS: Record<string, string> = { to: 'To', subject: 'Subject', body: 'Me
 export const fieldLabel = (tool: string, key: string) => (tool === 'ask_founder' && key === 'answer' ? 'Your answer' : LABELS[key] ?? key);
 // The answers a question to the founder offers, each shown as its own button; nothing for any other step.
 export const choicesOf = (tool: Pick<ToolEvent, 'name' | 'choices'> & Partial<ToolEvent>) => (tool.name === 'ask_founder' ? (tool.choices ?? []).filter((one) => one.trim()) : []);
+// A question to the founder waits for words or a choice: an empty answer would close it with nothing said.
+export const canAnswer = (tool: string, args: Record<string, string>) => tool !== 'ask_founder' || !!args.answer?.trim();
 // What the founder was asked, when the step itself came with no question of its own. The needs panel says it back
 // in the same words, so an approval the app closed on reads there exactly as it read in the room.
 export const asked = (name: string) => TITLES[name]?.[0] ?? `Allow ${name}?`;
@@ -71,7 +73,7 @@ export function Approval({ tool }: { tool: ToolEvent }) {
       {problem && <p className="msg--problem">{problem}</p>}
       <div className="approval__end">
         <button type="button" disabled={sending} onClick={() => void answer(false)}>Don't</button>
-        <button type="button" className="primary" disabled={sending} onClick={() => void answer(true)}>{yes}</button>
+        <button type="button" className="primary" disabled={sending || !canAnswer(tool.name, args)} title={canAnswer(tool.name, args) ? undefined : 'Type an answer or pick a choice'} onClick={() => void answer(true)}>{yes}</button>
       </div>
     </div>
   );
