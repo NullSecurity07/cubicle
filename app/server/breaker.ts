@@ -2,15 +2,27 @@
 // a 429 that names no wait rests the key three seconds, then six, then twelve, up to five minutes, and one good answer
 // clears it; a provider that errors (5xx) or times out (408) five times in a row is taken out for thirty seconds, then
 // trusted with exactly one request, which closes it again on success and opens it for another thirty on failure.
+// A key the provider refuses (401, 403) is dead, not busy: it rests six hours, so it stops going first every turn, and
+// one good answer brings it back. The usage book tells the founder once.
 // A resting key is only moved to the back: its siblings serve, and it is still there when nothing else is.
 const TRIPS = 5;
 export const OPEN_MS = 30_000;
 const REST_FIRST = 3000;
 export const REST_MOST = 5 * 60_000;
+export const DEAD_MS = 6 * 3_600_000;
 
-type Key = { fails: number; openUntil?: number; probeUntil?: number; half?: boolean; rest?: number; restUntil?: number };
+type Key = { fails: number; openUntil?: number; probeUntil?: number; half?: boolean; rest?: number; restUntil?: number; deadUntil?: number };
 
 const statusOf = (error: unknown) => (error as { status?: number })?.status;
+export const refused = (error: unknown) => statusOf(error) === 401 || statusOf(error) === 403;
+// Which free limit a 429 hit, in the words the founder reads, from what the provider wrote: the day's quota is not
+// the same news as a busy minute, and the dashboard's "left today" is only about the first.
+export const limitWords = (error: unknown) => {
+  const said = String((error as Error)?.message ?? '');
+  if (/per.?day|\bRPD\b|\bTPD\b|daily/i.test(said)) return "today's free limit reached";
+  if (/per.?minute|\bRPM\b|\bTPM\b/i.test(said)) return 'busy this minute';
+  return 'busy for now';
+};
 // How long a provider said to wait before asking again, from its Retry-After header, whatever the status.
 export const headerWait = (error: unknown) => {
   const seconds = Number((error as { headers?: Headers })?.headers?.get?.('retry-after'));
@@ -33,6 +45,10 @@ export function createBreaker(now: () => number = Date.now) {
     // One failed request. Gives back how long the key now rests, or 0 when this failure is not the kind we count.
     failed(name: string, error: unknown): number {
       const one = key(name);
+      if (refused(error)) {
+        one.deadUntil = now() + DEAD_MS;
+        return DEAD_MS;
+      }
       if (statusOf(error) === 429) {
         const asked = headerWait(error);
         const rest = asked ?? Math.min(one.rest ? one.rest * 2 : REST_FIRST, REST_MOST);
@@ -58,7 +74,7 @@ export function createBreaker(now: () => number = Date.now) {
       const one = keys[name];
       if (!one) return false;
       const at = now();
-      if ((one.restUntil ?? 0) > at || (one.openUntil ?? 0) > at) return true;
+      if ((one.restUntil ?? 0) > at || (one.openUntil ?? 0) > at || (one.deadUntil ?? 0) > at) return true;
       return !!one.half && (one.probeUntil ?? 0) > at;
     },
     // Asked right before a request goes out. An open key says no; a key whose thirty seconds are up lets exactly one
@@ -73,6 +89,8 @@ export function createBreaker(now: () => number = Date.now) {
       one.probeUntil = at + OPEN_MS;
       return true;
     },
+    // True while the key rests after the provider refused it.
+    dead: (name: string) => (keys[name]?.deadUntil ?? 0) > now(),
     state(name: string): 'closed' | 'open' | 'half-open' {
       const one = keys[name];
       if (!one?.openUntil) return 'closed';

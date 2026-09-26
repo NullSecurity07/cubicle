@@ -31,6 +31,10 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
   const cooling: Record<string, number> = {};
   let saving: Promise<unknown> = Promise.resolve();
   const breaker = createBreaker(now);
+  // Keys the provider refused, told once when they go and once when they answer again.
+  const refusedKeys = new Set<string>();
+  const keyWatchers = new Set<(event: { name: string; dead: boolean; status?: number }) => void>();
+  const tellKey = (event: { name: string; dead: boolean; status?: number }) => { for (const tell of keyWatchers) { try { tell(event); } catch { /* a listener never costs a call */ } } };
   const folder = path ? dirname(path) : null;
 
   const roll = () => { if (state.day !== today(now())) state = { day: today(now()), providers: {} }; };
@@ -82,6 +86,7 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
       if (usage && fromCache.has(usage)) return;
       roll();
       breaker.ok(name);
+      if (refusedKeys.delete(name)) tellKey({ name, dead: false });
       const of = ((state.kinds ??= {})[kind] ??= { requests: 0, input: 0, output: 0 });
       of.requests += 1;
       of.input += usage?.input ?? 0;
@@ -97,11 +102,22 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     // A provider said "not now": leave it alone for as long as it asked, or a minute.
     cool(name: string, milliseconds = WINDOW) { cooling[name] = now() + milliseconds; },
     // A request that failed: a 429 rests the key (as long as it asked, or three seconds doubling), five 5xx or
-    // timeouts in a row open its breaker. See breaker.ts.
-    failed: (name: string, error: unknown) => breaker.failed(name, error),
+    // timeouts in a row open its breaker, a 401 or 403 rests it six hours as dead. See breaker.ts.
+    failed(name: string, error: unknown) {
+      const rest = breaker.failed(name, error);
+      if (breaker.dead(name) && !refusedKeys.has(name)) {
+        refusedKeys.add(name);
+        tellKey({ name, dead: true, status: (error as { status?: number })?.status });
+      }
+      return rest;
+    },
+    // Hears a key the provider refused, and the same key answering again.
+    onKey(tell: (event: { name: string; dead: boolean; status?: number }) => void) { keyWatchers.add(tell); return () => { keyWatchers.delete(tell); }; },
     // Right before a request goes out: false while the key's breaker is open, or half open with its one try out.
     admit: (name: string) => breaker.admit(name),
     breaker: (name: string) => breaker.state(name),
+    // True while the provider's refusal of this key (401, 403) is fresh.
+    dead: (name: string) => breaker.dead(name),
     // How much one key has carried, the last minute first: what spreads a provider's keys evenly.
     carried(name: string) {
       roll();

@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { resolve } from 'node:path';
 import { isHeaded, type Stage } from '../shared/model.ts';
 import { createApprovals } from './approvals.ts';
-import { boardAttention, createAttention } from './attention.ts';
+import { boardAttention, createAttention, keyAttention } from './attention.ts';
 import { createBoards } from './boards.ts';
 import { createBrowser, dnsResolve, fakeHand, fakeRunner, jinaReader, realRunner } from './browser.ts';
 import { createChat } from './chat.ts';
@@ -87,6 +87,8 @@ const memory = createMemory(store, async (messages) => {
 const boards = createBoards(workspace);
 // One list of everything that waits for the founder; boards report into it, approvals are held in it while they wait.
 const attention = createAttention(workspace);
+// A key the provider refuses is said once in Needs you, and goes from there when that key answers again.
+keyAttention(usage, attention);
 attention.source(boardAttention(store, boards));
 boards.onChange(() => { void attention.refresh(); });
 // The studio cards: one job per card, the files in the shared files folder, the rest beside the stage.

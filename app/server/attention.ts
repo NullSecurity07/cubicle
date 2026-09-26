@@ -4,6 +4,7 @@ import type { Lapsed } from '../shared/lapsed.ts';
 import type { Attention, AttentionKind, ToolEvent } from '../shared/model.ts';
 import type { Boards } from './boards.ts';
 import type { Store } from './store.ts';
+import type { UsageBook } from './usage.ts';
 
 export type AttentionBook = ReturnType<typeof createAttention>;
 type Source = () => Promise<Attention[]>;
@@ -104,3 +105,17 @@ export const boardAttention = (store: Store, boards: Boards) => async (): Promis
   }
   return found;
 };
+
+// A key the provider refused (401, 403) is one item for the founder, raised once and kept until the key answers again:
+// no turn can fix it, only a new key in Keys can. One item a key, so a provider with two keys can name either.
+export function keyAttention(usage: Pick<UsageBook, 'onKey'>, attention: AttentionBook, now: () => number = Date.now) {
+  return usage.onKey(({ name, dead, status }) => {
+    const id = `key-rejected:${name}`;
+    const provider = name.split('#')[0];
+    const said = provider[0].toUpperCase() + provider.slice(1);
+    const which = name.includes('#') ? ` (key ${name.split('#')[1]})` : '';
+    void (dead
+      ? attention.raise({ id, kind: 'key-rejected', at: now(), title: `${said} key rejected; fix it in Keys`, detail: `${said}${which} answered ${status ?? 'with a refusal'}: the key is wrong, revoked or out of credit. Other models answer meanwhile; this goes away the next time it answers.` })
+      : attention.clear(id)).catch(() => {});
+  });
+}

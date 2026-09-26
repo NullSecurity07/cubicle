@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Lapsed } from '../shared/lapsed.ts';
 import type { Attention } from '../shared/model.ts';
-import { boardAttention, createAttention } from './attention.ts';
+import { boardAttention, createAttention, keyAttention } from './attention.ts';
+import { createUsage } from './usage.ts';
 import { createBoards } from './boards.ts';
 import { createStore } from './store.ts';
 
@@ -156,5 +157,23 @@ describe('attention', () => {
     await before.raise({ ...waiting('c5'), kind: 'run-approval', cardId: 'b1', taskId: 't1' });
     await before.settled();
     expect(await createAttention(dir).list()).toEqual([]);
+  });
+});
+
+describe('a key the provider refuses', () => {
+  it('raises one item naming the provider and Keys, and clears it when the key answers again', async () => {
+    const attention = createAttention(await mkdtemp(join(tmpdir(), 'attention-')));
+    const usage = createUsage(null, () => NOON);
+    keyAttention(usage, attention, () => NOON);
+    const refused = Object.assign(new Error('Invalid API Key'), { status: 401 });
+    usage.failed('groq#2', refused);
+    usage.failed('groq#2', refused);
+    await new Promise((settle) => setTimeout(settle, 20));
+    const raised = await attention.list();
+    expect(raised).toHaveLength(1);
+    expect(raised[0]).toMatchObject({ kind: 'key-rejected', title: 'Groq key rejected; fix it in Keys' });
+    usage.record('groq#2');
+    await new Promise((settle) => setTimeout(settle, 20));
+    expect(await attention.list()).toHaveLength(0);
   });
 });
