@@ -337,6 +337,28 @@ describe('the partner slice: plans become tasks', () => {
     await part.close!();
   });
 
+  it('says there is no board rather than failing quietly, and makes one wired to the writer when asked', async () => {
+    const answers: [number, unknown][] = [];
+    const { deps, part } = await installed({ fake: true, json: (_res, status, body) => { answers.push([status, body]); } });
+    const stage = await deps.store.loadStage();
+    await deps.store.saveStage({ ...stage, docs: [...stage.docs, { id: 'doc-plan', title: 'Two weeks', x: 0, y: 0, w: 1, h: 1 }] });
+    await deps.store.writeDoc('doc-plan', '# Two-week plan\n\n### Mon 28 Sep\n- Draft the page\n- Set up the form\n');
+    await deps.seams.run('tool:after', { roomId: 'marketing', event: { id: 'e', name: 'write_doc', args: {}, ok: true, effect: { kind: 'doc-changed', id: 'doc-plan' } } });
+    const id = (await deps.attention.list()).find((one) => one.kind === 'proposed-plan')!.id.split(':')[1];
+    deps.body = async () => ({ accept: true });
+    await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/plans/${id}`);
+    expect(answers.at(-1)).toEqual([409, { error: 'There is no task board on the stage yet.', noBoard: true }]);
+    expect((await deps.attention.list()).some((one) => one.kind === 'proposed-plan')).toBe(true);
+    deps.body = async () => ({ accept: true, makeBoard: true });
+    await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/plans/${id}`);
+    const after = await deps.store.loadStage();
+    const board = after.cards!.find((card) => card.kind === 'board')!;
+    expect(after.wires.some((wire) => wire.from === 'marketing' && wire.to === board.id)).toBe(true);
+    expect(answers.at(-1)).toEqual([200, { ok: true, boardId: board.id, added: 2 }]);
+    expect((await deps.boards.list(board.id))).toHaveLength(2);
+    await part.close!();
+  });
+
   it('offers steps a person hands over with propose_tasks, only with a board on the stage', async () => {
     const { deps, part } = await installed({ fake: true });
     const tool = part.tools!.find((one) => one.name === 'propose_tasks')!;

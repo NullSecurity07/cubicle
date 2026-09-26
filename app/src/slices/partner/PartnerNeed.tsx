@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { Attention } from '../../../shared/model';
 import { overlay } from '../../overlay/store';
 import { answerBet, answerPlan, closeBet, morningDone } from './api';
@@ -26,9 +27,23 @@ export function PartnerNeed({ entry, attempt }: { entry: Attention; attempt: (wo
     <button type="button" onClick={() => attempt(closeBet(item, 'did-not'))}>It did not work</button>
     <button type="button" className="primary" onClick={() => attempt(closeBet(item, 'worked'))}>It worked</button>
   </>;
-  if (entry.kind === 'proposed-plan') return <>
-    <button type="button" onClick={() => attempt(answerPlan(item, false))}>Not now</button>
-    <button type="button" className="primary" onClick={() => attempt(answerPlan(item, true))}>Add to the board</button>
-  </>;
+  if (entry.kind === 'proposed-plan') return <PlanNeed item={item} attempt={attempt} />;
   return null;
+}
+
+// A plan's steps: on the board, or not now. With no board on the stage the row says so where the founder pressed,
+// and offers to make one, wired to whoever wrote the plan, and put the steps on it.
+function PlanNeed({ item, attempt }: { item: string; attempt: (work: Promise<unknown>) => void }) {
+  const [noBoard, setNoBoard] = useState('');
+  const add = (makeBoard: boolean) => attempt(answerPlan(item, true, makeBoard).catch((error: Error) => {
+    if (/no task board/i.test(error.message)) { setNoBoard(error.message); return; }
+    throw error;
+  }));
+  return <>
+    {noBoard && <p className="partner-need__problem" role="status">{noBoard}</p>}
+    <button type="button" onClick={() => attempt(answerPlan(item, false))}>Not now</button>
+    {noBoard
+      ? <button type="button" className="primary" onClick={() => add(true)}>Add a board and put them on it</button>
+      : <button type="button" className="primary" onClick={() => add(false)}>Add to the board</button>}
+  </>;
 }

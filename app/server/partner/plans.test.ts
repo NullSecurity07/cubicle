@@ -30,6 +30,6 @@ describe('a plan as tasks', () => {
     const tasks = await boards.list('board-b');
     expect(tasks.map((task) => [task.title, task.column])).toEqual([['Day 1: draft the page', 'todo'], ['post in r/SaaS', 'todo'], ['Mon 5 Oct: email 20 leads', 'todo'], ['4', 'todo'], ['5', 'todo'], ['6', 'todo']]);
     expect(tasks[0].detail).toBe('From the plan "2-week plan", written by Sam.');
-    await expect(addPlan(boards, { ...stage, cards: [] }, plan)).rejects.toThrow('Add a task board first');
+    await expect(addPlan(boards, { ...stage, cards: [] }, plan)).rejects.toThrow('There is no task board on the stage yet');
   });
 });

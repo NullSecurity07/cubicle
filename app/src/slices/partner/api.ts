@@ -9,4 +9,4 @@ export const askMorning = () => request<MorningNote>('/api/partner/morning', sen
 export const morningDone = () => request<{ ok: true }>('/api/partner/morning/done', send('POST', {}));
 export const answerBet = (id: string, accept: boolean) => request<{ ok: true }>(`/api/partner/bets/${encodeURIComponent(id)}`, send('POST', { accept }));
 export const closeBet = (id: string, verdict: BetVerdict) => request<Bet>(`/api/partner/bets/${encodeURIComponent(id)}/close`, send('POST', { verdict }));
-export const answerPlan = (id: string, accept: boolean) => request<{ ok: true; added?: number }>(`/api/partner/plans/${encodeURIComponent(id)}`, send('POST', { accept }));
+export const answerPlan = (id: string, accept: boolean, makeBoard = false) => request<{ ok: true; added?: number }>(`/api/partner/plans/${encodeURIComponent(id)}`, send('POST', { accept, ...(makeBoard ? { makeBoard } : {}) }));

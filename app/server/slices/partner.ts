@@ -8,7 +8,7 @@ import { betDue, betsAttention, betsBook, closedLine, metricChoices, readMetric,
 import { companyDocOf, ensureCompany, syncDecisions, writeBets } from '../partner/company.ts';
 import { hub } from '../events.ts';
 import { FAKE_MORNING, morningDue, morningMessage, writeMorning } from '../partner/morning.ts';
-import { addPlan, planAttention, stepsFrom } from '../partner/plans.ts';
+import { addPlan, boardFor, boardForPlan, NO_BOARD, planAttention, stepsFrom } from '../partner/plans.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import type { ModelMessage } from '../prompt.ts';
 import { complete, promptSize } from '../providers.ts';
@@ -342,7 +342,13 @@ export function createPartner(options: PartnerOptions = {}) {
             const sent = await deps.body(req);
             const held = (await state.read()).plans.find((one) => one.id === plan[1]);
             if (!held) { deps.json(res, 404, { error: 'that plan is no longer waiting' }); return true; }
-            const made = sent?.accept === true ? await addPlan(deps.boards, await deps.store.loadStage(), held) : null;
+            const accept = sent?.accept === true;
+            // No board yet: said plainly, and the plan waits, unless the founder asked for a board to be made for it.
+            if (accept && !boardFor(await deps.store.loadStage(), held.roomId)) {
+              if (sent?.makeBoard !== true) { deps.json(res, 409, { error: NO_BOARD, noBoard: true }); return true; }
+              await boardForPlan(deps.store, held.roomId);
+            }
+            const made = accept ? await addPlan(deps.boards, await deps.store.loadStage(), held) : null;
             await state.change((draft) => { draft.plans = draft.plans.filter((one) => one.id !== held.id); });
             await deps.attention.refresh();
             deps.json(res, 200, { ok: true, ...(made ?? {}) });

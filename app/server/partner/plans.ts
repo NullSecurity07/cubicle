@@ -2,6 +2,8 @@ import type { Attention, Stage } from '../../shared/model.ts';
 import { parsePlan, planTaskTitle, type PlanProposal, type PlanStep } from '../../shared/partner.ts';
 import type { Boards } from '../boards.ts';
 import { wired } from '../prompt.ts';
+import type { Store } from '../store.ts';
+import { placeOf } from './company.ts';
 
 // A plan a person wrote becomes tasks only when the founder says so: the steps wait in Needs you as one question,
 // "add these N tasks to the board?", and a yes puts each on the board as a task to do.
@@ -25,10 +27,23 @@ export const boardFor = (stage: Stage, roomId: string) => {
   return wired(stage, roomId, boards)[0] ?? boards[0];
 };
 
+export const NO_BOARD = 'There is no task board on the stage yet.';
+
+// A new board for a plan, put down right of everything on the stage and wired to whoever wrote the plan, for the
+// founder who said "add a board and put them on it".
+export async function boardForPlan(store: Pick<Store, 'patchStage'>, roomId: string): Promise<string> {
+  const id = `board-${Math.random().toString(36).slice(2, 8)}`;
+  await store.patchStage((draft) => {
+    draft.cards = [...(draft.cards ?? []), { id, kind: 'board', ...placeOf(draft), w: 980, h: 440 }];
+    if (draft.rooms.some((room) => room.id === roomId)) draft.wires.push({ id: `${roomId}-${id}`, from: roomId, fromHandle: 'r', to: id, toHandle: 'l' });
+  });
+  return id;
+}
+
 // The founder's yes: every step a task to do, in the order written.
 export async function addPlan(boards: Pick<Boards, 'add'>, stage: Stage, plan: PlanProposal): Promise<{ boardId: string; added: number }> {
   const boardId = boardFor(stage, plan.roomId);
-  if (!boardId) throw new Error('Add a task board first, then say yes again.');
+  if (!boardId) throw new Error(NO_BOARD);
   for (const step of plan.steps) await boards.add(boardId, { title: planTaskTitle(step), detail: `From the plan "${plan.title}", written by ${plan.who}.`, column: 'todo' });
   return { boardId, added: plan.steps.length };
 }
