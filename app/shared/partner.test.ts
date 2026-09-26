@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { COMPANY_SECTIONS, companyTemplate, findCompanyDoc, isCompanyTitle, isPlanDoc, morningText, parsePlan, planTaskTitle, readMorning } from './partner.ts';
+import { COMPANY_SECTIONS, companyTemplate, dueOf, findCompanyDoc, isCompanyTitle, isPlanDoc, morningText, parsePlan, planTaskTitle, readMorning } from './partner.ts';
 
 // The shape the journey's 2-week plan came back in (Sam, 2026-09-26): a heading per week, a heading per day with
 // bullets under it, then KPIs and kill criteria that are not steps at all.
@@ -83,6 +83,33 @@ describe('a plan read as steps', () => {
     expect(isPlanDoc('Launch plans', '')).toBe(true);
     expect(isPlanDoc('Notes', '# Planning the launch')).toBe(true);
     expect(isPlanDoc('Planet', '# Notes')).toBe(false);
+  });
+
+  // The plan Sam wrote in the second journey (2026-09-26), exactly: a week heading, then bold day ranges with dates.
+  const JOURNEY_DOC = '# Two-week validation plan\n\nStarting Monday, 28 September 2026. Goal: Validate whether indie hackers will pay.\n\n## Week 1: Sourcing & Landing Page (28 Sep \u2013 4 Oct)\n- **Mon\u2013Tue (28\u201329 Sep):** Find and vet 5 real abandoned/struggling SaaS side-projects. Write a short valuation note for each.\n- **Wed (30 Sep):** Set up a simple landing page (e.g., Carrd or Substack).\n\n## Week 2: Outreach & Go/No-Go Decision (5 Oct \u2013 11 Oct)\n- **Sat\u2013Sun (10\u201311 Oct):** Make the go/no-go call.\n';
+  // And the steps Sam handed to propose_tasks, with the narrow no-break spaces the model wrote.
+  const JOURNEY_STEPS = ['Mon\u202f28\u202fSep \u2013 Tue\u202f29\u202fSep: Find & vet 5 abandoned SaaS side\u2011projects; write valuation notes', 'Wed\u202f30\u202fSep: Build landing page (Carrd/Substack) with pricing or guarantee'];
+
+  it('keeps a day range one label, never glues the week heading on, and dates each step', () => {
+    const steps = parsePlan(JOURNEY_DOC);
+    expect(steps.map(planTaskTitle)).toEqual([
+      'Mon\u2013Tue (28\u201329 Sep): Find and vet 5 real abandoned/struggling SaaS side-projects. Write a short valuation note for each',
+      'Wed (30 Sep): Set up a simple landing page (e.g., Carrd or Substack)',
+      'Sat\u2013Sun (10\u201311 Oct): Make the go/no-go call',
+    ]);
+    expect(steps.map((step) => dueOf(step.day!, '2026-09-26'))).toEqual(['2026-09-28', '2026-09-30', '2026-10-10']);
+    const handed = JOURNEY_STEPS.flatMap((line) => parsePlan(line));
+    expect(handed.map(planTaskTitle)).toEqual(['Mon 28 Sep \u2013 Tue 29 Sep: Find & vet 5 abandoned SaaS side\u2011projects; write valuation notes', 'Wed 30 Sep: Build landing page (Carrd/Substack) with pricing or guarantee']);
+    expect(handed.map((step) => dueOf(step.day!, '2026-09-26'))).toEqual(['2026-09-28', '2026-09-30']);
+  });
+
+  it('dates a label only when it names a calendar day, in the year nearest today', () => {
+    expect(dueOf('Day 3', '2026-09-26')).toBeUndefined();
+    expect(dueOf('Mon', '2026-09-26')).toBeUndefined();
+    expect(dueOf('Sep 28', '2026-09-26')).toBe('2026-09-28');
+    expect(dueOf('Mon 4 Jan', '2026-12-28')).toBe('2027-01-04');
+    expect(dueOf('2026-10-02', '2026-09-26')).toBe('2026-10-02');
+    expect(planTaskTitle({ day: 'Mon 28 Sep', text: 'Mon 28 Sep: call Ana' })).toBe('Mon 28 Sep: call Ana');
   });
 
   it('finds nothing in a document that has no days in it', () => {

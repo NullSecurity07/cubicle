@@ -27,3 +27,6 @@
 /* Said in the Needs you row itself, where the founder pressed, rather than at the top of the panel. */
 .partner-need__problem { flex-basis: 100%; margin: 0 0 4px; font-size: 12px; color: var(--problem); }
 .needs__end:has(.partner-need__problem) { flex-wrap: wrap; }
+
+/* The day a plan put a task on, on its board card. */
+.task__meta .task__due { color: var(--text); opacity: 0.75; }

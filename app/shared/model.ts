@@ -139,6 +139,8 @@ export type Task = {
   // `from.at` is when that earlier run finished, so "what changed since then" has a boundary; a board saved before
   // this was carried across has none, and then nothing is said about when.
   script?: TaskScript; skill?: string; onMissed?: 'once' | 'skip'; after?: string;
+  // The day a plan put this step on (YYYY-MM-DD). Only a date: it runs nothing, it is when the founder meant to do it.
+  due?: string;
   from?: { task: string; title: string; result: string; at?: number }; fails?: number;
 };
 // What a board streams to its card: the tasks after every change, and stage effects from runs that the client must mirror.

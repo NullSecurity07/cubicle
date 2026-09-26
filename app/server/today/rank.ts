@@ -29,6 +29,7 @@ export const WEIGHTS: Record<string, { weight: number; label: string }> = {
   'run-failed': { weight: 50, label: 'Work stopped halfway' },
   missed: { weight: 45, label: 'A repeat was missed' },
   'task-due': { weight: 40, label: 'Due today' },
+  'planned-today': { weight: 40, label: 'Planned for today' },
   'proposed-task': { weight: 35, label: 'A suggested task' },
   'proposed-target': { weight: 35, label: 'A suggested target' },
   'proposed-runway': { weight: 35, label: 'A suggested change to the runway' },
@@ -85,6 +86,11 @@ export async function gather(deps: { attention: { list(): Promise<Attention[]> }
   for (const card of stage.cards ?? []) {
     if (card.kind !== 'board') continue;
     for (const task of await deps.boards.list(card.id).catch(() => [])) {
+      // A plan's step dated today (or left from an earlier day) that is not done yet.
+      if (!task.repeat && task.due && task.due <= localDay(now) && task.column !== 'done' && !listed.has(task.id)) {
+        due.push({ id: `planned-today:${task.id}:${task.due}`, kind: 'planned-today', title: task.title, at: new Date(`${task.due}T00:00:00`).getTime(), cardId: card.id, taskId: task.id });
+        continue;
+      }
       if (listed.has(task.id) || !task.repeat || !task.nextRun || task.nextRun > end.getTime()) continue;
       if (task.run?.state === 'running' || task.run?.state === 'waiting') continue;
       const who = stage.rooms.find((room) => room.id === task.assignee)?.name;

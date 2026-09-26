@@ -2,6 +2,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { localDay } from '../clock.ts';
 import type { Attention, Stage, Task } from '../../shared/model.ts';
 import { AGE_MOST, gather, rank, readWaved, wave, WEIGHTS, type Signal } from './rank.ts';
 
@@ -57,6 +58,19 @@ describe('gather and the day\'s dismissals', () => {
     const needs = [{ id: 'missed:t2:1', kind: 'missed', title: 'Missed one', at: NOW - DAY, taskId: 't2', cardId: 'board-1' }] as Attention[];
     const signals = await gather({ attention: { list: async () => needs }, boards: { list: async () => tasks }, stage: async () => stage }, NOW);
     expect(signals.map((one) => [one.id, one.kind, one.who])).toEqual([['missed:t2:1', 'missed', undefined], [`task-due:t1:${NOW + 3_600_000}`, 'task-due', 'Dev']]);
+  });
+
+  it('brings in a plan\'s steps dated today or earlier and not done, as planned for today', async () => {
+    const stage = { rooms: [], docs: [], wires: [], cards: [{ id: 'board-1', kind: 'board' }] } as unknown as Stage;
+    const today = localDay(NOW);
+    const tasks = [
+      { id: 'p1', title: 'Mon 28 Sep: Find & vet 5', column: 'todo', createdAt: 0, detail: '', due: today },
+      { id: 'p2', title: 'Later', column: 'todo', createdAt: 0, detail: '', due: '2999-01-01' },
+      { id: 'p3', title: 'Done already', column: 'done', createdAt: 0, detail: '', due: today },
+    ] as Task[];
+    const signals = await gather({ attention: { list: async () => [] }, boards: { list: async () => tasks }, stage: async () => stage }, NOW);
+    expect(signals.map((one) => [one.id, one.kind])).toEqual([[`planned-today:p1:${today}`, 'planned-today']]);
+    expect(rank(signals, NOW)[0].reason).toContain('Planned for today');
   });
 
   it('forgets what was dismissed when the day turns', async () => {

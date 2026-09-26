@@ -1,6 +1,7 @@
 import type { Attention, Stage } from '../../shared/model.ts';
-import { parsePlan, planTaskTitle, type PlanProposal, type PlanStep } from '../../shared/partner.ts';
+import { dueOf, parsePlan, planTaskTitle, type PlanProposal, type PlanStep } from '../../shared/partner.ts';
 import type { Boards } from '../boards.ts';
+import { localDay } from '../clock.ts';
 import { wired } from '../prompt.ts';
 import type { Store } from '../store.ts';
 import { placeOf } from './company.ts';
@@ -41,9 +42,14 @@ export async function boardForPlan(store: Pick<Store, 'patchStage'>, roomId: str
 }
 
 // The founder's yes: every step a task to do, in the order written.
-export async function addPlan(boards: Pick<Boards, 'add'>, stage: Stage, plan: PlanProposal): Promise<{ boardId: string; added: number }> {
+// Each task carries the calendar day its label names, read against today in the founder's time zone.
+export async function addPlan(boards: Pick<Boards, 'add'>, stage: Stage, plan: PlanProposal, now = Date.now()): Promise<{ boardId: string; added: number }> {
   const boardId = boardFor(stage, plan.roomId);
   if (!boardId) throw new Error(NO_BOARD);
-  for (const step of plan.steps) await boards.add(boardId, { title: planTaskTitle(step), detail: `From the plan "${plan.title}", written by ${plan.who}.`, column: 'todo' });
+  const today = localDay(now);
+  for (const step of plan.steps) {
+    const due = step.day ? dueOf(step.day, today) : undefined;
+    await boards.add(boardId, { title: planTaskTitle(step), detail: `From the plan "${plan.title}", written by ${plan.who}.`, column: 'todo', ...(due ? { due } : {}) });
+  }
   return { boardId, added: plan.steps.length };
 }
