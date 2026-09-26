@@ -238,6 +238,34 @@ describe('a team placed before its doc carried rules', () => {
   });
 });
 
+describe('the pain section without conversations', () => {
+  const RATE = 'Vitamin — painkiller — hair on fire:';
+  const pain = async (text: string) => {
+    const { as, fill } = await setup();
+    await fill();
+    return as('pain')('replace_section', { heading: '3. Is the pain real?', text });
+  };
+
+  it('is rated at most painkiller, 1 of 2, and says why', async () => {
+    const out = await pain(`${RATE} Painkiller bordering on hair-on-fire. Score: 2/2\n\nReal customer conversations done (of ten to twenty): 0`);
+    expect(out.ok).toBe(false);
+    expect(out.text).toMatch(/no customer conversations are recorded.*pain is at most painkiller and 1 of 2\. This one says painkiller, 2 of 2/);
+    expect((await pain(`${RATE} hair on fire\n\nReal customer conversations done: 0`)).ok).toBe(false);
+    expect((await pain(`${RATE} painkiller, unproven. Score: 1/2\n\nReal customer conversations done: 0`)).ok).toBe(true);
+    expect((await pain(`${RATE} vitamin\n\nReal customer conversations done: none`)).ok).toBe(true);
+  });
+
+  it('may be rated hair on fire once conversations back it', async () => {
+    expect((await pain(`${RATE} hair on fire. Score: 2/2\n\nReal customer conversations done (of ten to twenty): 12`)).ok).toBe(true);
+  });
+
+  it('ships as a rule on the doc and a line in the pain validator\'s brief', async () => {
+    const { framework } = await setup();
+    expect(framework.docs[0].rules!.caps!.some((cap) => cap.on === '3. Is the pain real?' && cap.verdict === 'painkiller' && cap.score === 1 && cap.outOf === 2)).toBe(true);
+    expect(framework.rooms.find((room) => room.key === 'pain')!.brief).toMatch(/no conversations.*at most painkiller, 1\/2/i);
+  });
+});
+
 describe('a second copy of a section', () => {
   it('is refused when appended or written in, so the verdict cannot slip in under its own heading again', async () => {
     const { as, doc, fill } = await setup();

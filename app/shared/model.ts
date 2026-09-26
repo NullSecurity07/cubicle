@@ -23,7 +23,10 @@ export type Room = Box & {
 // the caps evidence puts on it. `outcomes` lists the verdict words from lowest to highest. See server/tools/verdict.ts.
 export type DocRules = {
   framework: string; sections: { heading: string; by: string }[]; verdict: { heading: string; by: string };
-  outcomes?: string[]; caps?: { heading: string; line: string; verdict: string; score: number; why: string }[];
+  outcomes?: string[];
+  // A cap bounds the verdict unless `on` names another section, which it then bounds with its own `outcomes` (lowest
+  // first), a score out of `outOf`, and `name` for what the refusal calls it.
+  caps?: { heading: string; line: string; verdict: string; score: number; why: string; on?: string; outcomes?: string[]; outOf?: number; name?: string }[];
 };
 export type Doc = Box & { id: string; title: string; pinned?: boolean; rules?: DocRules };
 // Resource cards that are not docs. `browser` is a live browser a wired person can drive; `project` is the coder card, a running OpenCode in one code folder that the founder or a wired person drives; `board` holds tasks that wired people may propose and the founder runs.

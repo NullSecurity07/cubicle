@@ -68,17 +68,27 @@ const bare = (line: string) => line.replace(/^\s*(?:[-*+>]|\d+[.)])\s+/, '').rep
 // The verdict word and the score a verdict gives. The template's own "(STRONG / WEAK / PIVOT REQUIRED)" is a label,
 // not a verdict, so anything in brackets with a slash in it is read past. The score is read from a line that starts
 // with "Score" before anything else, because the reasons carry figures too: "7 of 10 we called said it hurts".
-export function verdictOf(body: string, outcomes: string[]): { word?: string; score?: number } {
-  const lines = filled(body).map(bare).map((line) => line.replace(/\([^)]*\/[^)]*\)/g, ' '));
+export function verdictOf(body: string, outcomes: string[], outOf = 10): { word?: string; score?: number } {
+  // A template label that lists the words ("Vitamin — painkiller — hair on fire: painkiller") is read past as well.
+  const listed = (label: string) => outcomes.filter((word) => wordAt(label, word) >= 0).length > 1;
+  const lines = filled(body).map(bare).map((line) => line.replace(/\([^)]*\/[^)]*\)/g, ' '))
+    .map((line) => (line.includes(':') && listed(line.slice(0, line.indexOf(':'))) ? line.slice(line.indexOf(':') + 1).trim() : line));
   const text = lines.join('\n');
-  const found = outcomes.map((word) => ({ word, at: text.search(new RegExp(`\\b${word}\\b`)) })).filter((one) => one.at >= 0).sort((a, b) => a.at - b.at);
-  const outOfTen = /(\d+(?:\.\d+)?)\s*(?:\/|out of|of)\s*10\b/i;
+  const found = outcomes.map((word) => ({ word, at: wordAt(text, word) })).filter((one) => one.at >= 0).sort((a, b) => a.at - b.at);
+  const outOfTotal = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(?:\\/|out of|of)\\s*${outOf}\\b`, 'i');
   const scoreLine = lines.find((line) => /^score\b/i.test(line));
   // On the Score line, the last "N/10" is the total, since a breakdown comes before it; then a number after "=" ("2, 2, 2, 1, 1 = 8"), then the first number after the colon.
-  const onLine = scoreLine && ([...scoreLine.matchAll(new RegExp(outOfTen.source, 'gi'))].at(-1)
+  const onLine = scoreLine && ([...scoreLine.matchAll(new RegExp(outOfTotal.source, 'gi'))].at(-1)
     ?? /=\s*(\d+(?:\.\d+)?)\s*$/.exec(scoreLine) ?? /:\s*(\d+(?:\.\d+)?)/.exec(scoreLine));
-  const out = onLine ?? outOfTen.exec(text);
+  const out = onLine ?? outOfTotal.exec(text);
   return { word: found[0]?.word, score: out ? Number(out[1]) : undefined };
+}
+
+// Where a rating word stands in a text, or -1. Verdict words are capitals and matched as written, so "a strong signal"
+// is no STRONG; lower-case words ("hair on fire") match any case, and a hyphen for a space.
+function wordAt(text: string, word: string): number {
+  const pattern = word.split(/\s+/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\s-]+');
+  return text.search(new RegExp(`\\b${pattern}\\b`, word === word.toUpperCase() ? '' : 'i'));
 }
 
 const SPELLED = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty'];
@@ -126,6 +136,19 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
       + `Ask ${owner.name} with ask_person, or name what is missing in your own section; never fill in their part yourself.`);
   }
 
+  // A section's own claim held to the evidence beside it: with no conversations, the pain can be no more than a guess.
+  for (const cap of (rules.caps ?? []).filter((one) => one.on && changed(one.on))) {
+    const body = sectionBody(after, cap.on!) ?? '';
+    if (!filled(body).length || conversations(sectionBody(after, cap.heading) ?? '', cap.line)) continue;
+    const order = cap.outcomes ?? [];
+    const outOf = cap.outOf ?? 10;
+    const { word, score } = verdictOf(body, order, outOf);
+    if ((word && order.indexOf(word) > order.indexOf(cap.verdict)) || (score !== undefined && score > cap.score)) {
+      throw new Error(`not written: ${cap.why}, so ${cap.name ?? 'this section'} is at most ${cap.verdict} and ${cap.score} of ${outOf}. `
+        + `This one says ${[word, score !== undefined ? `${score} of ${outOf}` : ''].filter(Boolean).join(', ')}. Write it again within the cap, and mark what is unproven.`);
+    }
+  }
+
   const verdictAt = rules.verdict.heading;
   const verdictBefore = sectionBody(before, verdictAt);
   if (changed(verdictAt)) {
@@ -146,7 +169,7 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
         };
       }
       const { word, score } = verdictOf(fresh, rules.outcomes ?? []);
-      for (const cap of rules.caps ?? []) {
+      for (const cap of (rules.caps ?? []).filter((one) => !one.on)) {
         if (conversations(sectionBody(after, cap.heading) ?? '', cap.line)) continue;
         const order = rules.outcomes ?? [];
         const over = (word && order.indexOf(word) > order.indexOf(cap.verdict)) || (score !== undefined && score > cap.score);
