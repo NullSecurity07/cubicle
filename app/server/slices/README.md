@@ -41,6 +41,6 @@ Set in the environment of a check or a test run, beside the other `STAGE_*` swit
   fake mode otherwise, so a test run never writes into somebody's CRM.
 - `STAGE_FAKE_TELEGRAM=0` — turns off the stand-in Telegram that the reach slice uses in fake mode, for a check that
   wants no phone at all.
-- `STAGE_BACKUP_DIR` — where backups go. In fake mode they go beside the workspace unless this is set.
+- `STAGE_BACKUP_DIR` — where backups go, over everything else. Without it: the folder chosen in Health for this workspace (kept in `backup-to.json` inside it); else `~/Cubicle backups` for the app's own workspace, and `<workspace>/backups` for any other workspace or a fake run.
 - `STAGE_ENV_FILE` — the `.env` file the Keys panel and "Back up to…" write. The repository root's `.env` by
   default, and `.env` beside the workspace in fake mode, so a check run never writes into the founder's own keys.

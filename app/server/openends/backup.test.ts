@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
-import { autoBackup, backupDir, backupDirOf, canWrite, leaveOut, landingPlace, listBackups, makeBackup, restore } from './backup.ts';
+import { autoBackup, backupDir, backupDirOf, canWrite, chooseBackupDir, chosenBackupDir, leaveOut, landingPlace, listBackups, makeBackup, restore } from './backup.ts';
 import { END, packTar, splitPath, tarBlock, tarEntries } from './tar.ts';
 
 const dir = (what: string) => mkdtemp(join(tmpdir(), `${what}-`));
@@ -127,11 +127,43 @@ describe('putting one back', () => {
 });
 
 describe('backupDirOf', () => {
+  const OWN = backupDir({});
   it('keeps a fake run beside its workspace, unless the machine names a folder', () => {
-    expect(backupDirOf({ fake: true, workspace: '/w' }, {})).toBe('/w/backups');
-    expect(backupDirOf({ fake: true, workspace: '/w' }, { STAGE_BACKUP_DIR: '/b' })).toBe('/b');
-    expect(backupDirOf({ fake: false, workspace: '/w' }, { STAGE_BACKUP_DIR: '/b' })).toBe('/b');
-    expect(backupDirOf({ fake: false, workspace: '/w' }, {})).toBe(backupDir({}));
+    expect(backupDirOf({ fake: true, workspace: '/w', root: '/r' }, {})).toBe('/w/backups');
+    expect(backupDirOf({ fake: true, workspace: '/w', root: '/r' }, { STAGE_BACKUP_DIR: '/b' })).toBe('/b');
+    expect(backupDirOf({ fake: false, workspace: '/w', root: '/r' }, { STAGE_BACKUP_DIR: '/b' })).toBe('/b');
+  });
+
+  it('sends a real run on any other workspace beside that workspace, never to the founder\'s own folder', async () => {
+    const scratch = await dir('scratch-ws');
+    expect(backupDirOf({ fake: false, workspace: scratch, root: '/r' }, {})).toBe(join(scratch, 'backups'));
+    expect(backupDirOf({ fake: false, workspace: scratch, root: '/r' }, {})).not.toBe(OWN);
+  });
+
+  it('keeps the founder\'s own folder for the app\'s own workspace', () => {
+    expect(backupDirOf({ fake: false, workspace: '/r/workspace', root: '/r' }, {})).toBe(OWN);
+  });
+
+  it('takes the folder chosen for this workspace, and only for this one', async () => {
+    const one = await dir('ws-one');
+    const other = await dir('ws-other');
+    await chooseBackupDir(one, '/media/usb/Cubicle backups');
+    expect(chosenBackupDir(one)).toBe('/media/usb/Cubicle backups');
+    expect(backupDirOf({ fake: false, workspace: one, root: '/r' }, {})).toBe('/media/usb/Cubicle backups');
+    expect(backupDirOf({ fake: false, workspace: other, root: '/r' }, {})).toBe(join(other, 'backups'));
+    // The machine still wins over the choice.
+    expect(backupDirOf({ fake: false, workspace: one, root: '/r' }, { STAGE_BACKUP_DIR: '/b' })).toBe('/b');
+    await chooseBackupDir(one, null);
+    expect(chosenBackupDir(one)).toBeNull();
+  });
+
+  it('writes a scratch run\'s daily backup beside the scratch workspace and nothing into the founder\'s folder', async () => {
+    const scratch = await workspace();
+    const before = (await listBackups(OWN)).length;
+    const auto = autoBackup({ workspace: scratch, dir: () => backupDirOf({ fake: false, workspace: scratch, root: '/r' }, {}) });
+    expect((await auto.tick())?.made).toBeTruthy();
+    expect(await listBackups(join(scratch, 'backups'))).toHaveLength(1);
+    expect(await listBackups(OWN)).toHaveLength(before);
   });
 });
 

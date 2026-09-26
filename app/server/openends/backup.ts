@@ -1,4 +1,4 @@
-import { createWriteStream } from 'node:fs';
+import { createWriteStream, readFileSync } from 'node:fs';
 import { access, constants, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
@@ -15,12 +15,38 @@ const MADE = /^cubicle-(\d{4}-\d{2}-\d{2}-\d{4})\.tar\.gz$/;
 const AGAIN = [/^browsers(\/|$)/, /^\.index(\/|$)/, /^\.cache(\/|$)/, /^trash(\/|$)/, /^backups(\/|$)/, /(^|\/)node_modules(\/|$)/, /(^|\/)\.git(\/|$)/, /(^|\/)\.DS_Store$/];
 
 export const leaveOut = (path: string) => AGAIN.some((pattern) => pattern.test(path));
-// Where they go. The founder's own folder, unless this machine says otherwise — which is what a test sets.
+// Where they go on this machine when nothing else is said: the founder's own folder, or STAGE_BACKUP_DIR.
 export const backupDir = (env: NodeJS.ProcessEnv = process.env) => env.STAGE_BACKUP_DIR || join(homedir(), 'Cubicle backups');
-// The folder the app itself uses. A check run works on a throwaway workspace and has no business writing into the
-// founder's own folders, so in fake mode its backups land beside that workspace unless the machine says otherwise.
-export const backupDirOf = (deps: { fake: boolean; workspace: string }, env: NodeJS.ProcessEnv = process.env) =>
-  (deps.fake && !env.STAGE_BACKUP_DIR ? join(deps.workspace, 'backups') : backupDir(env));
+
+// The folder the founder chose for one workspace ("Back up to…" in Health), kept inside that workspace, so a choice
+// made for one workspace never sends another one's backups there.
+const CHOICE = 'backup-to.json';
+export function chosenBackupDir(workspace: string): string | null {
+  try {
+    const dir = (JSON.parse(readFileSync(join(workspace, CHOICE), 'utf8')) as { dir?: unknown }).dir;
+    return typeof dir === 'string' && dir.trim() ? dir : null;
+  } catch { return null; }
+}
+export async function chooseBackupDir(workspace: string, dir: string | null): Promise<void> {
+  const path = join(workspace, CHOICE);
+  if (!dir) { await rm(path, { force: true }); return; }
+  await mkdir(workspace, { recursive: true });
+  await writeFile(`${path}.tmp`, JSON.stringify({ dir }, null, 2));
+  await rename(`${path}.tmp`, path);
+}
+
+// The folder the app itself uses, asked each time. The machine's STAGE_BACKUP_DIR first; then the folder chosen for
+// this workspace; then, for the app's own workspace, the founder's own folder. Any other workspace (a check run, a
+// scratch run, a second company) keeps its backups beside it, in its own "backups": it has no business writing into
+// the founder's folder, and a scratch run once did.
+// `withChoice` false asks where they would go without the founder's choice: the default "Use the default" returns to.
+export const backupDirOf = (deps: { fake: boolean; workspace: string; root: string }, env: NodeJS.ProcessEnv = process.env, withChoice = true) => {
+  if (env.STAGE_BACKUP_DIR) return env.STAGE_BACKUP_DIR;
+  const chosen = withChoice ? chosenBackupDir(deps.workspace) : null;
+  if (chosen) return chosen;
+  const own = !deps.fake && resolve(deps.workspace) === resolve(deps.root, 'workspace');
+  return own ? backupDir(env) : join(deps.workspace, 'backups');
+};
 
 const stamp = (at: number) => {
   const when = new Date(at);
