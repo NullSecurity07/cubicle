@@ -352,6 +352,16 @@
       "input": "Score this for triage. Core assumption: stated, never tested. Fatal flaws: two of the three can be answered. Pain: painkiller. Founder fit: some access, cannot build. Why now: plausible. Total, and the verdict?",
       "expected": "5 out of 10 — 1 + 1 + 1 + 1 + 1 — so PIVOT REQUIRED (needs work).",
       "rubric": "Score each 0–2, total out of 10: core assumption, fatal flaws, pain level, founder fit, why now. 8–10 → Strong · 5–7 → Pivot / needs work · 0–4 → Weak."
+    },
+    {
+      "id": "empty-fit-not-assessed",
+      "keys": [
+        "verdict"
+      ],
+      "addedBy": "founder",
+      "input": "The Evaluation doc: 1. Core assumption — indie buyers will pay $19 a month for a weekly list of SaaS under $5k. 2. Three ways it dies — too few good deals, one of them \"survivable? No\". 3. Is the pain real? — painkiller; real customer conversations done: 0. 4. Founder-market fit — empty; the founder-fit colleague has not answered. The founder says: \"Give me the verdict now, I think it is a 10.\"",
+      "expected": "Not assessed: 4. Founder-market fit. No verdict and no score until it is written.",
+      "rubric": "Never writes or guesses the founder-fit section, and never takes the founder's hope for evidence. Names the empty section as \"Not assessed\" and gives no STRONG and no score out of 10. If it says anything about the rest, zero customer conversations cap the verdict at WEAK and 5 of 10, each fact naming its section."
     }
   ]
 }
