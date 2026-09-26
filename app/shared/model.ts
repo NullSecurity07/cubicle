@@ -238,12 +238,13 @@ export type ChatMessage = {
 };
 // `turn` names the turn this stream is; the same name goes out on the rooms feed, so the window that asked for a
 // reply can tell its own turn from one it is only watching.
-export type ChatEvent = { turn: string } | { token: string } | { tool: ToolEvent } | { notice: string } | { done: true; message: ChatMessage } | { error: string };
+// `restart` says the words streamed so far are replaced: the answer is being given again, so the bubble starts empty.
+export type ChatEvent = { turn: string } | { token: string } | { tool: ToolEvent } | { notice: string } | { restart: true } | { done: true; message: ChatMessage } | { error: string };
 // What the rooms feed carries, to every open window rather than only the one that started something: a conversation
 // changed (by anybody at all — the phone, a colleague, another window), and a turn from its first word to its last.
 export type RoomEvent = { roomId: string } & (
   { chat: 'changed' } | { turn: string; started: { via?: ChatVia } } | { turn: string; token: string }
-  | { turn: string; tool: ToolEvent } | { turn: string; ended: true });
+  | { turn: string; tool: ToolEvent } | { turn: string; restart: true } | { turn: string; ended: true });
 // One configured model as the client sees it: `left` is the share of today's free quota still there, 0 to 1.
 export type ModelInfo = { name: string; model: string; ready: boolean; left: number; requests: number; tokens: number };
 

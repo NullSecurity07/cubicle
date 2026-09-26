@@ -77,6 +77,7 @@ export function Chat({ id, name, role, onStatus }: { id: string; name: string; r
       const now: Outside = held?.turn === event.turn ? held : { turn: event.turn, text: '', tools: [] };
       if ('started' in event) return { ...now, ...(event.started.via ? { via: event.started.via } : {}) };
       if ('token' in event) return { ...now, text: now.text + event.token };
+      if ('restart' in event) return { ...now, text: '' };
       return { ...now, tools: [...now.tools.filter((tool) => tool.id !== event.tool.id), event.tool] };
     });
     if ('tool' in event && event.tool.effect) emit('effect', { ...event.tool.effect, roomId: id });
@@ -116,6 +117,7 @@ export function Chat({ id, name, role, onStatus }: { id: string; name: string; r
         // This turn's name. The feed says it too, and hearing it there is how this window knows not to draw it again.
         if ('turn' in event) { mine.current.add(event.turn); return; }
         if ('token' in event) now.text += event.token;
+        if ('restart' in event) now.text = '';
         if ('tool' in event) {
           now.tools = [...now.tools.filter((tool) => tool.id !== event.tool.id), event.tool];
           if (event.tool.effect) emit('effect', { ...event.tool.effect, roomId: id });

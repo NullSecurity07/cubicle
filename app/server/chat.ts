@@ -103,8 +103,8 @@ export function createChat(deps: Deps) {
         const draft = { id: replyId, role: 'assistant' as const, text: kept.text, at: Date.now(), tools: kept.tools, stopped: true };
         kept.writes = kept.writes.then(() => store.putMessage(roomId, draft)).catch(() => {});
       };
-      const turnOn = (these: typeof messages) => runTurn({
-        messages: these, tools: mine, clients: order, usage, signal: stop.signal, seams, source: 'chat', query: text,
+      const turnOn = (these: typeof messages, offered = mine) => runTurn({
+        messages: these, tools: offered, clients: order, usage, signal: stop.signal, seams, source: 'chat', query: text,
         // Listened for before it is shown, so an answer given while Needs you is still being written is heard.
         approve: (event, signal) => askFounder(attention, approvals, { id: `approval:${event.id}`, kind: 'approval', title: event.question ?? event.name.replace(/_/g, ' '), at: Date.now(), roomId, who: room.name, event }, signal),
         context: { stage, roomId, store, granted: new Map() },
@@ -118,11 +118,14 @@ export function createChat(deps: Deps) {
       let reply = await turnOn(messages);
       // The partner is held to the precondition check on a raise, hire, spend or pivot plan, and says "My call" once.
       if (room.partner) {
-        reply = await holdPartner(text, reply, () => {
-          send({ notice: `${room.name} is checking the preconditions first.` });
+        reply = await holdPartner(text, reply, (first) => {
+          // Said first, then the bubble emptied, so no window shows the new answer running on from the old one.
+          send({ notice: `${room.name} is taking another look: checking the preconditions.` });
+          send({ restart: true });
+          roomFeed.tell({ roomId, turn, restart: true });
           kept.text = '';
-          const [system, ...rest] = messages;
-          return turnOn(system?.role === 'system' ? [{ ...system, content: `${system.content}\n\n${PRECONDITION_NUDGE}` }, ...rest] : messages);
+          // Words only this time, with the first answer and the nudge in front of it: nothing it did is done again.
+          return turnOn([...messages, { role: 'assistant', content: first.text }, { role: 'user', content: PRECONDITION_NUDGE }], []);
         });
       }
       const message = {

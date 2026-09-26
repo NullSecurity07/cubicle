@@ -6,25 +6,33 @@ const JOURNEY = 'I want to raise a $2M pre-seed next week. We have no users. Dra
 const turn = (text: string, tools: TurnResult['tools'] = []): TurnResult => ({ text, tools, provider: 'p', model: 'm', usage: { input: 10, output: 5 }, stopped: false });
 
 describe('the partner\'s precondition check', () => {
-  it('knows a founder asking for a raise, hire, spend or pivot plan', () => {
-    expect(asksCommitment(JOURNEY)).toBe(true);
-    for (const said of ['Plan how we hire two engineers next month', 'Draft a budget to spend $20k on ads', "Let's pivot to B2B, write the plan"]) expect(asksCommitment(said), said).toBe(true);
-    for (const said of ['What do you think of the name?', 'Draft the landing page copy', 'We raised the price, how do users react?']) expect(asksCommitment(said), said).toBe(false);
+  it('knows a founder asking for a raise, hire, spend or pivot plan, and not an ask that only shares the words', () => {
+    for (const said of [JOURNEY, 'Plan how we hire two engineers next month', 'Draft a budget to spend $20k on ads', "Let's pivot to B2B, write the plan", 'We should pivot to B2B. Thoughts?', 'should we hire a designer eventually?']) expect(asksCommitment(said), said).toBe(true);
+    for (const said of ['What do you think of the name?', 'Draft the landing page copy', 'We raised the price, how do users react?', 'help me write an investor update', "let's spend the afternoon on customer calls", 'I want to raise the price to $20']) expect(asksCommitment(said), said).toBe(false);
   });
 
-  it('knows a reply that checked the preconditions', () => {
-    expect(checksPreconditions('Not yet. Before that, get 20 paying users.')).toBe(true);
-    expect(checksPreconditions('I disagree: no users means no round.\n\nMy call: no.')).toBe(true);
+  it('knows a reply that checked the preconditions, however it says no', () => {
+    for (const reply of ['Not yet. Before that, get 20 paying users.', 'I disagree: no users means no round.\n\nMy call: no.', 'No. Here is why: nobody has paid yet.', "I'd hold off until you have ten users.", 'Plan below.\n\nMy call: not now.', 'Too early. First get ten paying readers.', "Don't raise yet: nobody pays so far.", 'My call: **wait** a month.']) expect(checksPreconditions(reply), reply).toBe(true);
     expect(checksPreconditions('Here is your 7-phase raise plan. 1. Prepare a SAFE with a $2M cap.')).toBe(false);
+    expect(checksPreconditions('Great idea. Know your numbers before the first call.')).toBe(false);
   });
 
   it('asks once more with the nudge when a raise plan comes back unchecked, and keeps the tools of both', async () => {
     let asked = 0;
-    const reply = await holdPartner(JOURNEY, turn('Phase 1: SAFE at $2M.', [{ id: 't1', name: 'create_doc', args: {}, ok: true }]), async () => { asked += 1; return turn('Not yet. Before that: 20 users.\n\nMy call: no raise this month.'); });
+    const reply = await holdPartner(JOURNEY, turn('Phase 1: SAFE at $2M.', [{ id: 't1', name: 'web_search', args: {}, ok: true }]), async (first) => { asked += 1; expect(first.text).toBe('Phase 1: SAFE at $2M.'); return turn('Not yet. Before that: 20 users.\n\nMy call: no raise this month.'); });
     expect(asked).toBe(1);
     expect(reply.text).toBe('Not yet. Before that: 20 users.\n\nMy call: no raise this month.');
     expect(reply.tools.map((one) => one.id)).toEqual(['t1']);
     expect(reply.usage).toEqual({ input: 20, output: 10 });
+  });
+
+  it('never asks again after a first answer that did something, and labels it instead', async () => {
+    let asked = 0;
+    const wrote = turn('Here is the raise plan, saved as a doc.', [{ id: 'w1', name: 'create_doc', args: { title: 'Raise plan' }, ok: true }]);
+    const reply = await holdPartner(JOURNEY, wrote, async () => { asked += 1; return turn('x'); });
+    expect(asked).toBe(0);
+    expect(reply.text).toBe(`Here is the raise plan, saved as a doc.\n\n${UNCHECKED}`);
+    expect(reply.tools.map((one) => one.id)).toEqual(['w1']);
   });
 
   it('posts the second answer with a line for the founder when it still did not check', async () => {

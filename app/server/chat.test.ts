@@ -122,29 +122,60 @@ describe('a turn', () => {
 });
 
 describe('a partner\'s turn', () => {
-  it('asks the partner once more when a raise plan comes back without the precondition check, and keeps one My call', async () => {
+  async function partnerChat(replies: { text: string; calls?: { id: string; name: string; args: string }[] }[]) {
     const dir = await mkdtemp(join(tmpdir(), 'chat-'));
     const store = createStore(dir);
     const stage = await store.loadStage();
     await store.saveStage({ ...stage, rooms: [...stage.rooms, { id: 'sam', name: 'Sam', role: 'Partner', accent: '#fff', brief: '', partner: true, x: 0, y: 0, w: 1, h: 1 }] });
-    const systems: string[] = [];
-    const replies = ['Phase 1: SAFE with a $2M cap.\n\nMy call: go.', 'Not yet. You have no users; before that, get 20 paying ones.\n\nMy call: no raise.\n\nMy call: no raise next week.'];
+    const steps: { messages: ModelMessage[]; tools: unknown }[] = [];
+    let at = 0;
     const client: ModelClient = {
       name: 'gemini', model: 'm', maxPromptChars: Infinity, tools: true, limits: { rpd: 1000 },
-      async step(messages, options) { systems.push(String(messages[0].content)); const text = replies[systems.length - 1]; options.onToken(text); return { text, calls: [] }; },
+      async step(messages, options) { steps.push({ messages, tools: options.tools }); const next = replies[at++] ?? { text: 'done' }; options.onToken(next.text); return { text: next.text, calls: next.calls ?? [] }; },
     };
+    const ran: string[] = [];
+    const write: Tool = { name: 'create_doc', description: 'Makes a doc.', parameters: { type: 'object', properties: {} }, run: async () => { ran.push('create_doc'); return { text: 'Created.' }; } };
+    const feed = createRoomFeed();
+    const heard: string[] = [];
+    feed.watch((event) => { if ('restart' in event) heard.push('feed restart'); });
     const { chat } = createChat({
-      store, roomFeed: createRoomFeed(), busy: new Set(), clients: [client], usage: createUsage(null), seams: createSeams(),
+      store, roomFeed: feed, busy: new Set(), clients: [client], usage: createUsage(null), seams: createSeams(),
       attention: createAttention(dir), approvals: createApprovals(), memory: { fold: async () => false },
       promptFor: async () => [{ role: 'system', content: 'You are Sam, Partner.' }, { role: 'user', content: 'q' }],
-      toolsFor: () => [],
+      toolsFor: () => [write],
     });
-    const res = Object.assign(new PassThrough(), { writeHead: () => res }) as unknown as ServerResponse;
+    const out = new PassThrough();
+    const events: Record<string, unknown>[] = [];
+    out.on('data', (chunk: Buffer) => { for (const line of chunk.toString().split('\n')) if (line.startsWith('data: ')) events.push(JSON.parse(line.slice(6))); });
+    const res = Object.assign(out, { writeHead: () => res }) as unknown as ServerResponse;
     await chat('sam', 'I want to raise a $2M pre-seed next week. We have no users. Draft the plan.', res);
-    expect(systems).toHaveLength(2);
-    expect(systems[0]).not.toContain('Before you answer');
-    expect(systems[1]).toContain('List its preconditions');
+    return { store, steps, ran, events, heard };
+  }
+
+  it('asks again in words only, with the first answer and the nudge, clears the bubble first, and keeps one My call', async () => {
+    const { store, steps, events, heard } = await partnerChat([
+      { text: 'Phase 1: SAFE with a $2M cap.\n\nMy call: go.' },
+      { text: 'Not yet. You have no users; before that, get 20 paying ones.\n\nMy call: no raise.\n\nMy call: no raise next week.' },
+    ]);
+    expect(steps).toHaveLength(2);
+    expect(steps[1].tools ?? []).toEqual([]);
+    expect(steps[1].messages.at(-2)).toEqual({ role: 'assistant', content: 'Phase 1: SAFE with a $2M cap.\n\nMy call: go.' });
+    expect(String(steps[1].messages.at(-1)!.content)).toContain('List its preconditions');
+    const order = events.map((one) => ('notice' in one ? 'notice' : 'restart' in one ? 'restart' : 'token' in one ? `token ${String(one.token).slice(0, 7)}` : 'done' in one ? 'done' : 'turn'));
+    expect(order).toEqual(['turn', 'token Phase 1', 'notice', 'restart', 'token Not yet', 'done']);
+    expect(events.find((one) => 'notice' in one)).toEqual({ notice: 'Sam is taking another look: checking the preconditions.' });
+    expect(heard).toEqual(['feed restart']);
     const talk = await store.readChat('sam');
     expect(talk.at(-1)!.text).toBe('Not yet. You have no users; before that, get 20 paying ones.\n\nMy call: no raise next week.');
+  });
+
+  it('does not ask again when the first answer wrote something, so no tool runs twice', async () => {
+    const { steps, ran, store } = await partnerChat([
+      { text: 'Writing the plan.', calls: [{ id: 'c1', name: 'create_doc', args: '{}' }] },
+      { text: 'Saved the raise plan doc.' },
+    ]);
+    expect(ran).toEqual(['create_doc']);
+    expect(steps).toHaveLength(2);
+    expect((await store.readChat('sam')).at(-1)!.text).toMatch(/Partner did not check preconditions/);
   });
 });
