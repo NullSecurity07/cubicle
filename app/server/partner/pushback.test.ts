@@ -7,7 +7,7 @@ const turn = (text: string, tools: TurnResult['tools'] = []): TurnResult => ({ t
 
 describe('the partner\'s precondition check', () => {
   it('knows a founder asking for a raise, hire, spend or pivot plan, and not an ask that only shares the words', () => {
-    for (const said of [JOURNEY, 'Plan how we hire two engineers next month', 'Draft a budget to spend $20k on ads', "Let's pivot to B2B, write the plan", 'We should pivot to B2B. Thoughts?', 'should we hire a designer eventually?']) expect(asksCommitment(said), said).toBe(true);
+    for (const said of [JOURNEY, 'Plan how we hire two engineers next month', 'Draft a budget to spend $20k on ads', "Let's pivot to B2B, write the plan", 'We should pivot to B2B. Thoughts?', 'should we hire a designer eventually?', 'Should we raise now?', 'Draft outreach to investors for our seed']) expect(asksCommitment(said), said).toBe(true);
     for (const said of ['What do you think of the name?', 'Draft the landing page copy', 'We raised the price, how do users react?', 'help me write an investor update', "let's spend the afternoon on customer calls", 'I want to raise the price to $20']) expect(asksCommitment(said), said).toBe(false);
   });
 
@@ -15,6 +15,9 @@ describe('the partner\'s precondition check', () => {
     for (const reply of ['Not yet. Before that, get 20 paying users.', 'I disagree: no users means no round.\n\nMy call: no.', 'No. Here is why: nobody has paid yet.', "I'd hold off until you have ten users.", 'Plan below.\n\nMy call: not now.', 'Too early. First get ten paying readers.', "Don't raise yet: nobody pays so far.", 'My call: **wait** a month.']) expect(checksPreconditions(reply), reply).toBe(true);
     expect(checksPreconditions('Here is your 7-phase raise plan. 1. Prepare a SAFE with a $2M cap.')).toBe(false);
     expect(checksPreconditions('Great idea. Know your numbers before the first call.')).toBe(false);
+    // The journey's own failure, and replies that only start a line with "No" or say "wait", are not pushback.
+    for (const reply of ['Here is the plan.\n\nNo existing marketplace serves this niche, so investors will love it.\n\nMy call: raise $2M.', 'Steps:\n- No-code landing page\n- SAFE at $2M\n\nMy call: go.', 'Wait for replies in week 2, then send the deck.\n\nMy call: go.']) expect(checksPreconditions(reply), reply).toBe(false);
+    for (const reply of ["You can't raise without users.", 'I have to push back on this.', 'Wait until you have ten paying readers.']) expect(checksPreconditions(reply), reply).toBe(true);
   });
 
   it('asks once more with the nudge when a raise plan comes back unchecked, and keeps the tools of both', async () => {

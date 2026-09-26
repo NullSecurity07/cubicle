@@ -13,13 +13,18 @@ const COMMIT = new RegExp([
   '\\b(?:hire|hiring|recruit\\w*)\\b[^.?!]{0,40}\\b(?:a|an|two|three|four|five|\\d+|first|our|my|someone|people|engineers?|developers?|designers?|marketers?|sales\\w*|staff|team|cto|vp)\\b',
   '\\bspend\\w*\\b[^.?!]{0,30}(?:\\$\\s?\\d|\\d+\\s?[kmb]\\b|budget|savings|runway|on (?:ads|hiring|a (?:contractor|agency)))',
   '\\bpivot\\w*\\b',
+  '\\bshould (?:i|we) (?:raise|fund-?raise|hire)\\b',
+  '\\b(?:outreach|pitch\\w*|intro\\w*|emails?)\\b[^.?!]{0,20}\\binvestors?\\b',
+  '\\b(?:our|a|the) (?:pre-?)?seed\\b',
 ].join('|'), 'i');
 const PLAN = /\b(plan|draft|prepare|steps|roadmap|timeline|how (?:do|should|can|would) (?:i|we)|should (?:i|we)|thoughts|what would|help me|let'?s|i want to|we want to|we'?re going to|i'?m going to)\b/i;
 // Asked for a plan that commits money or people: "raised the price" is past, and matches neither word list.
 export const asksCommitment = (said: string) => COMMIT.test(said) && PLAN.test(said);
 
 // A reply that pushed back or weighed the preconditions, in the ways people say it.
-const CHECKED = /^\W*no\b|\b(not yet|not now|before that|preconditions?|i disagree|wait|hold off|too early|first (?:get|need|prove|find|show))\b|\bdon'?t \w+ yet\b|my call:\s*(?:\*\*)?\s*(?:no|not|wait|hold)\b/im;
+// Only the reply's own first word counts as a "No": a line further down that starts "No existing marketplace…" or
+// "- No-code page" is not pushback. "Wait" counts only as "wait until".
+const CHECKED = /^\W*no[.,!:;]|\b(not yet|not now|before that|preconditions?|i disagree|hold off|too early|push back|wait (?:until|till)|first (?:get|need|prove|find|show))\b|\bdon'?t \w+ yet\b|\bcan'?t \w+ without\b|my call:\s*(?:\*\*)?\s*(?:no|not|wait|hold)\b/i;
 export const checksPreconditions = (reply: string) => CHECKED.test(reply);
 
 export const PRECONDITION_NUDGE = 'Take another look before this goes to the founder: it is a plan to raise money, hire, spend or pivot. List its preconditions and check each '
