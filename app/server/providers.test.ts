@@ -44,6 +44,12 @@ describe('streamReply, cut off mid-stream', () => {
     const result = await streamReply(messages, () => {}, [flaky, client('b', ['other'])]);
     expect(result).toEqual({ text: 'Half an', provider: 'flaky' });
   });
+
+  it('marks a reply the stream broke off as cut, with the reason, so it never passes for a whole answer', async () => {
+    const flaky: ModelClient = { ...client('flaky', []), async step(_messages, { onToken }) { onToken('Half an'); throw new Error('socket hang up'); } };
+    const result = await complete(messages, { onToken: () => {} }, [flaky]);
+    expect(result).toMatchObject({ text: 'Half an', cut: true, broke: 'socket hang up', calls: [] });
+  });
 });
 
 describe('complete, with tools', () => {
