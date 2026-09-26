@@ -70,6 +70,7 @@ describe('unreceiptedClaims', () => {
       'You said you sent it Monday, so it was sent already.',
       'Your landing page is published at acme.com.',
       'I sent you nothing yet.',
+      'We updated the pricing page in March.',
     ]) expect(unreceiptedClaims(reply, []), reply).toEqual([]);
   });
 });
@@ -99,6 +100,21 @@ describe('unsourcedFigures', () => {
   it('leaves small counts, dates and bare numbers alone', () => {
     expect(unsourcedFigures('Talk to 5 customers in 3 weeks, by 12 October 2026, in 2 steps.', [])).toEqual([]);
     expect(unsourcedFigures('Section 4 of the 2026 plan.', [])).toEqual([]);
+  });
+
+  it('takes a figure as sourced only when it is no more exact than the input it matches', () => {
+    expect(unsourcedFigures('That leaves $8,005 in savings.', ['Savings: $8k'])).toEqual(['$8,005']);
+    expect(unsourcedFigures('That leaves $8,000 in savings.', ['Savings: $8k'])).toEqual([]);
+    expect(unsourcedFigures('Raise $1.5M.', ['We need 1,500,000 dollars.'])).toEqual([]);
+    expect(unsourcedFigures('Raise $1.52M.', ['We need 1.5 million.'])).toEqual(['$1.52M']);
+  });
+
+  it('flags a range of hours or a rate nothing gave it, and leaves plain advice alone', () => {
+    expect(unsourcedFigures('Freelancers lose 20–40 hours per project search.', [])).toEqual(['20–40 hours']);
+    expect(unsourcedFigures('That is 15-25 days of work.', [])).toEqual(['15-25 days']);
+    expect(unsourcedFigures('They spend 12 hours per week on invoices.', [])).toEqual(['12 hours']);
+    expect(unsourcedFigures('Reply within 24 hours and run it 30 days.', [])).toEqual([]);
+    expect(unsourcedFigures('They spend 12 hours per week on invoices.', ['survey: 12 hours a week'])).toEqual([]);
   });
 
   it('leaves durations in advice alone', () => {
@@ -131,6 +147,13 @@ describe('proseToolCall', () => {
 });
 
 describe('checkReply', () => {
+  it('does not take a figure a past reply was already flagged for as a source', () => {
+    const earlier = 'We should charge $29 a month.\n\nUnsourced figures: $29 (not found in anything this turn read).';
+    expect(checkReply({ reply: 'At $29 a month we break even.', receipts: [], sources: ['What price?', earlier] }))
+      .toEqual(['Unsourced figures: $29 (not found in anything this turn read).']);
+    expect(checkReply({ reply: 'At $29 a month we break even.', receipts: [], sources: ['Price: $29', earlier] })).toEqual([]);
+  });
+
   it('gives the founder-visible lines, one per kind of problem', () => {
     const lines = checkReply({ reply: "I've saved it. Revenue grew to $36,850, up 23%.", receipts: [], sources: ['Numbers is empty.'] });
     expect(lines).toEqual([
