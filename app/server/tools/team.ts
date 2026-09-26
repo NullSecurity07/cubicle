@@ -7,10 +7,12 @@ export type Consult = (input: { fromRoomId: string; toRoomId: string; question: 
 // A colleague's side turn on a small model sometimes answers with a tool call written out as text, in one of the
 // shapes models are trained on: `<tool_call>`, `<function=name>`, a bare {"name", "arguments"} object (fenced or not),
 // or gpt-oss's **name**{...}. Passed on as the answer, a live run had the asker read it as the colleague's reply and
-// then write the colleague's section itself. So it is not an answer.
+// then write the colleague's section itself. So it is not an answer. A whole reply that is such an object is taken as
+// a call even when a colleague meant it as an example; that is rare, and the retry gives them a second chance.
 export function proseCall(said: string): boolean {
   const text = said.trim();
-  if (/<\|?tool_call\|?>|<function\s*=/i.test(text)) return true;
+  // At the start of the reply or of a line: a colleague who mentions the tags mid-sentence is still answering.
+  if (/(^|\n)\s*(<\|?tool_call\|?>|<function\s*=)/i.test(text)) return true;
   if (/^\*\*[a-z_][a-z0-9_]*\*\*\s*\{/i.test(text)) return true;
   const bare = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
   if (!/^[[{]/.test(bare)) return false;

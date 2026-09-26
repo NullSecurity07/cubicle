@@ -23,7 +23,7 @@ describe('asking a colleague', () => {
       '```json\n{"name": "read_doc", "parameters": {"doc": "Evaluation"}}\n```', '**ask_founder**{"question": "why?"}']) {
       expect(proseCall(said), said).toBe(true);
     }
-    for (const said of ['Yes, the stage is ready.', 'The JSON {"name": "x"} is in the doc.', 'Use a function= style flag.', '{"price": 19}']) expect(proseCall(said), said).toBe(false);
+    for (const said of ['Yes, the stage is ready.', 'Small models sometimes print <tool_call> tags instead of calling; ignore those.', 'The JSON {"name": "x"} is in the doc.', 'Use a function= style flag.', '{"price": 19}']) expect(proseCall(said), said).toBe(false);
   });
 
   it('passes a plain answer through', async () => {
