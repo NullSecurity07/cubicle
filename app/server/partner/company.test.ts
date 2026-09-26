@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { Decision } from '../../shared/model.ts';
 import type { Bet } from '../../shared/partner.ts';
 import { createStore } from '../store.ts';
-import { addToSection, betsSection, companyDocOf, decisionLine, ensureCompany, placeOf, RESTORE_FOR, syncDecisions, withSections, writeBets } from './company.ts';
+import { addToSection, betsSection, companyDocOf, decisionLine, ensureCompany, hasLine, placeOf, RESTORE_FOR, sectionText, syncDecisions, withSections, writeBets } from './company.ts';
 
 const decided = (id: string, title: string, chosen: string, day: string): Decision => ({ id, title, status: 'decided', at: new Date(`${day}T09:00`).getTime(), decidedAt: new Date(`${day}T10:00`).getTime(), context: '', options: [], chosen });
 
@@ -98,6 +98,27 @@ describe('the Company document', () => {
     const moved = list.map((one) => ({ ...one, chosen: `${one.chosen}, changed` }));
     await syncDecisions(store, id, moved, { decided: [] }, () => {}, T + 20 * RESTORE_FOR);
     expect((await store.readDoc(id)).match(/Newsletter first:/g)).toHaveLength(1);
+  });
+
+  it('finds a decision\'s line only in the Decisions section, by its whole title at the start of a line', async () => {
+    const store = createStore(await mkdtemp(join(tmpdir(), 'company-')));
+    const { id } = await ensureCompany(store);
+    await store.writeDoc(id, (await store.readDoc(id)).replace('## Idea\n', '## Idea\n\nPrice: $9 a month.\n'));
+    const list = [
+      decided('d1', 'Launch Price', 'Nine dollars', '2026-09-20'), decided('d2', 'Price', 'Nine dollars a month', '2026-09-21'),
+      decided('d3', 'Pricing: monthly or annual', 'Monthly', '2026-09-22'), decided('d4', 'What (x)?', 'Yes', '2026-09-23'),
+    ];
+    const T = 1_000_000;
+    const held = await syncDecisions(store, id, list, { decided: [] }, () => {}, T);
+    const text = await store.readDoc(id);
+    expect(sectionText(text, 'Decisions').match(/^- .+$/gm)).toEqual([
+      '- 2026-09-20 Launch Price: Nine dollars', '- 2026-09-21 Price: Nine dollars a month', '- 2026-09-22 Pricing: monthly or annual: Monthly', '- 2026-09-23 What (x)?: Yes',
+    ]);
+    expect(hasLine(text, { title: '' })).toBe(false);
+    // "Price" lost within two minutes comes back, though "Launch Price" still holds the word.
+    await store.writeDoc(id, text.replace('- 2026-09-21 Price: Nine dollars a month\n', ''));
+    await syncDecisions(store, id, list, held, () => {}, T + 60_000);
+    expect(sectionText(await store.readDoc(id), 'Decisions').match(/^- \S+ Price:/gm)).toEqual(['- 2026-09-21 Price:']);
   });
 
   it('keeps the Bets section as the ledger says, open ones first', async () => {

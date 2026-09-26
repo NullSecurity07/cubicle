@@ -77,9 +77,23 @@ export const decisionLine = (decision: Decision) => `- ${localDay(decision.decid
 // later stays as they left it.
 export const RESTORE_FOR = 2 * 60_000;
 export type DecisionsWritten = { decided: string[]; writtenAt?: Record<string, number> };
-// Whether the document already has a line for this decision, by its title: a line reworded around the title, or
-// dated in another time zone, is still that decision's line.
-const hasLine = (text: string, decision: Decision) => text.includes(` ${decision.title}:`);
+// The text under the Decisions heading, up to the next heading of the same level or higher.
+export function sectionText(text: string, heading: string): string {
+  const all = headings(text);
+  const hit = all.find((one) => headingKey(one.title) === headingKey(heading));
+  if (!hit) return '';
+  const next = all.find((one) => one.line > hit.line && one.level <= hit.level);
+  return text.split('\n').slice(hit.line + 1, next ? next.line : undefined).join('\n');
+}
+const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// Whether the Decisions section already has this decision's line: "- <date> <title>:" at the start of a line. Its
+// date or what follows the colon may have changed (another time zone, a founder's rewording); it is still that
+// decision's line. The founder's own words elsewhere, and a longer title ending in this one, are not.
+export function hasLine(text: string, decision: Pick<Decision, 'title'>): boolean {
+  const title = decision.title.trim();
+  if (!title) return false;
+  return new RegExp(`^- \\S+ ${escaped(title)}:`, 'm').test(sectionText(text, 'Decisions'));
+}
 
 // Each decided decision gets one dated line under Decisions, oldest first, once. A line the app wrote goes back in
 // only while it is fresh (a window saved over it); after that the founder's edits stand.
