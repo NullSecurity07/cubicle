@@ -261,6 +261,16 @@ describe('the partner slice: the morning note', () => {
     await part.close!();
   });
 
+  it('posts a note with an unsourced figure all the same, with the flag line under it in the partner\'s chat', async () => {
+    const { deps, part } = await installed({}, { now: () => NINE, ask: async () => 'Three moves for today:\n1. Charge $29/month from Monday.\n2. Email the replied leads.\n3. Log signups.\nRisk: r\nQuestion: q?' });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.route!({ method: 'POST' } as never, {} as never, '/api/partner/morning');
+    const said = (await deps.store.readChat('p1')).at(-1)!.text;
+    expect(said).toContain('1. Charge $29/month from Monday.');
+    expect(said).toMatch(/\n\nUnsourced figures: \$29/);
+    await part.close!();
+  });
+
   it('has no partner, no note', async () => {
     let asked = 0;
     const { part } = await installed({}, { now: () => NINE, ask: async () => { asked += 1; return SHAPED; } });

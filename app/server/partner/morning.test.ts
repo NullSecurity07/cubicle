@@ -109,6 +109,16 @@ describe('one morning turn', () => {
     expect(clean?.flags).toBeUndefined();
   });
 
+  it('flags "$29/month" that neither the Company document nor the chats hold, and not a price the Company document gives', async () => {
+    const withCompany = async (): Promise<ModelMessage[]> => [{ role: 'system', content: 'You are Sam, Partner.\n\n## Doc: Company brief\n\n## Numbers\n\nPrice: $19/month.' }];
+    const note = (price: string) => `Three moves for today:\n1. Set the price at ${price} on the landing page.\n2. Email the replied leads.\n3. Log signups.\nRisk: r\nQuestion: q?`;
+    const invented = await writeMorning({ sources: await sources(), name: 'Sam', promptFor: withCompany, ask: async () => note('$29/month') });
+    expect(invented?.flags).toEqual([expect.stringMatching(/^Unsourced figures: \$29/)]);
+    expect(morningMessage(invented!)).toContain('Unsourced figures: $29');
+    const quoted = await writeMorning({ sources: await sources(), name: 'Sam', promptFor: withCompany, ask: async () => note('$19/month') });
+    expect(quoted?.flags).toBeUndefined();
+  });
+
   it('gives back nothing when the reply lost the shape', async () => {
     expect(await writeMorning({ sources: await sources(), name: 'Sam', promptFor: prompt, ask: async () => 'Good morning!' })).toBeNull();
   });
