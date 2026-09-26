@@ -72,7 +72,9 @@ const workspace = process.env.STAGE_WORKSPACE ?? resolve(root, 'workspace');
 // Every open window hears what every other writer did, through the store: a message written anywhere at all reaches
 // the canvas, whether the founder typed it here, sent it from their phone or a colleague put it there.
 const roomFeed = createRoomFeed();
-const store = createStore(workspace, (roomId) => roomFeed.tell({ roomId, chat: 'changed' }));
+// The events feed is made further down, once everything it listens to is; until then a saved stage has nobody to tell.
+let restage: (stage: Stage) => void = () => {};
+const store = createStore(workspace, (roomId) => roomFeed.tell({ roomId, chat: 'changed' }), (stage) => restage(stage));
 const usage = createUsage(resolve(workspace, 'usage.json'));
 await usage.load();
 const browser = fake ? createBrowser(fakeRunner, undefined, undefined, fakeHand) : createBrowser(realRunner(), { direct: [redditFeed(), stackExchange()], fallback: process.env.STAGE_NO_READER === '1' ? [] : [jinaReader, archiveCopy()] }, dnsResolve);
@@ -104,6 +106,7 @@ const founder = createFounder(workspace);
 // The one live connection a window holds: every feed below still answers on its own address for scripts and checks,
 // but the page hears all of them through this.
 const events = createEvents({ attention, skills, rooms: roomFeed, media, boards, stage: () => store.loadStage() });
+restage = (stage) => events.restage(stage);
 // Search by meaning over everything the workspace holds. The model runs inside this process; its file is fetched once.
 const recall = createRecall({ dir: workspace, embed: fake ? wordEmbedder : localEmbedder(resolve(root, 'app/.cache/recall')), gather: gatherPieces(store, decisions, (roomId) => memory.read(roomId), skills) });
 // Bring the saved vectors up to date shortly after start, so the first search does not wait for it.

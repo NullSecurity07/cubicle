@@ -29,4 +29,26 @@ describe('PUT /api/stage', () => {
     expect((await store.loadStage()).docs.map((one) => one.id)).toContain('doc-made');
     server.close();
   });
+
+  it('answers a save made over an older stage with 409 and the stage as it is, and a fresh one with the next revision', async () => {
+    const store = createStore(await mkdtemp(join(tmpdir(), 'stage-route-')));
+    const route = stageRoutes({ store, events: { restage: () => {}, join: async () => () => {} } as never, browser: { close: async () => {} } as never, attention: { refresh: async () => {} }, approvals: createApprovals() });
+    const server = createServer(async (req, res) => { const url = new URL(req.url ?? '/', 'http://x'); if (!(await route(req, res, url.pathname, url))) { res.writeHead(404); res.end(); } });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const put = (stage: Stage) => fetch(`${base}/api/stage`, { method: 'PUT', body: JSON.stringify(stage) });
+    const seen = (await (await fetch(`${base}/api/stage`)).json()) as Stage;
+    expect(seen.rev).toBe(0);
+    const fresh = await put({ ...seen, rooms: seen.rooms.map((room) => ({ ...room, x: room.x + 10 })) });
+    expect(fresh.status).toBe(200);
+    expect(await fresh.json()).toEqual({ ok: true, rev: 1 });
+    // Another window, still on revision 0, tries to take every person away.
+    const stale = await put({ ...seen, rooms: [] });
+    expect(stale.status).toBe(409);
+    const said = (await stale.json()) as { stage: Stage };
+    expect(said.stage.rev).toBe(1);
+    expect(said.stage.rooms).toHaveLength(seen.rooms.length);
+    expect((await store.loadStage()).rooms).toHaveLength(seen.rooms.length);
+    server.close();
+  });
 });

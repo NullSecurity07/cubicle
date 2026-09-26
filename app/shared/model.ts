@@ -196,7 +196,11 @@ export function studioBehind(stage: { wires?: Wire[]; cards?: Card[] }, cardId: 
   return (stage.cards ?? []).find((card) => card.kind === 'imagegen' && ends.has(card.id))?.id ?? null;
 }
 export type Wire = { id: string; from: string; fromHandle: string; to: string; toHandle: string };
-export type Stage = { rooms: Room[]; docs: Doc[]; wires: Wire[]; cards?: Card[] };
+// `rev` counts the saves: the server adds one on every save, and a window sends back the one it last saw, so a save
+// made over a stage somebody else has changed since is refused rather than taking their change away.
+export type Stage = { rooms: Room[]; docs: Doc[]; wires: Wire[]; cards?: Card[]; rev?: number };
+// The feed channel every window hears the stage on, as saved, after every save.
+export const STAGE_CHANNEL = 'stage';
 export type Usage = { input: number; output: number };
 // A note a person kept after a conversation without being asked to carries this mark, so the founder can tell those
 // lines from the ones they asked for and throw a wrong one out. `MEMORY_CHANNEL` says a room's memory changed when no
