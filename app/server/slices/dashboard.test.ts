@@ -137,6 +137,18 @@ describe('the dashboard', () => {
     await expect.poll(async () => (await row())?.detail, { timeout: 30_000, interval: 200 }).toMatch(/1 kept in .*the newest made/);
   });
 
+  it('says the same about backups on its line and in its Backup row, in the same answer, from one reading', { timeout: 60_000 }, async () => {
+    const { get, workspace } = await setup();
+    const row = async () => (await get()).body.health.find((one) => one.name === 'Backup');
+    await expect.poll(row, { timeout: 30_000 }).toMatchObject({ ok: false });
+    await mkdir(join(workspace, 'backups'), { recursive: true });
+    await writeFile(join(workspace, 'backups', 'cubicle-2026-09-26-1647.tar.gz'), 'x');
+    // No waiting for the health check to come round: the very next answer agrees with itself.
+    const body = (await get()).body;
+    expect(body.backup?.at).toBeTruthy();
+    expect(body.health.find((one) => one.name === 'Backup')).toMatchObject({ ok: true, detail: expect.stringMatching(/1 kept in .*the newest made today/) });
+  });
+
   it('reads the founder\'s day, each row carrying where it lives', async () => {
     const { get, running, due } = await setup();
     const { handled, body } = await get();
