@@ -37,6 +37,7 @@ import { createRuns, desktopNotify } from './runs.ts';
 import { createSeams } from './seams.ts';
 import { createSkills } from './skills.ts';
 import { createSources, sourceAttention } from './sources.ts';
+import { guardProcess } from './restart.ts';
 import { readStatic } from './static.ts';
 import { createStore } from './store.ts';
 import { decisionTools } from './tools/decisions.ts';
@@ -57,6 +58,9 @@ import { createPromptFor } from './turn-prompt.ts';
 import { createUsage } from './usage.ts';
 import { wireStudios } from './wiring/studios.ts';
 
+// First of all: a promise nobody caught is written down and the app goes on; a throw nobody caught ends it with a
+// failure, which dev.mjs starts again.
+guardProcess();
 const root = resolve(import.meta.dirname, '../..');
 try { process.loadEnvFile(resolve(root, '.env')); } catch { /* no .env: only the fake model will work */ }
 
