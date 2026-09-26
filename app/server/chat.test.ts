@@ -120,3 +120,31 @@ describe('a turn', () => {
     expect(talk[1].stopped).toBeUndefined();
   });
 });
+
+describe('a partner\'s turn', () => {
+  it('asks the partner once more when a raise plan comes back without the precondition check, and keeps one My call', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'chat-'));
+    const store = createStore(dir);
+    const stage = await store.loadStage();
+    await store.saveStage({ ...stage, rooms: [...stage.rooms, { id: 'sam', name: 'Sam', role: 'Partner', accent: '#fff', brief: '', partner: true, x: 0, y: 0, w: 1, h: 1 }] });
+    const systems: string[] = [];
+    const replies = ['Phase 1: SAFE with a $2M cap.\n\nMy call: go.', 'Not yet. You have no users; before that, get 20 paying ones.\n\nMy call: no raise.\n\nMy call: no raise next week.'];
+    const client: ModelClient = {
+      name: 'gemini', model: 'm', maxPromptChars: Infinity, tools: true, limits: { rpd: 1000 },
+      async step(messages, options) { systems.push(String(messages[0].content)); const text = replies[systems.length - 1]; options.onToken(text); return { text, calls: [] }; },
+    };
+    const { chat } = createChat({
+      store, roomFeed: createRoomFeed(), busy: new Set(), clients: [client], usage: createUsage(null), seams: createSeams(),
+      attention: createAttention(dir), approvals: createApprovals(), memory: { fold: async () => false },
+      promptFor: async () => [{ role: 'system', content: 'You are Sam, Partner.' }, { role: 'user', content: 'q' }],
+      toolsFor: () => [],
+    });
+    const res = Object.assign(new PassThrough(), { writeHead: () => res }) as unknown as ServerResponse;
+    await chat('sam', 'I want to raise a $2M pre-seed next week. We have no users. Draft the plan.', res);
+    expect(systems).toHaveLength(2);
+    expect(systems[0]).not.toContain('Before you answer');
+    expect(systems[1]).toContain('List its preconditions');
+    const talk = await store.readChat('sam');
+    expect(talk.at(-1)!.text).toBe('Not yet. You have no users; before that, get 20 paying ones.\n\nMy call: no raise next week.');
+  });
+});

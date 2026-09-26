@@ -12,7 +12,7 @@ import { addPlan, planAttention, stepsFrom } from '../partner/plans.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import type { ModelMessage } from '../prompt.ts';
 import { complete, promptSize } from '../providers.ts';
-import { route as routeModels } from '../router.ts';
+import { partnerRoute } from '../partner/route.ts';
 import { withSystem, type Handler } from '../seams.ts';
 import { newId, patchStageVia } from '../slice-kit.ts';
 import { speaker, text, type Tool } from '../tools/registry.ts';
@@ -195,7 +195,7 @@ export function createPartner(options: PartnerOptions = {}) {
     // ------------------------------------------------------------ the morning turn
 
     const ask = options.ask ?? (deps.fake ? async () => FAKE_MORNING : async (messages: ModelMessage[]) => {
-      const { order } = routeModels(deps.clients, deps.usage, { promptChars: promptSize(messages), tools: false });
+      const { order } = partnerRoute(deps.clients, deps.usage, { promptChars: promptSize(messages), tools: false });
       const reply = await complete(messages, { onToken: () => {} }, order);
       deps.usage.record(reply.client.name, reply.usage, reply.quota);
       return reply.text;

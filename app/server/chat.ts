@@ -3,6 +3,8 @@ import { newMessageId, newTurnId, type Attachment, type ChatEvent, type ChatVia,
 import { askFounder, type Approvals } from './approvals.ts';
 import type { AttentionBook } from './attention.ts';
 import { json } from './http.ts';
+import { holdPartner, PRECONDITION_NUDGE } from './partner/pushback.ts';
+import { partnerRoute } from './partner/route.ts';
 import { runTurn } from './loop.ts';
 import type { createMemory } from './memory.ts';
 import type { Offered } from './playbook.ts';
@@ -45,7 +47,8 @@ export function createChat(deps: Deps) {
       const before: Payloads['turn:before'] & Offered = { roomId: toRoomId, source: 'run', query: question, messages, offered: [] };
       messages = (await seams.run('turn:before', before)).messages;
     }
-    const { order } = route(clients, usage, { pinned: target.model, promptChars: promptSize(messages), tools: false });
+    const { order } = target.partner && !target.model ? partnerRoute(clients, usage, { promptChars: promptSize(messages), tools: false })
+      : route(clients, usage, { pinned: target.model, promptChars: promptSize(messages), tools: false });
     // The same road a turn takes: a key that is resting is passed over, and a key that fails is rested.
     const ask = (these: ModelMessage[]) => complete(these, { onToken: () => {}, signal }, order, ({ client, error }) => usage.failed(client.name, error), (client) => usage.admit(client.name));
     let reply = await ask(messages);
@@ -85,7 +88,9 @@ export function createChat(deps: Deps) {
       const messages = await promptFor(stage, roomId, mine.map((tool) => tool.name));
       const room = stage.rooms.find((candidate) => candidate.id === roomId)!;
       const vision = messages.some((message) => message.role === 'user' && !!message.images?.length);
-      const { order, notice } = route(clients, usage, { pinned: room.model, promptChars: promptSize(messages), tools: true, vision });
+      // The partner answers on the strongest free models unless the founder pinned one for them.
+      const { order, notice } = room.partner && !room.model ? partnerRoute(clients, usage, { promptChars: promptSize(messages), tools: true, vision })
+        : route(clients, usage, { pinned: room.model, promptChars: promptSize(messages), tools: true, vision });
       if (vision && !order[0]?.vision) send({ notice: 'No model that can see images is set up (Gemini can), so the picture is described to the model only by its file name.' });
       if (notice) send({ notice });
       // The reply is kept as it stands after every step a tool finishes, marked stopped, and the finished reply is
@@ -98,8 +103,8 @@ export function createChat(deps: Deps) {
         const draft = { id: replyId, role: 'assistant' as const, text: kept.text, at: Date.now(), tools: kept.tools, stopped: true };
         kept.writes = kept.writes.then(() => store.putMessage(roomId, draft)).catch(() => {});
       };
-      const reply = await runTurn({
-        messages, tools: mine, clients: order, usage, signal: stop.signal, seams, source: 'chat', query: text,
+      const turnOn = (these: typeof messages) => runTurn({
+        messages: these, tools: mine, clients: order, usage, signal: stop.signal, seams, source: 'chat', query: text,
         // Listened for before it is shown, so an answer given while Needs you is still being written is heard.
         approve: (event, signal) => askFounder(attention, approvals, { id: `approval:${event.id}`, kind: 'approval', title: event.question ?? event.name.replace(/_/g, ' '), at: Date.now(), roomId, who: room.name, event }, signal),
         context: { stage, roomId, store, granted: new Map() },
@@ -110,6 +115,16 @@ export function createChat(deps: Deps) {
           notice: (text) => send({ notice: text }),
         },
       });
+      let reply = await turnOn(messages);
+      // The partner is held to the precondition check on a raise, hire, spend or pivot plan, and says "My call" once.
+      if (room.partner) {
+        reply = await holdPartner(text, reply, () => {
+          send({ notice: `${room.name} is checking the preconditions first.` });
+          kept.text = '';
+          const [system, ...rest] = messages;
+          return turnOn(system?.role === 'system' ? [{ ...system, content: `${system.content}\n\n${PRECONDITION_NUDGE}` }, ...rest] : messages);
+        });
+      }
       const message = {
         id: replyId, role: 'assistant' as const, text: reply.text, at: Date.now(), provider: reply.provider, model: reply.model,
         usage: reply.usage, ...(reply.tools.length ? { tools: reply.tools } : {}), ...(reply.stopped ? { stopped: true } : {}),
