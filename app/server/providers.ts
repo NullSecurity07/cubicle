@@ -12,8 +12,9 @@ export type ToolSpec = { name: string; description: string; parameters: Record<s
 // it goes back unchanged on the next step, because some providers reject a call they cannot recognise.
 export type ToolCall = { id: string; name: string; args: string; extra?: unknown };
 export type Quota = { remainingRequests?: number; limitRequests?: number; remainingTokens?: number; limitTokens?: number };
-// `cut`: the provider stopped the reply at its length limit, mid-thought.
-export type ModelTurn = { text: string; calls: ToolCall[]; usage?: Usage; quota?: Quota; cut?: boolean };
+// `cut`: the reply stops mid-thought, at the provider's length limit or, with `broke` saying why, because the stream
+// failed part way through.
+export type ModelTurn = { text: string; calls: ToolCall[]; usage?: Usage; quota?: Quota; cut?: boolean; broke?: string };
 type StepOptions = { tools?: ToolSpec[]; signal?: AbortSignal; onToken: (token: string) => void };
 
 export type ModelClient = {
@@ -94,7 +95,9 @@ export async function complete(
         failures.push(`${client.name}: empty reply`);
       } catch (error) {
         if (options.signal?.aborted) return { text, calls: [], client };
-        if (text.trim()) return { text, calls: [], client };
+        // Words already streamed stay (the founder has seen them), but the answer is marked as broken off: any tool
+        // call it was in the middle of is lost, and what came through is not the whole reply.
+        if (text.trim()) return { text, calls: [], client, cut: true, broke: ((error as Error).message || 'the stream broke off').slice(0, 160) };
         // A per-minute limit that clears in a few seconds is worth waiting out once; anything longer goes to the next model.
         const wait = retryAfter(error);
         if (attempt === 1 && wait !== undefined && wait <= MAX_WAIT) { await sleep(wait + 300, options.signal); continue; }
