@@ -76,4 +76,15 @@ describe('doc tools', () => {
     expect(write.ok).toBe(false);
     expect(write.text).toMatch(/pinned company document: you can read it, but writing to it needs a wire/);
   });
+
+  it('refuses to add a top-level section that is already there, and lets a sub-heading repeat', async () => {
+    const { store, call } = await setup();
+    const again = await call('append_doc', { doc: 'Brand doc', text: '## Review\n\nMore notes.' });
+    expect(again.ok).toBe(false);
+    expect(again.text).toMatch(/"Review" is already a section of this document; change it with replace_section/);
+    expect(await store.readDoc('brand-doc')).toBe(PLAN);
+    expect((await call('replace_section', { doc: 'Brand doc', heading: 'Build', text: '## Research\n\nx' })).ok).toBe(false);
+    expect((await call('append_doc', { doc: 'Brand doc', text: '### Monday\n\na' })).ok).toBe(true);
+    expect((await call('append_doc', { doc: 'Brand doc', text: '### Monday\n\nb' })).ok).toBe(true);
+  });
 });

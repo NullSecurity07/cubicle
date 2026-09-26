@@ -10,7 +10,7 @@ import { createStore } from '../store.ts';
 import { createUsage } from '../usage.ts';
 import { docTools } from './docs.ts';
 import { runTool } from './registry.ts';
-import { conversations, filled, sectionBody, verdictOf } from './verdict.ts';
+import { conversations, filled, guardWrite, sectionBody, verdictOf } from './verdict.ts';
 
 const OUTCOMES = ['WEAK', 'PIVOT REQUIRED', 'STRONG'];
 const FILLED = {
@@ -235,6 +235,39 @@ describe('a team placed before its doc carried rules', () => {
     placed.title = 'Evaluation';
     for (const room of stage.rooms) if (room.framework) room.framework = { ...room.framework, id: 'no-such-team' };
     expect((await as('verdict')('replace_section', { heading: '4. Founder-market fit', text: 'lived it' })).ok).toBe(true);
+  });
+});
+
+describe('a second copy of a section', () => {
+  it('is refused when appended or written in, so the verdict cannot slip in under its own heading again', async () => {
+    const { as, doc, fill } = await setup();
+    await fill(['4. Founder-market fit']);
+    const before = await doc();
+    const appended = await as('verdict')('append_doc', { text: '## 5. Verdict\n\nWEAK\n\nScore: 5/10' });
+    expect(appended.ok).toBe(false);
+    expect(appended.text).toMatch(/"5\. Verdict" is already a section of this document; change it with replace_section/);
+    const rewritten = await as('verdict')('write_doc', { text: `${before}\n## 5. Verdict\n\nSTRONG\n` });
+    expect(rewritten.ok).toBe(false);
+    expect(await doc()).toBe(before);
+  });
+
+  it('is checked with the first when a doc already holds two', async () => {
+    const { stage, doc, fill, as } = await setup();
+    await fill(['4. Founder-market fit']);
+    const rules = stage.docs.find((one) => one.id === 'evaluation')!.rules!;
+    const twice = `${await doc()}\n## 5. Verdict\n\n`;
+    const guard = (writerId: string, after: string) => guardWrite({ rules, stage, docId: 'evaluation', writerId, before: twice, after, now: Date.now() });
+    // The judge fills the second copy while the fit is empty: the verdict is "not assessed", in one section.
+    const held = guard('verdict', `${twice}STRONG\n\nScore: 10/10\n`);
+    expect(held.held).toBe(true);
+    expect(held.text.match(/^## 5\. Verdict$/gm)).toHaveLength(1);
+    expect(sectionBody(held.text, '5. Verdict')).toMatch(/^Not assessed: 4\. Founder-market fit/);
+    expect(held.text).not.toMatch(/10\/10/);
+    // And a colleague may not write into the second copy either.
+    expect(() => guard('pain', `${twice}STRONG\n`)).toThrow(/is Priya's section/);
+    // Every copy's words count: a colleague's section filled in its second copy is filled.
+    expect(filled(sectionBody(`## 4. Founder-market fit\n\nIn one sentence:\n\n## 4. Founder-market fit\n\nlived it\n`, '4. Founder-market fit'))).toEqual(['lived it']);
+    void as;
   });
 });
 

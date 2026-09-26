@@ -56,3 +56,25 @@ export function replaceSection(text: string, heading: string, body: string): { t
   const tail = next ? lines.slice(next.line).join('\n') : '';
   return { text: `${head}\n\n${fresh ? `${fresh}\n` : ''}${tail ? `\n${tail}` : ''}`.replace(/\n{3,}$/, '\n\n') };
 }
+
+// A heading this write adds a second copy of, or null. Only sections that already exist count, and only top-level ones
+// (# and ##) or the ones named in `also`: a sub-heading such as "### Monday" repeats under each week on purpose. A
+// second "## 5. Verdict" appended at the end is how a judge once wrote a verdict the checks on the first never saw.
+export function addedTwice(before: string, after: string, also: string[] = []): string | null {
+  const named = new Set(also.map(headingKey));
+  const count = (text: string) => {
+    const seen = new Map<string, { title: string; times: number }>();
+    for (const one of headings(text)) {
+      const key = headingKey(one.title);
+      if (one.level > 2 && !named.has(key)) continue;
+      seen.set(key, { title: one.title, times: (seen.get(key)?.times ?? 0) + 1 });
+    }
+    return seen;
+  };
+  const was = count(before);
+  for (const [key, now] of count(after)) {
+    const had = was.get(key)?.times ?? 0;
+    if (had >= 1 && now.times > had) return now.title;
+  }
+  return null;
+}

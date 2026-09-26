@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path';
 import type { Framework } from '../../shared/frameworks.ts';
 import type { Box, DocRules, Stage } from '../../shared/model.ts';
 import { readableDocIds, wiredDocIds } from '../prompt.ts';
-import { replaceSection, rewriteLoss } from './sections.ts';
+import { addedTwice, replaceSection, rewriteLoss } from './sections.ts';
 import { text, type Tool, type ToolContext } from './registry.ts';
 import { guardWrite } from './verdict.ts';
 
@@ -86,6 +86,8 @@ async function rulesOf(stage: Stage, id: string): Promise<DocRules | undefined> 
 // stand, so what is saved may be the writer's words with a stale mark or a "not assessed" verdict put in.
 async function save(context: ToolContext, id: string, before: string, after: string, done: string) {
   const rules = await rulesOf(context.stage, id);
+  const twice = addedTwice(before, after, rules ? [...rules.sections, rules.verdict].map((one) => one.heading) : []);
+  if (twice) throw new Error(`not written: "${twice}" is already a section of this document; change it with replace_section instead of adding it again.`);
   const guarded = rules ? guardWrite({ rules, stage: context.stage, docId: id, writerId: context.roomId, before, after, now: Date.now() }) : { text: after };
   await context.store.replaceDoc(id, guarded.text);
   const said = guarded.held ? guarded.note! : [done, guarded.note].filter(Boolean).join(' ');

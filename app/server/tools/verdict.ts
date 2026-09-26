@@ -15,24 +15,36 @@ import { headingKey, headings } from './sections.ts';
 const STALE = /^Stale: .* changed after this verdict on .*\.$/;
 const NOT_ASSESSED = /^not assessed\b/i;
 
-// The text under a heading, up to the next heading of the same or a higher level; null when there is no such heading.
-export function sectionBody(text: string, heading: string): string | null {
+// Where each copy of a heading's section starts and ends, as line numbers: the heading line, and the line after the
+// section's last. A doc is meant to hold one of each, but one written before the doc tools refused a second copy may
+// hold two, and every check reads them all: a verdict under the second copy is still a verdict.
+function copies(text: string, heading: string): { at: number; end: number }[] {
   const all = headings(text);
-  const hit = all.find((one) => headingKey(one.title) === headingKey(heading));
-  if (!hit) return null;
-  const next = all.find((one) => one.line > hit.line && one.level <= hit.level);
-  return text.split('\n').slice(hit.line + 1, next ? next.line : undefined).join('\n').trim();
+  const total = text.split('\n').length;
+  return all.filter((one) => headingKey(one.title) === headingKey(heading)).map((hit) => {
+    const next = all.find((one) => one.line > hit.line && one.level <= hit.level);
+    return { at: hit.line, end: next ? next.line : total };
+  });
+}
+
+// The text under a heading, up to the next heading of the same or a higher level, every copy's in order; null when
+// there is no such heading.
+export function sectionBody(text: string, heading: string): string | null {
+  const found = copies(text, heading);
+  if (!found.length) return null;
+  const lines = text.split('\n');
+  return found.map(({ at, end }) => lines.slice(at + 1, end).join('\n').trim()).filter(Boolean).join('\n\n');
 }
 
 // The same document with the text under one heading swapped, the heading and every other line kept as they were.
+// A second copy of the heading goes, words and all: what it said is in `body` already, read by sectionBody.
 function withBody(text: string, heading: string, body: string): string {
-  const all = headings(text);
-  const hit = all.find((one) => headingKey(one.title) === headingKey(heading));
-  if (!hit) return text;
-  const next = all.find((one) => one.line > hit.line && one.level <= hit.level);
-  const lines = text.split('\n');
-  const tail = next ? lines.slice(next.line) : [];
-  return [...lines.slice(0, hit.line + 1), '', ...(body ? [body, ''] : []), ...tail].join('\n').replace(/\n*$/, '\n');
+  const found = copies(text, heading);
+  if (!found.length) return text;
+  let lines = text.split('\n');
+  for (const { at, end } of found.slice(1).reverse()) lines = [...lines.slice(0, at), ...lines.slice(end)];
+  const [{ at, end }] = found;
+  return [...lines.slice(0, at + 1), '', ...(body ? [body, ''] : []), ...lines.slice(end)].join('\n').replace(/\n*$/, '\n');
 }
 
 // What a person really wrote under a heading: the template's labels ("In one sentence:"), its dashes and blank lines
