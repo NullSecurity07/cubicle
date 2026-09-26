@@ -207,8 +207,11 @@ describe('the partner slice: the morning note', () => {
     const client = (name: string, step: () => Promise<string>) => ({ name, model: `${name}-1`, maxPromptChars: Infinity, tools: true, limits: {},
       async step(_messages: unknown, { onToken }: { onToken: (token: string) => void }) { onToken(await step()); return { text: '', calls: [] }; } });
     const refused = client('refused', async () => { refusedAsked += 1; throw Object.assign(new Error('401 invalid key'), { status: 401 }); });
-    const { deps, part } = await installed({ clients: [refused, client('good', async () => SHAPED)] as Deps['clients'] }, { now: () => NINE });
+    let clock = NINE;
+    const { deps, part } = await installed({ clients: [refused, client('good', async () => SHAPED)] as Deps['clients'] }, { now: () => clock });
     await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    // The partner arrived yesterday: no note on the day they arrive.
+    clock -= 86_400_000; await part.tick!(); clock += 86_400_000;
     await part.tick!();
     expect(refusedAsked).toBe(1);
     expect(deps.usage.dead('refused')).toBe(true);
