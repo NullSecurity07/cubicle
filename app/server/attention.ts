@@ -74,7 +74,9 @@ export function createAttention(dir: string, now: () => number = Date.now) {
     async dismiss(id: string) {
       const { open, dismissed } = await load();
       const held = open.find((one) => one.id === id);
-      if (held) { if (!held.lapsed) throw new Error('this is still waiting for an answer'); state!.open = open.filter((one) => one.id !== id); return changed(); }
+      // A refused key waits on nothing but the founder, who may have seen it and moved on; it comes back only if the
+      // key is refused again after answering once.
+      if (held) { if (!held.lapsed && held.kind !== 'key-rejected') throw new Error('this is still waiting for an answer'); state!.open = open.filter((one) => one.id !== id); return changed(); }
       const reported = (await list()).find((one) => one.id === id);
       if (!reported || !DISMISSABLE.has(reported.kind)) throw new Error('this cannot be dismissed; answer it where it lives');
       state!.dismissed = [...dismissed, id];

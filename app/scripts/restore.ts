@@ -3,10 +3,12 @@
 // Usage: pnpm restore                       the newest backup, into a new folder beside the others
 //        pnpm restore <archive> [<folder>]
 import { resolve } from 'node:path';
-import { backupDir, listBackups, restore } from '../server/openends/backup.ts';
+import { backupDirOf, listBackups, restore } from '../server/openends/backup.ts';
 
 const [asked, into] = process.argv.slice(2).filter((one) => !one.startsWith('-'));
-const dir = backupDir(process.env);
+// The same folder the app backs up to for this workspace.
+const root = resolve(import.meta.dirname, '../..');
+const dir = backupDirOf({ fake: process.env.STAGE_FAKE_MODEL === '1', workspace: process.env.STAGE_WORKSPACE ?? resolve(root, 'workspace'), root });
 const held = await listBackups(dir);
 const archive = asked ? resolve(asked) : held[0] ? resolve(dir, held[0].file) : '';
 if (!archive) {

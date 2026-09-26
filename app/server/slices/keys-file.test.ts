@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { KeysView } from '../../shared/keys-file.ts';
 import type { Deps } from '../install.ts';
+import { chosenBackupDir } from '../openends/backup.ts';
 import keysFile, { envFileOf, failuresOf, fromOwnPage, rowsOf } from './keys-file.ts';
 
 const OWN = { ports: [7420, 7421], token: 't' };
@@ -66,12 +67,15 @@ describe('the keys file', () => {
     const usb = join(await mkdtemp(join(tmpdir(), 'usb-')), 'Cubicle backups');
     expect((await call('/api/keys-file/places'))!.body).toMatchObject({ current: join(workspace, 'backups'), custom: false, places: [] });
     expect((await call('/api/keys-file/STAGE_BACKUP_DIR', 'PUT', { value: usb }))!.status).toBe(200);
-    expect(process.env.STAGE_BACKUP_DIR).toBe(usb);
+    // Kept for this workspace, not for the machine: another workspace is not sent there.
+    expect(chosenBackupDir(workspace)).toBe(usb);
+    expect(process.env.STAGE_BACKUP_DIR).toBeUndefined();
     expect((await stat(usb)).isDirectory()).toBe(true);
     expect((await call('/api/keys-file/places'))!.body).toMatchObject({ current: usb, custom: true, fallback: join(workspace, 'backups') });
     expect((await call('/api/keys-file/STAGE_BACKUP_DIR', 'PUT', { value: join(workspace, 'inside') }))!.body.error).toMatch(/inside the workspace/);
     await call('/api/keys-file/STAGE_BACKUP_DIR', 'PUT', { value: '' });
-    expect(process.env.STAGE_BACKUP_DIR).toBeUndefined();
+    expect(chosenBackupDir(workspace)).toBeNull();
+    expect((await call('/api/keys-file/places'))!.body).toMatchObject({ current: join(workspace, 'backups'), custom: false });
   });
 
   it('takes a name OpenOutreach reads at once, and waits for nothing', async () => {

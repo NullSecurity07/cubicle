@@ -54,6 +54,22 @@ const ago = (at: number, now: number) => {
   return days <= 0 ? 'today' : days === 1 ? 'yesterday' : `${days} days ago`;
 };
 
+// The Backup row, from one reading of the backups folder. Health and the dashboard both build it here, from the same
+// reading the dashboard's own backup line uses, so the two can never say different things at once.
+// A day, since one is made by itself every day; and a folder it can still be written to, or the next one fails.
+export function backupRow(state: { dir: string; backups: { at: number }[]; writable: boolean }, now: number): Check {
+  const newest = state.backups[0]?.at ?? 0;
+  const fresh = !!newest && now - newest < DAY;
+  return {
+    name: 'Backup', ok: fresh && state.writable,
+    detail: [
+      newest ? `${state.backups.length} kept in ${state.dir}, the newest made ${ago(newest, now)}` : `nothing has been backed up yet (they would go to ${state.dir})`,
+      ...(state.writable ? [] : ['and that folder cannot be written to']),
+    ].join(', '),
+    fix: 'One is made by itself once a day, and five are kept. Point "Back up to…" in Health at a second disk or a synced folder: a copy on this same disk is gone with it.',
+  };
+}
+
 export type HealthDeps = {
   workspace: string; root: string; env?: NodeJS.ProcessEnv; now?: () => number;
   backups: () => Promise<{ at: number }[]>; backupDir: string;
@@ -205,19 +221,7 @@ export async function checkAll(deps: HealthDeps): Promise<Check[]> {
     fix: 'Ask a voice studio for one line. The voice fetches itself the first time, about 80 MB, and then speaks without the internet.',
   });
 
-  // A day, since one is made by itself every day; and a folder it can still be written to, or the next one fails.
-  const held = await deps.backups();
-  const newest = held[0]?.at ?? 0;
-  const fresh = !!newest && now() - newest < DAY;
-  const backupWritable = await canWrite(deps.backupDir);
-  checks.push({
-    name: 'Backup', ok: fresh && backupWritable,
-    detail: [
-      newest ? `${held.length} kept in ${deps.backupDir}, the newest made ${ago(newest, now())}` : `nothing has been backed up yet (they would go to ${deps.backupDir})`,
-      ...(backupWritable ? [] : ['and that folder cannot be written to']),
-    ].join(', '),
-    fix: 'One is made by itself once a day, and five are kept. Point "Back up to…" in Health at a second disk or a synced folder: a copy on this same disk is gone with it.',
-  });
+  checks.push(backupRow({ dir: deps.backupDir, backups: await deps.backups(), writable: await canWrite(deps.backupDir) }, now()));
 
   checks.push(...keyChecks(env, root));
   // What slices know about themselves right now (the phone, Twenty), each asked once; one that throws is left out.
