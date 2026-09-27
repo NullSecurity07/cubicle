@@ -36,6 +36,15 @@ describe('a key that keeps failing', () => {
     expect(breaker.admit('groq')).toBe(true);
   });
 
+  it('counts a model that breaks its own tool call as a breakdown, and a plain bad request not', () => {
+    const breaker = createBreaker(() => 0);
+    const malformed = Object.assign(new Error("400 Failed to call a function. Please adjust your prompt. See 'failed_generation' for more details."), { status: 400 });
+    for (let at = 0; at < 4; at += 1) breaker.failed('groq-qwen', malformed);
+    expect(breaker.failed('groq-qwen', malformed)).toBe(OPEN_MS);
+    for (let at = 0; at < 5; at += 1) breaker.failed('groq', failure(400));
+    expect(breaker.state('groq')).toBe('closed');
+  });
+
   it('opens again at once when the one request let through fails', () => {
     let now = 0;
     const breaker = createBreaker(() => now);

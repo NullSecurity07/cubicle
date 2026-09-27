@@ -113,6 +113,8 @@ export function createChat(deps: Deps) {
           token: (token) => { kept.text += token; send({ token }); roomFeed.tell({ roomId, turn, token }); },
           tool: (tool) => { keepSoFar(tool); send({ tool }); roomFeed.tell({ roomId, turn, tool }); },
           notice: (text) => send({ notice: text }),
+          // A model broke off part way and the next one answers from the start: every window empties the bubble.
+          restart: () => { kept.text = ''; send({ restart: true }); roomFeed.tell({ roomId, turn, restart: true }); },
         },
       });
       let reply = await turnOn(messages);

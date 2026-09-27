@@ -15,7 +15,9 @@ export type Quota = { remainingRequests?: number; limitRequests?: number; remain
 // `cut`: the reply stops mid-thought, at the provider's length limit or, with `broke` saying why, because the stream
 // failed part way through.
 export type ModelTurn = { text: string; calls: ToolCall[]; usage?: Usage; quota?: Quota; cut?: boolean; broke?: string };
-type StepOptions = { tools?: ToolSpec[]; signal?: AbortSignal; onToken: (token: string) => void };
+// `onRestart`: the words streamed so far are dropped, because another model is about to answer from the start. A caller
+// that does not pass it keeps the old way: a reply that breaks part way is kept as it stands.
+type StepOptions = { tools?: ToolSpec[]; signal?: AbortSignal; onToken: (token: string) => void; onRestart?: () => void };
 
 export type ModelClient = {
   name: string;
@@ -68,8 +70,18 @@ export function retryAfter(error: unknown): number | undefined {
   return (error as { status?: number }).status === 429 ? headerWait(error) : undefined;
 }
 
+// Why a stream broke off, in words the founder can read, for the line under a reply that stops short.
+export function plainBreak(message: string): string {
+  if (/failed_generation|failed to call a function|tool call validation|failed to parse tool/i.test(message)) return 'its tool call came out malformed';
+  if (/no first word/i.test(message)) return message;
+  if (/timed? ?out|timeout/i.test(message)) return 'it stopped answering (timed out)';
+  return (message || 'the stream broke off').slice(0, 160);
+}
+
 // Tries each client in order. Moves on when one throws before saying anything, answers with nothing,
-// or cannot hold the prompt. A reply cut off mid-stream is kept: the founder has already seen it.
+// or cannot hold the prompt. A reply that breaks off mid-stream moves on too when the caller can take its words back
+// (`onRestart`): the next model answers from the start, and the broken words come back, marked as cut, only when no
+// model at all can give a whole answer. A caller that cannot take words back keeps the cut reply as it stands.
 export async function complete(
   messages: ModelMessage[], options: StepOptions, clients: ModelClient[], onFailure: (failure: Failure) => void = () => {},
   // Asked right before a client is tried: a key whose breaker is open is passed over, as one too small would be.
@@ -77,15 +89,21 @@ export async function complete(
 ): Promise<Completion> {
   const size = promptSize(messages);
   const failures: string[] = [];
+  // The longest reply that broke off part way, kept in case nobody does better; and what the window shows right now.
+  let broken: Completion | undefined;
+  let showing = '';
   for (const client of clients) {
     if (size > client.maxPromptChars) { failures.push(`${client.name}: prompt too large`); continue; }
     if (options.tools?.length && !client.tools) { failures.push(`${client.name}: no tool support`); continue; }
     if (!admit(client)) { failures.push(`${client.name}: resting after failing several times in a row`); continue; }
     if (client.busy?.()) { failures.push(`${client.name}: already answering another request`); continue; }
+    // Another model is really about to answer: the broken words go from the window first.
+    if (showing) { options.onRestart?.(); showing = ''; }
     let text = '';
     const onToken = (token: string) => {
       if (!token || (!text && !token.trim())) return;
       text += token;
+      showing += token;
       options.onToken(token);
     };
     for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -95,20 +113,36 @@ export async function complete(
         failures.push(`${client.name}: empty reply`);
       } catch (error) {
         if (options.signal?.aborted) return { text, calls: [], client };
-        // Words already streamed stay (the founder has seen them), but the answer is marked as broken off: any tool
-        // call it was in the middle of is lost, and what came through is not the whole reply.
-        if (text.trim()) return { text, calls: [], client, cut: true, broke: ((error as Error).message || 'the stream broke off').slice(0, 160) };
+        const message = (error as Error).message ?? '';
+        // Words already streamed and a tool call it was in the middle of lost: not a whole answer. With nobody to take
+        // the words back they stay, marked as broken off; otherwise the breaker hears of it and the next model is asked.
+        if (text.trim()) {
+          const cut: Completion = { text, calls: [], client, cut: true, broke: plainBreak(message) };
+          if (!options.onRestart) return cut;
+          onFailure({ client, error: error as Error });
+          failures.push(`${client.name}: ${message}`);
+          if (!broken || text.length > broken.text.length) broken = cut;
+          break;
+        }
         // A per-minute limit that clears in a few seconds is worth waiting out once; anything longer goes to the next model.
         const wait = retryAfter(error);
         if (attempt === 1 && wait !== undefined && wait <= MAX_WAIT) { await sleep(wait + 300, options.signal); continue; }
         // gpt-oss now and then calls a tool it was never offered, and Groq answers that with a 400. It is a slip, not
         // a refusal: asked once more, the same model answers in words.
-        if (attempt === 1 && !options.tools?.length && CALLED_UNOFFERED.test((error as Error).message ?? '')) continue;
+        if (attempt === 1 && !options.tools?.length && CALLED_UNOFFERED.test(message)) continue;
         onFailure({ client, error: error as Error });
-        failures.push(`${client.name}: ${(error as Error).message}`);
+        failures.push(`${client.name}: ${message}`);
       }
       break;
     }
+  }
+  if (broken) {
+    // Nobody gave a whole answer: the best broken one is what the founder gets, shown again if it was taken away.
+    if (showing !== broken.text) {
+      if (showing) options.onRestart?.();
+      options.onToken(broken.text);
+    }
+    return broken;
   }
   throw new Error(`no provider answered — ${failures.join('; ')}`);
 }
@@ -202,7 +236,11 @@ function keysOf(env: NodeJS.ProcessEnv, keyEnv: string): { key: string; at: numb
 
 type Shape = { model: string; maxPromptChars: number; maxTokens: number; tools: boolean; side?: boolean; vision?: boolean; streamUsage?: boolean; callSignature?: string; concurrency?: number; extra?: Record<string, unknown>; limits?: Limits; local?: boolean };
 
-function clientOf(name: string, entry: Shape, api: OpenAI): ModelClient {
+// How long a hosted model may keep silent before its first word: a hanging Gemini costs this, not the whole 45 s
+// request timeout, and the next model is asked. Once anything streams, the model has all the time the request has.
+const FIRST_WORD_MS = 20_000;
+
+function clientOf(name: string, entry: Shape, api: OpenAI, firstWordMs?: number): ModelClient {
   // Requests out on this key now. Kept here, beside the one handle every copy of the client shares, so a caller that
   // never saw the usage book still cannot send a second.
   let out = 0;
@@ -227,24 +265,36 @@ function clientOf(name: string, entry: Shape, api: OpenAI): ModelClient {
 
   async function ask(history: ModelMessage[], { tools, signal, onToken }: StepOptions): Promise<ModelTurn> {
     const messages = withImages(portable(history, entry.callSignature), !!entry.vision);
-    const { data: stream, response } = await api.chat.completions.create({
-      model: entry.model, messages, stream: true, max_tokens: entry.maxTokens,
-      ...(entry.streamUsage === false ? {} : { stream_options: { include_usage: true } }),
-      ...(tools?.length ? { tools: wireTools(tools) } : {}),
-      ...(entry.extra ?? {}),
-    } as OpenAI.Chat.ChatCompletionCreateParamsStreaming, { signal }).withResponse();
+    // The founder's Stop and the first-word clock both end the request; only the clock's is this model's failure.
+    const silent = firstWordMs ? new AbortController() : undefined;
+    const timer = silent ? setTimeout(() => silent.abort(), firstWordMs) : undefined;
+    const either = silent ? (signal ? AbortSignal.any([signal, silent.signal]) : silent.signal) : signal;
+    try {
+      const { data: stream, response } = await api.chat.completions.create({
+        model: entry.model, messages, stream: true, max_tokens: entry.maxTokens,
+        ...(entry.streamUsage === false ? {} : { stream_options: { include_usage: true } }),
+        ...(tools?.length ? { tools: wireTools(tools) } : {}),
+        ...(entry.extra ?? {}),
+      } as OpenAI.Chat.ChatCompletionCreateParamsStreaming, { signal: either }).withResponse();
 
-    const calls: ToolCall[] = [];
-    let usage: Usage | undefined;
-    let cut = false;
-    for await (const chunk of stream) {
-      if (chunk.usage) usage = { input: chunk.usage.prompt_tokens ?? 0, output: chunk.usage.completion_tokens ?? 0 };
-      const delta = chunk.choices[0]?.delta;
-      if (chunk.choices[0]?.finish_reason === 'length') cut = true;
-      if (delta?.content) onToken(delta.content);
-      collectCalls(calls, delta?.tool_calls ?? []);
+      const calls: ToolCall[] = [];
+      let usage: Usage | undefined;
+      let cut = false;
+      for await (const chunk of stream) {
+        clearTimeout(timer);
+        if (chunk.usage) usage = { input: chunk.usage.prompt_tokens ?? 0, output: chunk.usage.completion_tokens ?? 0 };
+        const delta = chunk.choices[0]?.delta;
+        if (chunk.choices[0]?.finish_reason === 'length') cut = true;
+        if (delta?.content) onToken(delta.content);
+        collectCalls(calls, delta?.tool_calls ?? []);
+      }
+      return { text: '', calls: calls.filter(Boolean).map((call, index) => ({ ...call, id: call.id || callId() })), usage, quota: readQuota(response.headers), ...(cut ? { cut } : {}) };
+    } catch (error) {
+      if (silent?.signal.aborted && !signal?.aborted) throw new Error(`no first word within ${Math.round(firstWordMs! / 100) / 10} s (timed out)`);
+      throw error;
+    } finally {
+      clearTimeout(timer);
     }
-    return { text: '', calls: calls.filter(Boolean).map((call, index) => ({ ...call, id: call.id || callId() })), usage, quota: readQuota(response.headers), ...(cut ? { cut } : {}) };
   }
 }
 
@@ -276,13 +326,14 @@ function localClient(local: LocalModel): ModelClient {
 
 export function realClients(env: NodeJS.ProcessEnv = process.env, local?: LocalModel): ModelClient[] {
   // An entry whose key, or any name its address needs, is not set here is left out without a word: the health check
-  // says once which are unset.
+  // says once which are unset. `STAGE_FIRST_TOKEN_MS` changes the first-word clock (a test sets it short).
+  const firstWordMs = Number(env.STAGE_FIRST_TOKEN_MS) > 0 ? Number(env.STAGE_FIRST_TOKEN_MS) : FIRST_WORD_MS;
   const hosted = ENTRIES.flatMap((entry) => {
     const baseURL = expand(entry.baseURL, env);
     return baseURL === undefined ? [] : keysOf(env, entry.keyEnv).map(({ key, at }) => ({ entry, key, at, baseURL }));
   }).map(({ entry, key, at, baseURL }) => {
     const api = new OpenAI({ apiKey: key, baseURL, timeout: 45_000, maxRetries: 0 });
-    return clientOf(at > 1 ? `${entry.name}#${at}` : entry.name, entry, api);
+    return clientOf(at > 1 ? `${entry.name}#${at}` : entry.name, entry, api, firstWordMs);
   });
   return local ? [...hosted, localClient(local)] : hosted;
 }

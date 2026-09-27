@@ -128,6 +128,62 @@ describe('runTurn', () => {
     void run;
   });
 
+  it('drops a reply that broke part way, keeps the words of earlier steps, and answers from the next model', async () => {
+    const store = createStore(await mkdtemp(join(tmpdir(), 'loop-')));
+    const shown: string[] = [];
+    const notices: string[] = [];
+    let window = '';
+    const usage = createUsage(null);
+    // Step one: words and a tool call from the first model. Step two: three words, then Groq's 400.
+    let steps = 0;
+    const qwen: ModelClient = {
+      ...scripted([]), name: 'groq-qwen',
+      async step(_messages, { onToken }) {
+        steps += 1;
+        if (steps === 1) { onToken('Checking the files.'); return { text: '', calls: [{ id: 'c1', name: 'list_files', args: '{}' }] }; }
+        for (const token of ['Let', ' me', ' ground']) onToken(token);
+        throw Object.assign(new Error("400 Failed to call a function. See 'failed_generation'."), { status: 400 });
+      },
+    };
+    const result = await runTurn({
+      messages: [{ role: 'user', content: 'critique it' }], tools: fileTools, clients: [qwen, scripted(['The whole critique.'])], usage,
+      context: { stage: await store.loadStage(), roomId: 'build', store, granted: new Map() },
+      events: {
+        token: (token) => { window += token; shown.push(token); }, tool: () => {}, notice: (text) => notices.push(text),
+        restart: () => { window = ''; shown.push('<restart>'); },
+      },
+    });
+    expect(result.text).toBe('Checking the files.\n\nThe whole critique.');
+    expect(result.provider).toBe('script');
+    expect(window).toBe(result.text);
+    expect(shown).toContain('<restart>');
+    expect(result.text).not.toMatch(/failed_generation|cut short/);
+    expect(notices.join(' ')).toMatch(/groq-qwen could not answer .*so script answers/);
+  });
+
+  it('keeps the broken words with a plain reason only when every model fails', async () => {
+    const store = createStore(await mkdtemp(join(tmpdir(), 'loop-')));
+    let window = '';
+    const notices: string[] = [];
+    const qwen: ModelClient = {
+      ...scripted([]), name: 'groq-qwen',
+      async step(_messages, { onToken }) {
+        for (const token of ['Let', ' me', ' ground']) onToken(token);
+        throw Object.assign(new Error("400 Failed to call a function. See 'failed_generation'."), { status: 400 });
+      },
+    };
+    const down: ModelClient = { ...scripted([]), name: 'openrouter', async step() { throw Object.assign(new Error('503 overloaded'), { status: 503 }); } };
+    const result = await runTurn({
+      messages: [{ role: 'user', content: 'critique it' }], tools: [], clients: [qwen, down], usage: createUsage(null),
+      context: { stage: await store.loadStage(), roomId: 'build', store, granted: new Map() },
+      events: { token: (token) => { window += token; }, tool: () => {}, notice: (text) => notices.push(text), restart: () => { window = ''; } },
+    });
+    expect(result.text).toBe('Let me ground\n\n(reply cut short: its tool call came out malformed)');
+    expect(window).toBe(result.text);
+    expect(result.text).not.toMatch(/failed_generation/);
+    expect(notices.join(' ')).not.toMatch(/so groq-qwen answers/);
+  });
+
   it('tells the founder when a reply was cut at the model\'s length limit', async () => {
     const short: ModelClient = { ...scripted([]), name: 'short', async step(_messages, { onToken }) { onToken('The plan has three par'); return { text: '', calls: [], cut: true }; } };
     const notices: string[] = [];

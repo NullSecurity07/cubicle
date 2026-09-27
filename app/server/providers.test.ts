@@ -52,6 +52,77 @@ describe('streamReply, cut off mid-stream', () => {
   });
 });
 
+describe('complete, a stream that breaks part way with another model to ask', () => {
+  // Groq's qwen, journey 3: three tokens of "Let me ground the critique", then a 400 about a tool call it could not make.
+  const breaking = (name: string) => ({
+    ...client(name, []),
+    async step(_messages: unknown, { onToken }: { onToken: (token: string) => void }) {
+      for (const token of ['Let', ' me', ' ground']) onToken(token);
+      throw Object.assign(new Error("400 Failed to call a function. Please adjust your prompt. See 'failed_generation' for more details."), { status: 400 });
+    },
+  }) as ModelClient;
+
+  it('drops the streamed words, tells the breaker, and answers from the next model', async () => {
+    const seen: string[] = [];
+    const failures: string[] = [];
+    const result = await complete(messages, { onToken: (token) => seen.push(token), onRestart: () => seen.push('<restart>') },
+      [breaking('groq-qwen'), client('openrouter', ['A', ' whole', ' answer.'])], ({ client: failed }) => failures.push(failed.name));
+    expect(result).toMatchObject({ text: 'A whole answer.', calls: [] });
+    expect(result.client.name).toBe('openrouter');
+    expect(result.cut).toBeUndefined();
+    expect(failures).toEqual(['groq-qwen']);
+    expect(seen).toEqual(['Let', ' me', ' ground', '<restart>', 'A', ' whole', ' answer.']);
+  });
+
+  it('shows the cut words again, marked as broken off, only when every model fails', async () => {
+    const seen: string[] = [];
+    const failures: string[] = [];
+    const result = await complete(messages, { onToken: (token) => seen.push(token), onRestart: () => seen.push('<restart>') },
+      [breaking('groq-qwen'), client('openrouter', new Error('503 overloaded'))], ({ client: failed }) => failures.push(failed.name));
+    expect(result).toMatchObject({ text: 'Let me ground', cut: true, calls: [] });
+    expect(result.client.name).toBe('groq-qwen');
+    expect(result.broke).toMatch(/tool call/);
+    expect(failures).toEqual(['groq-qwen', 'openrouter']);
+    expect(seen.join('')).toBe('Let me ground<restart>Let me ground');
+  });
+
+  it('keeps the words where they stand when no other model is tried', async () => {
+    const seen: string[] = [];
+    const result = await complete(messages, { onToken: (token) => seen.push(token), onRestart: () => seen.push('<restart>') }, [breaking('groq-qwen')]);
+    expect(result).toMatchObject({ text: 'Let me ground', cut: true });
+    expect(seen).toEqual(['Let', ' me', ' ground']);
+  });
+});
+
+describe('a model that says nothing for too long', () => {
+  it('is given up on at the first-word timeout, so the next model answers', async () => {
+    const [gemini] = realClients({ GEMINI_API_KEY: 'g', STAGE_FIRST_TOKEN_MS: '40' } as NodeJS.ProcessEnv);
+    let aborted = false;
+    (gemini.openai!.chat.completions as unknown as { create: unknown }).create = (_body: unknown, { signal }: { signal: AbortSignal }) => ({
+      withResponse: () => new Promise((_done, fail) => signal.addEventListener('abort', () => { aborted = true; fail(new Error('Request was aborted.')); }, { once: true })),
+    });
+    const failures: string[] = [];
+    const started = Date.now();
+    const result = await complete(messages, { onToken: () => {} }, [gemini, client('groq', ['here'])], ({ client: failed, error }) => failures.push(`${failed.name}: ${error.message}`));
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(aborted).toBe(true);
+    expect(result.client.name).toBe('groq');
+    expect(failures[0]).toMatch(/^gemini.*no first word/);
+  });
+
+  it('is not given up on once the words have started', async () => {
+    const [gemini] = realClients({ GEMINI_API_KEY: 'g', STAGE_FIRST_TOKEN_MS: '40' } as NodeJS.ProcessEnv);
+    async function* chunks() {
+      yield { choices: [{ delta: { content: 'slow' } }] };
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      yield { choices: [{ delta: { content: ' but whole' } }] };
+    }
+    (gemini.openai!.chat.completions as unknown as { create: unknown }).create = () => ({ withResponse: async () => ({ data: chunks(), response: { headers: new Headers() } }) });
+    const result = await complete(messages, { onToken: () => {} }, [gemini]);
+    expect(result.text).toBe('slow but whole');
+  });
+});
+
 describe('complete, with tools', () => {
   it('accepts a step that only calls tools, and skips a model without tool support', async () => {
     const mute: ModelClient = { ...client('mute', ['hi']), tools: false };
