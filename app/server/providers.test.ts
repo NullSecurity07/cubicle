@@ -691,6 +691,16 @@ describe('the first-word and idle clocks on a stream (reliability audit 3)', () 
     } finally { vi.useRealTimers(); }
   });
 
+  it('counts reasoning streamed before the words as speech, so 25 s of thinking survives the 20 s first-word clock', async () => {
+    vi.useFakeTimers();
+    try {
+      const groq = groqOf();
+      const think = (field: 'reasoning' | 'reasoning_content') => ({ choices: [{ delta: { [field]: 'weighing it' } }] });
+      streaming(groq, [role, ...Array.from({ length: 5 }, (_, i) => think(i % 2 ? 'reasoning_content' : 'reasoning')), words('Do not raise.')].map((chunk, i) => ({ after: i ? 5_000 : 100, chunk })));
+      expect(await run(groq, 31_000)).toEqual({ error: null, said: 'Do not raise.' });
+    } finally { vi.useRealTimers(); }
+  });
+
   it('lets a steady stream run as long as it needs, and waits longer between chunks for the last model able', async () => {
     vi.useFakeTimers();
     try {

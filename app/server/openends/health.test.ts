@@ -163,7 +163,8 @@ describe('a word with each model', () => {
       const [nvidia, groq, mistral] = await asked;
       expect(nvidia.ok).toBe(true);
       expect(groq).toMatchObject({ ok: false });
-      expect(mistral).toMatchObject({ ok: false, detail: PLANLESS });
+      expect(mistral).toMatchObject({ ok: false, detail: PLANLESS, fix: 'Turn on the free plan at console.mistral.ai; the key itself is fine.' });
+      expect(groq.fix).toMatch(/key in \.env/);
     } finally { vi.useRealTimers(); }
   });
 });

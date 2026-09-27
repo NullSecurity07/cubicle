@@ -2,9 +2,9 @@ import { execFile } from 'node:child_process';
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Check } from '../../shared/openends.ts';
-import { fallbackList } from '../keys-file/catalogue.ts';
+import { fallbackList, PROVIDERS } from '../keys-file/catalogue.ts';
 import { planless, PLANLESS } from '../breaker.ts';
-import { ENTRIES, unset, type ModelClient } from '../providers.ts';
+import { ENTRIES, providerOf, unset, type ModelClient } from '../providers.ts';
 import type { EngineHealth } from '../opencode/server.ts';
 import { graphifyVersion, INSTALL, mcpCommand, PIN } from '../slices/graph.ts';
 import { isoDay, parseFeed, REDDIT_AGENT } from '../readers.ts';
@@ -270,6 +270,12 @@ export async function checkAll(deps: HealthDeps): Promise<Check[]> {
 
 // The one thing this cannot answer on its own: does a key still work? One token asked of each provider, which costs
 // as close to nothing as a request can. Only run when the founder asks for it.
+// What to do about a key whose plan allows no requests: nothing in .env, only the plan in the provider's console.
+const planFix = (name: string) => {
+  const where = PROVIDERS[ENTRIES.find((entry) => entry.name === providerOf(name))?.keyEnv ?? '']?.where;
+  return `Turn on the free plan${where ? ` at ${where}` : " in the provider's console"}; the key itself is fine.`;
+};
+
 export async function liveChecks(clients: ModelClient[]): Promise<Check[]> {
   if (!clients.length) return [{ name: 'A word with each model', ok: false, detail: 'there is no provider to ask', fix: 'Put a free key in the .env file beside the app.' }];
   return Promise.all(clients.map(async (client) => {
@@ -282,7 +288,7 @@ export async function liveChecks(clients: ModelClient[]): Promise<Check[]> {
       try { await client.step([{ role: 'user', content: 'Say ok.' }], { onToken: () => {}, signal: stop.signal }); } finally { clearTimeout(timer); }
       return { name: `A word with ${client.name}`, ok: true, detail: `answered in ${Date.now() - started} ms as ${client.model}`, fix: '' };
     } catch (error) {
-      return { name: `A word with ${client.name}`, ok: false, detail: planless(error) ? PLANLESS : (error as Error).message.slice(0, 200), fix: `Check this provider's key in .env, and whether today's free allowance is used up.` };
+      return { name: `A word with ${client.name}`, ok: false, detail: planless(error) ? PLANLESS : (error as Error).message.slice(0, 200), fix: planless(error) ? planFix(client.name) : `Check this provider's key in .env, and whether today's free allowance is used up.` };
     }
   }));
 }

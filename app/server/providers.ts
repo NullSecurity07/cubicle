@@ -460,7 +460,10 @@ function clientOf(name: string, entry: Shape, api: OpenAI, firstWordMs?: number)
       let cut = false;
       for await (const chunk of stream) {
         const said = chunk.choices[0]?.delta;
-        if (said?.content || said?.tool_calls?.length) spoken = true;
+        // Thinking out loud counts: gpt-oss (Cloudflare, Groq) and Kimi stream their reasoning before any words, and cut
+        // at the first-word clock mid-thought they never answered at all.
+        const thinking = said as { reasoning?: string; reasoning_content?: string } | undefined;
+        if (said?.content || said?.tool_calls?.length || thinking?.reasoning || thinking?.reasoning_content) spoken = true;
         if (silent && spoken) rearm();
         if (chunk.usage) {
           const neurons = (chunk.usage as { neurons?: number }).neurons;
