@@ -93,12 +93,19 @@ describe('the rest of the checks', () => {
     expect(row(await setup(), 'Backup').fix).toContain('second disk');
   });
 
-  it('count a backup on the same disk as the workspace as a problem, however fresh the newest', async () => {
-    const one = row(await setup({ backups: async () => [{ at }], stat: async () => ({ dev: 7 }) }), 'Backup');
-    expect(one.ok).toBe(false);
+  it('warn, not fail, when a fresh backup is on the same disk as the workspace; red stays for none, failed or old', async () => {
+    const same = async () => ({ dev: 7 });
+    const one = row(await setup({ backups: async () => [{ at }], stat: same }), 'Backup');
+    expect(one).toMatchObject({ ok: true, warn: true });
     expect(one.detail).toContain('the newest made today');
-    expect(one.detail).toContain('same disk as the workspace');
-    expect(row(await setup({ backups: async () => [{ at }] }), 'Backup').detail).not.toContain('same disk');
+    expect(one.detail).toContain('a copy here dies with this disk; pick another disk');
+    const apart = row(await setup({ backups: async () => [{ at }] }), 'Backup');
+    expect(apart.warn).toBeUndefined();
+    expect(apart.detail).not.toContain('same disk');
+    // Old or missing is red whatever the disk, and not also amber.
+    expect(row(await setup({ backups: async () => [{ at: at - 2 * DAY }], stat: same }), 'Backup')).toMatchObject({ ok: false });
+    expect(row(await setup({ backups: async () => [{ at: at - 2 * DAY }], stat: same }), 'Backup').warn).toBeUndefined();
+    expect(row(await setup({ stat: same }), 'Backup').ok).toBe(false);
   });
 
   it('count a backup folder that cannot be written to as a problem, however fresh the newest', async () => {

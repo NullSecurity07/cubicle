@@ -13,14 +13,14 @@ const when = (at: number) => new Date(at).toLocaleString(undefined, { month: 'sh
 
 function Row({ check }: { check: Check }) {
   return (
-    <li className={`health__row${check.ok ? '' : ' is-bad'}`}>
-      <span className={`quota__dot${check.ok ? '' : ' ring--out'}`} aria-hidden="true" />
+    <li className={`health__row${check.ok ? (check.warn ? ' is-warn' : '') : ' is-bad'}`}>
+      <span className={`quota__dot${check.ok ? (check.warn ? ' ring--low' : '') : ' ring--out'}`} aria-hidden="true" />
       <div>
         <b>{check.name}</b>
         <small>{check.detail}</small>
-        {!check.ok && check.fix && <p className="playbook__note">{check.fix}</p>}
+        {(!check.ok || check.warn) && check.fix && <p className="playbook__note">{check.fix}</p>}
       </div>
-      <span className="health__verdict">{check.ok ? 'Fine' : 'Needs you'}</span>
+      <span className="health__verdict">{check.ok ? (check.warn ? 'Worth a look' : 'Fine') : 'Needs you'}</span>
     </li>
   );
 }

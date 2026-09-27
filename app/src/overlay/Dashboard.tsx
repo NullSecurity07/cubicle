@@ -304,8 +304,8 @@ export function Dashboard() {
                 {board.health.length ? (
                   <ul className="dash__health">
                     {board.health.map((one) => (
-                      <li key={one.name} className={one.ok ? undefined : 'is-bad'}>
-                        <span className="dash__mark" aria-label={one.ok ? 'Working' : 'Not working'}>{one.ok ? '✓' : '✗'}</span>
+                      <li key={one.name} className={one.ok ? (one.warn ? 'is-warn' : undefined) : 'is-bad'}>
+                        <span className="dash__mark" aria-label={one.ok ? (one.warn ? 'Worth a look' : 'Working') : 'Not working'}>{one.ok ? (one.warn ? '!' : '✓') : '✗'}</span>
                         <span className="dash__text"><b>{one.name}</b><small>{one.detail}</small></span>
                       </li>
                     ))}

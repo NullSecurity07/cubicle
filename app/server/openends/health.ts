@@ -57,16 +57,18 @@ const ago = (at: number, now: number) => {
 // The Backup row, from one reading of the backups folder. Health and the dashboard both build it here, from the same
 // reading the dashboard's own backup line uses, so the two can never say different things at once.
 // A day, since one is made by itself every day; and a folder it can still be written to, or the next one fails.
-// A folder on the same disk as the workspace is a problem however fresh: the day the disk goes, both go.
+// Red is for no backup, one that failed or one older than a day. Fresh ones on the workspace's own disk are a warning
+// (amber): the day the disk goes, both go. "Same disk" is the same filesystem as stat sees it: two partitions of one
+// drive look different, and so do two btrfs subvolumes, so the warning is only ever a floor.
 export function backupRow(state: { dir: string; backups: { at: number }[]; writable: boolean; sameDisk?: boolean }, now: number): Check {
   const newest = state.backups[0]?.at ?? 0;
   const fresh = !!newest && now - newest < DAY;
   return {
-    name: 'Backup', ok: fresh && state.writable && !state.sameDisk,
+    name: 'Backup', ok: fresh && state.writable, ...(fresh && state.writable && state.sameDisk ? { warn: true } : {}),
     detail: [
       newest ? `${state.backups.length} kept in ${state.dir}, the newest made ${ago(newest, now)}` : `nothing has been backed up yet (they would go to ${state.dir})`,
       ...(state.writable ? [] : ['and that folder cannot be written to']),
-      ...(state.sameDisk ? ['on the same disk as the workspace'] : []),
+      ...(state.sameDisk ? ['on the same disk as the workspace: a copy here dies with this disk; pick another disk'] : []),
     ].join(', '),
     fix: 'One is made by itself once a day, and five are kept. Point "Back up to…" in Health at a second disk or a synced folder: a copy on this same disk is gone with it.',
   };

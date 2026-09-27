@@ -36,7 +36,7 @@ export type DashTokens = {
   byDay: { day: string; tokens: number }[];
 };
 
-export type DashCheck = { name: string; ok: boolean; detail: string };
+export type DashCheck = { name: string; ok: boolean; detail: string; warn?: boolean };
 
 // `placedRoomId` is the first of the team's people on the stage, for "Open".
 export type DashTeam = {
