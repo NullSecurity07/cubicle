@@ -8,7 +8,7 @@ import './today.css';
 // Today's five, at the top of the dashboard: the few things most worth the founder's morning, ranked on the server by a
 // fixed table (no model picks them). Each row opens the place it came from; resting on it says why it is here; the
 // small cross puts it away until tomorrow. Read again whenever the dashboard is (`stamp` moves).
-export function TodayFive({ stamp }: { stamp: number }) {
+export function TodayFive({ stamp, onItems }: { stamp: number; onItems?: (items: TodayItem[] | null) => void }) {
   const [items, setItems] = useState<TodayItem[] | null>(null);
   const [problem, setProblem] = useState('');
   const jumpTo = useJumpTo();
@@ -18,6 +18,9 @@ export function TodayFive({ stamp }: { stamp: number }) {
     request<Today>('/api/today').then((today) => { if (live) { setItems(today.items); setProblem(''); } }).catch((error: Error) => { if (live) setProblem(error.message); });
     return () => { live = false; };
   }, [stamp]);
+
+  // The dashboard leaves out of its other lists what this one already shows.
+  useEffect(() => { onItems?.(items); }, [items, onItems]);
 
   const close = () => overlay.close({ kind: 'panel', name: 'dashboard' });
   // The same doors the rest of the dashboard uses: the decision, the person asked, the card, or Needs you.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { suggest, type Known } from '../../overlay/commands';
-import { partnerCommands } from './words';
+import { partnerCommands, takeBetLabel } from './words';
 
 const known: Known = { cards: [{ id: 'marketing', type: 'room', label: 'Maya', role: 'Marketing' }] };
 
@@ -26,5 +26,16 @@ describe('the partner\'s words in the command bar', () => {
     for (const typed of ['bets', 'my bets', 'open bets', 'ledger']) expect(suggest(typed, known, extra).map((one) => one.label), typed).toContain('Bets');
     (suggest('morning note', known, extra).find((one) => one.label === 'Morning note')!.action as { run(): void }).run();
     expect(asked).toBe(1);
+  });
+});
+
+describe('the button that takes a suggested bet', () => {
+  it('says it adds a Metrics card when the bet\'s number is only in the Company brief', () => {
+    expect(takeBetLabel('Measured by "paying users" on the Company brief: 5 by 2026-10-15. Add a Metrics card from the brief and take the bet: taking it adds a Metrics card with Paying users at 2, wired to Sam.')).toBe('Add a Metrics card and take the bet');
+  });
+
+  it('says only take the bet when a card already holds the number, or nothing is said', () => {
+    expect(takeBetLabel('Measured by "mrr" on the Metrics card: 900 by 2026-10-15.')).toBe('Take the bet');
+    expect(takeBetLabel(undefined)).toBe('Take the bet');
   });
 });

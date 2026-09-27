@@ -328,6 +328,8 @@ test('a reply can be stopped, and what was said is kept', async ({ page }) => {
 
 test('the dock shows today\'s model usage and a person can be pinned to a model', async ({ page }) => {
   await ask(page, 'marketing', 'hello');
+  // A model that has answered today gives its share left; one nobody has asked would say "untested".
+  await expect(page.getByRole('img', { name: /^fake: / })).toHaveAccessibleName(/^fake: \d+% left$/);
   await page.getByRole('button', { name: 'Model usage today' }).click();
   const detail = page.getByRole('dialog', { name: 'Model usage today' });
   await expect(detail).toContainText('fake');
@@ -407,7 +409,23 @@ test('code runs only after the founder reads it, in the sandbox', async ({ page 
   await send(page, 'build', '/tool run_code {"language":"javascript","code":"console.log(6 * 7)"}');
   const ask = node(page, 'build').getByRole('group', { name: 'Run this code?' });
   await expect(ask.getByLabel('Code')).toHaveValue('console.log(6 * 7)');
-  await ask.getByRole('button', { name: 'Run' }).click();
+  // The same question waits in Needs you, counted on the bell, and is answered there as well as on the card.
+  const bell = page.getByRole('button', { name: /^Needs you/ });
+  await expect(bell).toHaveAccessibleName('Needs you: 1 waiting');
+  // The dashboard's Today carries it once, as a thing worth the founder's time.
+  await page.keyboard.press('Control+d');
+  const dash = page.getByRole('dialog', { name: 'Dashboard' });
+  await expect(dash.locator('#dash-today').locator('.today__row, .dash__rows button').filter({ hasText: 'Dev needs your OK' })).toHaveCount(1);
+  await page.keyboard.press('Escape');
+  await bell.click();
+  const needs = page.getByRole('dialog', { name: 'Needs you' });
+  const there = needs.getByRole('group', { name: 'Run this code?' });
+  await expect(there.getByLabel('Code')).toHaveValue('console.log(6 * 7)');
+  await expect(there.getByRole('button', { name: "Don't" })).toBeVisible();
+  await there.getByRole('button', { name: 'Run' }).click();
+  await expect(bell).toHaveAccessibleName('Needs you: nothing waiting');
+  await page.keyboard.press('Escape');
+  await expect(ask).toHaveCount(0);
   await expect(node(page, 'build').locator('.chip--ok summary').last()).toHaveText('Ran javascript code');
   await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('Tool said: 42');
 });
@@ -1152,9 +1170,16 @@ test('decisions: a person lays a choice out, only the founder decides, and every
   await panel.getByLabel('Why').fill('Support cost.');
   await panel.getByRole('button', { name: 'Decide' }).click();
   await expect(panel.getByRole('navigation', { name: 'All decisions' }).getByRole('button', { name: /No free tier/ })).toContainText('Trial only, 14 days');
-  await page.keyboard.press('Escape');
+  // "Decide" handed Needs you over to Decisions rather than stacking on it: one Escape clears both, shade and all,
+  // and the next click on the stage lands.
   await page.keyboard.press('Escape');
   await expect(panel).toBeHidden();
+  await expect(page.getByRole('dialog', { name: 'Needs you' })).toBeHidden();
+  await expect(page.locator('.overlay__shade')).toBeHidden();
+  await page.getByRole('button', { name: 'Frameworks', exact: true }).click({ timeout: 5_000 });
+  await expect(page.getByRole('dialog', { name: 'Frameworks' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.overlay__shade')).toBeHidden();
 
   // From now on every person works from it, and can read it in full.
   await send(page, 'build', '/tool read_decision {"title":"launch channel"}');

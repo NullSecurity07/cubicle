@@ -16,9 +16,14 @@ async function say(page: Page, words: string) {
 }
 
 test.beforeEach(async ({ page }) => {
+  // The Getting started button joins the dock when the first-run list is read, and the pill widens by one button:
+  // everything measured here is measured after that.
+  const missions = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/missions');
   await page.goto('/');
   await expect(page.locator('.react-flow__node[data-id="marketing"]')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Model usage today' })).toBeVisible();
+  await missions;
+  await page.evaluate(() => new Promise((done) => { requestAnimationFrame(() => requestAnimationFrame(done)); }));
 });
 
 test('floats as a pill at the foot of the window, centred, and its menu opens upward, whole in the window', async ({ page }) => {

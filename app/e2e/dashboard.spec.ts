@@ -2,7 +2,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
 
-// The dashboard: Ctrl D opens it, its four sections are there, and a row in "Needs you" is a door. A watched page that
+// The dashboard: Ctrl D opens it, its four sections are there, and a row in Today's five is a door. A watched page that
 // changed is written straight into the workspace, the way the half-minute check writes one, and it names Maya's room;
 // pressing it closes the dashboard and brings Maya forward. The file is taken away afterwards.
 const WATCH = join(process.env.STAGE_WORKSPACE!, 'watch', 'marketing.json');
@@ -55,8 +55,12 @@ test('the dashboard opens on the founder\'s day, and a needs-you row lands in th
   await expect(dash.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Teams' })).toHaveAttribute('aria-current', 'true');
   await dash.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name: 'Today' }).click();
 
-  const row = dash.locator('.dash__group', { hasText: 'Needs you' }).getByRole('button', { name: /The page Rival pricing changed/ });
+  // The changed page is shown once, in Today's five; Needs you below says it is already up there rather than repeat it.
+  const row = dash.getByRole('list', { name: "Today's five" }).locator('.today__row', { hasText: 'Rival pricing' });
   await expect(row).toBeVisible({ timeout: 10_000 });
+  const needs = dash.locator('.dash__group', { has: page.getByRole('heading', { name: 'Needs you', exact: true }) });
+  await expect(needs).toContainText("Already in Today's five.");
+  await expect(needs.getByRole('button', { name: /Rival pricing/ })).toHaveCount(0);
   await row.click();
   await expect(dash).toBeHidden();
   const sheet = page.getByRole('dialog', { name: 'Focused card' });
