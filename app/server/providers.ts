@@ -113,6 +113,9 @@ export function plainBreak(message: string, provider?: string): string {
 // What one model's failure was, in a few plain words: never the provider's own text, which means nothing to a founder.
 function failureWords(message: string): string {
   if (MALFORMED_CALL.test(message)) return 'tool call came out malformed';
+  // The long clock is said as such, so the founder knows why the answer took a minute and a half to fail.
+  const waited = /no first word within ([\d.]+) s, the last model able/i.exec(message);
+  if (waited) return `said nothing for too long (waited ${waited[1]} s: last model able)`;
   if (/no first word/i.test(message)) return 'said nothing for too long';
   if (TOO_LARGE.test(message)) return 'prompt too large';
   if (REJECTED.test(message)) return 'rejected the request';
@@ -407,7 +410,7 @@ function clientOf(name: string, entry: Shape, api: OpenAI, firstWordMs?: number)
       }
       return { text: '', calls: calls.filter(Boolean).map((call, index) => ({ ...call, id: call.id || callId() })), usage, quota: readQuota(response.headers), ...(cut ? { cut } : {}) };
     } catch (error) {
-      if (silent?.signal.aborted && !signal?.aborted) throw new Error(`no first word within ${Math.round(wait! / 100) / 10} s (timed out)`);
+      if (silent?.signal.aborted && !signal?.aborted) throw new Error(`no first word within ${Math.round(wait! / 100) / 10} s${patient ? ', the last model able' : ''} (timed out)`);
       throw error;
     } finally {
       clearTimeout(timer);

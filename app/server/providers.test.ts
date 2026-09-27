@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { fitHistory, plainBreak, plainFailure, scrubProvider, wireTools, collectCalls, complete, expand, portable, readQuota, realClients, unset, type ModelClient, type ToolCall } from './providers.ts';
 
 const client = (name: string, tokens: string[] | Error, maxPromptChars = Infinity): ModelClient => ({
@@ -453,5 +453,24 @@ describe('the Cloudflare models on the day\'s neuron pool', () => {
   it('marks gpt-oss and Qwen as sharing the pool with the pictures, and Scout not', () => {
     const clients = realClients({ CLOUDFLARE_API_TOKEN: 't', CLOUDFLARE_ACCOUNT_ID: 'abc' } as NodeJS.ProcessEnv);
     expect(clients.map((one) => [one.name, !!one.sharedPool])).toEqual([['cloudflare-gpt-oss', true], ['cloudflare-qwen', true], ['cloudflare', false]]);
+  });
+});
+
+describe('the long clock, said (round 5)', () => {
+  it('adds how long the last model able was waited for to "said nothing for too long"', async () => {
+    vi.useFakeTimers();
+    try {
+      const [gemini] = realClients({ GEMINI_API_KEY: 'g', STAGE_FIRST_TOKEN_MS: '40' } as NodeJS.ProcessEnv);
+      (gemini.openai!.chat.completions as unknown as { create: unknown }).create = (_body: unknown, { signal }: { signal: AbortSignal }) => ({
+        withResponse: () => new Promise((_done, fail) => signal.addEventListener('abort', () => fail(new Error('Request was aborted.')), { once: true })),
+      });
+      const failed = complete(messages, { onToken: () => {} }, [gemini]).catch((error: Error) => error);
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(plainFailure((await failed as Error).message)).toBe('gemini said nothing for too long (waited 90 s: last model able)');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('keeps the short line when the usual clock cut it', () => {
+    expect(plainFailure('no provider answered — gemini: no first word within 20 s (timed out); cloudflare: 503')).toBe('gemini said nothing for too long, cloudflare down');
   });
 });
