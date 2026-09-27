@@ -259,7 +259,8 @@ export type RoomEvent = { roomId: string } & (
   { chat: 'changed' } | { turn: string; started: { via?: ChatVia } } | { turn: string; token: string }
   | { turn: string; tool: ToolEvent } | { turn: string; restart: true } | { turn: string; ended: true });
 // One configured model as the client sees it: `left` is the share of today's free quota still there, 0 to 1.
-export type ModelInfo = { name: string; model: string; ready: boolean; left: number; requests: number; tokens: number };
+// `planOff`: every key this provider has is refused because its free plan is not turned on; it answers nobody until it is.
+export type ModelInfo = { name: string; model: string; ready: boolean; left: number; requests: number; tokens: number; planOff?: boolean };
 
 export const newMessageId = () => `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 export const newTurnId = () => `t-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
