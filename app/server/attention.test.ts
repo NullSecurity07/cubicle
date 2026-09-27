@@ -279,14 +279,16 @@ describe('a daily backup that failed', () => {
 describe('what is already done leaves Needs you', () => {
   const setUp = async () => {
     const dir = await mkdtemp(join(tmpdir(), 'attention-done-'));
-    const store = createStore(dir); const boards = createBoards(dir); const decisions = createDecisions(dir, () => NOON - 60_000); const bets = betsBook(dir, () => NOON);
+    // One clock for the boards, the bets and the decisions, moved by a test that needs one thing earlier than another.
+    const time = { now: NOON, decisions: NOON - 60_000 };
+    const store = createStore(dir); const boards = createBoards(dir, () => time.now); const decisions = createDecisions(dir, () => time.decisions); const bets = betsBook(dir, () => time.now);
     const stage = await store.loadStage();
     await store.saveStage({ ...stage, cards: [{ id: 'b1', kind: 'board', x: 0, y: 0, w: 900, h: 400 }] });
     const attention = createAttention(dir, () => NOON);
     attention.source(boardAttention(store, boards));
     attention.source(decisionAttention(decisions));
     attention.settle(doneAttention({ workspace: dir, store, boards, decisions }));
-    return { dir, store, boards, decisions, bets, attention };
+    return { dir, store, boards, decisions, bets, attention, time };
   };
   const plan = (id: string, steps: string[]) => ({ id, at: NOON, who: 'Sam', roomId: 'partner', title: 'Invoicing week', steps: steps.map((text) => ({ text })) });
 
@@ -328,6 +330,61 @@ describe('what is already done leaves Needs you', () => {
     expect(await attention.list()).toEqual([]);
   });
 
+  it('counts only tasks made since the plan was offered, so a weekly plan is not hidden by last week\'s tasks', async () => {
+    const { dir, boards, attention, time } = await setUp();
+    await writeFile(join(dir, 'partner.json'), JSON.stringify({ decided: [], plans: [plan('plan-a', ['Ship the invoice form', 'Call the three beta users'])] }));
+    attention.source(async () => [{ id: 'proposed-plan:plan-a', kind: 'proposed-plan' as const, title: 'Add these 2 tasks', at: NOON }]);
+    time.now = NOON - 7 * 86_400_000;
+    await boards.add('b1', { title: 'Ship the invoice form', column: 'done' });
+    await boards.add('b1', { title: 'Call the three beta users', column: 'done' });
+    expect((await attention.list()).map((one) => one.id)).toEqual(['proposed-plan:plan-a']);
+    // Made in the same turn, a moment before the offer was written down, they count.
+    time.now = NOON - 60_000;
+    await boards.add('b1', { title: 'Ship the invoice form' });
+    await boards.add('b1', { title: 'Call the three beta users' });
+    expect(await attention.list()).toEqual([]);
+  });
+
+  it('keeps a question asked again after an old decision on the same title', async () => {
+    const { decisions, attention, time } = await setUp();
+    time.decisions = NOON - 7 * 86_400_000;
+    await decisions.record({ title: 'Raise the price?', chosen: 'No' });
+    time.decisions = NOON;
+    const again = await decisions.propose({ title: 'Raise the price?', options: ['Yes', 'No'] });
+    expect((await attention.list()).map((one) => one.id)).toEqual([`proposed-decision:${again.id}`]);
+  });
+
+  it('answers only a question that asks to choose a bet, only with an open bet taken after it, and never with a closed twin', async () => {
+    const { bets, decisions, attention, time } = await setUp();
+    const input = { what: 'Retain 5 paying beta users', hypothesis: 'Invoicing keeps them', metric: 'paying_users', target: 5, checkDate: '2026-10-04' };
+    // A bet taken and closed a week ago: neither its words proposed again nor a new question to pick a bet are answered by it.
+    time.now = NOON - 7 * 86_400_000;
+    const old = await bets.propose(input);
+    await bets.answer(old.id, true);
+    await bets.close(old.id, { verdict: 'did-not', value: 3, note: '', by: 'Founder' });
+    time.now = NOON; time.decisions = NOON - 60_000;
+    const rerun = await bets.propose(input);
+    const pick = await decisions.propose({ title: 'Pick the next bet', options: ['Retention', 'Signups'] });
+    const kill = await decisions.propose({ title: 'Kill the retention bet?', options: ['Yes', 'No'] });
+    const source = async () => (await bets.list()).filter((bet) => bet.status === 'proposed').map((bet) => ({ id: `proposed-bet:${bet.id}`, kind: 'proposed-bet' as const, title: bet.what, at: bet.at }));
+    attention.source(source);
+    const ids = async () => (await attention.list()).map((one) => one.id).sort();
+    expect(await ids()).toEqual([`proposed-bet:${rerun.id}`, `proposed-decision:${kill.id}`, `proposed-decision:${pick.id}`].sort());
+    // Taken now, the rerun answers "pick the next bet"; "kill the retention bet" is not a question about choosing one.
+    await bets.answer(rerun.id, true);
+    expect(await ids()).toEqual([`proposed-decision:${kill.id}`]);
+  });
+
+  it('does not take a bet proposed and taken before the question as its answer', async () => {
+    const { bets, decisions, attention, time } = await setUp();
+    time.now = NOON - 3_600_000;
+    const early = await bets.propose({ what: 'Retain 5 paying beta users', hypothesis: '', metric: 'paying_users', target: 5, checkDate: '2026-10-04' });
+    await bets.answer(early.id, true);
+    time.decisions = NOON;
+    const which = await decisions.propose({ title: 'Which bet next?', options: ['Retention', 'Signups'] });
+    expect((await attention.list()).map((one) => one.id)).toEqual([`proposed-decision:${which.id}`]);
+  });
+
   it('tells whoever watches when a board change makes a plan done', async () => {
     const { dir, boards, attention } = await setUp();
     await writeFile(join(dir, 'partner.json'), JSON.stringify({ decided: [], plans: [plan('plan-a', ['Ship the invoice form', 'Call the three beta users'])] }));
@@ -337,8 +394,6 @@ describe('what is already done leaves Needs you', () => {
     boards.onChange(() => { void attention.refresh(); });
     await boards.add('b1', { title: 'Ship the invoice form' });
     await boards.add('b1', { title: 'Call the three beta users' });
-    await boards.settled();
-    await new Promise((done) => setTimeout(done, 50));
-    expect(told.at(-1)).toBe(0);
+    await expect.poll(() => told.at(-1)).toBe(0);
   });
 });

@@ -43,13 +43,18 @@ describe('unreceiptedClaims', () => {
     expect(unreceiptedClaims(said, [refused])).toEqual(['proposed']);
     expect(checkReply({ reply: said, receipts: [refused], sources: [] })[0]).toMatch(/^Unconfirmed: .*\(proposed\)/);
     expect(unreceiptedClaims("I've just proposed the decision.", [])).toEqual(['proposed']);
-    expect(unreceiptedClaims('The bet has been proposed to you.', [])).toEqual(['proposed']);
     // A proposal that went through backs it, whatever was proposed.
     expect(unreceiptedClaims(said, [refused, { name: 'propose_bet', ok: true }])).toEqual([]);
     expect(unreceiptedClaims("I've proposed the tasks for your board.", [{ name: 'propose_tasks', ok: true }])).toEqual([]);
     // The plain past is history or a suggestion in words, not a record made this turn.
     expect(unreceiptedClaims('The price I proposed yesterday still holds.', [])).toEqual([]);
     expect(unreceiptedClaims('As I proposed, start with invoicing.', [])).toEqual([]);
+    // Talk about what waits, or a proposal made on another turn, is not a claim about this one.
+    expect(unreceiptedClaims('Two bets have been proposed and wait for you in Needs you.', [])).toEqual([]);
+    expect(unreceiptedClaims('What has been proposed so far is thin.', [])).toEqual([]);
+    expect(unreceiptedClaims('I have proposed this twice already, so here it is plainly.', [])).toEqual([]);
+    expect(unreceiptedClaims("I've proposed it before: start with invoicing.", [])).toEqual([]);
+    expect(unreceiptedClaims('I have proposed it again, with a lower target.', [])).toEqual([]);
   });
 
   it('does not count a write the doc guard held back', () => {

@@ -37,7 +37,8 @@ else {
 
 const width = Math.max(...checks.map((one) => one.name.length));
 for (const check of checks) {
-  console.log(`${check.ok ? '✓' : '✗'} ${check.name.padEnd(width)}  ${check.detail}`);
+  // A detail may run on to a line of its own (the backup folder): it lines up under the first, not at the margin.
+  console.log(`${check.ok ? '✓' : '✗'} ${check.name.padEnd(width)}  ${check.detail.replace(/\n/g, `\n${' '.repeat(width + 4)}`)}`);
   if (!check.ok && check.fix) console.log(`${' '.repeat(width + 4)}${check.fix}`);
 }
 const bad = checks.filter((one) => !one.ok).length;

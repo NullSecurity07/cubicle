@@ -28,9 +28,11 @@ const WE_DID = new RegExp(`\\bwe\\s+(${VERBS})(?=\\s+(?:it|this|that|them|the|yo
 const PASSIVE = new RegExp(`\\b(?:has been|have been|is now|are now|was just|were just)(?:\\s+(?:just|now|already|also))?\\s+(${VERBS})\\b`, 'gi');
 const MADE = new RegExp(`\\b(?:file|doc|document|email|e-mail|mail|post|update|draft|note|message|deck|invite)s?\\s+(?:was|were|is|are)(?:\\s+(?:just|now|already|also))?\\s+(${VERBS})\\b`, 'gi');
 // "I have proposed a bet": a proposal put on record this turn, which only a propose_ tool that worked can back. The
-// plain past ("the price I proposed") is a suggestion made in words or some earlier day, so only the perfect counts.
+// plain past ("the price I proposed") is a suggestion made in words or some earlier day, so only the perfect counts,
+// and only in the first person: "two bets have been proposed" is how Needs you stands, not something done this turn.
 const PROPOSED = /\b(?:I(?:'ve| have)|we(?:'ve| have))(?:\s+(?:just|now|already|also))?\s+(proposed)\b/gi;
-const PROPOSED_PASSIVE = /\b(?:has been|have been|is now|are now|was just|were just)(?:\s+(?:just|now|already|also))?\s+(proposed)\b/gi;
+// "I have proposed this twice", "before", "again": a proposal of other turns, told as history.
+const PROPOSED_BEFORE = /\b(?:twice|before|again|earlier|previously)\b/i;
 const OPENING = new RegExp(`(?:^|[.!?]\\s+|\\n\\s*)(${VERBS})\\s+(?:it|the|this|to|your|a|an|them|\`|")`, 'gi');
 // A claim that is not one: under a condition, denied, asked, or about words that sit in this very reply ("below",
 // or a sentence ending in a colon with the words after it).
@@ -54,7 +56,7 @@ function sentenceAround(text: string, at: number): { before: string; rest: strin
 // The action verbs this reply claims as done that no working receipt of the same kind stands behind, in the order said.
 export function unreceiptedClaims(reply: string, receipts: Receipt[]): string[] {
   const found: { at: number; verb: string }[] = [];
-  for (const pattern of [FIRST, WE_DID, PASSIVE, MADE, OPENING, PROPOSED, PROPOSED_PASSIVE]) {
+  for (const pattern of [FIRST, WE_DID, PASSIVE, MADE, OPENING, PROPOSED]) {
     for (const match of reply.matchAll(pattern)) {
       const verb = match[1];
       const at = match.index + match[0].length - verb.length;
@@ -64,6 +66,7 @@ export function unreceiptedClaims(reply: string, receipts: Receipt[]): string[] 
       const { rest } = sentenceAround(reply, at);
       if (CONDITION.test(before) || HERE.test(rest) || /[?:]$/.test(rest.trimEnd())) continue;
       if (ELSEWHEN.test(before + rest) || IN_MONTH.test(before + rest) || NOT_A_THING.test(rest)) continue;
+      if (verb.toLowerCase() === 'proposed' && PROPOSED_BEFORE.test(before + rest)) continue;
       found.push({ at, verb: verb.toLowerCase() });
     }
   }

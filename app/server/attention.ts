@@ -5,6 +5,7 @@ import type { Attention, AttentionKind, Decision, ToolEvent } from '../shared/mo
 import { planTaskTitle, stepText, type Bet, type PlanProposal } from '../shared/partner.ts';
 import type { Boards } from './boards.ts';
 import type { Damage, Store } from './store.ts';
+import { localDay } from './clock.ts';
 import { ENTRIES } from './providers.ts';
 import type { UsageBook } from './usage.ts';
 
@@ -181,12 +182,17 @@ export function backupAttention(attention: Pick<AttentionBook, 'raise' | 'clear'
 
 // The same words however they were typed: case, spacing and a closing stop do not make two things different.
 const same = (text: string) => text.toLowerCase().replace(/\s+/g, ' ').trim().replace(/[.!?\u2026\s]+$/, '');
+// A question that asks which bet to make, not one about a bet already made ("Kill the retention bet?").
+const CHOOSE_BET = /\b(?:choose|pick|which|select|decide on)\b.*\bbets?\b/i;
+const SAME_TURN = 5 * 60_000;
 const readJson = async <T>(path: string, fallback: T): Promise<T> => { try { return JSON.parse(await readFile(path, 'utf8')) as T; } catch { return fallback; } };
 
-// A proposal is done when what it asks for is already so, however it got there: a plan whose every step is a task on
-// a board (added by a first yes, or by hand), a bet already taken under the same words, a decision already on record
-// under the same title, or a question to choose a bet asked before a bet was taken. Read fresh on every look, so
-// the row goes on the next tick and on the action that did it, and never lingers to be advised on.
+// A proposal is done when what it asks for is already so, however it got there, and done since it was asked: a plan
+// whose every step is a task made on a board since it was offered (by a first yes, or by hand), a bet open under the
+// same words, a decision on record under the same title decided since it was asked, or a question to choose a bet
+// answered by an open bet taken after it. Read fresh on every look, so the row goes on the next tick and on the action
+// that did it, and never lingers to be advised on. What was done before the ask ("Raise the price?" decided last
+// month, last week's tasks of a weekly plan, a bet already closed) answers nothing: asking again is asking again.
 export function doneAttention(deps: { workspace: string; store: Pick<Store, 'loadStage'>; boards: Pick<Boards, 'list'>; decisions: { list(): Promise<Decision[]> } }): Settle {
   return async (list) => {
     const done = new Set<string>();
@@ -194,15 +200,17 @@ export function doneAttention(deps: { workspace: string; store: Pick<Store, 'loa
     if (wanted('proposed-plan')) {
       const { plans } = await readJson<{ plans?: PlanProposal[] }>(join(deps.workspace, 'partner.json'), {});
       const stage = await deps.store.loadStage();
-      const titles = new Set<string>();
-      for (const card of (stage.cards ?? []).filter((one) => one.kind === 'board')) for (const task of await deps.boards.list(card.id)) if (task.column !== 'proposed') titles.add(same(task.title));
+      const tasks: { title: string; at: number }[] = [];
+      for (const card of (stage.cards ?? []).filter((one) => one.kind === 'board')) for (const task of await deps.boards.list(card.id)) if (task.column !== 'proposed') tasks.push({ title: same(task.title), at: task.createdAt });
       for (const plan of Array.isArray(plans) ? plans : []) {
+        // A few minutes before the offer still count: a person may put a step on the board in the turn that offers the plan.
+        const titles = new Set(tasks.filter((task) => task.at >= plan.at - SAME_TURN).map((task) => task.title));
         const onBoard = plan.steps.length > 0 && plan.steps.every((step) => titles.has(same(planTaskTitle(step))) || titles.has(same(stepText(step))));
         if (onBoard) done.add(`proposed-plan:${plan.id}`);
       }
     }
     const bets = wanted('proposed-bet') || wanted('proposed-decision') ? (await readJson<{ bets?: Bet[] }>(join(deps.workspace, 'bets.json'), {})).bets ?? [] : [];
-    const taken = bets.filter((bet) => bet.status !== 'proposed');
+    const taken = bets.filter((bet) => bet.status === 'open');
     for (const bet of bets) {
       if (bet.status !== 'proposed') continue;
       const twin = taken.some((one) => same(one.what) === same(bet.what) || (one.metric === bet.metric && one.target === bet.target && one.checkDate === bet.checkDate));
@@ -210,12 +218,14 @@ export function doneAttention(deps: { workspace: string; store: Pick<Store, 'loa
     }
     if (wanted('proposed-decision')) {
       const all = await deps.decisions.list();
-      const decided = new Set(all.filter((one) => one.status === 'decided').map((one) => same(one.title)));
+      const decided = all.filter((one) => one.status === 'decided');
       for (const decision of all) {
         if (decision.status !== 'proposed') continue;
-        // "Choose a 2-week validation bet": a bet taken after it was asked is its answer.
-        const aboutBet = /\bbets?\b/i.test(decision.title) && taken.some((bet) => bet.at >= decision.at);
-        if (decided.has(same(decision.title)) || aboutBet) done.add(`proposed-decision:${decision.id}`);
+        const twin = decided.some((one) => same(one.title) === same(decision.title) && (one.decidedAt ?? one.at) >= decision.at);
+        // "Choose a 2-week validation bet": an open bet taken after it was asked is its answer. Taken after is proposed
+        // after, or taken on a later day (the ledger keeps the day a bet was taken, not the hour).
+        const aboutBet = CHOOSE_BET.test(decision.title) && taken.some((bet) => bet.at >= decision.at || bet.made > localDay(decision.at));
+        if (twin || aboutBet) done.add(`proposed-decision:${decision.id}`);
       }
     }
     return done;

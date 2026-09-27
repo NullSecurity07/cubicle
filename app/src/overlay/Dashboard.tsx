@@ -313,7 +313,7 @@ export function Dashboard() {
                       <li key={one.name} className={one.ok ? (one.warn ? 'is-warn' : undefined) : 'is-bad'}>
                         <span className="dash__mark" aria-label={one.ok ? (one.warn ? 'Worth a look' : 'Working') : 'Not working'}>{one.ok ? (one.warn ? '!' : '✓') : '✗'}</span>
                         {/* What is so, then where (a folder) on its own line, cut short if it must be: the sentence stays whole. */}
-                        <span className="dash__text"><b>{one.name}</b><small>{one.detail.split('\n')[0]}</small>{one.detail.split('\n').slice(1).map((line) => <small key={line} className="dash__where" title={line}>{line}</small>)}</span>
+                        <span className="dash__text"><b>{one.name}</b><small>{one.detail.split('\n')[0]}</small>{one.detail.split('\n').slice(1).map((line, index) => <small key={index} className="dash__where" title={line}>{line}</small>)}</span>
                       </li>
                     ))}
                   </ul>
