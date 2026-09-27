@@ -1,11 +1,12 @@
 import type { Mail } from '../mail.ts';
 import { SETUP_HINT } from '../mail.ts';
 import { runCode } from '../sandbox.ts';
+import { plainArithmetic } from './arithmetic.ts';
 import { speaker, text, type Tool } from './registry.ts';
 
 const ADDRESS = /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/;
 
-// Tools that reach outside the workspace or run something. Each one waits for the founder's yes.
+// Tools that reach outside the workspace or run something. Each one waits for the founder's yes, but for plain arithmetic.
 export function outwardTools(mail: Mail, filesDir: string): Tool[] {
   return [
     {
@@ -46,14 +47,15 @@ export function outwardTools(mail: Mail, filesDir: string): Tool[] {
     },
     {
       name: 'run_code',
-      approval: true,
+      // Plain arithmetic runs at once; anything that imports or reaches further is read and approved first.
+      approval: async (args) => (plainArithmetic(args.language === 'javascript' ? 'javascript' : 'python', typeof args.code === 'string' ? args.code : '') ? null : ''),
       perTurn: 3,
       description: 'Run Python or JavaScript in a sealed sandbox: no network, nothing can be installed, 30 seconds (90 with packages). '
         + 'Python has the standard library plus the Pyodide packages, loaded when imported: pandas, numpy, matplotlib, scipy, scikit-learn, openpyxl, beautifulsoup4 and similar. '
         + 'It sees only the shared files folder, as the working directory (JavaScript gets files.list(), files.read(path), files.write(path, text)). '
         + 'Look at a data file with read_file before you write code for it, so the columns are right the first time. Print what you want to see. '
         + 'For a chart, save a PNG into the folder (plt.savefig("chart.png")) and show it in your reply as ![chart](/api/files/chart.png). '
-        + 'The founder must read and approve every run, so do the whole job in one run.',
+        + 'Short code that only does arithmetic (no imports, no files) runs at once; the founder must read and approve any other run, so do the whole job in one run.',
       parameters: { type: 'object', properties: { language: { type: 'string', enum: ['python', 'javascript'] }, code: { type: 'string' } }, required: ['language', 'code'] },
       // The context goes in so that code can reach this person's own tools, if anything offered them any.
       async run(args, context) {

@@ -92,4 +92,15 @@ describe('outward tools', () => {
     const { result } = await turn(mailbox({}).mail, [{ name: 'run_code', args: { language: 'javascript', code: '2 + 3' } }], async () => ({ ok: true }));
     expect(result.tools[0]).toMatchObject({ ok: true, result: '5' });
   }, 60_000);
+
+  it('runs plain arithmetic without asking, and still asks for code that reaches further', async () => {
+    const asked: ToolEvent[] = [];
+    const plain = await turn(mailbox({}).mail, [{ name: 'run_code', args: { language: 'javascript', code: 'console.log((9800 / (1650 - 78)).toFixed(1))' } }], async (event) => { asked.push(event); return { ok: false }; });
+    expect(asked).toEqual([]);
+    expect(plain.events.some((event) => event.waiting)).toBe(false);
+    expect(plain.result.tools[0]).toMatchObject({ ok: true, result: expect.stringMatching(/^6\.2/) });
+    const further = await turn(mailbox({}).mail, [{ name: 'run_code', args: { language: 'javascript', code: "files.write('a.txt', 'x')" } }], async (event) => { asked.push(event); return { ok: false }; });
+    expect(asked).toEqual([expect.objectContaining({ name: 'run_code', waiting: true })]);
+    expect(further.result.tools[0].ok).toBe(false);
+  }, 60_000);
 });
