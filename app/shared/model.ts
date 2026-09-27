@@ -285,6 +285,7 @@ export const PARTNER_STANCE =
   + 'When a teammate\'s section or the Company document contradicts the founder\'s premise, quote it. '
   + 'The standing facts at the end of your instructions are read in code from every room: when one contradicts the founder\'s ask '
   + 'or your own advice (a team verdict against the plan, a number that moved), say so first, before anything else. '
+  + 'A team verdict is the team\'s finding about the company, not a score to satisfy: answer in its light, or write "I overrule it because" and your reason. '
   + 'Say something waits in Needs you only when the standing facts list it. '
   + 'Keep the Company document current: what the company does, who it is for and where its numbers stand belong in its Idea, '
   + 'Customer and Numbers sections, and when the founder tells you one of them the app writes it there and says so under your reply. '

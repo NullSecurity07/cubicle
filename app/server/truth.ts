@@ -12,11 +12,21 @@ const WRITES = /write|create|append|replace|remember|retain|note_|add_|log_|clos
 const KINDS: { verbs: RegExp; tools: RegExp }[] = [
   { verbs: /^(saved|wrote|written|updated|created|stored|recorded)$/i, tools: WRITES },
   { verbs: /^(sent|emailed|mailed|messaged)$/i, tools: /send|mail|reach|telegram|ask_person|note_founder/ },
+  // Outreach: someone was contacted, called or interviewed. Only a tool that reaches people backs it.
+  { verbs: /^(contacted|reached out|called|interviewed|spoke to)$/i, tools: /send|mail|reach|telegram|outreach|message|call|interview|leads/ },
   { verbs: /^(posted|published)$/i, tools: /post|publish|send|reach|browse|edit_site|make_site/ },
   { verbs: /^(scheduled|booked)$/i, tools: /watch|automation|schedule|repeat|propose_|remind|nudge|delegate/ },
   { verbs: /^proposed$/i, tools: /propose_/ },
 ];
-const VERBS = 'saved|wrote|written|updated|created|stored|recorded|sent|emailed|mailed|messaged|posted|published|scheduled|booked';
+const VERBS = 'saved|wrote|written|updated|created|stored|recorded|sent|emailed|mailed|messaged|contacted|reached out|called|interviewed|spoke to|posted|published|scheduled|booked';
+// Review 7: "10 non-paying beta users contacted for testing", a count of people with the outreach done to them and
+// no "I" or "has been" in front. "Called" is left out here: "3 users called it confusing" names, it does not phone.
+// Nobody may stand between the count and the verb: "the 12 beta users you contacted" is who was reached by someone
+// named, "the 3 hosts Lena interviewed" too. Case is read as written: a capital word is a name, unless a plural
+// noun follows it ("10 Kindling hosts contacted" names the product, not who did it).
+const REACHED = /\b\d[\d,]*\s+(?:(?!(?:you|they|we|i|he|she|someone|somebody)\b)(?:[a-z0-9][\w-]*|[A-Z][\w-]*(?=\s+[a-z][\w-]*s\b))\s+){0,4}?(contacted|emailed|messaged|interviewed)\b(?!\s+(?:back|us|me|in)\b)/g;
+// Said as a plan or a goal, not as done: "Plan: 5 hosts interviewed by Friday", "we need 5 users interviewed".
+const AHEAD = /\b(?:need|needs|needed|should|plan|planned|goal|target|aim)\b|\bby (?:mon|tues|wednes|thurs|fri|satur|sun)day\b/i;
 // "I saved", "I've just sent", "we have posted"; "it has been saved", "the draft was saved"; a sentence that opens with
 // the verb, "Saved it to plan.md". A bare "we sent" is the company's own history, not this turn, and a bare "is
 // updated" or "was created" says how things are or were ("updated weekly", "created in 2010"), so the passive counts
@@ -43,7 +53,7 @@ const HERE = /\b(?:below|above|here|in this (?:reply|message|chat))\b/i;
 const ELSEWHEN = /\b(?:yesterday|last (?:week|month|year|quarter|time)|ago|in (?:19|20)\d\d|you (?:said|told|mentioned|wrote))\b/i;
 // "In March", "last June": a month named as the time of it puts the sentence in the past (case kept, so "in may" is not one).
 const IN_MONTH = /\b(?:[Ii]n|[Dd]uring|[Ss]ince|[Ll]ast|[Bb]ack in|[Ee]arly|[Ll]ate)\s+(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept?|Oct|Nov|Dec)\b/;
-const NOT_A_THING = /^\w+\s+(?:(?:you|them|him|her|us)\s+)?nothing\b|^\w+\s+my\s+(?:view|mind|thinking|take|estimate|opinion|read|understanding|guess)\b/i;
+const NOT_A_THING = /^\w+\s+(?:(?:you|them|him|her|us)\s+)?nothing\b|^(?:\w+\s+){1,2}(?:nobody|no one|no-one)\b|^\w+\s+my\s+(?:view|mind|thinking|take|estimate|opinion|read|understanding|guess)\b/i;
 
 function sentenceAround(text: string, at: number): { before: string; rest: string } {
   const start = Math.max(text.lastIndexOf('.', at - 1), text.lastIndexOf('!', at - 1), text.lastIndexOf('?', at - 1), text.lastIndexOf('\n', at - 1)) + 1;
@@ -56,7 +66,7 @@ function sentenceAround(text: string, at: number): { before: string; rest: strin
 // The action verbs this reply claims as done that no working receipt of the same kind stands behind, in the order said.
 export function unreceiptedClaims(reply: string, receipts: Receipt[]): string[] {
   const found: { at: number; verb: string }[] = [];
-  for (const pattern of [FIRST, WE_DID, PASSIVE, MADE, OPENING, PROPOSED]) {
+  for (const pattern of [FIRST, WE_DID, PASSIVE, MADE, OPENING, PROPOSED, REACHED]) {
     for (const match of reply.matchAll(pattern)) {
       const verb = match[1];
       const at = match.index + match[0].length - verb.length;
@@ -66,6 +76,7 @@ export function unreceiptedClaims(reply: string, receipts: Receipt[]): string[] 
       const { rest } = sentenceAround(reply, at);
       if (CONDITION.test(before) || HERE.test(rest) || /[?:]$/.test(rest.trimEnd())) continue;
       if (ELSEWHEN.test(before + rest) || IN_MONTH.test(before + rest) || NOT_A_THING.test(rest)) continue;
+      if (pattern === REACHED && AHEAD.test(before + rest)) continue;
       if (verb.toLowerCase() === 'proposed' && PROPOSED_BEFORE.test(before + rest)) continue;
       found.push({ at, verb: verb.toLowerCase() });
     }
@@ -107,6 +118,26 @@ export function stripFlagged(source: string): string {
   // A figure a doc carries marked "(unsourced)" is not a source either: the doc tools marked it so.
   const marked = source.replace(FLAG_LINE, '').replace(/[$€£]?\s?\d[\d,.]*\s?(?:k|m|bn|%|x)?\s?\(unsourced\)/gi, '');
   return named.reduce((kept, label) => kept.replace(whole(label), ''), marked);
+}
+
+// For what is kept to read later (a person's memory): stripFlagged takes the flagged figure out and leaves the rest of
+// the claim standing, so journey 9's "10 non-paying beta users contacted for testing" came back as a fact. Here each
+// sentence that holds a figure or a claimed action the truth net flagged goes whole, then the flag lines themselves.
+const CLAIMED = /^Unconfirmed: this reply claims an action no tool confirmed \((.+?)\)\.?$/gm;
+export function dropFlagged(text: string): string {
+  const named = [...text.matchAll(/^Unsourced figures: (.+?) \(not found/gm)].flatMap((match) => match[1].split(', '));
+  const verbs = [...text.matchAll(CLAIMED)].flatMap((match) => match[1].split(', '));
+  const quote = (label: string) => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const marks = [
+    ...named.map((label) => new RegExp(`(?<![\\d.,])${quote(label)}(?![\\d])`)),
+    ...verbs.map((verb) => new RegExp(`\\b${quote(verb)}\\b`, 'i')),
+  ];
+  const lines = text.replace(FLAG_LINE, '').split('\n').flatMap((line) => {
+    if (!marks.length || !line.trim()) return [line];
+    const kept = line.split(/(?<=[.!?])\s+/).filter((sentence) => !marks.some((mark) => mark.test(sentence)));
+    return kept.length ? [kept.join(' ')] : [];
+  });
+  return stripFlagged(lines.join('\n')).replace(/\n{3,}/g, '\n\n').trim();
 }
 
 // What kind of thing a figure in the inputs is. Money and a share never stand for each other: "$2k" is two thousand
@@ -452,6 +483,21 @@ export const NOT_WRITTEN = '[not written]';
 const SCORE = /\b\d{1,2}(?:\.\d)?\s*\/\s*10\b|\b\d{1,2}(?:\.\d)?\s+(?:out\s+)?of\s+10\b(?!\s+(?!(?:is|was|has|as|this|thus|us|yes|plus)\b)[a-z-]{2,}s\b)/g;
 // "[not written] ([not written])", "[not written], [not written]": said once.
 const TWICE = /\[not written\]((?:\*\*|__)?)(?:[\s,;:\u2013\u2014-]*|\s*\()\[not written\]\)?/g;
+// A part's score beside its label, "Fit: 2/2" or "**Pain:** 1/2": while the verdict is unwritten the parts add up to it,
+// so journey 9's "Flaws: 1/2 ... Fit: 2/2 ... Why Now: 1/2" beside "Verdict: [not written]" gave the total away.
+// Review 7: only a rubric part, scored out of five or less and not over its top, and only where the score ends the
+// phrase: "Paying: 2/12 hosts", "Sessions: 40/40 booked" and "Fit: 2/2 is Rohan's own score" stay as said.
+const PART = /(\b[A-Za-z][A-Za-z -]{0,24}(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*)(\d(?:\.\d)?)\s*\/\s*([1-5])\b(?!\s*(?:\*\*|__)?\s+(?!(?:and|or)\b)[A-Za-z])/g;
+const maskPart = (whole: string, label: string, got: string, top: string) => (Number(got) <= Number(top) ? `${label}${NOT_WRITTEN}` : whole);
+// What stays of a sentence masked whole: its bullet and a bold label ("- **Score:** [not written]").
+const MASK_LEAD = /^\s*(?:(?:[-*+]|\d+[.)])\s+)?(?:(?:\*\*|__)[^*_\n]{1,30}?(?::(?:\*\*|__)|(?:\*\*|__):)\s*)?/;
+const masks = (text: string) => text.split(NOT_WRITTEN).length - 1;
+// "caps the overall verdict at [not written] and [not written]" reads broken: a sentence that would hold two masks is
+// one mask, keeping its bullet, bold label and end stop.
+const maskSentences = (line: string) => line.split(/(?<=[.!?])\s+/).map((sentence) => {
+  if (masks(sentence) < 2) return sentence;
+  return `${MASK_LEAD.exec(sentence)?.[0] ?? ''}${NOT_WRITTEN}${/[.!?]$/.exec(sentence)?.[0] ?? ''}`;
+}).join(' ');
 // A line consult answers carry up to a colleague when the judge's verdict was not written: the relay is held too.
 const RELAYED = /^Unconfirmed: the verdict was not written; (.+)\.$/m;
 // Journeys 6-8: the refused judge said "PIVOT REQUIRED ... 5/10" and only a line under it said the doc refused it; the
@@ -470,11 +516,11 @@ export function holdVerdict(reply: string, receipts: Receipt[], sources: string[
   let changed = false;
   const lines = reply.split('\n').map((line) => {
     if (/^(?:Unconfirmed: |Unsourced figures: |Currency changed: )/.test(line)) return line;
-    let out = [...words, SCORE].reduce((kept, word) => kept.replace(word, NOT_WRITTEN), line);
+    let out = [...words, SCORE].reduce((kept, word) => kept.replace(word, NOT_WRITTEN), line).replace(PART, maskPart);
     if (out === line) return line;
     changed = true;
     while (TWICE.test(out)) out = out.replace(TWICE, `${NOT_WRITTEN}$1`);
-    return out;
+    return maskSentences(out);
   });
   if (!changed) return reply;
   const text = lines.join('\n');

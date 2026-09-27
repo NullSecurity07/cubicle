@@ -395,7 +395,7 @@ describe('a partner\'s turn against the team\'s verdict', () => {
     const res = Object.assign(out, { writeHead: () => res }) as unknown as ServerResponse;
     await chat('sam', 'so what do I do right now?', res);
     expect(steps).toHaveLength(2);
-    expect(String(steps[1].at(-1)!.content)).toBe('The team\'s verdict is PIVOT REQUIRED 6/10 (Evaluation); answer in its light or say why you overrule it. Name the verdict in your reply.');
+    expect(String(steps[1].at(-1)!.content)).toBe('The team\'s verdict is PIVOT REQUIRED 6/10 (Evaluation). It is the team\'s finding about the company, not a target to satisfy: answer in its light, or say "I overrule it because" and your reason. Name the verdict in your reply.');
     expect(events).toContainEqual({ notice: 'Sam is taking another look: weighing the team\'s verdict.' });
     expect((await store.readChat('sam')).at(-1)!.text).toBe(replies[1]);
   });
@@ -435,7 +435,7 @@ describe('a verdict the doc does not hold, in a turn', () => {
   it('keeps the judge\'s reply with the verdict word and score replaced, and the Unconfirmed line once', async () => {
     const system = `You are Priya, the judge.\n\n${verdictStanding('Rohan has not written "4. Founder-market fit" yet', OUTCOMES)}`;
     const { kept, shown } = await turn('priya', '**PIVOT REQUIRED**\n\n**Score:** 5/10 (Fit: 1/2)', system);
-    expect(kept).toBe(`**${NOT_WRITTEN}**\n\n**Score:** ${NOT_WRITTEN} (Fit: 1/2)\n\n${LINE}`);
+    expect(kept).toBe(`**${NOT_WRITTEN}**\n\n**Score:** ${NOT_WRITTEN}\n\n${LINE}`);
     expect(shown).toBe(kept);
     expect(kept.match(/Unconfirmed/g)).toHaveLength(1);
   });
