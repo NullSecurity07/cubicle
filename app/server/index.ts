@@ -40,6 +40,7 @@ import { createSources, sourceAttention } from './sources.ts';
 import { guardProcess } from './restart.ts';
 import { readStatic } from './static.ts';
 import { backupDirOf } from './openends/backup.ts';
+import { bookRescue } from './rescue.ts';
 import { createStore, type Damage } from './store.ts';
 import { decisionTools } from './tools/decisions.ts';
 import { docTools } from './tools/docs.ts';
@@ -87,6 +88,9 @@ const store = createStore(workspace, (roomId) => roomFeed.tell({ roomId, chat: '
   backups: () => backupDirOf({ fake, workspace, root }),
   onDamaged: (damage) => tellDamage(damage),
 });
+// The side books (promises, bets, boards, Needs you, the partner's notes) are rescued the same way and said the same way.
+bookRescue.backups = () => backupDirOf({ fake, workspace, root });
+bookRescue.tell = (damage) => tellDamage(damage);
 const usage = createUsage(resolve(workspace, 'usage.json'));
 await usage.load();
 const browser = fake ? createBrowser(fakeRunner, undefined, undefined, fakeHand) : createBrowser(realRunner(), { direct: [redditFeed(), stackExchange()], fallback: process.env.STAGE_NO_READER === '1' ? [] : [jinaReader, archiveCopy()] }, dnsResolve);

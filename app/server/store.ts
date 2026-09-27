@@ -1,7 +1,6 @@
 import { createReadStream, createWriteStream } from 'node:fs';
 import { copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
-import { gunzipSync } from 'node:zlib';
 import { pipeline } from 'node:stream/promises';
 import type { Readable } from 'node:stream';
 import { newMessageId, seedDocs, seedStage, type ChatMessage, type Stage } from '../shared/model.ts';
@@ -9,13 +8,12 @@ import { stableJson } from '../shared/stable.ts';
 import { trashStamp } from './clock.ts';
 import { safeId, writeAtomic } from './fsx.ts';
 import type { Memory } from './memory.ts';
-import { listBackups } from './openends/backup.ts';
-import { tarEntries } from './openends/tar.ts';
+import { backupCopy, type Damage } from './rescue.ts';
 
 export type Store = ReturnType<typeof createStore>;
 // A file the app could not read (a crash left half of it, or a hand edit broke it): where it was, where the damaged
 // copy was moved to, and the backup it was put back from, or null when none held it and it started again.
-export type Damage = { file: string; aside: string; from: { file: string; at: number } | null };
+export type { Damage };
 export type Rescue = { backups?: () => string; onDamaged?: (damage: Damage) => void };
 
 // Where an upload goes: under files/uploads, with a name that cannot clash or escape.
@@ -112,20 +110,7 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
   // queue, so no write lands between them: a caller already inside a queued job (`holding`) does them there and then,
   // anyone else queues them. Rescues from outside the queue share one job a file.
   const rescuing = new Map<string, Promise<string>>();
-  const fromBackup = async (name: string) => {
-    const where = rescue.backups?.();
-    if (!where) return null;
-    for (const one of await listBackups(where)) {
-      try {
-        const entry = tarEntries(gunzipSync(await readFile(join(where, one.file)))).find((held) => held.name === name && held.kind === '0');
-        if (!entry) continue;
-        const text = entry.body.toString('utf8');
-        JSON.parse(text);
-        return { text, file: one.file, at: one.at };
-      } catch { /* an unreadable archive, or a damaged copy in it: try the one before */ }
-    }
-    return null;
-  };
+  const fromBackup = (name: string) => backupCopy(rescue.backups?.(), name);
   type Mend = { empty: string; holding: boolean; fresh?: () => Promise<void>; stamp?: (text: string) => string };
   const recover = (path: string, mend: Mend): Promise<string> => {
     const file = relative(dir, path).split(sep).join('/');

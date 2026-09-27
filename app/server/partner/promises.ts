@@ -1,8 +1,8 @@
-import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Attention } from '../../shared/model.ts';
 import { localDay } from '../clock.ts';
 import { writeAtomic } from '../fsx.ts';
+import { readBook } from '../rescue.ts';
 import { newId } from '../slice-kit.ts';
 
 // The founder's promises, in `workspace/promises.json`. A co-founder remembers what the other said they would do: "I'll
@@ -124,7 +124,8 @@ export function promisesBook(workspace: string, now: () => number = Date.now) {
   const path = join(workspace, 'promises.json');
   let queue: Promise<unknown> = Promise.resolve();
   async function list(): Promise<FounderPromise[]> {
-    try { const saved = JSON.parse(await readFile(path, 'utf8')) as { promises?: FounderPromise[] }; return Array.isArray(saved.promises) ? saved.promises : []; } catch { return []; }
+    const saved = await readBook<{ promises?: FounderPromise[] }>(path, workspace, { empty: { promises: [] }, what: { thing: 'Your promises file', again: 'your promises started again', first: 'your promises start empty' } });
+    return Array.isArray(saved?.promises) ? saved.promises : [];
   }
   function change<T>(edit: (all: FounderPromise[]) => T): Promise<T> {
     const job = queue.then(async () => {

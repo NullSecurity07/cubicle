@@ -1,8 +1,9 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { catchUp, cleanRepeat, nextDue } from '../shared/automation.ts';
 import { COLUMNS, type BoardEvent, type Column, type Task } from '../shared/model.ts';
 import { automate } from './automation/fields.ts';
+import { readBook } from './rescue.ts';
 
 export type Boards = ReturnType<typeof createBoards>;
 const GRACE = 10 * 60_000;
@@ -32,7 +33,9 @@ export function createBoards(dir: string, now: () => number = Date.now) {
     const known = cache.get(boardId);
     if (known) return known;
     let tasks: Task[] = [];
-    try { tasks = JSON.parse(await readFile(path(boardId), 'utf8')); } catch { /* a new board */ }
+    // No file is a new board; a damaged one is rescued, never read as an empty board and saved over.
+    tasks = (await readBook<Task[]>(path(boardId), dir, { empty: [], what: { thing: 'A board\'s file', again: 'that board started again', first: 'that board starts empty' } })) ?? [];
+    if (!Array.isArray(tasks)) tasks = [];
     // A run cut short by the app closing cannot still be running.
     for (const task of tasks) if (task.run && (task.run.state === 'running' || task.run.state === 'waiting')) { task.run = { ...task.run, state: 'stopped', finishedAt: now(), approval: undefined, log: [...task.run.log, 'stopped: the app was closed'] }; task.column = 'review'; }
     cache.set(boardId, tasks);
