@@ -3,7 +3,7 @@ import type { IncomingMessage } from 'node:http';
 import { join } from 'node:path';
 import type { KeyRow, KeysView } from '../../shared/keys-file.ts';
 import type { Deps, Slice } from '../install.ts';
-import { catalogue, SETTINGS, type KeyInfo } from '../keys-file/catalogue.ts';
+import { catalogue, fallbackLine, SETTINGS, type KeyInfo } from '../keys-file/catalogue.ts';
 import { NAME, readEnv, tailOf, withEnv } from '../keys-file/envfile.ts';
 import { backupPlaces, readyFolder } from '../keys-file/places.ts';
 import { backupDirOf, chooseBackupDir } from '../openends/backup.ts';
@@ -82,7 +82,11 @@ export default {
     let checkedAt: number | null = null;
     let writing: Promise<unknown> = Promise.resolve();
 
-    const view = async (): Promise<KeysView> => ({ file, rows: rowsOf(known, await readFileEnv(), started, startedFile, failing), checkedAt });
+    const view = async (): Promise<KeysView> => {
+      const rows = rowsOf(known, await readFileEnv(), started, startedFile, failing);
+      const fallback = fallbackLine((name) => rows.some((row) => row.name === name && row.state !== 'missing'));
+      return { file, rows, checkedAt, ...(fallback ? { fallback } : {}) };
+    };
 
     // One name at a time, one write at a time, under a working name and renamed whole: a crash never leaves half a file.
     async function write(name: string, value: string | null) {

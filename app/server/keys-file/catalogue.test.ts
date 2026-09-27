@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { keyChecks } from '../openends/health.ts';
 import { ENTRIES, needs } from '../providers.ts';
-import { catalogue } from './catalogue.ts';
+import { catalogue, fallbackLine } from './catalogue.ts';
 
 describe('the keys the app knows', () => {
   it('has a row for every name models.json needs, once, with where to get it', () => {
@@ -28,5 +28,19 @@ describe('the keys the app knows', () => {
   it('gives a provider it has no words for a row under its own name', () => {
     expect(catalogue([{ name: 'newcomer', keyEnv: 'NEWCOMER_KEY', baseURL: 'https://x/${NEWCOMER_ACCOUNT}' }]).slice(0, 2))
       .toEqual([{ name: 'NEWCOMER_KEY', group: 'Models', label: 'newcomer', where: undefined, restart: true }, { name: 'NEWCOMER_ACCOUNT', group: 'Models', label: 'newcomer', where: undefined, restart: true }]);
+  });
+});
+
+describe('the keys that would add a fallback (round 5)', () => {
+  it('names each free sign-up that is not set, with where to make it and the models it brings', () => {
+    const line = fallbackLine(() => false)!;
+    expect(line).toBe('Keys that would add a fallback, each a free sign-up: NVIDIA at build.nvidia.com (kimi-k2.6); Mistral at console.mistral.ai (mistral-small-latest); '
+      + 'Cerebras at cloud.cerebras.ai (gpt-oss-120b, qwen-3.8-27b); OpenRouter at openrouter.ai/keys (gemma-4-31b-it:free, qwen3.8-27b:free).');
+  });
+
+  it('leaves out the ones set, and says nothing when all are', () => {
+    const line = fallbackLine((name) => name !== 'MISTRAL_API_KEY')!;
+    expect(line).toBe('Keys that would add a fallback, each a free sign-up: Mistral at console.mistral.ai (mistral-small-latest).');
+    expect(fallbackLine(() => true)).toBeNull();
   });
 });

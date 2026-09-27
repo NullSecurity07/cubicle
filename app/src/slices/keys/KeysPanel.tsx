@@ -113,6 +113,7 @@ export function KeysPanel() {
                 {' '}The app reads these when it starts.
               </p>
             )}
+            {view.fallback && <p className="playbook__note keys__fallback">{view.fallback}</p>}
             <div className="keys__check">
               <button type="button" className="playbook__act" disabled={checking} onClick={() => void check()}>{checking ? 'Checking…' : 'Check model keys'}</button>
               <small>{view.checkedAt ? `Checked at ${when(view.checkedAt)}` : 'Asks each model for one word, which costs next to nothing.'}</small>

@@ -58,3 +58,22 @@ export function catalogue(entries: { name: string; keyEnv: string; baseURL: stri
 
 // Names the route will write that are not keys: where backups go, which the Health panel sets.
 export const SETTINGS = ['STAGE_BACKUP_DIR'];
+
+// The free sign-ups that would each put another model behind Gemini on a room-sized turn, best first (the round-5
+// research): NVIDIA and Mistral are strong on their own, Cerebras and OpenRouter hold a whole room prompt.
+export const FALLBACK_KEYS = ['NVIDIA_API_KEY', 'MISTRAL_API_KEY', 'CEREBRAS_API_KEY', 'OPENROUTER_API_KEY'];
+
+// The ones not set here, as "NVIDIA at build.nvidia.com (kimi-k2.6)", or null when every one is set.
+export function fallbackList(isSet: (name: string) => boolean, entries: { keyEnv: string; model: string }[] = ENTRIES): string | null {
+  const unset = FALLBACK_KEYS.filter((name) => !isSet(name));
+  if (!unset.length) return null;
+  return unset.map((name) => {
+    const models = entries.filter((entry) => entry.keyEnv === name).map((entry) => entry.model.split('/').pop());
+    return `${PROVIDERS[name].label} at ${PROVIDERS[name].where} (${models.join(', ')})`;
+  }).join('; ');
+}
+
+export function fallbackLine(isSet: (name: string) => boolean): string | null {
+  const list = fallbackList(isSet);
+  return list ? `Keys that would add a fallback, each a free sign-up: ${list}.` : null;
+}
