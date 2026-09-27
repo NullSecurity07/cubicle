@@ -850,6 +850,13 @@ button.msg--learned:hover { color: var(--text); background: rgba(255, 255, 255, 
   .react-flow__panel.missions { margin: 16px 16px calc(var(--dock-block, 54px) + 28px); width: min(288px, calc(100vw - 32px)); }
 }
 
+/* A dock on the right edge carries the rail's buttons too, so in a short window its plates shrink to stay whole. */
+@media (max-height: 820px) {
+  .dock.bar--vertical button { width: 34px; height: 34px; padding: 8px; }
+  .dock.bar--vertical .quota__rings { width: 34px; padding: 7px 0; }
+  .dock.bar--vertical .dock__gap { margin: 2px 0; }
+}
+
 /* The way to ask for anything leads the dock on a faint plate of the accent, the one lit thing in it. */
 .dock button.dock__ask { background: rgba(78, 140, 255, 0.16); color: var(--accent-soft); }
 .dock button.dock__ask:hover { background: rgba(78, 140, 255, 0.26); color: #fff; }
