@@ -37,4 +37,17 @@ describe('a model dot says what is known about the model, not a guess', () => {
   it('reads only refused-key entries from the founder\'s list', () => {
     expect(refusedKeys([{ id: 'x', kind: 'approval', title: 'Maya needs your OK', at: 1 }]).size).toBe(0);
   });
+
+  it('says untested only for a model that never answered and never passed a key check (pass 8)', () => {
+    expect(dotOf(model('groq', { requests: 0 }), new Map()).tone).toBe('untested');
+    expect(dotOf(model('groq', { requests: 0, checked: true }), new Map())).toEqual({ tone: 'fine', words: 'key checked, 100% left' });
+    expect(dotOf(model('groq', { requests: 0, lastAnswerAt: 1 }), new Map())).toEqual({ tone: 'fine', words: '100% left' });
+  });
+
+  it('shows a model resting after two silences as slow, not untested, and a refused key or plan off before that', () => {
+    expect(dotOf(model('nvidia', { requests: 0, slow: true }), new Map())).toEqual({ tone: 'slow', words: 'slow to start, resting' });
+    expect(dotOf(model('nvidia', { slow: true, left: 0.8 }), new Map()).tone).toBe('slow');
+    expect(dotOf(model('mistral', { slow: true, planOff: true }), new Map()).tone).toBe('refused');
+    expect(dotOf(model('nvidia', { slow: true }), refusedKeys([refused('NVIDIA_API_KEY')])).tone).toBe('refused');
+  });
 });

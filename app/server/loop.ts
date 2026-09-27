@@ -8,7 +8,7 @@ import { resultCap } from './context/shrink.ts';
 import type { Offered } from './playbook.ts';
 import type { Payloads, Seams, Source } from './seams.ts';
 import { runTool, type Tool, type ToolContext } from './tools/registry.ts';
-import { ANSWER_IN_WORDS, CALL_THE_TOOL, checkReply, HELD_BACK, proseToolCall, turnSources } from './truth.ts';
+import { ANSWER_IN_WORDS, CALL_THE_TOOL, checkReply, HELD_BACK, proseToolCall, turnEvidence, turnSources } from './truth.ts';
 import type { UsageBook } from './usage.ts';
 import { needsSlim, slimNotice } from './slim.ts';
 import { localDay } from './clock.ts';
@@ -95,6 +95,8 @@ export async function runTurn(input: {
   // What this turn really read, for the truth net: the facts of the prompt as sent (not its rules) and the whole of
   // every tool result.
   const results: string[] = [];
+  // The results of tools that worked, for what a team doc may say: a refusal is no source, nor is a person's own memory.
+  const worked: string[] = [];
   // Why the stream broke off mid-reply, when it did; whether a tool call came back as text and was already asked about
   // once; whether it came back so twice and was held back; whether the reply had to be made from the receipts.
   let broke = '';
@@ -151,7 +153,7 @@ export async function runTurn(input: {
       tools: offered, signal,
       onToken: (token) => { const piece = first ? gap + token : token; first = false; text += piece; events.token(piece); },
       ...(restart ? { onRestart: restart } : {}),
-    }, clients, onFailure, (client) => usage.admit(client.name), (client) => usage.resting(client.name));
+    }, clients, onFailure, (client) => usage.admit(client.name), (client) => usage.resting(client.name), (client) => usage.blocked(client.name));
     // A step every model refused — usually because the prompt outgrew them — gets one more chance: whatever listens
     // here shortens it and says so, and we ask again with what it left.
     const asked = seams ? ask().catch(async (error: Error) => {
@@ -251,6 +253,10 @@ export async function runTurn(input: {
       context.query = query;
       // What the turn has read up to this call, so a doc write can mark a figure nothing backs as the reply would.
       context.sources = () => [...turnSources(inputs), ...results, query];
+      context.evidence = () => {
+        const { read, said } = turnEvidence(inputs);
+        return { read: [...read, ...worked, query], said: [...said, ...worked, query] };
+      };
       context.report = (effect) => events.tool({ id: call.id, name: call.name, args, effect });
       // A tool that runs a turn of its own inside itself asks the founder on this turn's path, not on one of its own.
       context.approve = input.approve;
@@ -265,6 +271,7 @@ export async function runTurn(input: {
       events.tool(event);
       messages.push({ role: 'tool', tool_call_id: call.id, content: full });
       results.push(full);
+      if (ran.ok && !/^(?:recall|reflect|remember)$/.test(call.name)) worked.push(full);
     }
   }
 
@@ -275,7 +282,7 @@ export async function runTurn(input: {
       const said = await complete(messages, {
         tools: [], signal, onToken: (token) => { text += token; events.token(token); },
         ...(events.restart ? { onRestart: () => { text = ''; events.restart!(); } } : {}),
-      }, clients, onFailure, (client) => usage.admit(client.name), (client) => usage.resting(client.name))
+      }, clients, onFailure, (client) => usage.admit(client.name), (client) => usage.resting(client.name), (client) => usage.blocked(client.name))
         .catch((error: Error) => { if (!/empty reply/.test(error.message)) unanswered = error.message; return null; });
       if (said) {
         if (failed.length) events.notice?.(said.broke ? `${failed.join('; ')}, so no model could finish this reply.` : `${failed.join('; ')}, so ${said.client.name} answers.`);

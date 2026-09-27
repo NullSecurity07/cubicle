@@ -18,7 +18,9 @@ export type ModelTurn = { text: string; calls: ToolCall[]; usage?: Usage; quota?
 // `onRestart`: the words streamed so far are dropped, because another model is about to answer from the start. A caller
 // that does not pass it keeps the old way: a reply that breaks part way is kept as it stands.
 // `patient`: this is the last model that can take the turn, so a slow first word is waited for rather than cut off.
-type StepOptions = { tools?: ToolSpec[]; signal?: AbortSignal; onToken: (token: string) => void; onRestart?: () => void; patient?: boolean };
+// `behind`: another model able to take the turn stands behind this one, so a model given longer for its first word
+// (Kimi's minute) gets only the usual 20 s: its long wait is for when it is the last one able.
+type StepOptions = { tools?: ToolSpec[]; signal?: AbortSignal; onToken: (token: string) => void; onRestart?: () => void; patient?: boolean; behind?: boolean };
 
 export type ModelClient = {
   name: string;
@@ -178,6 +180,9 @@ export async function complete(
   admit: (client: ModelClient) => boolean = () => true,
   // Whether a client is resting (a 429's wait, an open breaker, a refused key) without asking to be let in: only looks.
   resting: (client: ModelClient) => boolean = () => false,
+  // Whether a client cannot answer at all right now (a refused key, an open breaker), only looking: such a one behind
+  // another is nobody behind it, so the one before keeps its long first-word wait.
+  blocked: (client: ModelClient) => boolean = () => false,
 ): Promise<Completion> {
   // The tool definitions go to the model too, and count against what it can hold.
   const toolChars = options.tools?.length ? JSON.stringify(wireTools(options.tools)).length : 0;
@@ -216,8 +221,8 @@ export async function complete(
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       try {
         // With nobody behind it, a slow model is the answer: its first word is waited for, not cut off at the clock.
-        const patient = !clients.slice(index + 1).some(able);
-        const turn = await client.step(sent, { ...options, onToken, patient });
+        const patient = !clients.slice(index + 1).some((other) => able(other) && !blocked(other));
+        const turn = await client.step(sent, { ...options, onToken, patient, behind: !patient });
         if (text.trim() || turn.calls.length) return { ...turn, text, client, ...(oversize.length ? { oversize } : {}) };
         failures.push(`${client.name}: empty reply`);
       } catch (error) {
@@ -407,7 +412,8 @@ const PATIENT_IDLE_MS = 90_000;
 // the wait was up while the provider holds its headers back until the first token: such a request gets the wait and 15 s.
 const LONG_WAIT_MS = 30_000;
 
-function clientOf(name: string, entry: Shape, api: OpenAI, firstWordMs?: number): ModelClient {
+// `usualMs`: the first-word wait when another model able stands behind this one (`behind`), where `firstWordMs` is longer.
+function clientOf(name: string, entry: Shape, api: OpenAI, firstWordMs?: number, usualMs = firstWordMs): ModelClient {
   // Requests out on this key now. Kept here, beside the one handle every copy of the client shares, so a caller that
   // never saw the usage book still cannot send a second.
   let out = 0;
@@ -432,13 +438,15 @@ function clientOf(name: string, entry: Shape, api: OpenAI, firstWordMs?: number)
     },
   };
 
-  async function ask(history: ModelMessage[], { tools, signal, onToken, patient }: StepOptions): Promise<ModelTurn> {
+  async function ask(history: ModelMessage[], { tools, signal, onToken, patient, behind }: StepOptions): Promise<ModelTurn> {
     const carried = portable(history, entry.callSignature);
     const messages = withImages(entry.shortCallIds ? shortCallIds(carried) : carried, !!entry.vision);
     // The founder's Stop and the first-word clock both end the request; only the clock's is this model's failure.
     // The last model that can take a turn gets four times as long, and never less than a minute and a half: Gemini
     // took 58.8 s to its first word on a verdict, and cutting it left the founder with no answer at all.
-    const wait = firstWordMs && patient ? Math.max(PATIENT_MS, firstWordMs * 4) : firstWordMs;
+    // A model with somebody able behind it gets the usual wait, whatever its own: Kimi's minute cost 60 s a turn while
+    // gpt-oss behind it would have answered.
+    const wait = firstWordMs && patient ? Math.max(PATIENT_MS, firstWordMs * 4) : behind && usualMs ? Math.min(firstWordMs ?? usualMs, usualMs) : firstWordMs;
     const silent = wait ? new AbortController() : undefined;
     // One clock, two waits: until the first words or tool call (an empty chunk saying only who speaks does not count, or
     // a provider that sends it and then nothing never tripped the clock), and after them between any two chunks.
@@ -524,7 +532,7 @@ export function realClients(env: NodeJS.ProcessEnv = process.env, local?: LocalM
     return baseURL === undefined ? [] : keysOf(env, entry.keyEnv).map(({ key, at }) => ({ entry, key, at, baseURL }));
   }).map(({ entry, key, at, baseURL }) => {
     const api = new OpenAI({ apiKey: key, baseURL, timeout: 45_000, maxRetries: 0 });
-    return clientOf(at > 1 ? `${entry.name}#${at}` : entry.name, entry, api, forced ?? entry.firstWordMs ?? FIRST_WORD_MS);
+    return clientOf(at > 1 ? `${entry.name}#${at}` : entry.name, entry, api, forced ?? entry.firstWordMs ?? FIRST_WORD_MS, forced ?? FIRST_WORD_MS);
   });
   return local ? [...hosted, localClient(local)] : hosted;
 }

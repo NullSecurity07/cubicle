@@ -123,12 +123,54 @@ describe('a figure nothing this turn read', () => {
     const { placed, texts } = place(framework, seed, { x: 2000, y: 0 });
     const stage = { ...seed, rooms: [...seed.rooms, ...placed.rooms], docs: [...seed.docs, ...placed.docs], wires: [...seed.wires, ...placed.wires], cards: [...(seed.cards ?? []), ...placed.cards] };
     for (const [id, text] of Object.entries(texts)) await store.replaceDoc(id, text as string);
-    const context = { stage, roomId: 'pain', store, granted: new Map<string, string>(), sources: () => ['Ledgerly: $29 a month, 3 paying users.'] };
+    const context = { stage, roomId: 'pain', store, granted: new Map<string, string>(), sources: () => ['Ledgerly: $29 a month, 3 paying users.', 'The founder: I have had 3 customer conversations.'] };
     const text = 'Vitamin — painkiller — hair on fire: painkiller\n\nWhat it costs them per month: an accountant at €80–€200/month.\n\nReal customer conversations done (of ten to twenty): 3';
     const out = await runTool(docTools, 'replace_section', JSON.stringify({ doc: 'Evaluation', heading: '3. Is the pain real?', text }), context);
     expect(out.ok).toBe(false);
     expect(out.text).toMatch(/not written: €80, €200 (?:are|is) not in anything this turn read\. Search or read for them first, take them out, or write "\(unsourced\)" right after each\./);
     const marked = text.replace('€80', '€80 (unsourced)').replace('€200', '€200 (unsourced)');
     expect((await runTool(docTools, 'replace_section', JSON.stringify({ doc: 'Evaluation', heading: '3. Is the pain real?', text: marked }), context)).ok).toBe(true);
+  });
+});
+
+// Journey 10: Meera wrote counts and claims nobody gave into the Evaluation doc, and the judge's verdict rested on them.
+describe('what a team doc says about the world', () => {
+  async function team() {
+    const { readFile } = await import('node:fs/promises');
+    const { resolve } = await import('node:path');
+    const { place } = await import('../frameworks/place.ts');
+    const framework = JSON.parse(await readFile(resolve(import.meta.dirname, '../../frameworks/startup-evaluation/framework.json'), 'utf8'));
+    const store = createStore(await mkdtemp(join(tmpdir(), 'docs-evidence-')));
+    const seed = await store.loadStage();
+    const { placed, texts } = place(framework, seed, { x: 2000, y: 0 });
+    const stage = { ...seed, rooms: [...seed.rooms, ...placed.rooms], docs: [...seed.docs, ...placed.docs], wires: [...seed.wires, ...placed.wires], cards: [...(seed.cards ?? []), ...placed.cards] };
+    for (const [id, text] of Object.entries(texts)) await store.replaceDoc(id, text as string);
+    // The founder's Day-1 message went to another room; the Company brief the partner kept is what Meera read.
+    await store.appendChat(seed.rooms[0].id, { id: 'm1', role: 'user', text: 'Kindling: a playtest tool for board game designers. 12 beta users (2 paying), MRR €78, 40 playtest sessions logged.', at: 1 });
+    const read = ['# Company brief\n\n## Numbers\n\n- Beta users: 12 (2 paying)\n- MRR: €78'];
+    const context = { stage, roomId: 'pain', store, granted: new Map<string, string>(), sources: () => read, evidence: () => ({ read, said: ['Write section 3 from the brief.'] }) };
+    const write = (text: string) => runTool(docTools, 'replace_section', JSON.stringify({ doc: 'Evaluation', heading: '3. Is the pain real?', text }), context);
+    return { store, stage, write };
+  }
+  const SECTION = (lines: string) => `Vitamin — painkiller — hair on fire: painkiller\n\n${lines}`;
+
+  it('refuses journey 10\'s invented counts and claims, and names each', async () => {
+    const { write } = await team();
+    const conversations = await write(SECTION('Real customer conversations done (of ten to twenty): 2 (beta users currently paying)'));
+    expect(conversations.ok).toBe(false);
+    expect(conversations.text).toMatch(/not written: "2" \(in "Real customer conversations done/);
+    const hours = await write(SECTION('What it costs them per month: 3+ hours per test'));
+    expect(hours.text).toMatch(/not written: "3\+" \(in "What it costs them per month: 3\+ hours per test"\)/);
+    const retention = await write('Vitamin — painkiller — hair on fire: Painkiller (some pay, retention OK — workable)');
+    expect(retention.text).toMatch(/"retention OK" in "3\. Is the pain real\?": no founder message or tool result says this/);
+  });
+
+  it('writes a count the founder gave in another room, and marks a view the writer left plain', async () => {
+    const { store, stage, write } = await team();
+    const out = await write(SECTION('40 playtest sessions logged so far. Likely a painkiller for designers who test often.'));
+    expect(out.ok).toBe(true);
+    const doc = stage.docs.find((one) => one.title === 'Evaluation')!;
+    expect(await store.readDoc(doc.id)).toContain('40 playtest sessions logged so far. Likely a painkiller for designers who test often (assumption).');
+    expect(out.text).toContain('Marked as a view: "Likely a painkiller for designers who test often."');
   });
 });

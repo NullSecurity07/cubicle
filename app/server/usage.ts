@@ -42,6 +42,10 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
   const recent: Record<string, Seen[]> = {};
   const quotas: Record<string, { at: number; quota: Quota }> = {};
   const cooling: Record<string, number> = {};
+  // When each key last answered, and the keys a check found answering: kept past midnight, while the server runs, so a
+  // model that has answered or passed a check is never "untested" again only because the day's count went to zero.
+  const answeredAt: Record<string, number> = {};
+  const checked = new Set<string>();
   let saving: Promise<unknown> = Promise.resolve();
   const breaker = createBreaker(now);
   // Keys last refused because their plan allows no requests. Only true while the refusal itself still holds.
@@ -125,6 +129,7 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
       roll();
       breaker.ok(name);
       planlessKeys.delete(name);
+      answeredAt[name] = now();
       if (keyWatchers.size) tellKey({ name, dead: false });
       const of = ((state.kinds ??= {})[kind] ??= { requests: 0, input: 0, output: 0 });
       of.requests += 1;
@@ -161,7 +166,8 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     planOff,
     // A key a check found answering: whatever its breaker held against it (a refusal's six hours, say, after the founder
     // turned a plan on) is forgotten, and whoever heard of the refusal hears it answer.
-    revive(name: string) { breaker.ok(name); planlessKeys.delete(name); if (keyWatchers.size) tellKey({ name, dead: false }); },
+    // The check that found it answering is remembered, so its dot says so.
+    revive(name: string) { breaker.ok(name); planlessKeys.delete(name); checked.add(name); if (keyWatchers.size) tellKey({ name, dead: false }); },
     // How much one key has carried, the last minute first: what spreads a provider's keys evenly.
     carried(name: string) {
       roll();
@@ -199,7 +205,12 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
       const pictures = state.pictures?.[pool];
       return { used: poolNeurons(pool), of: NEURONS_FOR_TURNS, pictures: pictures?.neurons ?? 0, drawn: pictures?.drawn ?? 0 };
     },
-    // True while this key rests after a 429, an open breaker or a refused key. Only looks.
+    // True while this key cannot answer at all: refused (a 401, a plan that is off) or its breaker open. Only looks. A
+    // slow or 429-resting key is not blocked: it may still answer, so it still counts as a model behind another.
+    blocked: (name: string) => breaker.dead(name) || breaker.state(name) === 'open',
+    // True while this model rests after giving no first word twice in a row (breaker.ts): at the back, not dead.
+    slow: (name: string) => breaker.slow(name),
+    // True while this key rests after a 429, an open breaker, a refused key or two silences. Only looks.
     resting: (name: string) => breaker.resting(name),
     // True when one more request of this size would likely hit the per-minute wall.
     // A key that takes one request at a time and has one out counts as out of room until it is back.
@@ -217,18 +228,23 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     // The side model is no one's to pin, so the picker never lists it; the insights ask for it with `withSide`.
     info(clients: ModelClient[], withSide = false): ModelInfo[] {
       roll();
-      const rows = new Map<string, { info: ModelInfo; keys: number; off: number }>();
+      const rows = new Map<string, { info: ModelInfo; keys: number; off: number; slow: number }>();
       for (const client of clients.filter((one) => withSide || !one.side)) {
         const name = providerOf(client.name);
         const used = count(client.name);
-        const row = rows.get(name) ?? { info: { name, model: client.model, ready: true, left: 0, requests: 0, tokens: 0 }, keys: 0, off: 0 };
+        const row = rows.get(name) ?? { info: { name, model: client.model, ready: true, left: 0, requests: 0, tokens: 0 }, keys: 0, off: 0, slow: 0 };
+        const last = Math.max(row.info.lastAnswerAt ?? 0, answeredAt[client.name] ?? 0);
         rows.set(name, {
-          keys: row.keys + 1, off: row.off + (planOff(client.name) ? 1 : 0),
-          info: { ...row.info, left: row.info.left + left(client), requests: row.info.requests + used.requests, tokens: row.info.tokens + used.input + used.output },
+          keys: row.keys + 1, off: row.off + (planOff(client.name) ? 1 : 0), slow: row.slow + (breaker.slow(client.name) ? 1 : 0),
+          info: {
+            ...row.info, left: row.info.left + left(client), requests: row.info.requests + used.requests, tokens: row.info.tokens + used.input + used.output,
+            ...(last ? { lastAnswerAt: last } : {}), ...(row.info.checked || checked.has(client.name) ? { checked: true } : {}),
+          },
         });
       }
-      // A provider none of whose keys has a plan on answers nobody: said as that, not as a full ring.
-      return [...rows.values()].map(({ info, keys, off }) => ({ ...info, left: info.left / keys, ...(off === keys ? { planOff: true } : {}) }));
+      // A provider none of whose keys has a plan on answers nobody: said as that, not as a full ring. One whose every key
+      // rests slow is slow; one slow key of two is not, its sibling still serves.
+      return [...rows.values()].map(({ info, keys, off, slow }) => ({ ...info, left: info.left / keys, ...(off === keys ? { planOff: true } : {}), ...(slow === keys ? { slow: true } : {}) }));
     },
   };
 }

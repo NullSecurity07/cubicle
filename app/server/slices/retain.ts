@@ -7,8 +7,9 @@ import type { ModelMessage } from '../prompt.ts';
 import { readableDocIds } from '../prompt.ts';
 import type { ModelClient } from '../providers.ts';
 import type { Handler, Payloads } from '../seams.ts';
+import { heldForMemory } from '../tools/docs.ts';
 import { reflectTools } from '../tools/reflect.ts';
-import { dropFlagged } from '../truth.ts';
+import { NOT_WRITTEN } from '../truth.ts';
 import type { UsageBook } from '../usage.ts';
 
 // Retain: after a conversation turn, a person writes down on its own the one or two things worth keeping from it —
@@ -151,12 +152,16 @@ export function createRetain(deps: {
     try {
       const stage = await deps.store.loadStage();
       const name = stage.rooms.find((room) => room.id === roomId)?.name || 'Someone';
+      // The reply without what the truth net flagged in it, and with a verdict the team doc does not hold masked as
+      // chat masks it: an invented figure or action, or a verdict nobody wrote, is never shown as a fact.
+      const hold = (text: string) => heldForMemory(stage, roomId, (id) => deps.store.readDoc(id), text, payload.reply.tools);
       const raw = await deps.extract!([
         { role: 'system', content: retainPrompt(now()) },
-        // The reply without what the truth net flagged in it: an invented figure or action is never shown as a fact.
-        { role: 'user', content: `Founder: ${payload.query.trim().slice(0, 2000)}\n\n${name}: ${dropFlagged(payload.reply.text).slice(0, 3000)}` },
+        { role: 'user', content: `Founder: ${payload.query.trim().slice(0, 2000)}\n\n${name}: ${(await hold(payload.reply.text)).slice(0, 3000)}` },
       ]);
-      const facts = parseFacts(raw, [name, 'Founder']);
+      // A line that still names the verdict (the model may know the word from elsewhere) is not kept at all.
+      const facts = [];
+      for (const fact of parseFacts(raw, [name, 'Founder'])) if (!(await hold(fact)).includes(NOT_WRITTEN) && !fact.includes(NOT_WRITTEN)) facts.push(fact);
       if (!facts.length) return [];
       const docs = await Promise.all(readableDocIds(stage, roomId).map((id) => deps.store.readDoc(id).catch(() => '')));
       const founder = (await deps.store.readChat(roomId).catch(() => [] as ChatMessage[])).filter((message) => message.role === 'user').map((message) => message.text);

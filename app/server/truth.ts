@@ -423,6 +423,17 @@ export function turnSources(messages: { role: string; content: unknown }[], stan
   }).filter(Boolean);
 }
 
+// What a team doc's counts and claims may rest on (server/tools/evidence.ts): the facts of the prompt without the
+// person's own memory, and the founder's words; never the person's own earlier replies. Journey 10: Meera said "two
+// real customer conversations" in chat, recalled it, and wrote it into the Evaluation doc as a fact.
+export function turnEvidence(messages: { role: string; content: unknown }[], stances: string[] = [STANCE, PARTNER_STANCE]): { read: string[]; said: string[] } {
+  const text = (message: { content: unknown }) => (typeof message.content === 'string' ? message.content : '');
+  const said = messages.filter((message) => message.role === 'user').map(text).filter(Boolean);
+  const facts = messages.filter((message) => message.role === 'system')
+    .map((message) => factsOf(text(message), stances).split(/\n{2,}/).filter((part) => !/^Your memory \(/.test(part)).join('\n\n')).filter(Boolean);
+  return { read: [...facts, ...said], said };
+}
+
 // A tool call the model wrote out as words instead of making it: the XML shapes of Qwen and Hermes, a raw JSON call,
 // or a tool's name with its JSON arguments right after it ("**ask_founder**{...}").
 export function proseToolCall(reply: string, names: string[] = []): boolean {

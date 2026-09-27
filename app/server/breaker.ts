@@ -4,16 +4,23 @@
 // trusted with exactly one request, which closes it again on success and opens it for another thirty on failure.
 // A key the provider refuses (401, 403) is dead, not busy: it rests six hours, so it stops going first every turn, and
 // one good answer brings it back. The usage book tells the founder once.
+// A model that gives no first word twice in a row within ten minutes is slow, not down: it rests thirty minutes, so the
+// second stall in a session is the last one it costs the founder (Gemini and Kimi on NVIDIA each held a turn 20-60 s
+// before another model answered, turn after turn). One good answer ends the rest.
 // A resting key is only moved to the back: its siblings serve, and it is still there when nothing else is.
 const TRIPS = 5;
+export const SLOW_WITHIN = 10 * 60_000;
+export const SLOW_MS = 30 * 60_000;
 export const OPEN_MS = 30_000;
 const REST_FIRST = 3000;
 export const REST_MOST = 5 * 60_000;
 export const DEAD_MS = 6 * 3_600_000;
 
-type Key = { fails: number; openUntil?: number; probeUntil?: number; half?: boolean; rest?: number; restUntil?: number; deadUntil?: number };
+type Key = { fails: number; quietAt?: number; slowUntil?: number; openUntil?: number; probeUntil?: number; half?: boolean; rest?: number; restUntil?: number; deadUntil?: number };
 
 const statusOf = (error: unknown) => (error as { status?: number })?.status;
+// The first-word clock's own failure (providers.ts), however long the wait was.
+const silent = (error: unknown) => /no first word/i.test(String((error as Error)?.message ?? ''));
 // A key whose plan allows no requests at all is refused, not busy: Mistral answers a key with no plan chosen yet with
 // a 429 whose headers say the minute allows nothing (x-ratelimit-limit-req-minute: 0), and waiting never fixes that.
 export const planless = (error: unknown) => {
@@ -76,6 +83,11 @@ export function createBreaker(now: () => number = Date.now) {
         return rest;
       }
       if (!brokeDown(error)) return 0;
+      if (silent(error)) {
+        const at = now();
+        if (one.quietAt !== undefined && at - one.quietAt <= SLOW_WITHIN) { one.slowUntil = at + SLOW_MS; one.quietAt = undefined; }
+        else one.quietAt = at;
+      }
       one.fails += 1;
       if (one.half || one.fails >= TRIPS) {
         one.openUntil = now() + OPEN_MS;
@@ -93,7 +105,7 @@ export function createBreaker(now: () => number = Date.now) {
       const one = keys[name];
       if (!one) return false;
       const at = now();
-      if ((one.restUntil ?? 0) > at || (one.openUntil ?? 0) > at || (one.deadUntil ?? 0) > at) return true;
+      if ((one.restUntil ?? 0) > at || (one.openUntil ?? 0) > at || (one.deadUntil ?? 0) > at || (one.slowUntil ?? 0) > at) return true;
       return !!one.half && (one.probeUntil ?? 0) > at;
     },
     // Asked right before a request goes out. An open key says no; a key whose thirty seconds are up lets exactly one
@@ -110,6 +122,8 @@ export function createBreaker(now: () => number = Date.now) {
     },
     // True while the key rests after the provider refused it.
     dead: (name: string) => (keys[name]?.deadUntil ?? 0) > now(),
+    // True while the model rests after giving no first word twice in a row.
+    slow: (name: string) => (keys[name]?.slowUntil ?? 0) > now(),
     state(name: string): 'closed' | 'open' | 'half-open' {
       const one = keys[name];
       if (!one?.openUntil) return 'closed';

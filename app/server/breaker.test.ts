@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createBreaker, DEAD_MS, limitWords, OPEN_MS, REST_MOST } from './breaker.ts';
+import { createBreaker, DEAD_MS, limitWords, OPEN_MS, REST_MOST, SLOW_MS } from './breaker.ts';
 import { complete, type ModelClient } from './providers.ts';
 import { route } from './router.ts';
 import { createUsage } from './usage.ts';
@@ -136,12 +136,13 @@ describe('a resting key in the router and in a turn', () => {
   it('is skipped while its sibling serves, and comes back first once it has rested and carried less', () => {
     let now = Date.parse('2026-09-24T10:00:00Z');
     const usage = createUsage(null, () => now);
-    const clients = [client('groq'), client('groq#2'), client('gemini')];
+    // Cerebras, not Gemini, beside them: it stands with Groq in the shared order, where Gemini would go first whatever the rest.
+    const clients = [client('groq'), client('groq#2'), client('cerebras')];
     usage.failed('groq', failure(429));
-    expect(route(clients, usage, { promptChars: 10, tools: true }).order.map((one) => one.name)).toEqual(['groq#2', 'gemini', 'groq']);
+    expect(route(clients, usage, { promptChars: 10, tools: true }).order.map((one) => one.name)).toEqual(['groq#2', 'cerebras', 'groq']);
     usage.record('groq#2', { input: 500, output: 20 });
     now += 3000;
-    expect(route(clients, usage, { promptChars: 10, tools: true }).order.map((one) => one.name)).toEqual(['groq', 'groq#2', 'gemini']);
+    expect(route(clients, usage, { promptChars: 10, tools: true }).order.map((one) => one.name)).toEqual(['groq', 'groq#2', 'cerebras']);
   });
 
   it('is passed over by a call once its breaker is open, even when it is the first one asked', async () => {
@@ -152,5 +153,56 @@ describe('a resting key in the router and in a turn', () => {
     const reply = await complete([{ role: 'user', content: 'hi' }], { onToken: () => {} }, [broken, client('gemini')], () => {}, (one) => usage.admit(one.name));
     expect(reply.client.name).toBe('gemini');
     expect(asked).toBe(0);
+  });
+});
+
+describe('a model that twice gives no first word (pass 8)', () => {
+  const quiet = () => new Error('no first word within 20 s (timed out)');
+
+  it('rests slow for thirty minutes after two silences within ten minutes, apart from a refused key', () => {
+    let now = 0;
+    const breaker = createBreaker(() => now);
+    breaker.failed('gemini', quiet());
+    expect(breaker.slow('gemini')).toBe(false);
+    expect(breaker.resting('gemini')).toBe(false);
+    now += 9 * 60_000;
+    breaker.failed('gemini', quiet());
+    expect(breaker.slow('gemini')).toBe(true);
+    expect(breaker.resting('gemini')).toBe(true);
+    expect(breaker.dead('gemini')).toBe(false);
+    // Only moved to the back: it is still let in when nothing else is.
+    expect(breaker.admit('gemini')).toBe(true);
+    now += SLOW_MS - 1;
+    expect(breaker.slow('gemini')).toBe(true);
+    now += 1;
+    expect(breaker.slow('gemini')).toBe(false);
+    expect(breaker.resting('gemini')).toBe(false);
+  });
+
+  it('does not rest a model whose two silences are more than ten minutes apart, or that answered between them', () => {
+    let now = 0;
+    const breaker = createBreaker(() => now);
+    breaker.failed('nvidia', quiet());
+    now += 10 * 60_000 + 1;
+    breaker.failed('nvidia', quiet());
+    expect(breaker.slow('nvidia')).toBe(false);
+    breaker.ok('nvidia');
+    now += 1000;
+    breaker.failed('nvidia', quiet());
+    expect(breaker.slow('nvidia')).toBe(false);
+    // A 503 is not a silence and does not count towards it.
+    breaker.failed('mistral', quiet());
+    breaker.failed('mistral', failure(503));
+    expect(breaker.slow('mistral')).toBe(false);
+  });
+
+  it('counts the long wait of the last model able as a silence too, and one good answer ends the rest', () => {
+    let now = 0;
+    const breaker = createBreaker(() => now);
+    breaker.failed('nvidia', new Error('no first word within 240 s, the last model able (timed out)'));
+    breaker.failed('nvidia', quiet());
+    expect(breaker.slow('nvidia')).toBe(true);
+    breaker.ok('nvidia');
+    expect(breaker.slow('nvidia')).toBe(false);
   });
 });

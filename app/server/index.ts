@@ -43,7 +43,7 @@ import { backupDirOf } from './openends/backup.ts';
 import { bookRescue } from './rescue.ts';
 import { createStore, type Damage } from './store.ts';
 import { decisionTools } from './tools/decisions.ts';
-import { docTools } from './tools/docs.ts';
+import { docTools, heldForMemory } from './tools/docs.ts';
 import { fileTools } from './tools/files.ts';
 import { founderTools } from './tools/founder.ts';
 import { mediaTools } from './tools/media.ts';
@@ -101,7 +101,7 @@ const memory = createMemory(store, async (messages) => {
   const reply = await complete(messages, { onToken: () => {} }, order);
   usage.record(reply.client.name, reply.usage, reply.quota, 'side');
   return reply.text;
-});
+}, Date.now, async (roomId, text) => heldForMemory(await store.loadStage(), roomId, (id) => store.readDoc(id), text));
 const boards = createBoards(workspace);
 // One list of everything that waits for the founder; boards report into it, approvals are held in it while they wait.
 const attention = createAttention(workspace);

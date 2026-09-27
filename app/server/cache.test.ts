@@ -28,9 +28,10 @@ describe('the small side model', () => {
   it('answers side calls first, and never a turn', () => {
     const usage = createUsage(null);
     const clients = [client('groq'), client('groq-small', { tools: false, side: true, maxPromptChars: 16_000 }), client('gemini')];
-    expect(route(clients, usage, { promptChars: 10, tools: true }).order.map((one) => one.name)).toEqual(['groq', 'gemini']);
+    // A turn goes in the one shared order (router.ts), Gemini before Groq; a side call keeps the order it was given.
+    expect(route(clients, usage, { promptChars: 10, tools: true }).order.map((one) => one.name)).toEqual(['gemini', 'groq']);
     // A turn without tools (a consult) still never lands on it, not even as the last net.
-    expect(route(clients, usage, { promptChars: 10, tools: false }).order.map((one) => one.name)).toEqual(['groq', 'gemini']);
+    expect(route(clients, usage, { promptChars: 10, tools: false }).order.map((one) => one.name)).toEqual(['gemini', 'groq']);
     expect(route(clients, usage, { promptChars: 10, tools: false, kind: 'side' }).order.map((one) => one.name)).toEqual(['groq-small', 'groq', 'gemini']);
     // Too big for it, or out of room: the rest answer as they always did.
     expect(route(clients, usage, { promptChars: 17_000, tools: false, kind: 'side' }).order.map((one) => one.name)).toEqual(['groq', 'gemini']);

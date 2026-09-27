@@ -260,7 +260,9 @@ export type RoomEvent = { roomId: string } & (
   | { turn: string; tool: ToolEvent } | { turn: string; restart: true } | { turn: string; ended: true });
 // One configured model as the client sees it: `left` is the share of today's free quota still there, 0 to 1.
 // `planOff`: every key this provider has is refused because its free plan is not turned on; it answers nobody until it is.
-export type ModelInfo = { name: string; model: string; ready: boolean; left: number; requests: number; tokens: number; planOff?: boolean };
+// `lastAnswerAt`: when any of its keys last answered, known across a new day's zeroed count; `checked`: a key check found
+// a key answering; `slow`: every key rests after giving no first word twice (breaker.ts). What a dot is drawn from.
+export type ModelInfo = { name: string; model: string; ready: boolean; left: number; requests: number; tokens: number; planOff?: boolean; lastAnswerAt?: number; checked?: boolean; slow?: boolean };
 
 export const newMessageId = () => `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 export const newTurnId = () => `t-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -270,7 +272,10 @@ export const STANCE =
   + 'there is a real choice. Ask when the request is unclear. Act only through your tools, and never claim an action that a tool result '
   + 'does not confirm. '
   + 'You know about the founder, the product, the customers and the numbers only what this chat and the connected '
-  + 'documents say. Do not invent such facts; when you need one, ask for it.';
+  + 'documents say. Do not invent such facts; when you need one, ask for it. '
+  // Journey 10: Lena, asked who contacted the beta users, put a yes/no in Needs you and waited 90 s for an answer the
+  // record already gave: nobody, as far as anything says.
+  + 'Asked who did something or how many, with nothing on record: say "none on record", do not ask the founder.';
 
 // The partner's stance, in place of STANCE for that one person: they own the picture of the company and say what they
 // would do, and they say so when the founder goes against what the record shows. Every other rule of honesty stays.

@@ -216,6 +216,8 @@ div.msg--assistant { white-space: normal; display: flex; flex-direction: column;
 .ring--untested .ring__track { stroke: rgba(255, 255, 255, 0.3); stroke-dasharray: 2.2 2.2; }
 .ring--refused { stroke: #f0b35a !important; }
 .ring__mark { fill: #f0b35a; stroke: none; }
+/* Slow: resting after it twice gave no first word, so a full grey ring: asked last, not broken. */
+.ring--slow { stroke: rgba(255, 255, 255, 0.42) !important; }
 .quota__detail {
   position: absolute; bottom: calc(100% + 10px); left: 50%; transform: translateX(-50%); width: max-content; min-width: 300px; padding: 10px 12px; display: flex; flex-direction: column; gap: 9px;
   border-radius: 14px; border: 1px solid var(--card-border); background: rgba(16, 17, 20, 0.92);
@@ -227,6 +229,7 @@ div.msg--assistant { white-space: normal; display: flex; flex-direction: column;
 .quota__dot.ring--out { background: var(--danger); }
 .quota__dot.ring--untested { box-sizing: border-box; background: transparent; border: 1.5px dashed rgba(255, 255, 255, 0.4); }
 .quota__dot.ring--refused { background: #f0b35a; box-shadow: 0 0 0 2px rgba(240, 179, 90, 0.25); }
+.quota__dot.ring--slow { box-sizing: border-box; background: transparent; border: 1.5px solid rgba(255, 255, 255, 0.42); }
 .quota__name { flex: 1; text-transform: capitalize; font-weight: 600; }
 .quota__numbers { text-align: right; }
 .quota small { display: block; white-space: nowrap; font-weight: 400; font-size: 11px; color: var(--muted); text-transform: none; }
