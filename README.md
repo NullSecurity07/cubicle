@@ -295,6 +295,22 @@ candidates come from; the free tier has 40 credits), `OPENOUTFIND_OPERATOR_EMAIL
 (who is running it), and `OPENOUTFIND_ACCEPT_LEGAL_NOTICE` (your own acceptance of its legal notice, which the app
 never gives for you). It runs through `uvx`, so `uv` must be installed.
 
+### Showcase
+
+`pnpm showcase` (in `app/`) or `./start.sh --showcase` (at the repository root) opens **Kindling**, a made-up
+company run on this app for a week, so the app can be shown to people without showing your own work. Kindling sells a
+€39-a-month print-and-play kit to indie board-game designers: 12 beta users, 2 paying, €9,800 in the bank, €1,650 a
+month out, one designer-developer. On its stage are Sam the partner, the startup-evaluation team with its verdict,
+Maya, Dev and Lena, the docs the other built-in teams filled, a board mid-flight, twelve weeks of numbers, runway,
+leads, a rival, a survey, a site, a deck, decisions, bets (one closed with what was learned), promises, a morning
+note, one drawn picture and one short film. The chats are the real conversations, with the model that said each reply.
+
+The company lives in `app/showcase/`. It is copied into a fresh folder under the temp folder each time (or into an
+empty folder you name: `pnpm showcase --into <folder>`), and the app starts on the copy at http://localhost:7440, with
+its backups beside the copy. Your own workspace, backups and running stage are never touched, and the showcase can
+run beside your stage. `./start.sh --shell --showcase` opens it in the desktop window. People answer with your own keys,
+so anything asked of them in the showcase is a real model call.
+
 ### Keep it running while the window is closed
 
 The morning note, the bet checks, the page watches, the daily backup and the phone all run on the server's
