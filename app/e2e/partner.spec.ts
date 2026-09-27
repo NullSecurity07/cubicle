@@ -40,11 +40,23 @@ test.afterEach(async ({ page }) => {
 
 test('the founder adds a partner who keeps the Company document and leaves a morning note', async ({ page }) => {
   await bar(page, 'add a partner called Sam', 'Add Sam, your partner');
-  await expect(page.getByRole('status').filter({ hasText: 'Sam is your partner' })).toBeVisible({ timeout: 15_000 });
+  const notice = page.getByRole('status').filter({ hasText: 'Sam is your partner' });
+  await expect(notice).toBeVisible({ timeout: 15_000 });
 
   const stage = await stageOf(page);
   const sam = stage.rooms.find((room) => room.name === 'Sam')!;
   const company = stage.docs.find((doc) => doc.id === 'company-brief')!;
+  // The line sits at the top of the window, clear of the two cards it is about, and goes by itself after six seconds.
+  const box = (await notice.boundingBox())!;
+  expect(box.y).toBeLessThan(40);
+  expect(box.height).toBeLessThan(48);
+  for (const id of [sam.id, company.id]) {
+    await expect.poll(async () => {
+      const card = (await page.locator(`.react-flow__node[data-id="${id}"]`).boundingBox())!;
+      return card.y >= box.y + box.height || card.x >= box.x + box.width || card.x + card.width <= box.x;
+    }).toBe(true);
+  }
+  await expect(notice).toBeHidden({ timeout: 7_000 });
   expect(sam.partner).toBe(true);
   expect(company.pinned).toBe(true);
   expect(stage.docs.filter((doc) => doc.pinned)).toHaveLength(1);
