@@ -395,6 +395,13 @@ describe('the partner slice: the bets ledger', () => {
     await Promise.allSettled([part.route!({ method: 'POST' } as never, {} as never, url), part.route!({ method: 'POST' } as never, {} as never, url)]);
     const after = await deps.store.loadStage();
     expect((after.cards ?? []).filter((one) => one.kind === 'metrics')).toHaveLength(1);
+    // A card of that key left on the stage without its wire still gets the partner's wire.
+    await deps.store.patchStage((draft) => { draft.wires = draft.wires.filter((wire) => !wire.to.startsWith('metrics-')); });
+    const { metricsFromBrief } = await import('./partner.ts');
+    await metricsFromBrief(workspace, deps.store, { label: 'Paying users', value: 2 }, 'p1', Date.now());
+    const rewired = await deps.store.loadStage();
+    expect((rewired.cards ?? []).filter((one) => one.kind === 'metrics')).toHaveLength(1);
+    expect(rewired.wires.filter((wire) => wire.from === 'p1' && wire.to.startsWith('metrics-'))).toHaveLength(1);
     const card = (after.cards ?? []).find((one) => one.kind === 'metrics')!;
     expect(card).toMatchObject({ kind: 'metrics', title: 'Numbers' });
     expect(after.wires.filter((wire) => wire.from === 'p1' && wire.to === card.id)).toHaveLength(1);

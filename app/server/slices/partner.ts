@@ -126,9 +126,9 @@ export async function metricsFromBrief(workspace: string, store: Pick<Deps['stor
   const id = `metrics-${keyOf(row.label)}`;
   await writeAtomic(join(workspace, 'metrics', `${id}.json`), JSON.stringify(briefMetrics(row, localDay(now), now), null, 2), { mkdir: true });
   await store.patchStage((draft) => {
-    if ((draft.cards ?? []).some((card) => card.id === id)) return;
-    draft.cards = [...(draft.cards ?? []), { id, kind: 'metrics', title: 'Numbers', ...placeOf(draft), w: 380, h: 440 }];
-    if (roomId && draft.rooms.some((room) => room.id === roomId)) draft.wires.push({ id: `${roomId}-${id}`, from: roomId, fromHandle: 'r', to: id, toHandle: 'l' });
+    if (!(draft.cards ?? []).some((card) => card.id === id)) draft.cards = [...(draft.cards ?? []), { id, kind: 'metrics', title: 'Numbers', ...placeOf(draft), w: 380, h: 440 }];
+    // A card of that key already there (left from before, or the other yes) is wired, never wired twice.
+    if (roomId && draft.rooms.some((room) => room.id === roomId) && !draft.wires.some((wire) => wire.from === roomId && wire.to === id)) draft.wires.push({ id: `${roomId}-${id}`, from: roomId, fromHandle: 'r', to: id, toHandle: 'l' });
   });
   return id;
 }

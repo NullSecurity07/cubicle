@@ -537,7 +537,8 @@ describe('outreach claimed as done', () => {
     expect(unreceiptedClaims('4 hosts emailed back.', [])).toEqual([]);
     // Backed by a tool that reaches out, said as a plan, or a name: not a claim.
     expect(unreceiptedClaims('I contacted the 12 beta users.', [{ name: 'send_email', ok: true }])).toEqual([]);
-    for (const reply of ['Once you have contacted the 12 beta users, tell me.', '3 users called it confusing.', 'Nobody contacted them yet.'])
+    for (const reply of ['Once you have contacted the 12 beta users, tell me.', '3 users called it confusing.', 'Nobody contacted them yet.',
+      'Of the 12 beta users you contacted, 2 pay.', 'Plan: 5 hosts interviewed by Friday.', 'We need 5 users interviewed before we build.', 'I spoke to nobody this week.', 'Of the 3 hosts Lena interviewed, 1 pays.'])
       expect(unreceiptedClaims(reply, []), reply).toEqual([]);
     const lines = checkReply({ reply: '10 non-paying beta users contacted for testing.', receipts: [], sources: ['Beta users: 12. Paying users: 2.'] });
     expect(lines).toEqual(['Unconfirmed: this reply claims an action no tool confirmed (contacted).']);
