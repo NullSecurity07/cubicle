@@ -110,18 +110,21 @@ function asksAbout(question: string, heading: string): boolean {
 const HEDGE = /\b(not sure|unsure|don'?t know|do not know|haven'?t|have not|no idea|no clue|unclear|unknown|hard to say|need to ask|ask (?:the )?founder|tbd|n\/a|pending|not yet|can'?t say)\b/i;
 const hedges = (answer: string) => /\?\s*$/.test(answer.trim()) || HEDGE.test(answer.replace(/[’‘]/g, "'"));
 
+// The words an answer says beyond its section's name: three letters or more, and not a bare yes or no. None left
+// ("No." to "have you written section 4 yet?", or "Founder-market fit.") says nothing that could be the section.
+const AFFIRM = new Set(['yes', 'yeah', 'yep', 'nope', 'okay', 'sure']);
+function saying(text: string, heading: string): string[] {
+  const words = (said: string) => said.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word.length > 2);
+  const named = new Set(words(heading));
+  return words(text).filter((word) => !named.has(word) && !AFFIRM.has(word));
+}
+
 // An answer most of whose words are the question's own: the question said back, maybe as dictated to them. The
 // section's own words are left out on both sides, so "Founder-market fit: lived it." is an answer.
 function echoes(answer: string, question: string, heading: string): boolean {
-  const split = (text: string) => text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word.length > 2 && !named.has(word));
-  const named = new Set<string>();
-  for (const word of split(heading)) named.add(word);
-  const asked = new Set(split(question));
-  const said = split(answer);
-  // Nothing left once the section's name is taken out ("Founder-market fit.") says nothing either; "No." is still a word.
-  const left = answer.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word && !named.has(word));
-  if (!left.length) return true;
-  return !!said.length && said.filter((word) => asked.has(word)).length / said.length >= 0.7;
+  const asked = new Set(saying(question, heading));
+  const said = saying(answer, heading);
+  return said.filter((word) => asked.has(word)).length / said.length >= 0.7;
 }
 
 // A colleague asked with ask_person answers in words, without tools, so their answer never reached their own section of
@@ -150,6 +153,7 @@ export async function answerIntoSection(context: ToolContext, targetId: string, 
     const [{ heading }] = asked;
     // A colleague answering without tools does not know their reply becomes their section, so they hedge or ask back;
     // written in, a hedge counted as the section and let a verdict stand on it. Nor is the question said back an answer.
+    if (!saying(answer, heading).length) return `${target.name} answered but did not fill "${heading}"; it stays empty. Ask ${target.name} what goes in it.`;
     if (hedges(answer) || echoes(answer, question, heading)) return `${target.name} answered but did not fill "${heading}"; it stays empty.`;
     const asking = question.replace(/\s+/g, ' ').trim();
     const body = `${answer.trim()}\n\n(From chat: ${target.name} answered ${asker.name} on ${shortDay(Date.now())}, asked "${asking.length > 200 ? `${asking.slice(0, 199)}…` : asking}".)`;

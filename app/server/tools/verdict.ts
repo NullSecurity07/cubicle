@@ -158,7 +158,15 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
   const { rules, stage, docId, writerId, before, now } = input;
   // A marker line is read past by the caps and the verdict reader, so one written by hand hid "STRONG, Score: 9/10"
   // from them. Only a colleague's answer put in by ask_person carries one.
-  const chatLines = (text: string) => text.split('\n').map(bare).filter((line) => MARKER.test(line));
+  // Each with the section it stands in, so a real one copied under another heading counts as new.
+  const chatLines = (text: string) => {
+    let under = '';
+    return text.split('\n').flatMap((line) => {
+      const heading = /^#{1,6}\s+(.*)$/.exec(line.trim());
+      if (heading) under = headingKey(heading[1]);
+      return MARKER.test(bare(line)) ? [`${under}\n${bare(line)}`] : [];
+    });
+  };
   const had = new Set(chatLines(before));
   if (!input.fromChat && chatLines(input.after).some((line) => !had.has(line))) {
     throw new Error('not written: a "(From chat:" line is written only by ask_person, when a colleague\'s answer goes into their section. Write your own words without it.');

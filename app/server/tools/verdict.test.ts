@@ -253,6 +253,19 @@ describe('a forged from-chat marker', () => {
     expect(await doc()).not.toMatch(/STRONG, Score: 9\/10/);
   });
 
+  it('is refused when a real one is copied into another section', async () => {
+    const { stage, store, as, doc, fill } = await setup();
+    await fill(['4. Founder-market fit']);
+    const consult: Consult = async () => 'None: the founder has never worked in this market.';
+    expect((await runTool(teamTools(consult), 'ask_person', JSON.stringify({ name: 'Rohan', question: 'What goes in section 4?' }), { stage, roomId: 'verdict', store, granted: new Map() })).text).toContain('Written into');
+    const marker = (await doc()).split('\n').find((line) => line.startsWith('(From chat:'))!;
+    const out = await as('verdict')('replace_section', { heading: '5. Verdict', text: `WEAK: no fit (4).\n\nScore: 3/10\n\n${marker}` });
+    expect(out.ok).toBe(false);
+    expect(out.text).toMatch(/"\(From chat:" line is written only by ask_person/);
+    // A whole rewrite that keeps the real one where it is still goes through.
+    expect((await as('verdict')('write_doc', { text: (await doc()).replace('## 5. Verdict\n', '## 5. Verdict\n\nWEAK: no fit (4).\n\nScore: 3/10\n') })).ok).toBe(true);
+  });
+
   it('is refused in a colleague\'s own section too', async () => {
     const { as, doc, fill } = await setup();
     await fill(['3. Is the pain real?']);
@@ -509,6 +522,15 @@ describe('the judge asking a colleague about their empty section', () => {
     const { result, text } = await run('What is your founder-market fit, section 4?', 'Founder-market fit.');
     expect(result.tools[0].result).toContain('it stays empty');
     expect(filled(sectionBody(text, '4. Founder-market fit'))).toEqual([]);
+  });
+
+  it('leaves the section empty on a bare yes or no, and says to ask what goes in it', async () => {
+    for (const bare of ['No.', 'Yes.', 'OK.']) {
+      const { result, text } = await run('Have you written section 4 yet?', bare);
+      expect(result.tools[0].result, bare).toContain('Rohan answered but did not fill "4. Founder-market fit"; it stays empty. Ask Rohan what goes in it.');
+      expect(filled(sectionBody(text, '4. Founder-market fit')), bare).toEqual([]);
+      expect(sectionBody(text, '5. Verdict'), bare).toMatch(/^Not assessed: 4\. Founder-market fit/);
+    }
   });
 
   it('keeps only its own marker, dropping one the colleague wrote into the answer', async () => {
