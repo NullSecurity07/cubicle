@@ -42,7 +42,7 @@ export function createChat(deps: Deps) {
     await store.appendChat(toRoomId, { id: newMessageId(), role: 'user', text: question, at: Date.now(), from: asker.name });
     let messages = await promptFor(stage, toRoomId, []);
     // Nobody able holds the whole prompt: the colleague answers from the short one.
-    const slim = needsSlim(clients, usage, messages, []);
+    let slim = needsSlim(clients, usage, messages, []);
     if (slim) messages = await promptFor(stage, toRoomId, [], false, true);
     // The colleague is shown what they would be shown in a turn of their own: their playbook, their notes, their
     // cards. Offered nothing, so every procedure that needs a tool is left out, and they still answer in words only.
@@ -51,6 +51,11 @@ export function createChat(deps: Deps) {
     if (!busy.has(toRoomId)) {
       const before: Payloads['turn:before'] & Offered = { roomId: toRoomId, source: 'run', query: question, messages, offered: [], ...(slim ? { slim } : {}) };
       messages = (await seams.run('turn:before', before)).messages;
+      // The extras made it too big after all: built short and asked again, as a turn is (loop.ts).
+      if (!slim && needsSlim(clients, usage, messages, [], 0)) {
+        slim = true;
+        messages = (await seams.run('turn:before', { ...before, messages: await promptFor(stage, toRoomId, [], false, true), slim })).messages;
+      }
     }
     const { order } = target.partner && !target.model ? partnerRoute(clients, usage, { promptChars: promptSize(messages), tools: false })
       : route(clients, usage, { pinned: target.model, promptChars: promptSize(messages), tools: false });
@@ -122,6 +127,8 @@ export function createChat(deps: Deps) {
       };
       const turnOn = (these: typeof messages, offered = mine) => runTurn({
         messages: these, tools: offered, clients: order, usage, signal: stop.signal, seams, source: 'chat', query: text, slim,
+        // The short prompt with whatever this call added after the whole one (a second look's answer and nudge).
+        slimmer: async () => [...await promptFor(stage, roomId, mine.map((tool) => tool.name), false, true), ...these.slice(messages.length)],
         // Listened for before it is shown, so an answer given while Needs you is still being written is heard.
         approve: (event, signal) => askFounder(attention, approvals, { id: `approval:${event.id}`, kind: 'approval', title: event.question ?? event.name.replace(/_/g, ' '), at: Date.now(), roomId, who: room.name, event }, signal),
         context: { stage, roomId, store, granted: new Map() },

@@ -96,10 +96,12 @@ export function createRuns(deps: {
         const again = task.repeat && last?.startedAt
           ? `This task repeats; it last ran on ${fullDay(last.startedAt)}${last.finishedAt ? ` and finished at ${clockTime(last.finishedAt)}` : ''}. Anything asked of you "since last time" starts there.\n\n`
           : '';
-        messages.push({ role: 'user', content: `${STARTED[by]} Do it now with your tools, then report the result in a few lines.\n\n${again}${before}Task: ${asked}` });
+        const work = { role: 'user' as const, content: `${STARTED[by]} Do it now with your tools, then report the result in a few lines.\n\n${again}${before}Task: ${asked}` };
+        messages.push(work);
         const { order } = route(clients, usage, { pinned: room.model, promptChars: promptSize(messages), tools: true });
         const reply = await runTurn({
           messages, tools: mine, clients: order, usage, signal: stop.signal, seams, source: 'run', query: asked, slim,
+          slimmer: async () => [...await promptFor(stage, room.id, mine.map((tool) => tool.name), true, true), work],
           context: { stage, roomId: room.id, store, granted: new Map() },
           events: {
             token: (token) => { result += token; },

@@ -10,6 +10,7 @@ import type { Payloads, Seams, Source } from './seams.ts';
 import { runTool, type Tool, type ToolContext } from './tools/registry.ts';
 import { ANSWER_IN_WORDS, CALL_THE_TOOL, checkReply, HELD_BACK, proseToolCall, turnSources } from './truth.ts';
 import type { UsageBook } from './usage.ts';
+import { needsSlim, slimNotice } from './slim.ts';
 
 const MAX_STEPS = 8;
 // The most tool calls that change something a stand-in model (one that answers because the first could not, or one on this machine) may
@@ -71,6 +72,8 @@ export async function runTurn(input: {
   seams?: Seams; source?: Source; query?: string;
   // The prompt is the short one, cut to fit the one model able to answer: the extras keep it short.
   slim?: boolean;
+  // Builds this turn's short prompt, for when the prompt fit before the extras at turn:before and no longer does.
+  slimmer?: () => Promise<ModelMessage[]>;
 }): Promise<TurnResult> {
   const { tools, context, usage, events, signal, seams } = input;
   const { roomId } = context;
@@ -117,6 +120,11 @@ export async function runTurn(input: {
   // What this turn offers rides along for the playbook, which leaves out procedures that need anything else.
   const before: Payloads['turn:before'] & Offered = { roomId, source, query, messages, offered: tools.map((tool) => tool.name), ...(input.slim ? { slim: true } : {}) };
   if (seams) messages = (await seams.run('turn:before', before)).messages;
+  // The extras made it too big for every model able to answer: the turn is built short and they are asked again.
+  if (seams && !input.slim && input.slimmer && needsSlim(input.clients, usage, messages, tools, 0)) {
+    messages = (await seams.run('turn:before', { ...before, messages: await input.slimmer(), slim: true })).messages;
+    if (input.clients[0]) events.notice?.(slimNotice(input.clients[0]));
+  }
   const inputs = messages;
 
   for (let step = 1; step <= MAX_STEPS && !signal?.aborted; step += 1) {

@@ -40,6 +40,8 @@ export type ModelClient = {
   // Its daily allowance is a pool shared with something else the founder uses (Cloudflare's neurons also draw the
   // pictures): once its own `rpd` is used it is left out for the rest of the day, not kept at the back as a net.
   sharedPool?: boolean;
+  // How long this model may keep silent before its first word, when not the usual 20 s (see `FIRST_WORD_MS`).
+  firstWordMs?: number;
   // The OpenAI-compatible handle behind this client, when there is one. Nothing in a turn uses it — a turn goes
   // through `step`, which streams and counts — but a library that speaks the OpenAI API for us (the eval scorers)
   // needs the very same key and base URL rather than a second one the founder would have to go and get.
@@ -332,7 +334,7 @@ export function collectCalls(calls: ToolCall[], parts: CallPart[]) {
   }
 }
 
-export type Entry = (typeof models)[number] & { side?: boolean; sharedPool?: boolean; pool?: string; vision?: boolean; streamUsage?: boolean; callSignature?: string; shortCallIds?: boolean; concurrency?: number; extra?: Record<string, unknown>; limits?: Limits };
+export type Entry = (typeof models)[number] & { side?: boolean; sharedPool?: boolean; pool?: string; vision?: boolean; streamUsage?: boolean; callSignature?: string; shortCallIds?: boolean; firstWordMs?: number; concurrency?: number; extra?: Record<string, unknown>; limits?: Limits };
 
 // What the free providers give, as their own pages said on 2026-09-24. A line with only `rpm` has no published daily
 // cap. Groq and Cerebras count each model apart, so `groq-qwen` and `cerebras-qwen` are a second day's worth on the
@@ -390,7 +392,7 @@ function keysOf(env: NodeJS.ProcessEnv, keyEnv: string): { key: string; at: numb
   return [...(env[keyEnv] ? [{ key: env[keyEnv]!, at: 1 }] : []), ...spare.sort((one, other) => one.at - other.at)];
 }
 
-type Shape = { model: string; maxPromptChars: number; maxTokens: number; tools: boolean; side?: boolean; sharedPool?: boolean; vision?: boolean; streamUsage?: boolean; callSignature?: string; shortCallIds?: boolean; concurrency?: number; extra?: Record<string, unknown>; limits?: Limits; local?: boolean };
+type Shape = { model: string; maxPromptChars: number; maxTokens: number; tools: boolean; side?: boolean; sharedPool?: boolean; vision?: boolean; streamUsage?: boolean; callSignature?: string; shortCallIds?: boolean; firstWordMs?: number; concurrency?: number; extra?: Record<string, unknown>; limits?: Limits; local?: boolean };
 
 // How long a hosted model may keep silent before its first word: a hanging Gemini costs this, not the whole 45 s
 // request timeout, and the next model is asked. Once anything streams, the model has all the time the request has.
@@ -413,6 +415,7 @@ function clientOf(name: string, entry: Shape, api: OpenAI, firstWordMs?: number)
     ...(entry.side ? { side: true } : {}),
     ...(entry.sharedPool ? { sharedPool: true } : {}),
     ...(entry.concurrency ? { concurrency: entry.concurrency, busy } : {}),
+    ...(firstWordMs ? { firstWordMs } : {}),
     openai: api,
     async step(history, options) {
       if (busy()) throw new Error(`${name} is already answering another request`);
@@ -492,13 +495,15 @@ function localClient(local: LocalModel): ModelClient {
 export function realClients(env: NodeJS.ProcessEnv = process.env, local?: LocalModel): ModelClient[] {
   // An entry whose key, or any name its address needs, is not set here is left out without a word: the health check
   // says once which are unset. `STAGE_FIRST_TOKEN_MS` changes the first-word clock (a test sets it short).
-  const firstWordMs = Number(env.STAGE_FIRST_TOKEN_MS) > 0 ? Number(env.STAGE_FIRST_TOKEN_MS) : FIRST_WORD_MS;
+  // An entry may be given longer (`firstWordMs`): Kimi on NVIDIA takes 13-44 s to its first word, and cut at 20 s it was
+  // cut every time and counted towards its breaker. The machine's own setting wins over both.
+  const forced = Number(env.STAGE_FIRST_TOKEN_MS) > 0 ? Number(env.STAGE_FIRST_TOKEN_MS) : undefined;
   const hosted = ENTRIES.flatMap((entry) => {
     const baseURL = expand(entry.baseURL, env);
     return baseURL === undefined ? [] : keysOf(env, entry.keyEnv).map(({ key, at }) => ({ entry, key, at, baseURL }));
   }).map(({ entry, key, at, baseURL }) => {
     const api = new OpenAI({ apiKey: key, baseURL, timeout: 45_000, maxRetries: 0 });
-    return clientOf(at > 1 ? `${entry.name}#${at}` : entry.name, entry, api, firstWordMs);
+    return clientOf(at > 1 ? `${entry.name}#${at}` : entry.name, entry, api, forced ?? entry.firstWordMs ?? FIRST_WORD_MS);
   });
   return local ? [...hosted, localClient(local)] : hosted;
 }

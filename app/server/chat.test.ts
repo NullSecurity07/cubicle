@@ -416,3 +416,94 @@ describe('a turn when the only model able cannot hold the room prompt (round 6)'
     expect(asked).toEqual([false, true]);
   });
 });
+
+describe('the short prompt, measured with what the extras add (round 6 review)', () => {
+  const check: Tool = { name: 'check', description: 'Checks.', parameters: { type: 'object', properties: {} }, run: async () => ({ text: 'checked' }) };
+  const holding = (name: string, maxPromptChars: number, sizes: number[] = [], limits: ModelClient['limits'] = { rpd: 1000 }): ModelClient => ({
+    name, model: `${name}-1`, maxPromptChars, tools: true, limits,
+    async step(messages, { onToken }) { sizes.push(messages.reduce((sum, one) => sum + (one.content ?? '').length, 0)); onToken(`${name} answers.`); return { text: '', calls: [] }; },
+  });
+  // A room whose whole prompt is `full` characters, and a seam that adds `extra` at turn:before, as the partner's
+  // standing facts and the metrics block do.
+  async function setupRoom(clients: ModelClient[], full: number, extra: number, usage = createUsage(null)) {
+    const dir = await mkdtemp(join(tmpdir(), 'chat-'));
+    const store = createStore(dir);
+    const built: boolean[] = [];
+    const payloads: { slim?: boolean }[] = [];
+    const seams = createSeams();
+    seams.on('turn:before', async (payload, next) => {
+      payloads.push(payload);
+      const [system, ...rest] = payload.messages;
+      return next({ ...payload, messages: [{ ...system, content: `${system.content}\n\n${'F'.repeat(extra)}` }, ...rest] });
+    });
+    const { chat, consult } = createChat({
+      store, roomFeed: createRoomFeed(), busy: new Set(), clients, usage, seams,
+      attention: createAttention(dir), approvals: createApprovals(), memory: { fold: async () => false },
+      promptFor: async (_stage, roomId, _names, _fresh, slim) => {
+        built.push(!!slim);
+        return [{ role: 'system', content: slim ? `You are ${roomId}. Short.` : `You are ${roomId}. ${'x'.repeat(full)}` }, { role: 'user', content: 'Raise now?' }];
+      },
+      toolsFor: () => [check],
+    });
+    const turn = async () => {
+      const out = new PassThrough();
+      const events: Record<string, unknown>[] = [];
+      out.on('data', (chunk: Buffer) => { for (const line of chunk.toString().split('\n')) if (line.startsWith('data: ')) events.push(JSON.parse(line.slice(6))); });
+      const res = Object.assign(out, { writeHead: () => res }) as unknown as ServerResponse;
+      await chat('marketing', 'Raise now?', res);
+      return events.flatMap((one) => ('notice' in one ? [one.notice as string] : []));
+    };
+    return { store, built, payloads, turn, consult };
+  }
+
+  it('goes short when the prompt fits only without room for the extras, and Groq answers', async () => {
+    const sizes: number[] = [];
+    const { built, turn } = await setupRoom([holding('groq', 18_000, sizes)], 16_000, 3000);
+    const notices = await turn();
+    expect(built).toEqual([false, true]);
+    expect(notices.some((one) => /short prompt/.test(one))).toBe(true);
+    expect(sizes[0]).toBeLessThan(18_000);
+  });
+
+  it('goes short after the extras when they make a prompt that fitted too big, and says so once', async () => {
+    const sizes: number[] = [];
+    const { built, payloads, turn } = await setupRoom([holding('groq', 18_000, sizes)], 12_000, 6000);
+    const notices = await turn();
+    expect(built).toEqual([false, true]);
+    expect(payloads.map((one) => !!one.slim)).toEqual([false, true]);
+    expect(notices.filter((one) => /short prompt/.test(one))).toHaveLength(1);
+    expect(sizes).toHaveLength(1);
+    expect(sizes[0]).toBeLessThan(18_000);
+  });
+
+  it('keeps the whole prompt when it fits with the extras in', async () => {
+    const { built, turn } = await setupRoom([holding('groq', 18_000)], 8000, 3000);
+    expect((await turn()).some((one) => /short prompt/.test(one))).toBe(false);
+    expect(built).toEqual([false]);
+  });
+
+  it('does not count a model spent for the day (Gemini at its daily allowance) as able to hold the prompt', async () => {
+    const usage = createUsage(null);
+    usage.record('gemini');
+    const sizes: number[] = [];
+    const { built } = await setupRoom([holding('gemini', 400_000, [], { rpd: 1 }), holding('groq', 18_000, sizes)], 30_000, 0, usage).then(async (room) => { await room.turn(); return room; });
+    expect(built).toEqual([false, true]);
+    expect(sizes[0]).toBeLessThan(18_000);
+  });
+
+  it('answers a colleague from the short prompt when nobody able holds the whole one', async () => {
+    const sizes: number[] = [];
+    const { built, payloads, consult } = await setupRoom([holding('groq', 18_000, sizes)], 30_000, 0);
+    expect(await consult({ fromRoomId: 'build', toRoomId: 'marketing', question: 'Raise now?' })).toBe('groq answers.');
+    expect(built).toEqual([false, true]);
+    expect(payloads).toEqual([expect.objectContaining({ slim: true })]);
+    expect(sizes[0]).toBeLessThan(18_000);
+  });
+
+  it('answers a colleague from the short prompt when the extras made the whole one too big', async () => {
+    const { built, payloads, consult } = await setupRoom([holding('groq', 18_000)], 12_000, 6000);
+    await consult({ fromRoomId: 'build', toRoomId: 'marketing', question: 'Raise now?' });
+    expect(built).toEqual([false, true]);
+    expect(payloads.map((one) => !!one.slim)).toEqual([false, true]);
+  });
+});

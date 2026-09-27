@@ -579,3 +579,41 @@ describe('NVIDIA and Mistral on their free tiers (round 6)', () => {
     await one;
   });
 });
+
+describe('the first-word clock for a slow model (round 6 review)', () => {
+  const env = { NVIDIA_API_KEY: 'nvapi-x', GROQ_API_KEY: 'g' } as NodeJS.ProcessEnv;
+  // A provider that says nothing for 25 s, then answers; the abort of either clock ends it at once.
+  const silentFor = (one: ModelClient, milliseconds: number) => {
+    (one.openai!.chat.completions as unknown as { create: unknown }).create = (_body: unknown, options: { signal?: AbortSignal }) => ({
+      withResponse: () => new Promise((done, fail) => {
+        const timer = setTimeout(() => { async function* chunks() { yield { choices: [{ delta: { content: 'late but sound' } }] }; } done({ data: chunks(), response: { headers: new Headers() } }); }, milliseconds);
+        options.signal?.addEventListener('abort', () => { clearTimeout(timer); fail(new Error('Request was aborted.')); }, { once: true });
+      }),
+    });
+  };
+
+  it('gives Kimi on NVIDIA a minute before its first word, and everyone else the usual 20 s, unless the machine says', () => {
+    const clients = realClients(env);
+    expect(clients.find((one) => one.name === 'nvidia')!.firstWordMs).toBe(60_000);
+    expect(clients.find((one) => one.name === 'groq')!.firstWordMs).toBe(20_000);
+    expect(realClients({ ...env, STAGE_FIRST_TOKEN_MS: '500' }).find((one) => one.name === 'nvidia')!.firstWordMs).toBe(500);
+  });
+
+  it('waits out 25 s of silence from Kimi, where it cuts another model at 20', async () => {
+    vi.useFakeTimers();
+    try {
+      const clients = realClients(env);
+      const nvidia = clients.find((one) => one.name === 'nvidia')!;
+      const groq = clients.find((one) => one.name === 'groq')!;
+      silentFor(nvidia, 25_000);
+      silentFor(groq, 25_000);
+      let said = '';
+      const kimi = nvidia.step(messages, { onToken: (token) => { said += token; } });
+      const other = groq.step(messages, { onToken: () => {} }).catch((error: Error) => error);
+      await vi.advanceTimersByTimeAsync(26_000);
+      await kimi;
+      expect(said).toBe('late but sound');
+      expect(((await other) as Error).message).toMatch(/no first word within 20 s/);
+    } finally { vi.useRealTimers(); }
+  });
+});
