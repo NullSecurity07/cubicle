@@ -78,10 +78,13 @@ export function createChat(deps: Deps) {
     // The founder pressing Stop closes the request; the turn ends there and what was said is kept.
     const stop = new AbortController();
     res.on('close', () => stop.abort());
+    // The reply as it stands after every finished tool step; `id` is set once the founder's question is saved.
+    const kept = { id: '', text: '', tools: [] as ToolEvent[], writes: Promise.resolve() };
     try {
       // Regenerate and edit: the old message and everything after it leave the conversation (to trash) before the new one goes in.
       if (extra.replace) await store.cutChat(roomId, extra.replace, true);
       await store.appendChat(roomId, { id: newMessageId(), role: 'user', text, at: Date.now(), ...(extra.via ? { via: extra.via } : {}), ...(extra.attachments?.length ? { attachments: extra.attachments } : {}) });
+      kept.id = newMessageId();
       roomFeed.tell({ roomId, turn, started: { ...(extra.via ? { via: extra.via } : {}) } });
       // The names in the prompt are the narrowed list too: a person is never told about a tool they are not offered.
       const mine = deps.toolsFor(stage, roomId);
@@ -95,8 +98,7 @@ export function createChat(deps: Deps) {
       if (notice) send({ notice });
       // The reply is kept as it stands after every step a tool finishes, marked stopped, and the finished reply is
       // written over it under the same id: a restart mid-turn keeps what was said and done, not nothing.
-      const replyId = newMessageId();
-      const kept = { text: '', tools: [] as ToolEvent[], writes: Promise.resolve() };
+      const replyId = kept.id;
       const keepSoFar = (tool: ToolEvent) => {
         if (tool.ok === undefined) return;
         kept.tools = [...kept.tools.filter((one) => one.id !== tool.id), tool];
@@ -153,6 +155,13 @@ export function createChat(deps: Deps) {
       void memory.fold(roomId).catch(() => {});
     } catch (error) {
       send({ error: (error as Error).message });
+      // Kept as the reply, so a reload shows why the question has no answer rather than a question left hanging.
+      // Whatever a tool already did stays on it. A founder's Stop is not a failure and leaves nothing behind.
+      if (!stop.signal.aborted && kept.id) {
+        await kept.writes;
+        const failure = { id: kept.id, role: 'assistant' as const, text: `No model could answer this time: ${(error as Error).message.slice(0, 400)}. Ask again in a minute.`, at: Date.now(), ...(kept.tools.length ? { tools: kept.tools } : {}) };
+        await store.putMessage(roomId, failure).catch(() => {});
+      }
     } finally {
       busy.delete(roomId);
       roomFeed.tell({ roomId, turn, ended: true });

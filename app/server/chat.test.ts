@@ -227,6 +227,14 @@ describe('a turn when models fail', () => {
     expect(saved).toMatchObject({ role: 'assistant', text: 'The whole critique.', provider: 'openrouter' });
   });
 
+  it('saves the error as the reply when no model answers, so a reload shows it', async () => {
+    const { store, events } = await turnChat([down('gemini'), down('groq')]);
+    expect(events.some((one) => 'error' in one)).toBe(true);
+    const talk = await store.readChat('build');
+    expect(talk.map((one) => one.role)).toEqual(['user', 'assistant']);
+    expect(talk[1].text).toMatch(/^No model could answer this time.*gemini: 503 overloaded/s);
+  });
+
   it('keeps a partner\'s first answer, labelled, when taking another look fails', async () => {
     let asked = 0;
     const once: ModelClient = {
