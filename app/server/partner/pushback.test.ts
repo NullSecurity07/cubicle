@@ -21,6 +21,13 @@ describe('the partner\'s precondition check', () => {
       'Help me hire our first engineer', "Let's hire 3 people next quarter", 'Plan the pivot to agencies', 'Should we raise a pre-seed?']) expect(asksCommitment(said), said).toBe(true);
   });
 
+  // The review's probes: a large sum is a commitment whichever verb sits beside it, and so is money from angels, a VC or a lender.
+  it('knows a large sum beside any money verb, either side, and money from angels, a VC, a loan or an offer', () => {
+    for (const said of ['help me plan a $15k spend on a conference', "Let's put $20k into Google ads", 'Plan to allocate $50,000 to marketing', 'plan spending 1,500 dollars on ads',
+      'Should we take the $250k offer from the VC?', 'I want to raise from angels', 'Should we take on a $100k loan?', 'Help me plan a $5k budget', "Let's invest 10k in a booth"]) expect(asksCommitment(said), said).toBe(true);
+    for (const said of ['Draft a $300 budget for the ad test', 'Should we hire a freelance designer?', "Let's put $200 into boosting the post", 'Plan to pay $50 for the domain']) expect(asksCommitment(said), said).toBe(false);
+  });
+
   it('knows a reply that checked the preconditions, however it says no', () => {
     for (const reply of ['Not yet. Before that, get 20 paying users.', 'I disagree: no users means no round.\n\nMy call: no.', 'No. Here is why: nobody has paid yet.', "I'd hold off until you have ten users.", 'Plan below.\n\nMy call: not now.', 'Too early. First get ten paying readers.', "Don't raise yet: nobody pays so far.", 'My call: **wait** a month.']) expect(checksPreconditions(reply), reply).toBe(true);
     expect(checksPreconditions('Here is your 7-phase raise plan. 1. Prepare a SAFE with a $2M cap.')).toBe(false);

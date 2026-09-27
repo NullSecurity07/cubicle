@@ -10,30 +10,35 @@ import type { TurnResult } from '../loop.ts';
 // update", "the monthly email to investors", "the $300 ad budget" and "hire a contractor" are the founder's ordinary
 // week, and asking for preconditions on them only buys a "Not yet" nobody needed.
 const COMMIT = new RegExp([
-  '\\braise\\w*\\b(?!\\s+(?:the\\s+|our\\s+|my\\s+)?(?:price|prices|rate|rates|fee|fees|bar)\\b)[^.?!]{0,40}(?:\\$\\s?\\d|\\d+\\s?[kmb]\\b|round|pre-?seed|seed\\b|series [a-d]|money|capital|funding|from investors|investors)',
+  '\\braise\\w*\\b(?!\\s+(?:the\\s+|our\\s+|my\\s+)?(?:price|prices|rate|rates|fee|fees|bar)\\b)[^.?!]{0,40}(?:\\$\\s?\\d|\\d+\\s?[kmb]\\b|round|pre-?seed|seed\\b|series [a-d]|money|capital|funding|from investors|investors|angels?|vcs?\\b|loan|offer)',
   '\\b(?:fund-?rais\\w*|pre-?seed round|seed round|series [a-d] round)',
   '\\b(?:hire|hiring|recruit\\w*)\\b[^.?!]{0,40}\\b(?:a|an|two|three|four|five|\\d+|first|our|my|someone|people|engineers?|developers?|designers?|marketers?|sales\\w*|staff|team|cto|vp)\\b',
   '\\bspend\\w*\\b[^.?!]{0,30}(?:savings|runway|on hiring)',
-  '\\bbudget for\\b',
   '\\bpivot\\w*\\b',
   '\\bshould (?:i|we) (?:raise|fund-?raise|hire)\\b',
   '\\b(?:our|a|the) (?:pre-?)?seed\\b',
 ].join('|'), 'i');
 // Help from outside by the job is not headcount: a contractor, a freelancer or an agency.
-const HIRED_HELP = /\b(?:hire|hiring|recruit\w*)\b[^.?!]{0,30}\b(?:contractors?|freelancers?|agency|agencies|virtual assistants?)\b/i;
+const HIRED_HELP = /\b(?:hire|hiring|recruit\w*)\b[^.?!]{0,30}\b(?:contractors?|freelanc\w*|agency|agencies|virtual assistants?)\b/i;
 const HEADCOUNT = /\b(?:hire|hiring|recruit\w*)\b/i;
 // A sum is a commitment from this much: below it, a spend is a week's ad test, not a bet of the company.
 export const SPEND_FROM = 1000;
-const SUM = /\bspend\w*\b[^.?!]{0,30}?(?:\$\s?(\d[\d,]*(?:\.\d+)?)\s?([kmb])?\b|\b(\d[\d,]*(?:\.\d+)?)\s?([kmb])\b)/i;
-const bigSpend = (said: string) => {
-  const found = SUM.exec(said);
-  if (!found) return false;
-  const [digits, scale] = found[1] !== undefined ? [found[1], found[2]] : [found[3], found[4]];
-  const value = Number(digits.replace(/,/g, '')) * ({ k: 1e3, m: 1e6, b: 1e9 }[(scale ?? '').toLowerCase() as 'k'] ?? 1);
-  return value >= SPEND_FROM;
-};
+// A sum of money: "$15k", "$50,000", "10k", "1,500 dollars".
+const SUM = /\$\s?(\d[\d,]*(?:\.\d+)?)\s?([kmb])?\b|\b(\d[\d,]*(?:\.\d+)?)\s?([kmb])\b|\b(\d[\d,]*(?:\.\d+)?)\s+(?:dollars|usd|euros|pounds)\b/gi;
+// What makes a sum money going out or coming in, said on either side of it.
+const MONEY_VERB = /\b(?:spend\w*|put\w*|allocat\w*|invest\w*|budget\w*|pay\w*|burn\w*|loans?|offers?)\b/i;
+const NEAR = 30;
+const sums = (said: string) => [...said.matchAll(SUM)].map((found) => {
+  const digits = found[1] ?? found[3] ?? found[5];
+  const scale = (found[2] ?? found[4] ?? '').toLowerCase();
+  return { value: Number(digits.replace(/,/g, '')) * ({ k: 1e3, m: 1e6, b: 1e9 }[scale as 'k'] ?? 1), at: found.index, end: found.index + found[0].length };
+});
+const bigSpend = (said: string) => sums(said).some((sum) => sum.value >= SPEND_FROM
+  && MONEY_VERB.test(`${said.slice(Math.max(0, sum.at - NEAR), sum.at)} ${said.slice(sum.end, sum.end + NEAR)}`));
+// "The budget for" something is a commitment, unless the sum it names is a small one.
+const budgetFor = (said: string) => /\bbudget for\b/i.test(said) && !sums(said).some((sum) => sum.value < SPEND_FROM);
 const commits = (said: string) => {
-  if (bigSpend(said)) return true;
+  if (bigSpend(said) || budgetFor(said)) return true;
   if (!COMMIT.test(said)) return false;
   // Only a hire of outside help matched: that is not a commitment. A raise or a pivot said beside it still is.
   if (HIRED_HELP.test(said)) return COMMIT.test(said.replace(HEADCOUNT, ''));
