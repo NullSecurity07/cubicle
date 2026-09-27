@@ -4,7 +4,7 @@ import type { ChatMessage, Decision, Stage, Task } from '../../shared/model.ts';
 import { bare, morningText, readMorning, type Bet, type Morning, type MorningNote } from '../../shared/partner.ts';
 import { localDay, weekDay } from '../clock.ts';
 import type { ModelMessage } from '../prompt.ts';
-import { sectionBody, filled, verdictOf } from '../tools/verdict.ts';
+import { sectionBody, filled, verdictOf, verdictState } from '../tools/verdict.ts';
 import { checkReply, FLAG_LINE, stripFlagged, turnSources } from '../truth.ts';
 import { gatherMonth } from '../slices/month.ts';
 import { cardOf } from './bets.ts';
@@ -142,7 +142,8 @@ export async function gatherCompany(from: MorningSources, options: { verdictChar
     const rules = doc.rules!;
     const body = sectionBody(from.doc ? await from.doc(doc.id).catch(() => '') : '', rules.verdict.heading);
     const lines = filled(body);
-    if (!lines.length) { verdicts.push(`- ${doc.title}, ${rules.verdict.heading}: not written yet.`); continue; }
+    const state = verdictState(body);
+    if (state) { verdicts.push(`- ${doc.title}, ${rules.verdict.heading}: ${state}.`); continue; }
     const { word, score } = verdictOf(body ?? '', rules.outcomes ?? []);
     const read = [word, score !== undefined ? `score ${score}/10` : ''].filter(Boolean).join(', ');
     verdicts.push(`- ${doc.title}, ${rules.verdict.heading}: ${read ? `${read}. ` : ''}${lines.join(' ').replace(/\s+/g, ' ').slice(0, most)}`);
