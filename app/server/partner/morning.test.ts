@@ -191,6 +191,20 @@ describe('one morning turn', () => {
     expect(quoted?.flags).toBeUndefined();
   });
 
+  it('does not let figures flagged in one room wipe the founder\'s own words about them from the note\'s sources', async () => {
+    const chats: Record<string, ChatMessage[]> = {
+      m: [{ id: 'f1', role: 'user', text: 'We charge $29 and have 40 customers.', at: at('2026-09-26T15:00') }],
+      p1: [],
+    };
+    const stage: Stage = { ...(await sources()).stage, rooms: [...(await sources()).stage.rooms, { id: 'r', name: 'Rohan', role: 'Finance', accent: '#fff', brief: '', x: 0, y: 0, w: 1, h: 1 }] };
+    chats.r = [{ id: 'r1', role: 'assistant', text: 'We are at $29 with 40 customers.\n\nUnsourced figures: $29, 40 customers (not found in anything this turn read).', at: at('2026-09-26T16:00') }];
+    const from = await sources({ stage, chat: async (roomId) => chats[roomId] ?? [] });
+    expect(await gatherMorning(from)).toContain('Flagged by the truth net');
+    const note = await writeMorning({ sources: from, name: 'Sam', promptFor: prompt, ask: async () => 'Three moves for today:\n1. Email the 40 customers paying $29 about the pre-order.\n2. b\n3. c\nRisk: Rohan was flagged for the price\nQuestion: q?' });
+    expect(note).not.toBeNull();
+    expect(note?.flags).toBeUndefined();
+  });
+
   it('leaves a failed turn out of what it reads and of what keys it', async () => {
     const failed: ChatMessage = { id: 'f', role: 'assistant', text: 'No model could answer this time (gemini down). Ask again in a minute.', at: at('2026-09-26T16:00'), failed: true };
     const from = await sources();

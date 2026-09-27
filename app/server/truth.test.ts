@@ -262,6 +262,21 @@ describe('what counts as a proposal', () => {
 });
 
 
+describe('preconditions the partner sets', () => {
+  it('counts a threshold, a milestone and a preconditions list as proposals', () => {
+    for (const reply of ['Raise when MRR reaches $10k.', 'Hold off until you hit 150 customers.', 'Get to 150 customers first.', 'Precondition: 18 months of runway.'])
+      expect(figureCheck(reply, []), reply).toEqual({ unsourced: [], proposals: [expect.any(String)] });
+    const list = 'Not yet. Preconditions before a raise:\n- MRR over $10k\n- Churn under 3%\n- 150 customers\n\nMy call: wait.';
+    expect(figureCheck(list, [])).toEqual({ unsourced: [], proposals: ['$10k', '3%', '150 customers'] });
+    expect(checkReply({ reply: list, receipts: [], sources: ['Should we raise?'] })).toEqual([]);
+  });
+
+  it('still flags a plain claim, and a list that is not preconditions', () => {
+    expect(figureCheck('Good SaaS churn is under 3%.', []).unsourced).toEqual(['3%']);
+    expect(figureCheck('Benchmarks:\n- Churn under 3%', []).unsourced).toEqual(['3%']);
+  });
+});
+
 describe('what a turn counts as its sources', () => {
   const system = [
     'You are Sam, Partner. Keep CAC under $300 and churn under 2% in everything you propose.',

@@ -120,9 +120,31 @@ const MAX_OPERANDS = 80;
 // target market has 30,000 customers", "consider that 70% fail" and "companies that try it see 3x" are claims.
 const LEAD = String.raw`(?:^[\s*\-\d.)]*|\b(?:i|we|you|let'?s|i'?d|we'?d|could|should|would|might)\s+(?:\w+\s+)?)`;
 const VERB = String.raw`(?:try(?:ing)?|aim(?:ing)?\s+(?:for|at)|shoot\s+for|propos(?:e|ing)|suggest(?:ing)?)`;
-const PHRASE = String.raw`(?:targets?\s+of|goal\s+(?:of|is)|what\s+if|(?:could|should|would|might)\s+charge|price\s+(?:it|them|this)\s+at)`;
-const PROPOSING = new RegExp(String.raw`(?:${LEAD}${VERB}|\b${PHRASE})(?:\s+\S+){0,3}\s*$`, 'i');
+// A milestone as an order, at the start of its clause only: "get to 150 customers first". "You will reach 1,200
+// users" is a forecast, and a claim.
+const MILESTONE = String.raw`^[\s*\-\d.)]*(?:get\s+to|reach|hit)`;
+// A threshold a plan waits on is the partner's condition, not a claim: "raise when MRR reaches $10k", "hold off until
+// you hit 150 customers".
+const THRESHOLD = String.raw`(?:when|until|once|before|after)\s+(?:[\w'-]+\s+){0,4}?(?:reach(?:es)?|hits?|gets?\s+to|is\s+(?:over|above|at\s+least)|passes|crosses|tops)`;
+const PHRASE = String.raw`(?:targets?\s+of|goal\s+(?:of|is)|what\s+if|(?:could|should|would|might)\s+charge|price\s+(?:it|them|this)\s+at|${THRESHOLD})`;
+const PROPOSING = new RegExp(String.raw`(?:${LEAD}${VERB}|${MILESTONE}|\b${PHRASE})(?:\s+\S+){0,3}\s*$`, 'i');
+// A line that names a precondition, or an item of a list that a line naming preconditions opens: every figure there is
+// a condition the partner sets ("- Churn under 3%"), where the same words alone would be a claim.
+const PRECONDITION = /\bpre-?conditions?\b/i;
+const ITEM = /^\s*(?:[-*+]|\d+[.)])\s/;
+function inPreconditions(reply: string, at: number): boolean {
+  const lines = reply.slice(0, at).split('\n');
+  if (PRECONDITION.test(lines.at(-1)!)) return true;
+  if (!ITEM.test(lines.at(-1)!)) return false;
+  for (let index = lines.length - 2; index >= 0; index -= 1) {
+    if (ITEM.test(lines[index])) continue;
+    return PRECONDITION.test(lines[index]);
+  }
+  return false;
+}
+
 function proposed(reply: string, at: number): boolean {
+  if (inPreconditions(reply, at)) return true;
   const before = reply.slice(0, at);
   const start = Math.max(...['. ', '! ', '? ', '\n', ': ', ', ', '; '].map((end) => before.lastIndexOf(end))) + 1;
   return PROPOSING.test(before.slice(start));

@@ -156,6 +156,10 @@ export async function gatherMorning(from: MorningSources): Promise<string> {
   ].join('\n');
 }
 
+// The facts without the truth net's flagged block, which runs from its heading to the Company numbers.
+const FLAGGED_BLOCK = /^Flagged by the truth net since [^\n]*\n(?:(?!Company Numbers:)[^\n]*\n)*/m;
+const withoutFlagged = (facts: string) => facts.replace(FLAGGED_BLOCK, '');
+
 // One morning turn: the partner's own prompt, the ask and the facts, and the reply held to its shape. Gives back the
 // note, or null when the reply lost the shape (nothing is posted then; the next try comes later).
 // Why a note that kept its shape still is not one the founder can use, or null when it is.
@@ -193,7 +197,10 @@ export async function writeMorning(input: {
   // Checked as posted: the reshaped note, not the raw reply, so the flags name only what the founder reads.
   // Read like a turn's reply: the partner's own brief, stance and rules are not facts, only the documents, the facts
   // below and what was said.
-  const flags = checkReply({ reply: morningText(read), receipts: [], sources: turnSources(messages) });
+  // The flagged block is left out: its figures are the ones nothing backed, and stripping them from the one message
+  // that holds every fact would take the founder's own words about the same figures with them.
+  const checked = messages.map((message, index) => (index === messages.length - 1 ? { ...message, content: `${MORNING_ASK}\n\n${withoutFlagged(facts)}` } : message));
+  const flags = checkReply({ reply: morningText(read), receipts: [], sources: turnSources(checked) });
   if (fault) flags.push(`Note check: ${fault.split(':')[0].replace(/^The /, 'the ')}, even when asked again.`);
   return { ...read, day: localDay(sources.now), at: sources.now, roomId: sources.partnerId, who: input.name, ...(flags.length ? { flags } : {}), ...(provider ? { provider } : {}), ...(model ? { model } : {}) };
 }
