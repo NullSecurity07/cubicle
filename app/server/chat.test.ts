@@ -227,4 +227,25 @@ describe('a turn when models fail', () => {
     expect(saved).toMatchObject({ role: 'assistant', text: 'The whole critique.', provider: 'openrouter' });
   });
 
+  it('keeps a partner\'s first answer, labelled, when taking another look fails', async () => {
+    let asked = 0;
+    const once: ModelClient = {
+      name: 'gemini', model: 'g', maxPromptChars: Infinity, tools: true, limits: { rpd: 1000 },
+      async step(_messages, { onToken }) {
+        asked += 1;
+        if (asked > 1) throw Object.assign(new Error('503 overloaded'), { status: 503 });
+        onToken('Phase 1: SAFE with a $2M cap.');
+        return { text: '', calls: [] };
+      },
+    };
+    const { store, events } = await turnChat([once], 'sam', 'I want to raise a $2M pre-seed next week. Draft the plan.', true);
+    expect(events.some((one) => 'error' in one)).toBe(false);
+    const saved = (await store.readChat('sam')).at(-1)!;
+    expect(saved.text).toBe('Phase 1: SAFE with a $2M cap.\n\n*Partner did not check preconditions.*');
+    const done = events.find((one) => 'done' in one) as { message: { text: string } };
+    expect(done.message.text).toBe(saved.text);
+    // The window was emptied for the second look, so it is given the first answer back.
+    const tokens = events.map((one) => ('restart' in one ? '<restart>' : 'token' in one ? String(one.token) : '')).join('');
+    expect(tokens.split('<restart>').at(-1)).toBe('Phase 1: SAFE with a $2M cap.');
+  });
 });

@@ -127,7 +127,19 @@ export function createChat(deps: Deps) {
           roomFeed.tell({ roomId, turn, restart: true });
           kept.text = '';
           // Words only this time, with the first answer and the nudge in front of it: nothing it did is done again.
-          return turnOn([...messages, { role: 'assistant', content: first.text }, { role: 'user', content: PRECONDITION_NUDGE }], []);
+          return turnOn([...messages, { role: 'assistant', content: first.text }, { role: 'user', content: PRECONDITION_NUDGE }], [])
+            .catch((error: Error) => {
+              // No model could take the second look: the first answer stands, back in every window, and is labelled
+              // as unchecked below. Its tools and usage are already counted once.
+              if (stop.signal.aborted) throw error;
+              send({ notice: `${room.name} could not take another look (${error.message.slice(0, 160)}), so the first answer stands.` });
+              send({ restart: true });
+              roomFeed.tell({ roomId, turn, restart: true });
+              kept.text = first.text;
+              send({ token: first.text });
+              roomFeed.tell({ roomId, turn, token: first.text });
+              return { ...first, tools: [], usage: { input: 0, output: 0 } };
+            });
         });
       }
       const message = {
