@@ -369,6 +369,25 @@ describe('the partner slice: the bets ledger', () => {
     await part.close!();
   });
 
+  // Journey 5: with paying users at 3, the partner proposed a bet with target 3, one that could not lose.
+  it('refuses a bet whose target does not beat the number as it stands, the right way for that number', async () => {
+    const { deps, part, workspace } = await installed({}, { now: () => new Date('2026-09-27T10:00').getTime(), ask: async () => SHAPED });
+    await mkdir(join(workspace, 'metrics'), { recursive: true });
+    await writeFile(join(workspace, 'metrics', 'metrics-1.json'), JSON.stringify({ updatedAt: 0, metrics: [
+      { key: 'paying_users', label: 'paying_users', unit: '', better: 'up', points: [{ at: '2026-09-25', value: 2, from: 'founder' }, { at: '2026-09-27', value: 3, from: 'founder' }] },
+      { key: 'churn', label: 'Churn', unit: '%', better: 'down', points: [{ at: '2026-09-27', value: 8, from: 'founder' }] },
+    ] }));
+    const stage = await deps.store.loadStage();
+    await deps.store.saveStage({ ...stage, rooms: [...stage.rooms, room('p1', 'Sam', { partner: true })], cards: [{ id: 'metrics-1', kind: 'metrics', x: 0, y: 0, w: 1, h: 1 }] });
+    const propose = async (metric: string, target: number) => part.tools!.find((one) => one.name === 'propose_bet')!.run({ what: 'Ship PDF invoices to the beta users', hypothesis: 'they stay and pay', metric, target, check_date: '2026-10-11' }, { stage: await deps.store.loadStage(), roomId: 'p1', store: deps.store, granted: new Map(), query: 'make the 2-week bet' } as never);
+    await expect(propose('paying_users', 3)).rejects.toThrow('"paying_users" is 3 now, read from the Metrics card: a target of 3 cannot lose. Propose a target above 3');
+    await expect(propose('paying_users', 2)).rejects.toThrow('a target of 2 cannot lose');
+    await expect(propose('churn', 9)).rejects.toThrow('"churn" is 8 now, read from the Metrics card: a target of 9 cannot lose. Churn is better lower: propose a target below 8');
+    expect((await propose('paying_users', 5)).text).toContain('(paying_users to 5 by 2026-10-11)');
+    expect((await propose('churn', 5)).text).toContain('(churn to 5 by 2026-10-11)');
+    await part.close!();
+  });
+
   it('lets the founder say how a due bet went from Needs you', async () => {
     const answers: [number, unknown][] = [];
     const { deps, part } = await installed({ json: (_res, status, body) => { answers.push([status, body]); } }, { now: () => new Date('2026-10-05T10:00').getTime(), ask: async () => SHAPED });

@@ -24,10 +24,10 @@ async function seeded() {
 describe('the number a bet is measured by', () => {
   it('is read in code from the Metrics card, the Leads card or the Survey card', async () => {
     const { workspace, stage } = await seeded();
-    expect(await readMetric(workspace, stage, 'signups')).toEqual({ value: 13, said: 'Signups is 13 (2026-10-02), read from the Metrics card' });
+    expect(await readMetric(workspace, stage, 'signups')).toEqual({ value: 13, said: 'Signups is 13 (2026-10-02), read from the Metrics card', better: 'up' });
     expect(await readMetric(workspace, stage, 'Signups')).toMatchObject({ value: 13 });
     expect(await readMetric(workspace, stage, 'leads')).toMatchObject({ value: 3 });
-    expect(await readMetric(workspace, stage, 'leads:replied')).toEqual({ value: 2, said: '2 leads in Replied, read from the Leads card' });
+    expect(await readMetric(workspace, stage, 'leads:replied')).toEqual({ value: 2, said: '2 leads in Replied, read from the Leads card', better: 'up' });
     expect(await readMetric(workspace, stage, 'leads:nowhere')).toMatchObject({ value: null });
     expect(await readMetric(workspace, stage, 'survey')).toEqual({ value: null, said: 'no Survey card is on the stage' });
     expect(await readMetric(workspace, stage, 'mrr')).toEqual({ value: null, said: 'no number called "mrr" is on a Metrics card' });

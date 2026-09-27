@@ -4,7 +4,7 @@ import { bare, companyLine, isPlanDoc, SHARED_RECORD, parsePlan, PARTNER_CHANNEL
 import { localDay } from '../clock.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
 import { leadsFor } from '../leads/store.ts';
-import { askedInstead, betDue, betsAttention, betsBook, closedLine, metricChoices, missingMetric, readMetric, type BetsBook } from '../partner/bets.ts';
+import { askedInstead, betDue, betsAttention, betsBook, cannotLose, closedLine, metricChoices, missingMetric, readMetric, type BetsBook } from '../partner/bets.ts';
 import { companyDocOf, ensureCompany, syncDecisions, writeBets } from '../partner/company.ts';
 import { hub } from '../events.ts';
 import { saysSomething } from '../missions.ts';
@@ -45,7 +45,7 @@ export function betTools(book: BetsBook, workspace: string, changed: () => Promi
         what: { type: 'string', description: 'What the company does, in a few words' },
         hypothesis: { type: 'string', description: 'What should happen because of it, and why' },
         metric: { type: 'string', description: 'What it is measured by, as above' },
-        target: { type: 'number', description: 'The value that metric should reach' },
+        target: { type: 'number', description: 'The value that metric should reach: above where it stands now (below, for a number that is better lower), so the bet can lose' },
         check_date: { type: 'string', description: 'YYYY-MM-DD, the day to look' },
       }, required: ['what', 'hypothesis', 'metric', 'target', 'check_date'] },
       async run(args, context) {
@@ -63,6 +63,9 @@ export function betTools(book: BetsBook, workspace: string, changed: () => Promi
         if (!choices.some((one) => one.toLowerCase() === metric.toLowerCase()) && (await readMetric(workspace, context.stage, metric)).value === null) {
           throw new Error(missingMetric(context.stage, metric, choices));
         }
+        // A target the number already meets is no bet: it is refused with the number as it stands.
+        const lose = cannotLose(metric, target, await readMetric(workspace, context.stage, metric));
+        if (lose) throw new Error(lose);
         const me = speaker(context);
         const bet = await book.propose({ what: bare(text(args, 'what', 160)), hypothesis: typeof args.hypothesis === 'string' ? args.hypothesis.replace(/\s+/g, ' ').trim().slice(0, 400) : '', metric, target, checkDate, ...(me ? { proposedBy: me.name, roomId: me.id } : {}) });
         await changed();

@@ -63,8 +63,9 @@ export type BetsBook = ReturnType<typeof betsBook>;
 
 // ---------------------------------------------------------------- the number a bet is measured by
 
-// Read in code from where it lives. `value` is null when the card or the number is not on the stage.
-export type Reading = { value: number | null; said: string };
+// Read in code from where it lives. `value` is null when the card or the number is not on the stage. `better` is
+// which way that number should move: a count of leads or answers goes up, a Metrics row says for itself.
+export type Reading = { value: number | null; said: string; better?: 'up' | 'down' };
 const readJson = async <T>(path: string, fallback: T): Promise<T> => { try { return JSON.parse(await readFile(path, 'utf8')) as T; } catch { return fallback; } };
 
 export async function readMetric(workspace: string, stage: Stage, spec: string): Promise<Reading> {
@@ -77,14 +78,14 @@ export async function readMetric(workspace: string, stage: Stage, spec: string):
     if (asked !== 'leads' && !LEAD_STAGES.includes(wanted)) return { value: null, said: `"${spec}" is not a lead stage` };
     let count = 0;
     for (const card of leadCards) count += (await leadsFor(workspace).list(card.id)).filter((lead) => asked === 'leads' || lead.stage === wanted).length;
-    return { value: count, said: `${count} ${asked === 'leads' ? 'leads' : `leads in ${STAGE_NAMES[wanted]}`}, read from the Leads card` };
+    return { value: count, said: `${count} ${asked === 'leads' ? 'leads' : `leads in ${STAGE_NAMES[wanted]}`}, read from the Leads card`, better: 'up' };
   }
   if (asked === 'survey') {
     const surveyCards = cards.filter((card) => card.kind === 'survey');
     if (!surveyCards.length) return { value: null, said: 'no Survey card is on the stage' };
     let count = 0;
     for (const card of surveyCards) count += (await createSurveys(workspace).list(card.id)).length;
-    return { value: count, said: `${count} survey answers, read from the Survey card` };
+    return { value: count, said: `${count} survey answers, read from the Survey card`, better: 'up' };
   }
   for (const card of cards.filter((one) => one.kind === 'metrics')) {
     const data = await readJson<Partial<Metrics>>(join(workspace, 'metrics', `${card.id}.json`), {});
@@ -92,7 +93,7 @@ export async function readMetric(workspace: string, stage: Stage, spec: string):
     if (!metric) continue;
     const last = metric.points.at(-1);
     if (!last) return { value: null, said: `${metric.label} has no reading yet` };
-    return { value: last.value, said: `${metric.label} is ${formatValue(last.value, metric.unit)} (${last.at}), read from the Metrics card` };
+    return { value: last.value, said: `${metric.label} is ${formatValue(last.value, metric.unit)} (${last.at}), read from the Metrics card`, better: metric.better };
   }
   return { value: null, said: `no number called "${spec}" is on a Metrics card` };
 }
@@ -172,6 +173,17 @@ export async function askedInstead(workspace: string, stage: Stage, pick: string
   const there = (await readMetric(workspace, stage, asked)).value !== null;
   const missing = there ? '' : ` ${missingMetric(stage, asked, [])}`.replace(/^ (\w)/, (_, first: string) => ` ${first.toUpperCase()}`);
   return `The founder's ask counts ${asked.replace(/^leads:/, 'leads in ')}: propose it again measured by "${asked}".${missing}`;
+}
+
+// A bet has to be able to lose: its target beats the number as it stands, up for most numbers and down for one that
+// is better lower (churn, burn, cost). Null when it does; else what to tell the person, with the number read now.
+export function cannotLose(metric: string, target: number, reading: Reading): string | null {
+  if (reading.value === null) return null;
+  const lower = reading.better === 'down';
+  if (lower ? target < reading.value : target > reading.value) return null;
+  const where = /read from (the \w+ card)/.exec(reading.said)?.[1] ?? 'its card';
+  const way = lower ? `${metric.charAt(0).toUpperCase()}${metric.slice(1)} is better lower: propose a target below ${reading.value}` : `Propose a target above ${reading.value}`;
+  return `"${metric}" is ${reading.value} now, read from ${where}: a target of ${target} cannot lose. ${way}, one this bet could miss, and tell the founder the number it starts from.`;
 }
 
 // A bet's check is due from its check day on, while nobody has said how it went.
