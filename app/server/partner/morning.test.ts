@@ -197,6 +197,12 @@ describe('one morning turn', () => {
     expect(note?.flags).toBeUndefined();
   });
 
+  it('keeps which model wrote the note, when the ask says', async () => {
+    const note = await writeMorning({ sources: await sources(), name: 'Sam', promptFor: async () => [{ role: 'system', content: 'You are Sam.' }],
+      ask: async () => ({ text: 'Three moves for today:\n1. a\n2. b\n3. c\nRisk: Maya priced it at $9\nQuestion: q?', provider: 'gemini', model: 'gemini-3.5-flash-lite' }) });
+    expect(note).toMatchObject({ things: ['a', 'b', 'c'], provider: 'gemini', model: 'gemini-3.5-flash-lite' });
+  });
+
   it('gives back nothing when the reply lost the shape', async () => {
     expect(await writeMorning({ sources: await sources(), name: 'Sam', promptFor: prompt, ask: async () => 'Good morning!' })).toBeNull();
   });

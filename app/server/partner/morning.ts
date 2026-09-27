@@ -160,19 +160,21 @@ export async function gatherMorning(from: MorningSources): Promise<string> {
 export async function writeMorning(input: {
   sources: MorningSources; name: string;
   promptFor: (stage: Stage, roomId: string) => Promise<ModelMessage[]>;
-  ask: (messages: ModelMessage[]) => Promise<string>;
+  // The reply's words, and which model wrote them when the asker knows.
+  ask: (messages: ModelMessage[]) => Promise<string | { text: string; provider?: string; model?: string }>;
 }): Promise<MorningNote | null> {
   const { sources } = input;
   const facts = await gatherMorning(sources);
   const messages: ModelMessage[] = [...await input.promptFor(sources.stage, sources.partnerId), { role: 'user', content: `${MORNING_ASK}\n\n${facts}` }];
-  const reply = await input.ask(messages);
+  const answered = await input.ask(messages);
+  const { text: reply, provider, model } = typeof answered === 'string' ? { text: answered } as { text: string; provider?: string; model?: string } : answered;
   const read = readMorning(reply);
   if (!read || restates(read.things, sources.company ?? '') || !namesAPlace(read.risk, sources.stage)) return null;
   // The truth net, as every turn has it: a figure in the note that nothing it was given holds is flagged under it,
   // and the note is posted all the same, so the founder sees both.
   // Checked as posted: the reshaped note, not the raw reply, so the flags name only what the founder reads.
   const flags = checkReply({ reply: morningText(read), receipts: [], sources: messages.map((message) => (typeof message.content === 'string' ? message.content : '')) });
-  return { ...read, day: localDay(sources.now), at: sources.now, roomId: sources.partnerId, who: input.name, ...(flags.length ? { flags } : {}) };
+  return { ...read, day: localDay(sources.now), at: sources.now, roomId: sources.partnerId, who: input.name, ...(flags.length ? { flags } : {}), ...(provider ? { provider } : {}), ...(model ? { model } : {}) };
 }
 
 // How the note reads in the partner's own conversation.

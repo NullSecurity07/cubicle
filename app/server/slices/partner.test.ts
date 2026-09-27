@@ -175,6 +175,8 @@ describe('the partner slice: the morning note', () => {
     expect(chat[0].text).toContain('Three moves for today:\n1. Ship the landing page.');
     const needs = (await deps.attention.list()).find((one) => one.kind === 'morning-note')!;
     expect(needs).toMatchObject({ id: 'morning-note:2026-09-27', who: 'Sam', roomId: 'p1', title: 'Morning note: Ship the landing page.' });
+    // All three moves in the row, not the first one only.
+    expect(needs.detail).toBe('2. Email the five replied leads. 3. Log the signups. Risk: pre-orders are 3 of 17. Question: Keep $9?');
     const five = await todayFive(deps, clock);
     expect(five[0]).toMatchObject({ kind: 'morning-note', reason: expect.stringContaining('From your partner') });
     expect(five.some((one) => one.kind === 'proposed-decision')).toBe(true);
@@ -216,6 +218,8 @@ describe('the partner slice: the morning note', () => {
     expect(refusedAsked).toBe(1);
     expect(deps.usage.dead('refused')).toBe(true);
     expect((await deps.store.readChat('p1')).at(-1)?.text).toContain('Ship the landing page');
+    // Stamped with the model that wrote it, as a chat reply is.
+    expect((await deps.store.readChat('p1')).at(-1)).toMatchObject({ provider: 'good', model: 'good-1' });
     await part.close!();
   });
 

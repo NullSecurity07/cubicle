@@ -12,7 +12,7 @@ import { FAKE_MORNING, morningDue, morningInputs, morningMessage, writeMorning }
 import { addPlan, boardFor, boardForPlan, NO_BOARD, planAttention, stepsFrom } from '../partner/plans.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import type { ModelMessage } from '../prompt.ts';
-import { complete, promptSize } from '../providers.ts';
+import { complete, fakeClient, promptSize } from '../providers.ts';
 import { partnerRoute } from '../partner/route.ts';
 import { withSystem, type Handler } from '../seams.ts';
 import { newId, patchStageVia } from '../slice-kit.ts';
@@ -133,7 +133,7 @@ export function planTools(state: PartnerStateBook, changed: () => Promise<void>,
 }
 
 // What a test hands in instead of the clock and the model.
-export type PartnerOptions = { now?: () => number; ask?: (messages: ModelMessage[]) => Promise<string> };
+export type PartnerOptions = { now?: () => number; ask?: (messages: ModelMessage[]) => Promise<string | { text: string; provider?: string; model?: string }> };
 
 export function createPartner(options: PartnerOptions = {}) {
   const now = options.now ?? Date.now;
@@ -200,11 +200,11 @@ export function createPartner(options: PartnerOptions = {}) {
 
     // ------------------------------------------------------------ the morning turn
 
-    const ask = options.ask ?? (deps.fake ? async () => FAKE_MORNING : async (messages: ModelMessage[]) => {
+    const ask = options.ask ?? (deps.fake ? async () => ({ text: FAKE_MORNING, provider: fakeClient.name, model: fakeClient.model }) : async (messages: ModelMessage[]) => {
       const { order } = partnerRoute(deps.clients, deps.usage, { promptChars: promptSize(messages), tools: false });
       const reply = await complete(messages, { onToken: () => {} }, order, ({ client, error }) => deps.usage.failed(client.name, error), (client) => deps.usage.admit(client.name));
       deps.usage.record(reply.client.name, reply.usage, reply.quota);
-      return reply.text;
+      return { text: reply.text, provider: reply.client.name, model: reply.client.model };
     });
 
     // Today's note, written now if it is due (or asked for), else the one already written, else null.
@@ -246,7 +246,7 @@ export function createPartner(options: PartnerOptions = {}) {
         if (!written) return null;
         const note = { ...written, inputs: inputs.key };
         await state.change((draft) => { draft.morning = note; if (draft.morningDone === today) delete draft.morningDone; });
-        await deps.store.appendChat(partner.id, { id: newMessageId(), role: 'assistant', text: morningMessage(note), at: note.at });
+        await deps.store.appendChat(partner.id, { id: newMessageId(), role: 'assistant', text: morningMessage(note), at: note.at, ...(note.provider ? { provider: note.provider } : {}), ...(note.model ? { model: note.model } : {}) });
         await deps.attention.refresh().catch(() => {});
         deps.notify?.(`Morning note from ${partner.name}`, note.things[0]);
         return note;
@@ -259,7 +259,9 @@ export function createPartner(options: PartnerOptions = {}) {
       const note = held.morning;
       const found: Attention[] = [];
       if (note && note.day === localDay(now()) && held.morningDone !== note.day) {
-        found.push({ id: `morning-note:${note.day}`, kind: 'morning-note', title: `Morning note: ${note.things[0]}`, detail: `Risk: ${note.risk} Question: ${note.question}`, at: note.at, who: note.who, roomId: note.roomId });
+        // The first move is the title; the other moves, the risk and the question follow in the row itself.
+        const rest = note.things.slice(1).map((thing, index) => `${index + 2}. ${thing}`).join(' ');
+        found.push({ id: `morning-note:${note.day}`, kind: 'morning-note', title: `Morning note: ${note.things[0]}`, detail: `${rest ? `${rest} ` : ''}Risk: ${note.risk} Question: ${note.question}`, at: note.at, who: note.who, roomId: note.roomId });
       }
       return [...found, ...planAttention(held.plans), ...await betsAttention(await book.list(), await deps.store.loadStage(), deps.workspace, localDay(now()))];
     });

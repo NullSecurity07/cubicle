@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { COMPANY_SECTIONS, companyTemplate, dueOf, findCompanyDoc, isCompanyTitle, isPlanDoc, morningText, parsePlan, planStepLine, planTaskTitle, readMorning } from './partner.ts';
+import { bare, COMPANY_SECTIONS, companyTemplate, dueOf, findCompanyDoc, isCompanyTitle, isPlanDoc, morningText, parsePlan, planStepLine, planTaskTitle, readMorning } from './partner.ts';
 
 // The shape the journey's 2-week plan came back in (Sam, 2026-09-26): a heading per week, a heading per day with
 // bullets under it, then KPIs and kill criteria that are not steps at all.
@@ -131,6 +131,12 @@ describe('a plan read as steps', () => {
 
   it('finds nothing in a document that has no days in it', () => {
     expect(parsePlan('# Notes\n\n- one idea\n- another idea')).toEqual([]);
+  });
+});
+
+describe('a bet\'s words between full stops', () => {
+  it('drops whatever stop the writer ended on, an ellipsis too', () => {
+    for (const said of ['It gives us a head start.', 'It gives us a head start', 'It gives us a head start...', 'It gives us a head start\u2026', ' It gives us a head start. ']) expect(bare(said), said).toBe('It gives us a head start');
   });
 });
 

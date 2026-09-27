@@ -44,7 +44,7 @@ export type Bet = {
   status: 'proposed' | 'open' | 'closed'; at: number; proposedBy?: string; roomId?: string; result?: BetResult;
 };
 // A bet's words as they go between full stops: whatever stop the writer ended on is dropped, so a line never reads "product..".
-export const bare = (text: string) => text.replace(/\s+/g, ' ').trim().replace(/[.\s]+$/, '');
+export const bare = (text: string) => text.replace(/\s+/g, ' ').trim().replace(/[.\u2026\s]+$/, '');
 export const VERDICT_WORDS: Record<BetVerdict, string> = { worked: 'worked', 'did-not': 'did not work' };
 
 // ---------------------------------------------------------------- the morning note
@@ -52,7 +52,8 @@ export const VERDICT_WORDS: Record<BetVerdict, string> = { worked: 'worked', 'di
 export type Morning = { things: string[]; risk: string; question: string };
 // `inputs` is what the note was read from, as a key: asked again with nothing changed, the same note stands.
 // `flags` are the truth net's lines on it: a figure nothing the note was given holds.
-export type MorningNote = Morning & { day: string; at: number; roomId: string; who: string; inputs?: string; flags?: string[] };
+// `provider` and `model` stamp it with what wrote it, as a chat reply is.
+export type MorningNote = Morning & { day: string; at: number; roomId: string; who: string; inputs?: string; flags?: string[]; provider?: string; model?: string };
 
 const plain = (text: string) => text.replace(/\*\*|__|`/g, '').replace(/\s+/g, ' ').trim();
 // A numbered or bulleted line, the number or bullet bold or not: "1. a", "**1.** a", "- a".
