@@ -35,6 +35,15 @@ test('the dashboard opens on the founder\'s day, and a needs-you row lands in th
     if (!await dash.isVisible()) await page.keyboard.press('Control+d');
     await expect(dash).toBeVisible({ timeout: 1_500 });
   }).toPass({ timeout: 15_000 });
+  // It slides in from the left edge, takes the keyboard with it, and leaves the canvas beside it undimmed.
+  await dash.evaluate((element) => Promise.all(element.getAnimations().map((one) => one.finished)));
+  const box = (await dash.boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x).toBeLessThanOrEqual(20);
+  expect(box.x + box.width).toBeLessThan(page.viewportSize()!.width - 200);
+  expect(await dash.evaluate((element) => element.contains(document.activeElement))).toBe(true);
+  await expect(page.locator('.overlay__shade')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  await expect(page.locator('.overlay__shade')).toHaveCSS('backdrop-filter', 'none');
   for (const name of ['Today', 'Tokens and health', 'Teams', 'Made this week']) await expect(dash.getByRole('heading', { name, exact: true })).toBeVisible();
   for (const name of ['Today', 'Tokens and health', 'Teams', 'Made this week']) await expect(dash.getByRole('navigation', { name: 'Sections' }).getByRole('button', { name })).toBeVisible();
   await expect(dash.locator('.dash__chart svg')).toBeVisible();
@@ -63,4 +72,24 @@ test('the dashboard opens on the founder\'s day, and a needs-you row lands in th
   await expect(dash).toBeVisible();
   await page.keyboard.press('Control+d');
   await expect(dash).toBeHidden();
+  // Escape closes it too, and a view in the middle of the window still sits over its shade.
+  await page.keyboard.press('Control+d');
+  await expect(dash).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(dash).toBeHidden();
+  await page.keyboard.press('n');
+  await expect(page.getByRole('dialog', { name: 'Needs you' })).toBeVisible();
+  await expect(page.locator('.overlay__shade')).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+});
+
+test('a founder who asks for less motion gets the dashboard at once, without the slide', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/');
+  await expect(page.locator('.react-flow__node[data-id="marketing"]')).toBeVisible();
+  const dash = page.getByRole('dialog', { name: 'Dashboard' });
+  await expect(async () => {
+    if (!await dash.isVisible()) await page.keyboard.press('Control+d');
+    await expect(dash).toBeVisible({ timeout: 1_500 });
+  }).toPass({ timeout: 15_000 });
+  await expect(dash).toHaveCSS('animation-name', 'none');
 });

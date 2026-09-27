@@ -1,4 +1,4 @@
-import { setDockPlace } from '../dockPlace';
+import { setDockHidden, setDockPlace } from '../dockPlace';
 import { sliceCommands } from '../slices';
 
 // What the command bar can do, as plain data: the bar shows suggestions, the window carries the chosen action out.
@@ -75,6 +75,9 @@ const STARTERS: Starter[] = [
   { section: 'Do', label: 'Dock on the right', hint: 'The buttons in a column on the right edge', action: { do: 'run', run: () => setDockPlace('right') }, words: /^(move (the )?)?dock (on |to )?(the )?right( side| edge)?$/, say: ['dock right'], quiet: true },
   { section: 'Do', label: 'Dock on the left', hint: 'The buttons in a column on the left edge', action: { do: 'run', run: () => setDockPlace('left') }, words: /^(move (the )?)?dock (on |to )?(the )?left( side| edge)?$/, say: ['dock left'], quiet: true },
   { section: 'Do', label: 'Dock on the bottom', hint: 'The buttons in a row along the bottom', action: { do: 'run', run: () => setDockPlace('bottom') }, words: /^(move (the )?)?dock (on |to |at )?(the )?bottom( edge)?$/, say: ['dock bottom'], quiet: true },
+  // Out of the way altogether, and back. The rail on the right stays either way.
+  { section: 'Do', label: 'Hide the dock', hint: 'Put the dock away; "show dock" brings it back', action: { do: 'run', run: () => setDockHidden(true) }, words: /^hide (the )?dock$/, say: ['hide dock'], quiet: true },
+  { section: 'Do', label: 'Show the dock', hint: 'Bring the dock back', action: { do: 'run', run: () => setDockHidden(false) }, words: /^((show|unhide) (the )?dock|bring (back )?the dock( back)?)$/, say: ['show dock'], quiet: true },
 ];
 const offer = ({ words: _words, say: _say, quiet: _quiet, ...suggestion }: Starter): Suggestion => suggestion;
 
