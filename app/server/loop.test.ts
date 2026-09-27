@@ -451,9 +451,20 @@ describe('runTurn, the truth net', () => {
   it('flags a figure nothing gave it, and not one quoted from a wired doc or a tool result', async () => {
     const wired: ModelMessage[] = [{ role: 'system', content: '## Doc: Numbers\nMRR $22,000, churn 2.3%' }, { role: 'user', content: 'how are we doing?' }];
     expect((await turn(scripted(['MRR is $22,000 and churn is 2.3%.']), wired)).reply.text).toBe('MRR is $22,000 and churn is 2.3%.');
-    expect((await turn(scripted(['MRR is $22,000 and we should charge $29.']), wired)).reply.text).toMatch(/\n\nUnsourced figures: \$29 \(not found/);
+    expect((await turn(scripted(['MRR is $22,000 and the price is $29.']), wired)).reply.text).toMatch(/\n\nUnsourced figures: \$29 \(not found/);
+    // Put forward as a proposal, the same price is the person's suggestion, not a claim.
+    expect((await turn(scripted(['MRR is $22,000 and we should charge $29.']), wired)).reply.text).toBe('MRR is $22,000 and we should charge $29.');
     const read = scripted([[{ name: 'write_file', args: { path: 'late.md', text: '34% pay late' } }], [{ name: 'read_file', args: { path: 'late.md' } }], 'The note says 34% pay late.']);
     expect((await turn(read)).reply.text).toBe('The note says 34% pay late.');
+  });
+
+  it('does not take a figure in the person\'s own brief as a source, only the founder\'s words and the documents', async () => {
+    const prompt: ModelMessage[] = [
+      { role: 'system', content: 'You are Sam, Partner. Push for churn under 2%.\n\nThe founder has connected these documents to your room. Treat them as what the founder wants you to know.\n\n## Doc: Numbers\nMRR $22,000' },
+      { role: 'user', content: 'We have 40 customers.' },
+    ];
+    expect((await turn(scripted(['MRR is $22,000 over 40 customers, $550 each.']), prompt)).reply.text).toBe('MRR is $22,000 over 40 customers, $550 each.');
+    expect((await turn(scripted(['Good churn is under 2% a month.']), prompt)).reply.text).toMatch(/\n\nUnsourced figures: 2% \(not found/);
   });
 
   it('asks once more when the tool call came back written as text, and keeps the leak out of the reply', async () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { checkReply, proseToolCall, unreceiptedClaims, unsourcedFigures } from './truth.ts';
+import { PARTNER_STANCE, STANCE } from '../shared/model.ts';
+import { checkReply, figureCheck, proseToolCall, turnSources, unreceiptedClaims, unsourcedFigures } from './truth.ts';
 
 const wrote = { name: 'write_doc', ok: true };
 const failedWrite = { name: 'write_doc', ok: false };
@@ -80,11 +81,12 @@ describe('unsourcedFigures', () => {
 
   it('flags the figures Iona made up with nothing wired but the idea', () => {
     const reply = 'We charge $29 a month, hold SOC 2, keep CAC at $300 and churn under 2%, an 8x LTV:CAC.';
-    expect(unsourcedFigures(reply, ['## Idea\nA calm invoicing tool for freelancers.', 'Write the FAQ.'])).toEqual(['$29', '$300', '2%']);
+    expect(unsourcedFigures(reply, ['## Idea\nA calm invoicing tool for freelancers.', 'Write the FAQ.'])).toEqual(['$29', '$300', '2%', '8x']);
   });
 
-  it('flags Ben\'s arithmetic that no input holds', () => {
-    expect(unsourcedFigures('$22,000 × 18 = $396,000, rounded to $1.5M.', [doc])).toEqual(['$396,000', '$1.5M']);
+  it('takes arithmetic on known figures as sourced, and flags a figure no step of it gives', () => {
+    // $22,000 × 18 is arithmetic on two figures of the doc; $1.5M is nothing of the kind.
+    expect(unsourcedFigures('$22,000 × 18 = $396,000, rounded to $1.5M.', [doc])).toEqual(['$1.5M']);
   });
 
   it('does not flag a figure quoted from a wired doc, even written another way', () => {
@@ -168,5 +170,79 @@ describe('checkReply', () => {
 
   it('says nothing about a clean reply', () => {
     expect(checkReply({ reply: 'I did not send it. MRR is $22,000.', receipts: [], sources: ['MRR $22,000'] })).toEqual([]);
+  });
+});
+
+// The probe from the second reliability audit: the founder said 40 customers, $49/mo, $2k MRR, 3 churned, 9 months,
+// 12 prospects, and seventeen ordinary replies came back. Five were false alarms and two inventions were missed.
+describe('the truth net on ordinary founder replies', () => {
+  const founder = 'We have 40 customers paying $49/mo, about $2k MRR. 3 churned last month. We have 9 months of runway and 12 prospects in the pipeline.';
+  const check = (reply: string) => checkReply({ reply, receipts: [], sources: [founder] });
+  const figures = (reply: string) => figureCheck(reply, [founder]);
+
+  it('takes correct arithmetic on the founder\'s figures as sourced', () => {
+    expect(check('40 customers is $1,960 MRR, about $23,520 a year.')).toEqual([]);
+    expect(check('3 of 40 is 7.5% monthly churn.')).toEqual([]);
+    expect(check('30% of your 40, so 12 accounts.')).toEqual([]);
+  });
+
+  it('marks a goal or a proposed price as a proposal, not as unsourced', () => {
+    expect(figures('Aim for 100 customers by December.')).toEqual({ unsourced: [], proposals: ['100 customers'] });
+    expect(figures('Try $79/month for new signups.')).toEqual({ unsourced: [], proposals: ['$79'] });
+    expect(check('Aim for 100 customers by December.')).toEqual([]);
+    expect(check('What if you charged $99 for teams? You could charge $149 for agencies. I suggest a target of 60 customers.')).toEqual([]);
+  });
+
+  it('still flags what nothing gives, even among proposals', () => {
+    expect(check('Cutting the $500 ad spend frees cash.')).toEqual(['Unsourced figures: $500 (not found in anything this turn read).']);
+    expect(check('That is 20-40 hours of work.')).toEqual(['Unsourced figures: 20-40 hours (not found in anything this turn read).']);
+    expect(check('Stripe grew to 1,000 customers in its first year, in 2011.')).toEqual(['Unsourced figures: 1,000 customers (not found in anything this turn read).']);
+    expect(figures('Aim for 100 customers, since good SaaS churn is under 2% a month.')).toEqual({ unsourced: ['2%'], proposals: ['100 customers'] });
+  });
+
+  it('does not let the 2 in "$2k" source a 2% or a 2x', () => {
+    expect(check('Good B2B SaaS churn is under 2% a month.')).toEqual(['Unsourced figures: 2% (not found in anything this turn read).']);
+    expect(check('Your best customers pay 2x the median.')).toEqual(['Unsourced figures: 2x (not found in anything this turn read).']);
+  });
+
+  it('flags an unconfirmed save and leaves plain talk alone', () => {
+    expect(check('I saved the pricing notes.')).toEqual(['Unconfirmed: this reply claims an action no tool confirmed (saved).']);
+    for (const reply of [
+      'Talk to the three who churned before you change anything.',
+      'Once you have the numbers, I will have saved a copy for you.',
+      'I will send the update on Friday.',
+      'You told me we sent the deck last week.',
+      'I updated my view: price is not the problem.',
+      'Spend 2 hours a day on sales calls and reply within 24 hours.',
+    ]) expect(check(reply)).toEqual([]);
+  });
+
+  it('takes runway worked out from cash and burn as sourced, as journey 3 wrote it', () => {
+    expect(check('Runway: 26.67 months at this burn.').length).toBe(1);
+    expect(checkReply({ reply: 'Runway: 26.67 months at this burn.', receipts: [], sources: ['We have $8,000 in the bank and burn $300 a month.'] })).toEqual([]);
+  });
+});
+
+describe('what a turn counts as its sources', () => {
+  const system = [
+    'You are Sam, Partner. Keep CAC under $300 and churn under 2% in everything you propose.',
+    PARTNER_STANCE,
+    STANCE,
+    'Reply in short markdown: brief paragraphs, lists where they help, a table only for real comparisons.',
+    'Company documents every person reads:\n\n## Doc: Company\n## Numbers\nMRR $22,000\n\n## Team\nTwo founders.',
+    'The founder has connected these documents to your room. Treat them as what the founder wants you to know.\n\n## Doc: Plan\nLaunch with 140 customers.',
+    'Today is Sunday 27 September 2026, in the founder\'s time zone (UTC).',
+    'Your company playbook: what the people here learned doing this kind of work before.\nOffer 45% off the first month.',
+  ].join('\n\n');
+  const messages = [
+    { role: 'system' as const, content: system },
+    { role: 'user' as const, content: 'We burn $4,000 a month.' },
+    { role: 'tool' as const, content: 'Search results: 34% of freelancers pay late.', tool_call_id: 'c1' },
+  ];
+
+  it('reads the founder\'s words, the documents and the tool results, not the brief, the stance, the day or the playbook', () => {
+    const sources = turnSources(messages);
+    const flagged = unsourcedFigures('MRR is $22,000 with 140 customers, burn $4,000, and 34% pay late. Keep CAC at $300, churn at 2%, and offer 45% off.', sources);
+    expect(flagged).toEqual(['$300', '2%', '45%']);
   });
 });

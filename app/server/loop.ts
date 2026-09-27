@@ -7,7 +7,7 @@ import { resultCap } from './context/shrink.ts';
 import type { Offered } from './playbook.ts';
 import type { Payloads, Seams, Source } from './seams.ts';
 import { runTool, type Tool, type ToolContext } from './tools/registry.ts';
-import { ANSWER_IN_WORDS, CALL_THE_TOOL, checkReply, HELD_BACK, proseToolCall } from './truth.ts';
+import { ANSWER_IN_WORDS, CALL_THE_TOOL, checkReply, HELD_BACK, proseToolCall, turnSources } from './truth.ts';
 import type { UsageBook } from './usage.ts';
 
 const MAX_STEPS = 8;
@@ -75,7 +75,8 @@ export async function runTurn(input: {
   let answered: ModelClient | undefined;
   const failed: string[] = [];
   let unanswered = '';
-  // What this turn really read, for the truth net: the prompt as sent and the whole of every tool result.
+  // What this turn really read, for the truth net: the facts of the prompt as sent (not its rules) and the whole of
+  // every tool result.
   const results: string[] = [];
   // Why the stream broke off mid-reply, when it did; whether a tool call came back as text and was already asked about
   // once; whether it came back so twice and was held back; whether the reply had to be made from the receipts.
@@ -246,7 +247,7 @@ export async function runTurn(input: {
   // they did, since the words that would have said it never came.
   let flags: string[] = [];
   if (!signal?.aborted && !held && !summarised && text.trim()) {
-    flags = checkReply({ reply: text, receipts: done, sources: [...inputs.map((message) => message.content), ...results, query] });
+    flags = checkReply({ reply: text, receipts: done, sources: [...turnSources(inputs), ...results, query] });
     const tail = [...(broke ? [`(reply cut short: ${broke})`] : []), ...(broke && done.length ? [receiptSummary(done, 'The reply broke off after these steps')] : []), ...flags];
     if (tail.length) {
       const line = `${/\s$/.test(text) ? '' : '\n\n'}${tail.join('\n\n')}`;
