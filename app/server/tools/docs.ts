@@ -7,7 +7,7 @@ import { addedTwice, replaceSection, rewriteLoss } from './sections.ts';
 import { text, type Tool, type ToolContext } from './registry.ts';
 import { shortDay } from '../clock.ts';
 import { HELD_BACK } from '../truth.ts';
-import { filled, guardWrite, sectionBody } from './verdict.ts';
+import { filled, guardWrite, sectionBody, unmarked } from './verdict.ts';
 
 // A new doc card's size, and the gap kept round it: the same the window uses when it places one.
 const [WIDTH, HEIGHT, GAP] = [340, 300, 40];
@@ -118,6 +118,9 @@ function echoes(answer: string, question: string, heading: string): boolean {
   for (const word of split(heading)) named.add(word);
   const asked = new Set(split(question));
   const said = split(answer);
+  // Nothing left once the section's name is taken out ("Founder-market fit.") says nothing either; "No." is still a word.
+  const left = answer.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word && !named.has(word));
+  if (!left.length) return true;
   return !!said.length && said.filter((word) => asked.has(word)).length / said.length >= 0.7;
 }
 
@@ -125,7 +128,9 @@ function echoes(answer: string, question: string, heading: string): boolean {
 // a team doc, and a verdict waiting on it waited until the founder answered in the Needs you box. When the asker and
 // the colleague share such a doc, the colleague's section there is empty and the question is about it, the answer is
 // written into it as the colleague's own write, marked as from chat. Returns what to tell the asker, or null.
-export async function answerIntoSection(context: ToolContext, targetId: string, question: string, answer: string): Promise<string | null> {
+export async function answerIntoSection(context: ToolContext, targetId: string, question: string, said: string): Promise<string | null> {
+  // A marker the colleague wrote themselves is dropped: the only one is the one put in below.
+  const answer = unmarked(said).trim();
   const { stage } = context;
   const asker = stage.rooms.find((room) => room.id === context.roomId);
   const target = stage.rooms.find((room) => room.id === targetId);
@@ -152,10 +157,10 @@ export async function answerIntoSection(context: ToolContext, targetId: string, 
     if ('error' in next) continue;
     // The section's own checks hold as for any write of theirs; one that fails is said, and the answer still stands.
     let guarded;
-    try { guarded = guardWrite({ rules, stage, docId: id, writerId: targetId, before, after: next.text, now: Date.now() }); } catch (error) {
+    try { guarded = guardWrite({ rules, stage, docId: id, writerId: targetId, before, after: next.text, now: Date.now(), fromChat: true }); } catch (error) {
       // The guard speaks to the writer ("Write it again", "Ask Priya with ask_person"); the asker gets only the reason.
       const why = (error as Error).message.replace(/^not written:\s*/, '').replace(/\s+(?:Write it again|Ask \S+ with ask_person)[\s\S]*$/, '');
-      return `Not written into "${heading}": ${why} The section stays empty until ${target.name} writes it within that.`;
+      return `Not written into "${heading}": ${why} The section stays empty until ${target.name} writes it within the section's rules.`;
     }
     await context.store.replaceDoc(id, guarded.text);
     context.report?.({ kind: 'doc-changed', id });

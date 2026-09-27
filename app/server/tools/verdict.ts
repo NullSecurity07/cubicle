@@ -71,7 +71,9 @@ const bare = (line: string) => line.replace(/^\s*(?:[-*+>]|\d+[.)])\s+/, '').rep
 
 // A colleague's answer from chat is written with a marker line quoting the question it answered. The question is the
 // asker's words, not evidence: "after your 12 interviews?" in it once passed the pain cap on no interviews at all.
-const unmarked = (text: string) => text.split('\n').filter((line) => !/^\(From chat:/.test(bare(line))).join('\n');
+// Since the readers pass over such a line, only ask_person writes one: see guardWrite.
+const MARKER = /^\(From chat:/;
+export const unmarked = (text: string) => text.split('\n').filter((line) => !MARKER.test(bare(line))).join('\n');
 
 // The verdict word and the score a verdict gives. The template's own "(STRONG / WEAK / PIVOT REQUIRED)" is a label,
 // not a verdict, so anything in brackets with a slash in it is read past. The score is read from a line that starts
@@ -152,8 +154,15 @@ export type Guarded = { text: string; note?: string; held?: boolean };
 
 // `before` and `after` are the whole doc either side of one write by `writerId`. Returns the text to save (with a
 // "not assessed" verdict or a stale mark put in) and a note for the writer, or throws the reason nothing is written.
-export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string; writerId: string; before: string; after: string; now: number }): Guarded {
+export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string; writerId: string; before: string; after: string; now: number; fromChat?: boolean }): Guarded {
   const { rules, stage, docId, writerId, before, now } = input;
+  // A marker line is read past by the caps and the verdict reader, so one written by hand hid "STRONG, Score: 9/10"
+  // from them. Only a colleague's answer put in by ask_person carries one.
+  const chatLines = (text: string) => text.split('\n').map(bare).filter((line) => MARKER.test(line));
+  const had = new Set(chatLines(before));
+  if (!input.fromChat && chatLines(input.after).some((line) => !had.has(line))) {
+    throw new Error('not written: a "(From chat:" line is written only by ask_person, when a colleague\'s answer goes into their section. Write your own words without it.');
+  }
   let after = input.after;
   // A section has changed when its words have: a whole rewrite that only re-spaced or re-bulleted a colleague's
   // section, as models do when they copy a doc back, was refused whole, the writer's own section with it.
