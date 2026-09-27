@@ -138,8 +138,9 @@ const HEDGE = /\b(not sure|unsure|don'?t know|do not know|haven'?t|have not|no i
 // that quotes "what is your edge?" inside itself is still an answer. Bold round the question does not hide it.
 // A pick-one menu that ends "Please provide the applicable reason(s) so I can complete Section 4." is one too.
 // The emphasis is taken off first, so "ask_founder" is read as "askfounder".
-// "Which of these" and "which of the following" ask only as the answer's whole first sentence: "she tested which of
-// these channels reach consultants" is an answer that happens to use the words.
+// "Which of these" and "which of the following" ask only as a whole sentence, the first or after a lead-in ("Section 4
+// needs your input. Which of these applies to you:"): "she tested which of these channels reach consultants" is an
+// answer that happens to use the words.
 const ASKS = /\b(?:ask (?:the )?founder|please answer|answer the question|ask_?founder|please provide|please tell me|pick one|let me know (?:which|what|how|whether)|so I can complete)\b/i;
 const QUESTION = /^(?:could you tell me|what is your)\b.*\?$/i;
 const PICK = /^which of (?:these|the following)\b.*[?:]$/i;
@@ -147,7 +148,7 @@ const PICK = /^which of (?:these|the following)\b.*[?:]$/i;
 // closes after it ("**What is your edge?** Then I can write it.").
 const sentencesOf = (answer: string) => answer.split(/\n|(?<=[.!?][*_]*)\s+/).map((sentence) => sentence.replace(/^[\s>*_#-]+/, '').replace(/[\s*_]+$/, '').trim()).filter(Boolean);
 const asksBack = (answer: string) => ASKS.test(answer.replace(/[*_`]/g, '').replace(/[\u00a0\u202f]/g, ' '))
-  || sentencesOf(answer).some((sentence) => QUESTION.test(sentence)) || PICK.test(sentencesOf(answer)[0] ?? '');
+  || sentencesOf(answer).some((sentence) => QUESTION.test(sentence)) || sentencesOf(answer).some((sentence) => PICK.test(sentence));
 const hedges = (answer: string) => /\?\s*$/.test(answer.trim()) || HEDGE.test(answer.replace(/[’‘]/g, "'")) || asksBack(answer);
 
 // The words an answer says beyond its section's name: three letters or more, and not a bare yes or no. None left

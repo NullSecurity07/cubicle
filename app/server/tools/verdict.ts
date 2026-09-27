@@ -206,7 +206,7 @@ function countOf(said: string): number {
 // first, read past bold and bullets; a section written as prose is read for a number next to the conversations
 // ("talked to 12 founders", "14 customer interviews"). No count anywhere is no evidence, and the cap holds.
 // A plan in place of a count. A goal or a target is one only where the count would stand, or on a line that is not the
-// label's own: "done: 12 (goal was 20)" is twelve held, "done: target 10" is none.
+// label's own: "done: 12 (goal was 20)" is twelve held, "done: target 10" and "done: 20 (target)" are none.
 const PLANNED = /\b(planned|plan|booked|scheduled|will|next)\b/i;
 const TO_COME = /\b(planned|plan|booked|scheduled|will|next|target|goal|aim)\b/i;
 const AIMED = /^\W*(?:our\s+|the\s+)?(?:target|goal|aim)/i;
@@ -231,7 +231,8 @@ export function conversations(text: string, label: string): number | null {
   for (const value of values) {
     if (/^\W*(none|no\b|nil)/i.test(value)) return 0;
     // "12 (planned)", "12 booked for next week", "target 10": talks still to come are none held yet.
-    if (PLANNED.test(value) || AIMED.test(value)) return null;
+    // "20 (target)", "20 is the goal": a goal word with no number after it says the number is the goal.
+    if (PLANNED.test(value) || AIMED.test(value) || /\b(target|goal|aim)\b(?!\D*\d)/i.test(value)) return null;
     const count = new RegExp(`\\b${NUMBER}`, 'i').exec(value);
     if (count) return countOf(count[1]);
   }

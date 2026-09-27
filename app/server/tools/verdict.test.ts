@@ -952,10 +952,12 @@ describe('a verdict\'s score lines', () => {
 describe('the parked minors of round five', () => {
   const LABEL = 'Real customer conversations done';
 
-  it('skips "which of these" only as the answer\'s whole first sentence, and writes an answer that uses the words', async () => {
+  it('skips "which of these" only as a whole sentence, lead-in or not, and writes an answer that uses the words', async () => {
     const { text } = await setupAsk('What goes in section 4?', 'Lived it: she tested which of these channels reach solo consultants, and cold email won.');
     expect(sectionBody(text, '4. Founder-market fit')).toMatch(/^Lived it: she tested which of these channels/);
-    for (const asking of ['Which of these fits you: lived it, unusual access, technical edge?', '**Which of the following applies to you?** Lived it, or access.']) {
+    for (const asking of ['Which of these fits you: lived it, unusual access, technical edge?', '**Which of the following applies to you?** Lived it, or access.',
+      // A menu with a lead-in sentence before it is a menu still.
+      'Section 4 needs your input. Which of these applies to you:\n- Lived it\n- Unusual access', 'I need one thing first.\n\nWhich of the following describes you:\n- Lived it\n- Unusual access']) {
       const { text: held } = await setupAsk('What goes in section 4?', asking);
       expect(filled(sectionBody(held, '4. Founder-market fit')), asking).toEqual([]);
     }
@@ -988,6 +990,9 @@ describe('the parked minors of round five', () => {
     expect(conversations('Real customer conversations done: 12, target 20', LABEL)).toBe(12);
     expect(conversations('Real customer conversations done: target 10', LABEL)).toBeNull();
     expect(conversations('Real customer conversations done: goal of 20', LABEL)).toBeNull();
+    // A goal word after the number, with no other number after it, says the number is the goal.
+    expect(conversations('Real customer conversations done: 20 (target)', LABEL)).toBeNull();
+    expect(conversations('Real customer conversations done: 20 is the goal', LABEL)).toBeNull();
     // A line under an empty label that names a target is still no count.
     expect(conversations('Real customer conversations done:\nOur target is 10', LABEL)).toBeNull();
     expect(conversations('Real customer conversations done: 12 (planned)', LABEL)).toBeNull();
