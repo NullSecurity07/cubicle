@@ -409,7 +409,23 @@ test('code runs only after the founder reads it, in the sandbox', async ({ page 
   await send(page, 'build', '/tool run_code {"language":"javascript","code":"console.log(6 * 7)"}');
   const ask = node(page, 'build').getByRole('group', { name: 'Run this code?' });
   await expect(ask.getByLabel('Code')).toHaveValue('console.log(6 * 7)');
-  await ask.getByRole('button', { name: 'Run' }).click();
+  // The same question waits in Needs you, counted on the bell, and is answered there as well as on the card.
+  const bell = page.getByRole('button', { name: /^Needs you/ });
+  await expect(bell).toHaveAccessibleName('Needs you: 1 waiting');
+  // The dashboard's Today carries it once, as a thing worth the founder's time.
+  await page.keyboard.press('Control+d');
+  const dash = page.getByRole('dialog', { name: 'Dashboard' });
+  await expect(dash.locator('#dash-today').locator('.today__row, .dash__rows button').filter({ hasText: 'Dev needs your OK' })).toHaveCount(1);
+  await page.keyboard.press('Escape');
+  await bell.click();
+  const needs = page.getByRole('dialog', { name: 'Needs you' });
+  const there = needs.getByRole('group', { name: 'Run this code?' });
+  await expect(there.getByLabel('Code')).toHaveValue('console.log(6 * 7)');
+  await expect(there.getByRole('button', { name: "Don't" })).toBeVisible();
+  await there.getByRole('button', { name: 'Run' }).click();
+  await expect(bell).toHaveAccessibleName('Needs you: nothing waiting');
+  await page.keyboard.press('Escape');
+  await expect(ask).toHaveCount(0);
   await expect(node(page, 'build').locator('.chip--ok summary').last()).toHaveText('Ran javascript code');
   await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('Tool said: 42');
 });
