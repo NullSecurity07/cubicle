@@ -23,7 +23,10 @@ export function recent(history: ChatMessage[], budget = HISTORY_CHARS): ChatMess
   return history.slice(start);
 }
 
-export function createMemory(store: Store, summarise: Summarise, now: () => number = Date.now) {
+// `hold` gives back what memory may keep of one message's words: the app masks a verdict a team doc does not hold
+// (heldForMemory in server/tools/docs.ts); without it the words are kept as said.
+export type Hold = (roomId: string, text: string) => Promise<string>;
+export function createMemory(store: Store, summarise: Summarise, now: () => number = Date.now, hold: Hold = async (_roomId, text) => text) {
   const folding = new Set<string>();
   return {
     read: (roomId: string) => store.readMemory(roomId),
@@ -57,7 +60,9 @@ export function createMemory(store: Store, summarise: Summarise, now: () => numb
         // agreed in spring and one agreed yesterday both come back sounding like the price.
         // A sentence the truth net flagged under a reply (a figure nobody gave, an action no tool did) is left out, and so
         // are the flag lines: journey 9 kept "10 non-paying beta users contacted" as a fact.
-        const talk = fresh.filter((message) => !message.failed).map((message) => `[${shortDay(message.at)}] ${message.role === 'assistant' ? 'You' : message.from ?? 'Founder'}: ${dropFlagged(message.text).replace(/\s+/g, ' ').slice(0, 1200)}${message.tools?.length ? ` [did: ${message.tools.map((tool) => tool.name).join(', ')}]` : ''}`).join('\n');
+        // A verdict a team doc does not hold is masked as chat masks it (journey 10), line by line.
+        const lines = await Promise.all(fresh.filter((message) => !message.failed).map(async (message) => `[${shortDay(message.at)}] ${message.role === 'assistant' ? 'You' : message.from ?? 'Founder'}: ${(await hold(roomId, dropFlagged(message.text))).replace(/\s+/g, ' ').slice(0, 1200)}${message.tools?.length ? ` [did: ${message.tools.map((tool) => tool.name).join(', ')}]` : ''}`));
+        const talk = lines.join('\n');
         const summary = (await summarise([
           { role: 'system', content: `You keep the long-term memory of one person who works for a founder. Today is ${fullDay(now())}. Rewrite the memory so it also covers the new conversation. Keep decisions, facts about the company, product, customers and numbers, the founder's preferences, and work done or promised. `
             + 'Every line of the new conversation is stamped with the day it was said. Anything tied to a time keeps its date, in the line itself: "decided on 12 Sep to…", "the price was 19 as of 3 Aug". '

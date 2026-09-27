@@ -6,10 +6,10 @@ import { readableDocIds, wiredDocIds } from '../prompt.ts';
 import { addedTwice, replaceSection, rewriteLoss } from './sections.ts';
 import { text, type Tool, type ToolContext } from './registry.ts';
 import { shortDay } from '../clock.ts';
-import { figureCheck, HELD_BACK } from '../truth.ts';
+import { dropFlagged, figureCheck, HELD_BACK, holdVerdict, verdictStanding, type Receipt } from '../truth.ts';
 import { findCompanyDoc } from '../../shared/partner.ts';
 import { evidenceCheck } from './evidence.ts';
-import { filled, guardWrite, sectionBody, unmarked, WHOLE } from './verdict.ts';
+import { filled, guardWrite, sectionBody, standingVerdict, unmarked, verdictState, WHOLE } from './verdict.ts';
 
 // A new doc card's size, and the gap kept round it: the same the window uses when it places one.
 const [WIDTH, HEIGHT, GAP] = [340, 300, 40];
@@ -84,6 +84,25 @@ export async function rulesOf(stage: Stage, id: string): Promise<DocRules | unde
     if (spec?.rules?.framework === team) return spec.rules;
   }
   return undefined;
+}
+
+// What a person's memory may keep of their own words: a verdict word or a score is masked as holdVerdict masks it in
+// chat while a team doc they read holds no verdict, and the truth net's flagged sentences and lines go. Journey 10:
+// Priya's chat said "leans toward [not written]", and retain, reading the reply before chat masked it, kept "LEANS
+// TOWARD PIVOT REQUIRED" in her memory. The judge is held to her own standing line; anyone else to the doc's empty verdict.
+export async function heldForMemory(stage: Stage, roomId: string, readDoc: (id: string) => Promise<string>, text: string, receipts: Receipt[] = []): Promise<string> {
+  const standing: string[] = [];
+  for (const id of readableDocIds(stage, roomId)) {
+    const rules = await rulesOf(stage, id);
+    if (!rules) continue;
+    const doc = await readDoc(id).catch(() => '');
+    const heading = rules.verdict.heading;
+    const line = standingVerdict(stage, roomId, id, rules, doc)
+      ?? (verdictState(sectionBody(doc, heading)) === null ? null : verdictStanding(`"${heading}" is not written`, rules.outcomes ?? []));
+    if (line) standing.push(line);
+  }
+  const outcomes = [...new Set(stage.docs.flatMap((doc) => doc.rules?.outcomes ?? []))];
+  return dropFlagged(holdVerdict(text, receipts, standing, outcomes));
 }
 
 // Every write goes through here. A team's shared doc carries rules for whose each section is and when its verdict may
