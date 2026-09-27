@@ -93,14 +93,14 @@ describe('a plan read as steps', () => {
 
   it('keeps a day range one label, never glues the week heading on, and dates each step', () => {
     const steps = parsePlan(JOURNEY_DOC);
-    expect(steps.map(planTaskTitle)).toEqual([
+    expect(steps.map((step) => planTaskTitle(step))).toEqual([
       'Find and vet 5 real abandoned/struggling SaaS side-projects. Write a short\u2026',
       'Set up a simple landing page (e.g., Carrd or Substack)',
       'Make the go/no-go call',
     ]);
     expect(steps.map((step) => dueOf(step.day!, '2026-09-26'))).toEqual(['2026-09-28', '2026-09-30', '2026-10-10']);
     const handed = JOURNEY_STEPS.flatMap((line) => parsePlan(line));
-    expect(handed.map(planTaskTitle)).toEqual(['Find & vet 5 abandoned SaaS side\u2011projects; write valuation notes', 'Build landing page (Carrd/Substack) with pricing or guarantee']);
+    expect(handed.map((step) => planTaskTitle(step))).toEqual(['Find & vet 5 abandoned SaaS side\u2011projects; write valuation notes', 'Build landing page (Carrd/Substack) with pricing or guarantee']);
     expect(handed.map((step) => dueOf(step.day!, '2026-09-26'))).toEqual(['2026-09-28', '2026-09-30']);
   });
 
