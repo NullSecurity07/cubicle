@@ -14,6 +14,7 @@ const KINDS: { verbs: RegExp; tools: RegExp }[] = [
   { verbs: /^(sent|emailed|mailed|messaged)$/i, tools: /send|mail|reach|telegram|ask_person|note_founder/ },
   { verbs: /^(posted|published)$/i, tools: /post|publish|send|reach|browse|edit_site|make_site/ },
   { verbs: /^(scheduled|booked)$/i, tools: /watch|automation|schedule|repeat|propose_|remind|nudge|delegate/ },
+  { verbs: /^proposed$/i, tools: /propose_/ },
 ];
 const VERBS = 'saved|wrote|written|updated|created|stored|recorded|sent|emailed|mailed|messaged|posted|published|scheduled|booked';
 // "I saved", "I've just sent", "we have posted"; "it has been saved", "the draft was saved"; a sentence that opens with
@@ -26,6 +27,10 @@ const FIRST = new RegExp(`\\b(?:I(?:'ve| have| had)?(?:\\s+(?:just|now|already|a
 const WE_DID = new RegExp(`\\bwe\\s+(${VERBS})(?=\\s+(?:it|this|that|them|the|your)\\b)`, 'gi');
 const PASSIVE = new RegExp(`\\b(?:has been|have been|is now|are now|was just|were just)(?:\\s+(?:just|now|already|also))?\\s+(${VERBS})\\b`, 'gi');
 const MADE = new RegExp(`\\b(?:file|doc|document|email|e-mail|mail|post|update|draft|note|message|deck|invite)s?\\s+(?:was|were|is|are)(?:\\s+(?:just|now|already|also))?\\s+(${VERBS})\\b`, 'gi');
+// "I have proposed a bet": a proposal put on record this turn, which only a propose_ tool that worked can back. The
+// plain past ("the price I proposed") is a suggestion made in words or some earlier day, so only the perfect counts.
+const PROPOSED = /\b(?:I(?:'ve| have)|we(?:'ve| have))(?:\s+(?:just|now|already|also))?\s+(proposed)\b/gi;
+const PROPOSED_PASSIVE = /\b(?:has been|have been|is now|are now|was just|were just)(?:\s+(?:just|now|already|also))?\s+(proposed)\b/gi;
 const OPENING = new RegExp(`(?:^|[.!?]\\s+|\\n\\s*)(${VERBS})\\s+(?:it|the|this|to|your|a|an|them|\`|")`, 'gi');
 // A claim that is not one: under a condition, denied, asked, or about words that sit in this very reply ("below",
 // or a sentence ending in a colon with the words after it).
@@ -49,7 +54,7 @@ function sentenceAround(text: string, at: number): { before: string; rest: strin
 // The action verbs this reply claims as done that no working receipt of the same kind stands behind, in the order said.
 export function unreceiptedClaims(reply: string, receipts: Receipt[]): string[] {
   const found: { at: number; verb: string }[] = [];
-  for (const pattern of [FIRST, WE_DID, PASSIVE, MADE, OPENING]) {
+  for (const pattern of [FIRST, WE_DID, PASSIVE, MADE, OPENING, PROPOSED, PROPOSED_PASSIVE]) {
     for (const match of reply.matchAll(pattern)) {
       const verb = match[1];
       const at = match.index + match[0].length - verb.length;

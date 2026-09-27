@@ -37,6 +37,21 @@ describe('unreceiptedClaims', () => {
     expect(unreceiptedClaims("I've scheduled a check on it for Friday.", [{ name: 'propose_bet', ok: true }])).toEqual([]);
   });
 
+  it('catches a proposal the tool refused, the way the partner said it proposed a bet that was never put on record', () => {
+    const refused = { name: 'propose_bet', ok: false, result: 'there is no Metrics card with a "signups" row.' };
+    const said = 'I have proposed a bet for the next two weeks, but the system requires a Metrics card with a signups row.';
+    expect(unreceiptedClaims(said, [refused])).toEqual(['proposed']);
+    expect(checkReply({ reply: said, receipts: [refused], sources: [] })[0]).toMatch(/^Unconfirmed: .*\(proposed\)/);
+    expect(unreceiptedClaims("I've just proposed the decision.", [])).toEqual(['proposed']);
+    expect(unreceiptedClaims('The bet has been proposed to you.', [])).toEqual(['proposed']);
+    // A proposal that went through backs it, whatever was proposed.
+    expect(unreceiptedClaims(said, [refused, { name: 'propose_bet', ok: true }])).toEqual([]);
+    expect(unreceiptedClaims("I've proposed the tasks for your board.", [{ name: 'propose_tasks', ok: true }])).toEqual([]);
+    // The plain past is history or a suggestion in words, not a record made this turn.
+    expect(unreceiptedClaims('The price I proposed yesterday still holds.', [])).toEqual([]);
+    expect(unreceiptedClaims('As I proposed, start with invoicing.', [])).toEqual([]);
+  });
+
   it('does not count a write the doc guard held back', () => {
     const held = { name: 'replace_section', ok: true, result: 'Not written: the verdict waits for "4. Founder-market fit", which is empty. ' };
     expect(unreceiptedClaims('I wrote the verdict: STRONG.', [held])).toEqual(['wrote']);
