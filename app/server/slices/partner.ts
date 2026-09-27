@@ -273,8 +273,9 @@ export function createPartner(options: PartnerOptions = {}) {
     }
     async function standingFor(stage: Stage, partnerId: string) {
       // Bets are read from the ledger, never from Needs you rows: a row can outlive the take by a refresh.
-      const [parts, waiting, ledger] = await Promise.all([partsFor(stage, partnerId), deps.attention.list().catch(() => []), book.list().catch(() => [] as Bet[])]);
-      return standingBlock(parts, stillWaiting(waiting, ledger));
+      // A ledger that cannot be read filters nothing: every row stays rather than every bet going quiet.
+      const [parts, waiting, ledger] = await Promise.all([partsFor(stage, partnerId), deps.attention.list().catch(() => []), book.list().catch(() => null)]);
+      return standingBlock(parts, ledger ? stillWaiting(waiting, ledger) : waiting);
     }
 
     // What the note is read from, as it stands now.
@@ -411,7 +412,9 @@ export function createPartner(options: PartnerOptions = {}) {
         if (forCustomers(payload.query)) text = customerReply(text, numbers);
         text = runwayFix(text, numbers);
         // Sent to Needs you with nothing waiting there: said under the reply.
-        text = staleNeeds(text, stillWaiting(await deps.attention.list().catch(() => []), await book.list().catch(() => [] as Bet[])));
+        const rows = await deps.attention.list().catch(() => []);
+        const ledger = await book.list().catch(() => null);
+        text = staleNeeds(text, ledger ? stillWaiting(rows, ledger) : rows);
         if (receipt) text = `${text.replace(/\s+$/, '')}\n\n${receipt}`;
       } catch (error) { console.error(`partner keep: ${(error as Error).message}`); }
       return next(text === payload.reply.text ? payload : { ...payload, reply: { ...payload.reply, text } });

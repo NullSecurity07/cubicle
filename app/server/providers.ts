@@ -180,6 +180,9 @@ export async function complete(
   admit: (client: ModelClient) => boolean = () => true,
   // Whether a client is resting (a 429's wait, an open breaker, a refused key) without asking to be let in: only looks.
   resting: (client: ModelClient) => boolean = () => false,
+  // Whether a client cannot answer at all right now (a refused key, an open breaker), only looking: such a one behind
+  // another is nobody behind it, so the one before keeps its long first-word wait.
+  blocked: (client: ModelClient) => boolean = () => false,
 ): Promise<Completion> {
   // The tool definitions go to the model too, and count against what it can hold.
   const toolChars = options.tools?.length ? JSON.stringify(wireTools(options.tools)).length : 0;
@@ -218,7 +221,7 @@ export async function complete(
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       try {
         // With nobody behind it, a slow model is the answer: its first word is waited for, not cut off at the clock.
-        const patient = !clients.slice(index + 1).some(able);
+        const patient = !clients.slice(index + 1).some((other) => able(other) && !blocked(other));
         const turn = await client.step(sent, { ...options, onToken, patient, behind: !patient });
         if (text.trim() || turn.calls.length) return { ...turn, text, client, ...(oversize.length ? { oversize } : {}) };
         failures.push(`${client.name}: empty reply`);

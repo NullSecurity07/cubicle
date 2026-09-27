@@ -12,7 +12,7 @@ export function partnerRoute(clients: ModelClient[], usage: UsageBook, want: { p
   const { order } = route(clients, usage, { ...want, kind: 'turn' });
   const roomy = (client: ModelClient) => usage.left(client) > FLOOR && !usage.hot(client, want.promptChars);
   // Roomy before resting, hosted before this machine, then by strength; the router's order breaks ties.
-  const key = (client: ModelClient) => [roomy(client) ? 0 : 1, client.local ? 1 : 0, tier(client), order.indexOf(client)];
+  const key = (client: ModelClient) => [roomy(client) ? 0 : 1, client.local ? 1 : 0, tier(client, true), order.indexOf(client)];
   const compare = (a: ModelClient, b: ModelClient) => { const x = key(a); const y = key(b); const at = x.findIndex((value, index) => value !== y[index]); return at < 0 ? 0 : x[at] - y[at]; };
   // A small model on this machine never answers the partner while a hosted one is set up: the calls that matter are
   // exactly the ones a local 7B gets wrong, and one that took over made six tool calls under one id and broke the room.

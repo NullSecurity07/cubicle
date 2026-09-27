@@ -205,6 +205,9 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
       const pictures = state.pictures?.[pool];
       return { used: poolNeurons(pool), of: NEURONS_FOR_TURNS, pictures: pictures?.neurons ?? 0, drawn: pictures?.drawn ?? 0 };
     },
+    // True while this key cannot answer at all: refused (a 401, a plan that is off) or its breaker open. Only looks. A
+    // slow or 429-resting key is not blocked: it may still answer, so it still counts as a model behind another.
+    blocked: (name: string) => breaker.dead(name) || breaker.state(name) === 'open',
     // True while this model rests after giving no first word twice in a row (breaker.ts): at the back, not dead.
     slow: (name: string) => breaker.slow(name),
     // True while this key rests after a 429, an open breaker, a refused key or two silences. Only looks.

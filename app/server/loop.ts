@@ -153,7 +153,7 @@ export async function runTurn(input: {
       tools: offered, signal,
       onToken: (token) => { const piece = first ? gap + token : token; first = false; text += piece; events.token(piece); },
       ...(restart ? { onRestart: restart } : {}),
-    }, clients, onFailure, (client) => usage.admit(client.name), (client) => usage.resting(client.name));
+    }, clients, onFailure, (client) => usage.admit(client.name), (client) => usage.resting(client.name), (client) => usage.blocked(client.name));
     // A step every model refused — usually because the prompt outgrew them — gets one more chance: whatever listens
     // here shortens it and says so, and we ask again with what it left.
     const asked = seams ? ask().catch(async (error: Error) => {
@@ -282,7 +282,7 @@ export async function runTurn(input: {
       const said = await complete(messages, {
         tools: [], signal, onToken: (token) => { text += token; events.token(token); },
         ...(events.restart ? { onRestart: () => { text = ''; events.restart!(); } } : {}),
-      }, clients, onFailure, (client) => usage.admit(client.name), (client) => usage.resting(client.name))
+      }, clients, onFailure, (client) => usage.admit(client.name), (client) => usage.resting(client.name), (client) => usage.blocked(client.name))
         .catch((error: Error) => { if (!/empty reply/.test(error.message)) unanswered = error.message; return null; });
       if (said) {
         if (failed.length) events.notice?.(said.broke ? `${failed.join('; ')}, so no model could finish this reply.` : `${failed.join('; ')}, so ${said.client.name} answers.`);

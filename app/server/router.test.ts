@@ -3,7 +3,8 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { complete, neuronPoolOf, realClients, type ModelClient } from './providers.ts';
-import { route } from './router.ts';
+import { route, tierOrder } from './router.ts';
+import { partnerRoute } from './partner/route.ts';
 import { createUsage, pictureDrawn } from './usage.ts';
 
 const client = (name: string, extra: Partial<ModelClient> = {}): ModelClient => ({
@@ -219,10 +220,16 @@ describe('Cloudflare\'s neuron pool, one an account, pictures included (round 6)
 });
 
 describe('one order for every turn, the partner\'s (pass 8)', () => {
-  it('asks Gemini, gpt-oss on Cloudflare, NVIDIA and Mistral first, the rest as listed, and the low-effort gpt-oss last', () => {
-    const listed = ['groq', 'cerebras', 'gemini', 'nvidia', 'zai-flash', 'vercel', 'cloudflare-gpt-oss', 'sambanova', 'mistral', 'openrouter-qwen'].map((name) => client(name, { maxPromptChars: 100_000 }));
-    expect(names(route(listed, createUsage(null), { promptChars: 10, tools: true })))
-      .toEqual(['gemini', 'cloudflare-gpt-oss', 'nvidia', 'mistral', 'sambanova', 'openrouter-qwen', 'zai-flash', 'vercel', 'groq', 'cerebras']);
+  const listed = () => ['groq', 'cerebras', 'gemini', 'nvidia', 'zai-flash', 'vercel', 'cloudflare-gpt-oss', 'sambanova', 'mistral', 'openrouter-qwen'].map((name) => client(name, { maxPromptChars: 100_000 }));
+
+  it('asks a colleague\'s models Gemini, NVIDIA, Mistral, SambaNova, then gpt-oss on Cloudflare, the rest as listed, and the low-effort gpt-oss last', () => {
+    expect(names(route(listed(), createUsage(null), { promptChars: 10, tools: true })))
+      .toEqual(['gemini', 'nvidia', 'mistral', 'sambanova', 'cloudflare-gpt-oss', 'openrouter-qwen', 'zai-flash', 'vercel', 'groq', 'cerebras']);
+  });
+
+  it('keeps gpt-oss on Cloudflare second for the partner, whose calls its 25 a day are kept for', () => {
+    expect(tierOrder(true).slice(0, 5)).toEqual(['gemini', 'cloudflare-gpt-oss', 'nvidia', 'mistral', 'sambanova']);
+    expect(names(partnerRoute(listed(), createUsage(null), { promptChars: 10, tools: true })).slice(0, 4)).toEqual(['gemini', 'cloudflare-gpt-oss', 'nvidia', 'mistral']);
   });
 
   it('leaves side calls in the order they were given', () => {
@@ -243,11 +250,13 @@ describe('a stalled Gemini and a stalled NVIDIA, with real clients on a fake clo
   const env = { GEMINI_API_KEY: 'g', NVIDIA_API_KEY: 'nvapi-x', MISTRAL_API_KEY: 'm', CLOUDFLARE_API_TOKEN: 'c', CLOUDFLARE_ACCOUNT_ID: 'acct' } as NodeJS.ProcessEnv;
   const messages = [{ role: 'system' as const, content: 'You are Rohan, the founder-fit reviewer.' }, { role: 'user' as const, content: 'Write the fit section.' }];
   const tools = [{ name: 'read_doc', description: 'Read a doc', parameters: { type: 'object', properties: {} } }];
-  // A provider that never says a word until the request is aborted, or one that answers at once.
-  const script = (one: ModelClient, silent: boolean) => {
+  // A provider that never says a word until the request is aborted, one that answers at once, or one that answers
+  // after `after` ms unless the request is aborted first.
+  const script = (one: ModelClient, silent: boolean, after = 0) => {
     (one.openai!.chat.completions as unknown as { create: unknown }).create = (_body: unknown, options: { signal?: AbortSignal }) => ({
       withResponse: async () => {
         if (silent) await new Promise((_, fail) => options.signal?.addEventListener('abort', () => fail(new Error('Request was aborted.')), { once: true }));
+        else if (after) await new Promise<void>((done, fail) => { const timer = setTimeout(done, after); options.signal?.addEventListener('abort', () => { clearTimeout(timer); fail(new Error('Request was aborted.')); }, { once: true }); });
         async function* chunks() { yield { choices: [{ delta: { content: `${one.name} answers.` } }] }; }
         return { data: chunks(), response: { headers: new Headers() } };
       },
@@ -258,30 +267,52 @@ describe('a stalled Gemini and a stalled NVIDIA, with real clients on a fake clo
     for (const one of clients) script(one, one.name === 'gemini' || one.name === 'nvidia');
     return { clients, usage: createUsage(null) };
   };
-  const turn = async ({ clients, usage }: ReturnType<typeof setUp>) => {
+  const turn = async ({ clients, usage }: ReturnType<typeof setUp>, partner = false) => {
     const started = Date.now();
-    const { order, notice } = route(clients, usage, { promptChars: 200, tools: true });
+    const want = { promptChars: 200, tools: true };
+    const { order, notice } = partner ? partnerRoute(clients, usage, want) : route(clients, usage, want);
     let result: Awaited<ReturnType<typeof complete>> | undefined;
-    const done = complete(messages, { tools, onToken: () => {}, onRestart: () => {} }, order, ({ client: one, error }) => usage.failed(one.name, error), (one) => usage.admit(one.name), (one) => usage.resting(one.name))
+    const done = complete(messages, { tools, onToken: () => {}, onRestart: () => {} }, order, ({ client: one, error }) => usage.failed(one.name, error), (one) => usage.admit(one.name), (one) => usage.resting(one.name), (one) => usage.blocked(one.name))
       .then((reply) => { result = reply; usage.record(reply.client.name, reply.usage); });
     while (!result) await vi.advanceTimersByTimeAsync(500);
     await done;
     return { seconds: (Date.now() - started) / 1000, by: result.client.name, notice };
   };
 
-  it('reaches Cloudflare within about 20 s on the first and second turns, and at once from the third', async () => {
+  it('reaches Cloudflare within about 20 s on the partner\'s first and second turns, and at once from the third', async () => {
     vi.useFakeTimers();
     try {
       const set = setUp();
-      const first = await turn(set);
+      const first = await turn(set, true);
       expect(first.by).toBe('cloudflare-gpt-oss');
       expect(first.seconds).toBeLessThanOrEqual(25);
-      const second = await turn(set);
+      const second = await turn(set, true);
       expect(second.by).toBe('cloudflare-gpt-oss');
       expect(second.seconds).toBeLessThanOrEqual(25);
-      const third = await turn(set);
-      expect(third).toMatchObject({ by: 'cloudflare-gpt-oss', notice: 'Gemini was slow to start answering twice, so Cloudflare-gpt-oss answers for now.' });
+      const third = await turn(set, true);
+      expect(third.by).toBe('cloudflare-gpt-oss');
       expect(third.seconds).toBeLessThan(1);
+      // A colleague's turn skips the resting Gemini for NVIDIA, which is cut at 20 s, and Mistral answers before Cloudflare.
+      expect(await turn(set)).toMatchObject({ by: 'mistral', seconds: 20, notice: 'Gemini was slow to start answering twice, so Nvidia answers for now.' });
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('gives NVIDIA its minute when the only model behind it has a refused key, and its long wait when it is the last able', async () => {
+    vi.useFakeTimers();
+    try {
+      // Mistral's plan is off: it cannot answer, so NVIDIA is really the last one and is not cut at 20 s.
+      const refusedBehind = setUp(['cloudflare-gpt-oss', 'cloudflare-qwen', 'cloudflare']);
+      script(refusedBehind.clients.find((one) => one.name === 'nvidia')!, false, 45_000);
+      refusedBehind.usage.failed('mistral', Object.assign(new Error('429 Rate limit exceeded'), { status: 429, headers: new Headers({ 'x-ratelimit-limit-req-minute': '0' }) }));
+      const first = await turn(refusedBehind);
+      expect(first.by).toBe('nvidia');
+      expect(first.seconds).toBeGreaterThanOrEqual(65);
+      // Nobody at all behind it: the last model able waits well past its minute.
+      const alone = setUp(['cloudflare-gpt-oss', 'cloudflare-qwen', 'cloudflare', 'mistral']);
+      script(alone.clients.find((one) => one.name === 'nvidia')!, false, 100_000);
+      const last = await turn(alone);
+      expect(last.by).toBe('nvidia');
+      expect(last.seconds).toBeGreaterThanOrEqual(120);
     } finally { vi.useRealTimers(); }
   });
 

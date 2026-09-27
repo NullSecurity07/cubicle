@@ -11,15 +11,19 @@ const title = (name: string) => name[0].toUpperCase() + name.slice(1);
 // NVIDIA took 13-44 s to a first word, so it stands behind both, where a colleague's turn in journey 10 waited 20 s on
 // Gemini and then 60 s on it before gpt-oss answered. SambaNova is 20 requests a day.
 export const STRONG = ['gemini', 'cloudflare-gpt-oss', 'nvidia', 'mistral', 'sambanova'];
+// A colleague's turns take the same strong models with gpt-oss on Cloudflare last among them: its 25 requests a day
+// are kept for the partner, whose calls matter most, where a busy team would spend them by mid-morning.
+const COLLEAGUE = ['gemini', 'nvidia', 'mistral', 'sambanova', 'cloudflare-gpt-oss'];
+export const tierOrder = (partner = false) => [...(partner ? STRONG : COLLEAGUE), ...SECOND];
 // Behind them, the Qwens that also held a room prompt: OpenRouter's (only there when its key is set), then
 // Cloudflare's, which invented one claim. Everything else follows in the order it is listed.
 export const SECOND = ['openrouter-qwen', 'cloudflare-qwen'];
 // gpt-oss at low reasoning effort (Groq, Cerebras) drafted a raise plan for a company with no users: last.
 export const LOW_EFFORT = ['groq', 'cerebras'];
 // Where a model stands in that order; a sort by it is stable, so the listed order breaks ties.
-export const tier = (client: ModelClient) => {
+export const tier = (client: ModelClient, partner = false) => {
   const name = providerOf(client.name);
-  const at = [...STRONG, ...SECOND].indexOf(name);
+  const at = tierOrder(partner).indexOf(name);
   const rest = STRONG.length + SECOND.length;
   return at >= 0 ? at : LOW_EFFORT.includes(name) ? rest + 1 : rest;
 };
