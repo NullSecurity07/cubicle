@@ -315,6 +315,12 @@ describe('source websites', () => {
     expect(staff).toContain(STANCE);
     expect(staff).not.toContain(PARTNER_STANCE);
   });
+
+  // Journey 10: Lena, asked "who contacted the beta users?", asked the founder instead of saying none are on record.
+  it('tells a person to say "none on record" when the record holds nothing, rather than ask the founder', () => {
+    const staff = buildMessages(stage, 'build', {}, [])[0].content as string;
+    expect(staff).toContain('Asked who did something or how many, with nothing on record: say "none on record", do not ask the founder.');
+  });
 });
 
 describe('the short prompt, for when no model set up can hold the whole one (round 6)', () => {
