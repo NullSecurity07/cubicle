@@ -17,7 +17,7 @@ import type { Payloads, Seams } from './seams.ts';
 import type { Store } from './store.ts';
 import type { Consult } from './tools/team.ts';
 import type { Tool } from './tools/registry.ts';
-import { ANSWER_IN_WORDS, HELD_BACK, proseToolCall } from './truth.ts';
+import { ANSWER_IN_WORDS, HELD_BACK, proseToolCall, turnSources, verdictUnwritten } from './truth.ts';
 import type { PromptFor } from './turn-prompt.ts';
 import type { UsageBook } from './usage.ts';
 
@@ -62,6 +62,10 @@ export function createChat(deps: Deps) {
       if (!reply.reported) usage.record(reply.client.name, reply.usage, reply.quota);
       if (proseToolCall(reply.text)) reply = { ...reply, text: HELD_BACK };
     }
+    // A judge whose doc says "Not assessed" is held to it here too: an answer to a colleague naming a verdict gets the
+    // truth net's line, or the asker relays "PIVOT REQUIRED" as if it were written.
+    const unwritten = reply.text === HELD_BACK ? null : verdictUnwritten(reply.text, [], turnSources(messages));
+    if (unwritten) reply = { ...reply, text: `${reply.text.trimEnd()}\n\n${unwritten}` };
     await store.appendChat(toRoomId, { id: newMessageId(), role: 'assistant', text: reply.text, at: Date.now(), provider: reply.client.name, model: reply.client.model, usage: reply.usage });
     return reply.text;
   };

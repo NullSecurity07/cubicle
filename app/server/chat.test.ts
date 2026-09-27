@@ -14,11 +14,11 @@ import { createRoomFeed } from './rooms-feed.ts';
 import { createSeams } from './seams.ts';
 import { createStore } from './store.ts';
 import type { Tool } from './tools/registry.ts';
-import { HELD_BACK } from './truth.ts';
+import { HELD_BACK, verdictStanding } from './truth.ts';
 import { createUsage } from './usage.ts';
 
 type Step = ModelClient['step'];
-async function setup(steps?: Step, extra: ModelClient[] = []) {
+async function setup(steps?: Step, extra: ModelClient[] = [], system = '') {
   const dir = await mkdtemp(join(tmpdir(), 'chat-'));
   const store = createStore(dir);
   const seen: { messages: ModelMessage[]; tools: unknown }[] = [];
@@ -37,7 +37,7 @@ async function setup(steps?: Step, extra: ModelClient[] = []) {
   const { consult } = createChat({
     store, roomFeed: createRoomFeed(), busy, clients: [client, ...extra], usage: createUsage(null), seams,
     attention: createAttention(dir), approvals: createApprovals(), memory: { fold: async () => false },
-    promptFor: async (stage, roomId) => [{ role: 'system', content: `You are ${roomId}.` }, { role: 'user', content: 'q' }],
+    promptFor: async (stage, roomId) => [{ role: 'system', content: `You are ${roomId}.${system}` }, { role: 'user', content: 'q' }],
     toolsFor: () => [],
   });
   return { store, seen, payloads, busy, consult };
@@ -53,6 +53,17 @@ describe('a consult', () => {
     const talk = await store.readChat('build');
     expect(talk.map((one) => [one.role, one.text])).toEqual([['user', 'How long to build it?'], ['assistant', 'My answer.']]);
     expect(talk[0].from).toBe('Maya');
+  });
+
+  it('puts the truth net\'s line under a judge\'s answer that names a verdict her doc does not hold', async () => {
+    const standing = `\n\n${verdictStanding('Rohan has not written "4. Founder-market fit" yet', ['WEAK', 'PIVOT REQUIRED', 'STRONG'])}`;
+    const LINE = 'Unconfirmed: the verdict was not written; Rohan has not written "4. Founder-market fit" yet.';
+    const said = await setup(async (_messages, { onToken }) => { onToken('PIVOT REQUIRED, 6/10.'); return { text: '', calls: [] }; }, [], standing);
+    const answer = await said.consult({ fromRoomId: 'marketing', toRoomId: 'build', question: 'What is the verdict?' });
+    expect(answer).toBe(`PIVOT REQUIRED, 6/10.\n\n${LINE}`);
+    expect((await said.store.readChat('build')).at(-1)?.text).toBe(answer);
+    const relayed = await setup(async (_messages, { onToken }) => { onToken('No verdict yet: Rohan has not written section 4.'); return { text: '', calls: [] }; }, [], standing);
+    expect(await relayed.consult({ fromRoomId: 'marketing', toRoomId: 'build', question: 'What is the verdict?' })).toBe('No verdict yet: Rohan has not written section 4.');
   });
 
   it('leaves a colleague who is in a turn of their own undisturbed', async () => {

@@ -113,7 +113,7 @@ describe('the verdict judge on a team doc', () => {
     expect((await as('pain')('replace_section', { heading: '3. Is the pain real?', text: 'Vitamin — painkiller — hair on fire: painkiller\n\nReal customer conversations done (of ten to twenty): 0' })).ok).toBe(true);
     const strong = await as('verdict')('replace_section', { heading: '5. Verdict', text: 'STRONG\n\nScore out of 10: 10/10' });
     expect(strong.ok).toBe(false);
-    expect(strong.text).toMatch(/no customer conversations are recorded.*so the score is at most 5\/10 and the verdict is not STRONG; PIVOT REQUIRED stands\. This one says STRONG, 10 of 10/);
+    expect(strong.text).toMatch(/no customer conversations are recorded.*so the score is at most 5\/10 and the verdict is not STRONG; WEAK or PIVOT REQUIRED stand\. This one says STRONG, 10 of 10/);
     expect(strong.text).toContain('The count line reads "Real customer conversations done (of ten to twenty): 0".');
     expect((await as('verdict')('replace_section', { heading: '5. Verdict', text: 'PIVOT REQUIRED (3)\n\nScore: 6/10' })).ok).toBe(false);
     expect((await as('verdict')('replace_section', { heading: '5. Verdict', text: 'WEAK: no conversations yet (3).\n\nScore: 5/10' })).ok).toBe(true);
@@ -127,7 +127,7 @@ describe('the verdict judge on a team doc', () => {
     expect((await as('pain')('replace_section', { heading: '3. Is the pain real?', text: 'Vitamin — painkiller — hair on fire: painkiller\n\nReal customer conversations done (of ten to twenty): 0' })).ok).toBe(true);
     const six = await as('verdict')('replace_section', { heading: '5. Verdict', text: 'PIVOT REQUIRED: a flaw is not survivable (2).\n\nScore: 6/10' });
     expect(six.ok).toBe(false);
-    expect(six.text).toMatch(/so the score is at most 5\/10 and the verdict is not STRONG; PIVOT REQUIRED stands\. This one says 6 of 10\./);
+    expect(six.text).toMatch(/so the score is at most 5\/10 and the verdict is not STRONG; WEAK or PIVOT REQUIRED stand\. This one says 6 of 10\./);
     expect(six.text).not.toMatch(/at most WEAK/);
     expect((await as('verdict')('replace_section', { heading: '5. Verdict', text: 'STRONG (1)\n\nScore: 5/10' })).ok).toBe(false);
     expect((await as('verdict')('replace_section', { heading: '5. Verdict', text: 'PIVOT REQUIRED: a flaw is not survivable (2).\n\nScore: 5/10' })).text).toContain('The verdict is written.');
@@ -141,6 +141,12 @@ describe('the verdict judge on a team doc', () => {
     expect(conversations(pain, 'Real customer conversations done')).toBe(3);
     expect(conversations('Real customer conversations done (of ten to twenty):\nNone yet.\n\nPayer = user? If not, who pays:\nYes.', 'Real customer conversations done')).toBe(0);
     expect(conversations('Real customer conversations done (of ten to twenty):\n\nPayer = user? If not, who pays:\n12 of them pay.', 'Real customer conversations done')).toBeNull();
+    // The next template question with its own answer, or a target, is no count.
+    const L = 'Real customer conversations done';
+    expect(conversations(`${L} (of ten to twenty):\nPayer = user? If not, who pays: yes, 12 pay`, L)).toBeNull();
+    expect(conversations(`${L} (of ten to twenty):\n\nPayer = user? If not, who pays: the agency; 2 of 3 pay`, L)).toBeNull();
+    expect(conversations(`${L} (of ten to twenty):\n\nNote: target is ${L}: 10`, L)).toBeNull();
+    expect(conversations(`${L} (of ten to twenty): target 10`, L)).toBeNull();
     const { as, fill } = await setup();
     await fill();
     expect((await as('pain')('replace_section', { heading: '3. Is the pain real?', text: pain })).ok).toBe(true);
@@ -464,7 +470,7 @@ describe('a verdict written again over a section emptied since', () => {
     await all.store.replaceDoc('evaluation', (await all.doc()).replace('Real customer conversations done (of ten to twenty): 12', 'Real customer conversations done (of ten to twenty): 0'));
     const out = await all.as('verdict')('replace_section', { heading: '5. Verdict', text: strong });
     expect(out.ok).toBe(false);
-    expect(out.text).toMatch(/so the score is at most 5\/10 and the verdict is not STRONG; PIVOT REQUIRED stands\. This one says STRONG, 8 of 10/);
+    expect(out.text).toMatch(/so the score is at most 5\/10 and the verdict is not STRONG; WEAK or PIVOT REQUIRED stand\. This one says STRONG, 8 of 10/);
   });
 
   it('leaves a whole-doc write alone when every section is written', async () => {
@@ -601,7 +607,7 @@ describe('the judge told her verdict was refused', () => {
     await capped.as('pain')('replace_section', { heading: '3. Is the pain real?', text: 'Vitamin — painkiller — hair on fire: painkiller\n\nReal customer conversations done (of ten to twenty): 0' });
     const thrown = await capped.as('verdict')('replace_section', { heading: '5. Verdict', text: 'STRONG\n\nScore: 9/10' });
     expect(thrown.ok).toBe(false);
-    expect(thrown.text).toMatch(/Tell the founder the verdict was not written because no customer conversations are recorded in "3\. Is the pain real\?", so the score is at most 5\/10 and the verdict is not STRONG; PIVOT REQUIRED stands\. Give no verdict word/);
+    expect(thrown.text).toMatch(/Tell the founder the verdict was not written because no customer conversations are recorded in "3\. Is the pain real\?", so the score is at most 5\/10 and the verdict is not STRONG; WEAK or PIVOT REQUIRED stand\. Give no verdict word/);
   });
 
   it('gets the truth net\'s line under a chat reply that states the refused verdict anyway', async () => {
@@ -732,6 +738,11 @@ describe('the judge asking a colleague about their empty section', () => {
       expect(filled(sectionBody(text, '4. Founder-market fit')), asking).toEqual([]);
       expect(sectionBody(text, '5. Verdict'), asking).toMatch(/^Not assessed: 4\. Founder-market fit/);
     }
+  });
+
+  it('writes an answer that only quotes a question inside it', async () => {
+    const { text } = await run('What goes in section 4?', 'Lived it: when investors ask "what is your edge?", it is six years of filing VAT by hand.');
+    expect(sectionBody(text, '4. Founder-market fit')).toMatch(/^Lived it: when investors ask/);
   });
 
   it('writes an answer that names its section, since the section\'s words are not an echo', async () => {

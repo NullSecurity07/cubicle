@@ -191,6 +191,7 @@ function countOf(said: string): number {
 // How many customer conversations a section records, or null when it records none at all. The template's line comes
 // first, read past bold and bullets; a section written as prose is read for a number next to the conversations
 // ("talked to 12 founders", "14 customer interviews"). No count anywhere is no evidence, and the cap holds.
+const TO_COME = /\b(planned|plan|booked|scheduled|will|next|target|goal|aim)\b/i;
 export function conversations(text: string, label: string): number | null {
   // A struck-out count is a count taken back: "~~12~~ 0" is none.
   const section = unmarked(text).replace(/~~[^~]*~~/g, ' ');
@@ -200,16 +201,19 @@ export function conversations(text: string, label: string): number | null {
   const at = lines.findIndex((one) => one.toLowerCase().startsWith(label.toLowerCase()));
   // The template's label line, then the line under it when the label's own is empty (the count written below it),
   // then the label quoted inside a line ("3 paying beta users (Real customer conversations done: 3)").
+  // A line under the label or quoting it may be something else: the next template question with its own answer
+  // ("Payer = user? If not, who pays: yes, 12 pay"), or a target ("Note: target is ... done: 10"). Neither is a count.
+  const other = (line: string) => /^[^:]{0,80}\?[^:]*:/.test(line.trim()) || /:$/.test(line.trim()) || TO_COME.test(line);
   const next = at >= 0 && !after(lines[at]).trim() ? lines.slice(at + 1).find((one) => one.trim()) : undefined;
   const values = [
     ...(at >= 0 ? [after(lines[at])] : []),
-    ...(next !== undefined && !/:$/.test(next.trim()) ? [next] : []),
-    ...lines.filter((one, index) => index !== at && one.toLowerCase().includes(label.toLowerCase())).map(after),
+    ...(next !== undefined && !other(next) ? [next] : []),
+    ...lines.filter((one, index) => index !== at && one.toLowerCase().includes(label.toLowerCase()) && !other(one.slice(0, one.toLowerCase().indexOf(label.toLowerCase())))).map(after),
   ].filter((value) => value.trim());
   for (const value of values) {
     if (/^\W*(none|no\b|nil)/i.test(value)) return 0;
-    // "12 (planned)", "12 booked for next week": talks still to come are none held yet.
-    if (/\b(planned|plan|booked|scheduled|will|next)\b/i.test(value)) return null;
+    // "12 (planned)", "12 booked for next week", "target 10": talks still to come are none held yet.
+    if (TO_COME.test(value)) return null;
     const count = new RegExp(`\\b${NUMBER}`, 'i').exec(value);
     if (count) return countOf(count[1]);
   }
@@ -344,7 +348,8 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
       const wordOver = !!word && out.includes(word);
       const scoreOver = score !== undefined && score > cap.score;
       if (wordOver || scoreOver) {
-        const why = `${cap.why}, so the score is at most ${cap.score}/10${out.length ? ` and the verdict is not ${out.join(' or ')}` : ''}${stand.length ? `; ${stand.join(' or ')} ${stand.length > 1 ? 'stand' : 'stands'}` : ''}`;
+        const allowed = order.filter((one) => !out.includes(one));
+        const why = `${cap.why}, so the score is at most ${cap.score}/10${out.length ? ` and the verdict is not ${out.join(' or ')}` : ''}${allowed.length ? `; ${allowed.join(' or ')} ${allowed.length > 1 ? 'stand' : 'stands'}` : ''}`;
         throw new Error(`not written: ${why}. `
           + `This one says ${[wordOver ? word : '', scoreOver ? `${score} of 10` : ''].filter(Boolean).join(', ')}. ${countRead(sectionBody(text, cap.heading) ?? '', cap.line)}`
           + `${payers(sectionBody(text, cap.heading) ?? '', cap.line)} Write it again within the cap, and say which section each fact comes from. ${refusedVerdict(why, rules.outcomes ?? [])}`);

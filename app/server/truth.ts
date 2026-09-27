@@ -246,7 +246,8 @@ function otherFrom(a: Known, b: Known): number[] {
 }
 
 // `drifted`: money the reply gives in another currency than the sources hold it in ("€87" from "$29 × 3").
-const ALL_OR_NONE = /^\s*of\s+(?:your|the|my|our|their|his|her)\s+(?:time|effort|focus|attention|energy)\b/i;
+// Whose time it is has to be said: "of the time" is how often, a claim ("it fails 100% of the time").
+const ALL_OR_NONE = /^\s*of\s+(?:(?:your|my|our|their|his|her)\s+(?:time|effort|focus|attention|energy)|the\s+(?:effort|focus|attention|energy))\b/i;
 export function figureCheck(reply: string, sources: string[]): { unsourced: string[]; proposals: string[]; drifted?: { label: string; source: string }[] } {
   const known: Known[] = [];
   for (const source of sources) {

@@ -253,6 +253,8 @@ describe('all or none of someone\'s time', () => {
       expect(figureCheck(said, []).unsourced, said).toEqual([]);
     }
     expect(figureCheck('100% of customers churned.', []).unsourced).toEqual(['100%']);
+    // "Of the time" is how often, a claim.
+    expect(figureCheck('It fails 100% of the time.', []).unsourced).toEqual(['100%']);
     expect(figureCheck('Spend 40% of your time on sales.', []).unsourced).toEqual(['40%']);
   });
 });
