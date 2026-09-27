@@ -218,10 +218,49 @@ describe('the truth net on ordinary founder replies', () => {
   });
 
   it('takes runway worked out from cash and burn as sourced, as journey 3 wrote it', () => {
-    expect(check('Runway: 26.67 months at this burn.').length).toBe(1);
-    expect(checkReply({ reply: 'Runway: 26.67 months at this burn.', receipts: [], sources: ['We have $8,000 in the bank and burn $300 a month.'] })).toEqual([]);
+    const reply = 'Cash: $8,000. Burn: $300 a month.\nRunway: 26.67 months at this burn.';
+    expect(check(reply).length).toBe(1);
+    expect(checkReply({ reply, receipts: [], sources: ['We have $8,000 in the bank and burn $300 a month.'] })).toEqual([]);
   });
 });
+
+// The review's probes: with a few figures in the sources, one step of arithmetic on any two of them matched almost
+// any invented number. Arithmetic now counts only when a figure it starts from sits near it in the reply.
+describe('arithmetic the reply does not show', () => {
+  const founder = 'We sent 30 emails and got 1 reply. The budget is $2,000 and the team of 4 is part time.';
+  const metrics = '## Doc: Metrics\nMRR $4,210. 87 customers. Churn 3.1%. CAC $180. LTV $1,350. Trials 212, 46 converted. NPS 42. '
+    + 'Payback 7 months. Burn $17,450. Cash $184,300. Visitors 9,800. Signups 310. Seats 131. ARPA $48.';
+  it('flags invented figures that happen to be one step from two source figures', () => {
+    for (const reply of ['The market is $8,000 per seat.', 'Competitors charge $500.', 'Expect 120 signups.', 'Best teams see 7.5x.', 'A 25% reply rate is normal.'])
+      expect(unsourcedFigures(reply, [founder]), reply).toHaveLength(1);
+  });
+
+  it('flags invented benchmarks beside a wired metrics doc', () => {
+    for (const reply of ['Aim to keep a 3x LTV:CAC, as good SaaS does.', 'Healthy churn is 1.5% a month.', 'Payback is usually 14 months.', 'Good trials convert at 22%.', 'Mid-market contracts run $650.'])
+      expect(unsourcedFigures(reply, [metrics]), reply).toHaveLength(1);
+  });
+
+  it('still takes arithmetic whose starting figures sit in the same or the sentence before', () => {
+    expect(unsourcedFigures('Your 46 of 212 trials is 21.7% conversion.', [metrics])).toEqual([]);
+    expect(unsourcedFigures('Cash $184,300 over burn $17,450 is 10.6 months.', [metrics])).toEqual([]);
+  });
+});
+
+describe('dates and times in the sources', () => {
+  it('never source a figure, whole or in pieces', () => {
+    expect(unsourcedFigures('Expect 3x growth and 14 months of runway, and 26% churn.', ['Launched on 2026-03-14, reviewed 2026-09-26 at 09:00, and on 26 Sep.'])).toEqual(['3x', '14 months', '26%']);
+  });
+});
+
+describe('what counts as a proposal', () => {
+  it('only a figure the proposing words govern, said by the person or as an imperative', () => {
+    for (const reply of ['Your target market has 30,000 customers.', 'Consider that 70% of startups fail.', 'Companies that try usage pricing see 3x growth.', 'Consider this benchmark: 62% churn.'])
+      expect(figureCheck(reply, []).unsourced, reply).toHaveLength(1);
+    for (const reply of ['Aim for 100 customers.', 'Try $79/month.', '- Try $79/month for teams.', 'I suggest a target of 60 customers.', 'You could charge $149.', 'What if you charged $99?', 'We should charge $29.'])
+      expect(figureCheck(reply, []).proposals, reply).toHaveLength(1);
+  });
+});
+
 
 describe('what a turn counts as its sources', () => {
   const system = [
@@ -232,7 +271,9 @@ describe('what a turn counts as its sources', () => {
     'Company documents every person reads:\n\n## Doc: Company\n## Numbers\nMRR $22,000\n\n## Team\nTwo founders.',
     'The founder has connected these documents to your room. Treat them as what the founder wants you to know.\n\n## Doc: Plan\nLaunch with 140 customers.',
     'Today is Sunday 27 September 2026, in the founder\'s time zone (UTC).',
-    'Your company playbook: what the people here learned doing this kind of work before.\nOffer 45% off the first month.',
+    'Your company playbook: what the people here learned doing this kind of work before.\n\nDiscount launch\nWhen: pricing\nWhat to do:\n1. Offer 45% off the first month.\n\nWhen the founder asks you to learn how something was done, it is recorded after your reply; confirm in one line.',
+    '- A Runway card (read_runway; propose_flow and propose_scenario go to the founder). Cash $184,300 on 2026-09-01. Burn $17,450 a month. Revenue $4,210 a month. Runway 13.9 months. As of 2026-09-27.',
+    '- A Metrics card with 87 customers on its latest row.',
   ].join('\n\n');
   const messages = [
     { role: 'system' as const, content: system },
@@ -244,5 +285,15 @@ describe('what a turn counts as its sources', () => {
     const sources = turnSources(messages);
     const flagged = unsourcedFigures('MRR is $22,000 with 140 customers, burn $4,000, and 34% pay late. Keep CAC at $300, churn at 2%, and offer 45% off.', sources);
     expect(flagged).toEqual(['$300', '2%', '45%']);
+  });
+
+  it('reads the card lines slices add after the day and the playbook', () => {
+    const reply = 'Cash is $184,300 and burn is $17,450, so 13.9 months. Revenue is $4,210 from 87 customers.';
+    expect(unsourcedFigures(reply, turnSources(messages))).toEqual([]);
+  });
+
+  it('keeps a document paragraph that happens to start like a rule', () => {
+    const doc = [{ role: 'system', content: 'You are Sam, Partner. Brief.\n\n## Doc: Notes\nFirst line.\n\nToday is launch day and we have 140 customers.\n\nYou are paying $300 a month.' }];
+    expect(unsourcedFigures('We have 140 customers and pay $300.', turnSources(doc))).toEqual([]);
   });
 });

@@ -105,18 +105,36 @@ type Kind = 'money' | 'share' | 'other';
 type Known = { value: number; digits: number; kind: Kind; stamp?: boolean };
 // A figure in an input, taken whole: its currency, its number, its scale and whether a % or an x closes it.
 const TOKEN = new RegExp(String.raw`([$€£]\s?)?${AMOUNT}(?:\s?(k|mm|m|bn|b|thousand|million|billion)\b)?(\s?(?:%|percent\b)|(?:x|×)(?![\w]))?`, 'gi');
+const MONTHS = 'Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sept?(?:ember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?';
+// "26 Sep", "Sep 26": a day of a month, which is a date and not a figure.
+const MONTH_AFTER = new RegExp(`^\\s(?:${MONTHS})\\b`);
+const MONTH_BEFORE = new RegExp(`\\b(?:${MONTHS})\\s$`);
 const clash = (one: Kind, other: Kind) => (one === 'money' && other === 'share') || (one === 'share' && other === 'money');
 // Months in a year: "a year" is the one step a founder's monthly figures are always taken.
 const CONSTANTS = [12];
 const MAX_OPERANDS = 80;
 
-// A figure introduced as a goal, a proposal or a what-if is the person's suggestion, not a claim about the world.
-// Only the words before the figure in its own clause count.
-const PROPOSING = /\b(?:aim(?:ing)?(?: for| at)?|target(?:ing|s)?|goals?|propos(?:e|ed|ing)|suggest(?:ed|ing|s)?|what if|(?:could|should|would|might) (?:charge|price|set|ask|go (?:for|with))|try(?:ing)?|consider(?:ing)?|shoot for|price (?:it|them|this) at|test (?:a|an)? ?(?:price|charge)|let'?s (?:say|set|aim|try))\b/i;
+// A figure introduced as a goal, a proposal or a what-if is the person's suggestion, not a claim about the world. The
+// proposing words have to govern the figure: said by the person or as an imperative ("try $79", "I suggest a target
+// of 60", "we should charge $29", "what if you charged $99"), at most three words before it in its own clause. "Your
+// target market has 30,000 customers", "consider that 70% fail" and "companies that try it see 3x" are claims.
+const LEAD = String.raw`(?:^[\s*\-\d.)]*|\b(?:i|we|you|let'?s|i'?d|we'?d|could|should|would|might)\s+(?:\w+\s+)?)`;
+const VERB = String.raw`(?:try(?:ing)?|aim(?:ing)?\s+(?:for|at)|shoot\s+for|propos(?:e|ing)|suggest(?:ing)?)`;
+const PHRASE = String.raw`(?:targets?\s+of|goal\s+(?:of|is)|what\s+if|(?:could|should|would|might)\s+charge|price\s+(?:it|them|this)\s+at)`;
+const PROPOSING = new RegExp(String.raw`(?:${LEAD}${VERB}|\b${PHRASE})(?:\s+\S+){0,3}\s*$`, 'i');
 function proposed(reply: string, at: number): boolean {
   const before = reply.slice(0, at);
   const start = Math.max(...['. ', '! ', '? ', '\n', ': ', ', ', '; '].map((end) => before.lastIndexOf(end))) + 1;
   return PROPOSING.test(before.slice(start));
+}
+
+// The reply's own text around a figure: its sentence and the two before it. One step of arithmetic counts only when
+// a figure it starts from is written here, where the founder can follow it.
+function nearby(reply: string, at: number, length: number): string {
+  const ends = [...reply.slice(0, at).matchAll(/[.!?](?=\s)|\n/g)].map((match) => match.index + 1);
+  const start = ends.length >= 3 ? ends[ends.length - 3] : 0;
+  const next = /[.!?](?=\s|$)|\n/.exec(reply.slice(at + length));
+  return `${reply.slice(start, at)} ${reply.slice(at + length, next ? at + length + next.index + 1 : reply.length)}`;
 }
 
 // Every figure in the reply whose value appears in none of the inputs of this turn: what the founder said, the history
@@ -151,7 +169,8 @@ export function figureCheck(reply: string, sources: string[]): { unsourced: stri
       const kind: Kind = match[1] ? 'money' : closer ? 'share' : 'other';
       const text = match.input ?? '';
       const end = match.index + match[0].length;
-      const stamp = !match[1] && !closer && (/\d[-/:.]$/.test(text.slice(Math.max(0, match.index - 2), match.index)) || /^[-/:]\d/.test(text.slice(end, end + 2)) || /^(?:19|20)\d\d$/.test(match[0].trim()));
+      const stamp = !match[1] && !closer && (/\d[-/:.]$/.test(text.slice(Math.max(0, match.index - 2), match.index)) || /^[-/:]\d/.test(text.slice(end, end + 2))
+        || /^(?:19|20)\d\d$/.test(match[0].trim()) || MONTH_AFTER.test(text.slice(end, end + 12)) || MONTH_BEFORE.test(text.slice(Math.max(0, match.index - 12), match.index)));
       known.push({ value: match[4] ? valueOf(match[2], match[3], match[4]) : raw, digits: exactness(raw), kind, ...(stamp ? { stamp } : {}) });
     }
   }
@@ -159,17 +178,22 @@ export function figureCheck(reply: string, sources: string[]): { unsourced: stri
   // A worked-out figure has to agree to the last digit the reply gives, and never by more than 1%: 26.67 is $8,000 /
   // $300, but $8,005 is not $8k plus anything.
   const agrees = (result: number, target: number) => Math.abs(result - target) <= Math.min(Math.abs(target) * 0.01, halfUnit(target)) + 1e-9;
-  const found = (value: number, kind: Kind) => known.some((one) => close(one.value, value) && exactness(value) <= one.digits && !clash(one.kind, kind));
+  const found = (value: number, kind: Kind) => known.some((one) => !one.stamp && close(one.value, value) && exactness(value) <= one.digits && !clash(one.kind, kind));
   // One step of arithmetic on any two figures this turn read, or on one of them and a month count, that gives the
   // same kind of figure. Money comes from money plus or minus money, money times a count or a share, or money over a
   // count ($2k / 40 = $50 each); a count or a number of months from counts, or from one amount over another ($8,000 /
   // $300 = 26.67 months); a share or a multiple from a ratio of two figures that are not money against a count. So 30
   // emails less 1 reply never makes a price of $29. Dates and times are never worked with.
-  const derived = (value: number, kind: Kind) => {
+  // At least one of the two has to be written near the figure in the reply, and be known: a figure alone in its
+  // sentence is never taken as worked out, because any two of a doc's figures make almost any number.
+  const derived = (value: number, kind: Kind, around: string) => {
     const operands = [...new Map(known.filter((one) => !one.stamp).map((one) => [`${one.value}:${one.kind}`, one])).values()].slice(0, MAX_OPERANDS)
       .concat(CONSTANTS.map((constant) => ({ value: constant, digits: 12, kind: 'other' as Kind })));
-    for (const [i, a] of operands.entries()) {
-      for (const b of operands.slice(i + 1)) {
+    const shown = [...around.matchAll(TOKEN)].map((match) => valueOf(match[2], match[3], match[4]));
+    const starts = operands.filter((one) => shown.some((near) => close(near, one.value)));
+    for (const a of starts) {
+      for (const b of operands) {
+        if (a === b) continue;
         const ratios = [a.value / b.value, b.value / a.value];
         if (kind === 'share') {
           if ((a.kind === 'money') !== (b.kind === 'money')) continue;
@@ -203,7 +227,7 @@ export function figureCheck(reply: string, sources: string[]): { unsourced: stri
     }
     // A figure may be quoted in its bare form too ("18" for "18 months"), so the unscaled number also counts.
     const bare = match[1] === undefined && match[4] === undefined ? valueOf(match[7] ?? match[11], match[8] ?? match[12]) : undefined;
-    if (found(value, kind) || (bare !== undefined && found(bare, kind)) || derived(value, kind)) {
+    if (found(value, kind) || (bare !== undefined && found(bare, kind)) || derived(value, kind, nearby(reply, match.index, match[0].length))) {
       // Worked out once, it is known for the next figure in the reply ($1,960 a month, so $23,520 a year).
       known.push({ value, digits: 12, kind });
       continue;
@@ -220,22 +244,33 @@ export function figureCheck(reply: string, sources: string[]): { unsourced: stri
 
 export const unsourcedFigures = (reply: string, sources: string[]): string[] => figureCheck(reply, sources).unsourced;
 
-// Where each part of a person's system prompt starts, and whether it holds facts (the founder's words about
-// themselves, documents, notes, pages, decisions, memory, what colleagues said) or instructions (who the person is,
-// the stance, the rules, the tools, the day, the playbook). A part the list does not know keeps the kind of the part
-// before it, so a document's own paragraphs stay facts.
-const FACT_STARTS = /^(?:## Doc: |## Page: |About the founder\.|Company documents every person reads:|The founder has connected these documents|Sticky notes the founder connected|Web pages the founder connected|What the founder has decided|Your memory \(|Colleagues connected to your room|From the founder's notes \()/;
-const RULE_STARTS = /^(?:You are [^\n]{1,80}?, |Reply in short markdown|You can act with these tools|Not connected to your room|Only the recent part of this conversation|Decisions are the founder's|Websites the founder trusts|No documents are connected|Also connected to your room|Today is |Your company playbook:)/;
+// Which parts of a person's system prompt are instructions to the model rather than facts about the company: who
+// the person is (the first part), the stance, the rules and tools, the day, the playbook. Each such part is dropped on
+// its own and everything else is kept: documents, the founder's words, notes, pages, decisions, memory, colleagues,
+// and the card lines the slices add at the end (Runway, Metrics, interviews and the rest). Only the playbook runs over
+// several parts, and is dropped up to its closing line or the next fact heading. The rules are matched on the exact
+// words the prompt writes, so a document's paragraph that starts "Today is" stays.
+const FACT_STARTS = /^(?:## Doc: |## Page: |About the founder\.|Company documents every person reads:|The founder has connected these documents|Sticky notes the founder connected|Web pages the founder connected|What the founder has decided|Your memory \(|Colleagues connected to your room|From the founder's notes \(|- A )/;
+const RULE_STARTS = /^(?:Reply in short markdown: |You can act with these tools: |Not connected to your room, so you cannot yet: |Only the recent part of this conversation is in front of you\.|Decisions are the founder's, and they are kept on record\.|Websites the founder trusts\. |No documents are connected to your room, so |Today is [^\n]*, in the founder's time zone)/;
+const PLAYBOOK_HEAD = /^Your company playbook: /;
+const PLAYBOOK_END = /^When the founder asks you to learn how something was done/;
 function factsOf(system: string, stances: string[]): string {
   let text = system;
   for (const stance of stances) text = text.split(stance).join('\n\n');
-  let facts = false;
+  const parts = text.split(/\n{2,}/);
+  let playbook = false;
   const kept: string[] = [];
-  for (const part of text.split(/\n{2,}/)) {
-    if (FACT_STARTS.test(part)) facts = true;
-    else if (RULE_STARTS.test(part)) facts = false;
-    if (facts) kept.push(part);
-  }
+  parts.forEach((part, index) => {
+    if (playbook) {
+      if (PLAYBOOK_END.test(part)) { playbook = false; return; }
+      if (!FACT_STARTS.test(part)) return;
+      playbook = false;
+    }
+    if (index === 0 && /^You are [^\n]{1,80}?, /.test(part)) return;
+    if (PLAYBOOK_HEAD.test(part)) { playbook = true; return; }
+    if (RULE_STARTS.test(part) || !part.trim()) return;
+    kept.push(part);
+  });
   return kept.join('\n\n');
 }
 
