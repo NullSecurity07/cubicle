@@ -110,12 +110,16 @@ function countOf(said: string): number {
 // How many customer conversations a section records, or null when it records none at all. The template's line comes
 // first, read past bold and bullets; a section written as prose is read for a number next to the conversations
 // ("talked to 12 founders", "14 customer interviews"). No count anywhere is no evidence, and the cap holds.
-export function conversations(section: string, label: string): number | null {
+export function conversations(text: string, label: string): number | null {
+  // A struck-out count is a count taken back: "~~12~~ 0" is none.
+  const section = text.replace(/~~[^~]*~~/g, ' ');
   const line = section.split('\n').map(bare).find((one) => one.toLowerCase().startsWith(label.toLowerCase()));
   if (line) {
     // What follows the label, past the template's own "(of ten to twenty)" and whatever separates the two.
     const value = line.slice(label.length).replace(/^\s*\([^)]*\)/, '').replace(/^[\s:=\-–—]+/, '');
     if (/^\W*(none|no\b|nil)/i.test(value)) return 0;
+    // "12 (planned)", "12 booked for next week": talks still to come are none held yet.
+    if (/\b(planned|plan|booked|scheduled|will|next)\b/i.test(value)) return null;
     const count = new RegExp(`\\b${NUMBER}`, 'i').exec(value);
     if (count) return countOf(count[1]);
   }
@@ -212,7 +216,7 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
         if (over) {
           throw new Error(`not written: ${cap.why}, so the verdict is at most ${cap.verdict} and the score at most ${cap.score} of 10. `
             + `This one says ${[word, score !== undefined ? `${score} of 10` : ''].filter(Boolean).join(', ')}. ${countRead(sectionBody(after, cap.heading) ?? '', cap.line)} `
-        + 'Write it again within the cap, and say which section each fact comes from.');
+            + 'Write it again within the cap, and say which section each fact comes from.');
         }
       }
     }

@@ -107,6 +107,17 @@ function asksAbout(question: string, heading: string): boolean {
   return (!!words && flat(question).includes(words)) || (!!number && new RegExp(`\\bsection\\s+${number}\\b`, 'i').test(question));
 }
 
+const HEDGE = /\b(not sure|don'?t know|do not know|haven'?t|have not|no idea|unclear|need to ask|ask (?:the )?founder|tbd|can'?t say)\b/i;
+const hedges = (answer: string) => /\?\s*$/.test(answer.trim()) || HEDGE.test(answer.replace(/[’‘]/g, "'"));
+
+// An answer most of whose words are the question's own: the question said back, maybe as dictated to them.
+function echoes(answer: string, question: string): boolean {
+  const split = (text: string) => text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word.length > 2);
+  const asked = new Set(split(question));
+  const said = split(answer);
+  return !!said.length && said.filter((word) => asked.has(word)).length / said.length >= 0.7;
+}
+
 // A colleague asked with ask_person answers in words, without tools, so their answer never reached their own section of
 // a team doc, and a verdict waiting on it waited until the founder answered in the Needs you box. When the asker and
 // the colleague share such a doc, the colleague's section there is empty and the question is about it, the answer is
@@ -129,7 +140,11 @@ export async function answerIntoSection(context: ToolContext, targetId: string, 
     // One section at a time: an answer to a question naming two is not split between them.
     if (asked.length !== 1 || !filled(answer).length || answer.trim() === HELD_BACK) continue;
     const [{ heading }] = asked;
-    const body = `${answer.trim()}\n\n(From chat: ${target.name} answered ${asker.name} on ${shortDay(Date.now())}.)`;
+    // A colleague answering without tools does not know their reply becomes their section, so they hedge or ask back;
+    // written in, a hedge counted as the section and let a verdict stand on it. Nor is the question said back an answer.
+    if (hedges(answer) || echoes(answer, question)) return `${target.name} answered but did not fill "${heading}"; it stays empty.`;
+    const asking = question.replace(/\s+/g, ' ').trim();
+    const body = `${answer.trim()}\n\n(From chat: ${target.name} answered ${asker.name} on ${shortDay(Date.now())}, asked "${asking.length > 200 ? `${asking.slice(0, 199)}…` : asking}".)`;
     const next = replaceSection(before, heading, body);
     if ('error' in next) continue;
     // The section's own checks hold as for any write of theirs; one that fails is said, and the answer still stands.

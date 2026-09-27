@@ -206,6 +206,15 @@ describe('the conversations cap, however the pain section is written', () => {
     expect(conversations('A dozen interviews are booked for next week.', LABEL)).toBeNull();
   });
 
+  it('reads a struck-out or planned count as no count', () => {
+    const LABEL = 'Real customer conversations done';
+    expect(conversations('Real customer conversations done: ~~12~~ 0', LABEL)).toBe(0);
+    expect(conversations('Real customer conversations done: ~~12~~', LABEL)).toBeNull();
+    expect(conversations('Real customer conversations done: 12 (planned)', LABEL)).toBeNull();
+    expect(conversations('Real customer conversations done: 12 booked for next week', LABEL)).toBeNull();
+    expect(conversations('Painkiller. Talked to ~~12~~ founders.', LABEL)).toBeNull();
+  });
+
   it('asks the pain validator to keep the count line', async () => {
     const { framework } = await setup();
     expect(framework.rooms.find((room) => room.key === 'pain')!.brief).toContain('Real customer conversations done: <n>');
@@ -414,7 +423,7 @@ describe('the judge asking a colleague about their empty section', () => {
     expect(result.tools[0].result).toMatch(/^Rohan answered:\nNone: the founder has never worked in this market\./);
     expect(result.tools[0].result).toContain('Written into "4. Founder-market fit" as Rohan\'s answer, from chat.');
     const fit = sectionBody(text, '4. Founder-market fit')!;
-    expect(fit).toMatch(/^None: the founder has never worked in this market\.\n\n\(From chat: Rohan answered Priya on .+\.\)$/);
+    expect(fit).toMatch(/^None: the founder has never worked in this market\.\n\n\(From chat: Rohan answered Priya on .+, asked "Your section "4\. Founder-market fit" is empty\. What is the founder's fit\?"\.\)$/);
     expect(effects).toContain('doc-changed:evaluation');
     // With the section written, the verdict stands, rather than "not assessed".
     expect(result.tools[1].ok).toBe(true);
@@ -446,6 +455,21 @@ describe('the judge asking a colleague about their empty section', () => {
     expect(filled(sectionBody(await doc(), '3. Is the pain real?'))).toEqual([]);
   });
 
+  it('leaves the section empty when the answer hedges or asks back, so the verdict still waits', async () => {
+    for (const hedge of ['Not sure yet — I haven\'t talked to the founder. Can you ask them?', 'No idea, TBD.', 'Which market do you mean?', 'I don\'t know; we need to ask the founder.']) {
+      const { result, text } = await run('What goes in section 4, the founder-market fit?', hedge);
+      expect(result.tools[0].result, hedge).toContain('Rohan answered but did not fill "4. Founder-market fit"; it stays empty.');
+      expect(filled(sectionBody(text, '4. Founder-market fit')), hedge).toEqual([]);
+      expect(sectionBody(text, '5. Verdict'), hedge).toMatch(/^Not assessed: 4\. Founder-market fit/);
+    }
+  });
+
+  it('leaves the section empty when the answer only says the question back', async () => {
+    const { result, text } = await run('What is the founder-market fit in section 4?', 'The founder-market fit in section 4.');
+    expect(result.tools[0].result).toContain('it stays empty');
+    expect(filled(sectionBody(text, '4. Founder-market fit'))).toEqual([]);
+  });
+
   it('writes nothing when the answer was held back', async () => {
     const { text } = await run('What is your section 4, the founder-market fit?', HELD_BACK);
     expect(filled(sectionBody(text, '4. Founder-market fit'))).toEqual([]);
@@ -453,6 +477,8 @@ describe('the judge asking a colleague about their empty section', () => {
 
   it('asks the judge to repeat a refusal\'s reason rather than name a cause of her own', async () => {
     const { framework } = await setup();
-    expect(framework.rooms.find((room) => room.key === 'verdict')!.brief).toMatch(/refused.*its reason word for word.*never another cause/i);
+    const brief = framework.rooms.find((room) => room.key === 'verdict')!.brief;
+    expect(brief).toMatch(/refused.*its reason word for word.*never another cause/i);
+    expect(brief).toContain('Would an investor fund it as described today?');
   });
 });
