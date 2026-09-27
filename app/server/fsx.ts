@@ -1,14 +1,17 @@
-import { mkdir, open, readdir, rename, stat } from 'node:fs/promises';
+import { mkdir, open, readdir, rename, rm, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 // A file written whole or not at all: to a side file first, then renamed over the old one, so a reader never sees half.
+// Each write has its own side file, so two writes to one path at once never share one and trip over each other.
+let sides = 0;
 export async function writeAtomic(path: string, text: string | Buffer, options: { mkdir?: boolean } = {}) {
   if (options.mkdir) await mkdir(dirname(path), { recursive: true });
   // The bytes are pushed to the disk before the rename, and the folder after it: without that, a power cut soon after
   // can leave the new name pointing at an empty file, which is worse than the old one.
-  const file = await open(`${path}.tmp`, 'w');
+  const side = `${path}.${process.pid}-${(sides += 1)}.tmp`;
+  const file = await open(side, 'w');
   try { await file.writeFile(text); await file.sync(); } finally { await file.close(); }
-  await rename(`${path}.tmp`, path);
+  await rename(side, path).catch(async (error) => { await rm(side, { force: true }); throw error; });
   const folder = await open(dirname(path), 'r').catch(() => null);
   if (folder) { try { await folder.sync(); } catch { /* not every system lets a folder be synced */ } finally { await folder.close(); } }
 }

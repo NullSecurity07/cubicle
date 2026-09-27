@@ -85,8 +85,11 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
   // their conversation. Now it is moved aside, beside where it was, as <name>.corrupt-<time>.json, and the file is put
   // back from the newest backup that holds a copy that parses, or started again (`empty`) when none does; whoever
   // listens is told, so the founder hears what happened and where the damaged copy is. Files are moved and written
-  // directly, not through the queue, since this may run inside a queued job. One rescue a file at a time, and it looks
-  // again first: two readers who both saw the damage must not move the good copy the first one put back.
+  // The path is never left empty: the copy to put back is found first, the damaged file is copied aside, and the good
+  // copy is renamed over it, so a reader at the same moment never finds no file and takes it for a first run (which
+  // would seed the stage and write the seed's docs over the founder's). The look-again, copy and replace hold the
+  // queue, so no write lands between them: a caller already inside a queued job (`holding`) does them there and then,
+  // anyone else queues them. Rescues from outside the queue share one job a file.
   const rescuing = new Map<string, Promise<string>>();
   const fromBackup = async (name: string) => {
     const where = rescue.backups?.();
@@ -102,34 +105,43 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
     }
     return null;
   };
-  const recover = (path: string, empty: string, fresh?: () => Promise<void>) => {
+  type Mend = { empty: string; holding: boolean; fresh?: () => Promise<void>; stamp?: (text: string) => string };
+  const recover = (path: string, mend: Mend): Promise<string> => {
+    const file = relative(dir, path).split(sep).join('/');
+    const run = async () => {
+      const found = await fromBackup(file);
+      const replace = async () => {
+        const now = await readHere(path);
+        if (now === null) return mend.empty;
+        try { JSON.parse(now); return now; } catch { /* still damaged: this rescue is the one to put it back */ }
+        const aside = join(dirname(path), `${basename(path, '.json')}.corrupt-${trashStamp()}.json`);
+        await copyFile(path, aside);
+        const text = (mend.stamp ?? ((same: string) => same))(found?.text ?? mend.empty);
+        await writeAtomic(path, text, { mkdir: true });
+        if (!found) await mend.fresh?.();
+        rescue.onDamaged?.({ file, aside, from: found ? { file: found.file, at: found.at } : null });
+        return text;
+      };
+      return mend.holding ? replace() : exclusive(replace);
+    };
+    if (mend.holding) return run();
     const held = rescuing.get(path);
     if (held) return held;
-    const job = (async () => {
-      const text = await readHere(path);
-      if (text === null) return empty;
-      try { JSON.parse(text); return text; } catch { /* still damaged: this reader is the one to move it */ }
-      const aside = join(dirname(path), `${basename(path, '.json')}.corrupt-${trashStamp()}.json`);
-      await rename(path, aside);
-      const file = relative(dir, path).split(sep).join('/');
-      const found = await fromBackup(file);
-      await writeAtomic(path, found?.text ?? empty, { mkdir: true });
-      if (!found) await fresh?.();
-      rescue.onDamaged?.({ file, aside, from: found ? { file: found.file, at: found.at } : null });
-      return found?.text ?? empty;
-    })().finally(() => rescuing.delete(path));
+    const job = run().finally(() => rescuing.delete(path));
     rescuing.set(path, job);
     return job;
   };
   // What a file holds, read as JSON, or as `empty` when there is no such file; a damaged one is rescued first.
-  const parse = async <T>(path: string, text: string | null, empty: string, fresh?: () => Promise<void>): Promise<T> => {
-    if (text === null) return JSON.parse(empty) as T;
-    try { return JSON.parse(text) as T; } catch { return JSON.parse(await recover(path, empty, fresh)) as T; }
+  const parse = async <T>(path: string, text: string | null, mend: Mend): Promise<T> => {
+    if (text === null) return JSON.parse(mend.empty) as T;
+    try { return JSON.parse(text) as T; } catch { return JSON.parse(await recover(path, mend)) as T; }
   };
+  const LIST = { empty: '[]', holding: false };
+  const NOTES = { empty: '{}', holding: false };
 
   const editChat = <T>(id: string, edit: (messages: ChatMessage[]) => T) => exclusive(async () => {
     const path = chatPath(id);
-    const messages = await parse<ChatMessage[]>(path, await readHere(path), '[]');
+    const messages = await parse<ChatMessage[]>(path, await readHere(path), { ...LIST, holding: true });
     const out = edit(messages);
     await writeAtomic(path, JSON.stringify(messages, null, 2), { mkdir: true });
     return out;
@@ -184,7 +196,10 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
     const text = await read(stagePath);
     if (text !== null) {
       try { return JSON.parse(text) as Stage; } catch { /* rescued below */ }
-      const stage = await parse<Stage>(stagePath, text, JSON.stringify(seedStage, null, 2), seedMissing);
+      // Put back on a revision above any an open window could hold (a revision is a count of saves; this is the
+      // time), so every window takes the restored stage in instead of ignoring it as older than its own.
+      const stamp = (held: string) => JSON.stringify({ ...(JSON.parse(held) as Stage), rev: Math.max((JSON.parse(held) as Stage).rev ?? 0, Date.now()) }, null, 2);
+      const stage = await parse<Stage>(stagePath, text, { empty: JSON.stringify(seedStage, null, 2), holding: false, fresh: seedMissing, stamp });
       onStage(stage);
       return stage;
     }
@@ -265,7 +280,7 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
     },
     // Conversations saved before messages had ids get them once, here.
     async readChat(id: string): Promise<ChatMessage[]> {
-      const messages = await parse<ChatMessage[]>(chatPath(id), await read(chatPath(id)), '[]');
+      const messages = await parse<ChatMessage[]>(chatPath(id), await read(chatPath(id)), LIST);
       if (messages.every((message) => message.id)) return messages;
       return editChat(id, (held) => {
         for (const [at, message] of held.entries()) if (!message.id) held[at] = { ...message, id: newMessageId() };
@@ -288,14 +303,14 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
     readPage: async (id: string): Promise<{ url: string; title: string; text: string } | null> => JSON.parse((await read(pagePath(id))) ?? 'null'),
     writePage: (id: string, page: { url: string; title: string; text: string }) => write(pagePath(id), JSON.stringify(page, null, 2)),
     async readMemory(id: string): Promise<Memory> {
-      const saved = await parse<Partial<Memory>>(memoryPath(id), await read(memoryPath(id)), '{}');
+      const saved = await parse<Partial<Memory>>(memoryPath(id), await read(memoryPath(id)), NOTES);
       return { notes: saved.notes ?? '', summary: saved.summary ?? '', upTo: saved.upTo };
     },
     writeMemory: (id: string, memory: Memory) => write(memoryPath(id), JSON.stringify(memory, null, 2)),
     // A person's memory read, changed and written as one, so two notes kept at the same moment are both kept. `edit`
     // may throw, and then nothing is written.
     editMemory: <T>(id: string, edit: (memory: Memory) => { memory: Memory; out: T }) => exclusive(async () => {
-      const saved = await parse<Partial<Memory>>(memoryPath(id), await readHere(memoryPath(id)), '{}');
+      const saved = await parse<Partial<Memory>>(memoryPath(id), await readHere(memoryPath(id)), { ...NOTES, holding: true });
       const { memory, out } = edit({ notes: saved.notes ?? '', summary: saved.summary ?? '', upTo: saved.upTo });
       await writeAtomic(memoryPath(id), JSON.stringify(memory, null, 2), { mkdir: true });
       return out;
@@ -303,7 +318,7 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
     // Takes messages out of a conversation (one, or one and everything after it). What is taken out goes to trash.
     async cutChat(id: string, messageId: string, andAfter: boolean): Promise<ChatMessage[]> {
       const messages = await exclusive(async () => {
-        const held = await parse<ChatMessage[]>(chatPath(id), await readHere(chatPath(id)), '[]');
+        const held = await parse<ChatMessage[]>(chatPath(id), await readHere(chatPath(id)), { ...LIST, holding: true });
         const at = held.findIndex((message) => message.id === messageId);
         if (at < 0) throw new Error('unknown message');
         const gone = andAfter ? held.splice(at) : held.splice(at, 1);

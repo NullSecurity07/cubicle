@@ -2,7 +2,7 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { seedStage } from '../shared/model.ts';
+import { seedStage, type Stage } from '../shared/model.ts';
 import { makeBackup } from './openends/backup.ts';
 import { createStore, type Damage, type Store } from './store.ts';
 
@@ -268,6 +268,52 @@ describe('store, a file that cannot be read', () => {
     expect(await aside('rooms', 'marketing')).toHaveLength(1);
     expect(damaged).toHaveLength(1);
     expect((await store.readChat('marketing')).map((m) => m.id)).toEqual(['b']);
+  });
+
+  it('never leaves the stage missing while it is put back, so loads at the same moment neither seed it nor touch the docs', async () => {
+    const stage = await store.loadStage();
+    await store.saveStage({ ...stage, rooms: [{ ...stage.rooms[0], x: 111 }, ...stage.rooms.slice(1)] });
+    await store.writeDoc('brand-doc', 'MY OWN BRAND');
+    await store.writeDoc('company-brief', 'MY OWN BRIEF');
+    await makeBackup({ workspace: dir, dir: backups, now: () => new Date('2026-09-26T09:00:00').getTime() });
+    await cut('stage.json');
+    const later = (ms: number) => new Promise<void>((settle) => setTimeout(settle, ms)).then(() => store.loadStage());
+    const loads = await Promise.all([store.loadStage(), later(0), later(2), later(5), later(20)]);
+    for (const one of loads) expect(one.rooms[0].x).toBe(111);
+    expect((await store.loadStage()).rooms[0].x).toBe(111);
+    expect(await store.readDoc('brand-doc')).toBe('MY OWN BRAND');
+    expect(await store.readDoc('company-brief')).toBe('MY OWN BRIEF');
+    expect(await aside('.', 'stage')).toHaveLength(1);
+    expect(damaged).toHaveLength(1);
+  });
+
+  it('keeps a message written while a damaged conversation is being put back', async () => {
+    await store.appendChat('marketing', { id: 'a', role: 'user', text: 'one', at: 1 });
+    await makeBackup({ workspace: dir, dir: backups, now: () => new Date('2026-09-26T09:00:00').getTime() });
+    await cut('rooms/marketing.json');
+    const reading = store.readChat('marketing');
+    await new Promise((settle) => setTimeout(settle, 1));
+    await Promise.all([reading, store.appendChat('marketing', { id: 'b', role: 'user', text: 'two', at: 2 })]);
+    expect((await store.readChat('marketing')).map((m) => m.id)).toEqual(['a', 'b']);
+    expect(await aside('rooms', 'marketing')).toHaveLength(1);
+  });
+
+  it('puts the stage back on a revision above any a window could hold, and tells the windows', async () => {
+    const told: Stage[] = [];
+    store = createStore(dir, undefined, (stage) => told.push(stage), { backups: () => backups, onDamaged: (one) => damaged.push(one) });
+    let stage = await store.loadStage();
+    await makeBackup({ workspace: dir, dir: backups, now: () => new Date('2026-09-26T09:00:00').getTime() });
+    // Many saves after the backup: an open window holds a revision far past the backup's.
+    for (let count = 0; count < 30; count += 1) { await store.saveStage(stage); stage = await store.loadStage(); }
+    const window = stage.rev!;
+    await cut('stage.json');
+    const back = await store.loadStage();
+    expect(back.rev).toBeGreaterThan(window);
+    expect(back.rev).toBeGreaterThan(1_000_000);
+    expect(told.at(-1)?.rev).toBe(back.rev);
+    // Saved on from there, it counts up as before.
+    await store.saveStage(back);
+    expect((await store.loadStage()).rev).toBe(back.rev! + 1);
   });
 
   it('starts a cut-off memory empty rather than failing the person', async () => {
