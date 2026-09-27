@@ -3,7 +3,8 @@ import { join } from 'node:path';
 
 // What each message the bot sent belongs to, so that replying to it answers the person who wrote it.
 export type Route = { messageId: number; chatId: number; roomId: string };
-export type Kept = { routes: Route[]; told: string[]; digestAt: number; menu: string };
+// `morning` is the day the partner's morning note last went to the phone.
+export type Kept = { routes: Route[]; told: string[]; digestAt: number; menu: string; morning?: string };
 export type Book = ReturnType<typeof createBook>;
 
 const EMPTY: Kept = { routes: [], told: [], digestAt: 0, menu: '' };

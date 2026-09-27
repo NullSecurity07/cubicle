@@ -161,8 +161,9 @@ export function createPhone(deps: {
     if (told) await flush();
   }
   // Everything nobody asked for goes to one place: the company's own topic when there is a group, the phones otherwise.
-  async function everyone(text: string, loud = false) {
-    for (const where of await reach.where()) await out(where, text, { loud });
+  // Said as somebody (the partner's morning note), a reply to it on the phone answers them.
+  async function everyone(text: string, loud = false, roomId?: string) {
+    for (const where of await reach.where()) await out(where, text, { loud, ...(roomId ? { roomId } : {}) });
   }
 
   async function pair(chatId: number, text: string, message: Message) {

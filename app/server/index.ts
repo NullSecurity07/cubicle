@@ -182,7 +182,10 @@ const learner = createLearner({
 });
 seams.on('turn:after', learner.after);
 const curator = createCurator(skills);
-setInterval(() => { void runs.tick().catch(() => {}); void curator.tick().catch(() => {}); void extras.tick(); }, 30_000).unref();
+// The half-minute tick: repeats, the playbook's upkeep and every slice's own (the morning note, bet checks, page
+// watches, the backup, the phone). None of it waits for a window, so a server left running as a service does all of
+// it with the window closed. STAGE_TICK_MS is for a check that cannot wait half a minute to see it.
+setInterval(() => { void runs.tick().catch(() => {}); void curator.tick().catch(() => {}); void extras.tick(); }, Number(process.env.STAGE_TICK_MS) || 30_000).unref();
 
 // Started by the desktop shell: leave when the shell does, even if it was killed.
 if (process.env.STAGE_EXIT_WITH_PARENT === '1') {

@@ -1,5 +1,5 @@
 import { createServer, type Server } from 'node:http';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -7,6 +7,7 @@ import type { Room, Stage } from '../../shared/model.ts';
 import { voiceFor } from '../../shared/voices.ts';
 import { createApprovals } from '../approvals.ts';
 import { createAttention } from '../attention.ts';
+import { localDay } from '../clock.ts';
 import type { Deps, Installed } from '../install.ts';
 import { fakeVoices, VOICES } from '../media/voice.ts';
 import { createSeams } from '../seams.ts';
@@ -214,5 +215,99 @@ describe('saying a reply out loud', () => {
       expect(asked.mock.calls.at(-1)![0].voice).toBe('af_heart');
       await part.close?.();
     } finally { asked.mockRestore(); }
+  });
+});
+
+describe('the partner\'s morning note on the phone', () => {
+  // A phone that is paired and switched on, with the daily note due since midnight, and today's note from the partner.
+  async function paired(quiet = false, noNoteYet = false, digestAt = '00:00') {
+    const dir = mkdtempSync(join(tmpdir(), 'reach-morning-'));
+    const rooms = [room('marketing', 'Maya'), { ...room('pat', 'Pat'), role: 'Partner', partner: true }];
+    const held: Stage = { rooms, docs: [], wires: [], cards: [] };
+    writeFileSync(join(dir, 'reach.json'), JSON.stringify({ on: true, token: 'fake-token', paired: [{ chatId: 1, name: 'Founder', at: 1 }], updates: { on: !quiet, finished: true, stuck: true, digest: true, at: digestAt } }));
+    const at = Date.now();
+    const note = { day: localDay(at), at, roomId: 'pat', who: 'Pat', things: ['Call the three dentists who opened the email', 'Price the pilot at £49'], risk: 'the pilot has no end date', question: 'Which clinic goes first?' };
+    const late = () => writeFileSync(join(dir, 'partner.json'), JSON.stringify({ decided: [], plans: [], morning: note }));
+    if (noNoteYet) writeFileSync(join(dir, 'partner.json'), JSON.stringify({ decided: [], plans: [] }));
+    else late();
+    const attention = createAttention(dir);
+    let answer: unknown = null;
+    let incoming: Record<string, unknown> = {};
+    const deps = {
+      workspace: dir, root: dir, fake: true, seams: createSeams(), approvals: createApprovals(), attention,
+      store: { loadStage: async () => held }, boards: { list: async () => [], onChange: () => () => {} },
+      skills: { list: async () => [] }, busy: new Set<string>(), own: { ports: [port, port + 1], token: 'launch-token' },
+      json: (_res: unknown, _status: number, body: unknown) => { answer = body; }, body: async () => incoming, runs: {},
+    } as unknown as Deps;
+    await attention.list();
+    const part = await reach.install(deps);
+    const call = (method: string) => ({ method, headers: {} }) as unknown as Parameters<NonNullable<Installed['route']>>[0];
+    const telegram = async () => { await part.route!(call('GET'), {} as never, '/api/reach/telegram'); return answer as { posted: { chatId: number; text: string; messageId: number }[] }; };
+    // The founder writing on their phone, the way the fake Telegram is handed a message.
+    const says = async (body: Record<string, unknown>) => { incoming = body; await part.route!(call('POST'), {} as never, '/api/reach/telegram'); };
+    return { part, telegram, says, late };
+  }
+
+  it('goes out as one message with the digest, under the partner\'s name, and only once', async () => {
+    const { part, telegram } = await paired();
+    await part.tick!();
+    await part.tick!();
+    const posted = (await telegram()).posted;
+    expect(posted).toHaveLength(1);
+    expect(posted[0].chatId).toBe(1);
+    expect(posted[0].text).toContain('Pat');
+    expect(posted[0].text).toContain('Call the three dentists who opened the email');
+    expect(posted[0].text).toContain('Which clinic goes first?');
+    // The digest is in the same message, not a second one.
+    expect(posted[0].text).toContain('Today');
+    await part.close?.();
+  });
+
+  it('takes a reply to it on the phone to the partner\'s room', async () => {
+    const { part, telegram, says } = await paired();
+    await part.tick!();
+    const [note] = (await telegram()).posted;
+    asked.length = 0;
+    await says({ chatId: 1, text: 'Why the pilot first?', extra: { reply_to_message: { message_id: note.messageId, chat: { id: 1 }, text: 'x' } } });
+    await until(async () => asked.length, (many) => many === 1);
+    expect(asked[0].path).toBe('/api/rooms/pat/chat');
+    expect(JSON.parse(asked[0].body).text).toContain('Why the pilot first?');
+    await part.close?.();
+  });
+
+  // A digest at six, after the partner's hour: until ten past six it is still rightly held for the note, and before
+  // six it is not due at all, so this has nothing to see then.
+  const beforeTenPastSix = new Date().getHours() < 6 || (new Date().getHours() === 6 && new Date().getMinutes() < 11);
+  it.skipIf(beforeTenPastSix)('does not send a late note on its own once the digest has gone without it: one message a day', async () => {
+    const { part, telegram, late } = await paired(false, true, '06:00');
+    await part.tick!();
+    expect((await telegram()).posted).toHaveLength(1);
+    expect((await telegram()).posted[0].text).not.toContain('Call the three dentists');
+    late();
+    await part.tick!();
+    expect((await telegram()).posted).toHaveLength(1);
+    await part.close?.();
+  });
+
+  it('sends the note on its own later when the digest came before the partner writes', async () => {
+    // Midnight is before the partner's hour: the digest goes at once, and the note, when it comes, follows it.
+    const { part, telegram, late } = await paired(false, true, '00:00');
+    await part.tick!();
+    expect((await telegram()).posted).toHaveLength(1);
+    late();
+    await part.tick!();
+    const posted = (await telegram()).posted;
+    expect(posted).toHaveLength(2);
+    expect(posted[1].text).toContain('Call the three dentists');
+    await part.tick!();
+    expect((await telegram()).posted).toHaveLength(2);
+    await part.close?.();
+  });
+
+  it('stays off the phone when the founder asked for quiet', async () => {
+    const { part, telegram } = await paired(true);
+    await part.tick!();
+    expect((await telegram()).posted).toEqual([]);
+    await part.close?.();
   });
 });

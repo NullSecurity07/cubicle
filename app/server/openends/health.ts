@@ -10,6 +10,7 @@ import { isoDay, parseFeed, REDDIT_AGENT } from '../readers.ts';
 import { which, whichAsync } from '../which.ts';
 import { FIND_VARS, outreachEnv } from '../leads/openoutreach.ts';
 import { canWrite, sameDisk, type StatDev } from './backup.ts';
+import { serviceRow, serviceState, type ServiceState } from '../service.ts';
 
 // Is everything this app leans on really here? One question a line, answered yes or no, and when the answer is no,
 // what the founder would do about it — in the words they would use, not ours.
@@ -95,6 +96,8 @@ export type HealthDeps = {
   graphServer?: () => string[] | null;
   // The keys that have made today's published number of requests, by name.
   spent?: () => string[];
+  // Whether the app runs as a systemd user service; asked of systemctl unless a test says otherwise.
+  service?: () => Promise<ServiceState>;
   // The rows slices add about themselves. The app's own registry when left out.
   rows?: Map<string, () => Promise<Check | null> | Check | null>;
 };
@@ -239,6 +242,9 @@ export async function checkAll(deps: HealthDeps): Promise<Check[]> {
     detail: voice ? 'the voice is on this machine' : 'the voice has not been fetched yet',
     fix: 'Ask a voice studio for one line. The voice fetches itself the first time, about 80 MB, and then speaks without the internet.',
   });
+
+  // Whether the morning note, the bet checks, the watches and the backup happen with the window closed.
+  checks.push(serviceRow(await (deps.service ?? (() => serviceState({ env })))().catch(() => ({ systemd: false, installed: false, enabled: false, active: 'inactive', path: '' }))));
 
   checks.push(backupRow({ dir: deps.backupDir, backups: await deps.backups(), writable: await canWrite(deps.backupDir), sameDisk: await sameDisk(workspace, deps.backupDir, deps.stat) }, now()));
 
