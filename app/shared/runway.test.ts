@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  addMonths, alertLevel, months, amountIn, cleanRunway, daysBetween, MONTH_DAYS, monthsBetween, parseAmount, planOf, project, readBank, runwayCsv,
+  addMonths, alertLevel, months, tenths, amountIn, cleanRunway, daysBetween, MONTH_DAYS, monthsBetween, parseAmount, planOf, project, readBank, runwayCsv,
   runwayDetail, runwayLine, type Flow, type Runway,
 } from './runway';
 
@@ -177,13 +177,16 @@ describe('readMonth', () => {
 });
 
 describe('a months figure', () => {
-  it('shows one decimal, rounded to the nearest, never cut short (round 7)', () => {
-    expect(months(6.46)).toBe('6.5 months');
+  it('shows one decimal, rounded down to the tenth, the cautious side and the partner\'s own (round 7)', () => {
+    expect(months(6.46)).toBe('6.4 months');
     expect(months(6.44)).toBe('6.4 months');
+    expect(months(5.96)).toBe('5.9 months');
     expect(months(5.94)).toBe('5.9 months');
-    // A tenth that binary cannot hold exactly still rounds up at the half.
-    expect(months(0.15)).toBe('0.2 months');
+    expect(months(0.15)).toBe('0.1 months');
     expect(months(1)).toBe('1.0 month');
-    expect(months(0.96)).toBe('1.0 month');
+    expect(months(0.96)).toBe('0.9 months');
+    // A tenth that binary holds a hair under is still that tenth, not the one below.
+    for (let tenth = 0; tenth <= 200; tenth += 1) expect(tenths(tenth / 10)).toBe((tenth / 10).toFixed(1));
+    expect(tenths(0.7)).toBe('0.7');
   });
 });

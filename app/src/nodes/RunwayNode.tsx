@@ -2,7 +2,7 @@ import { useReactFlow, useStore, type Node, type NodeProps } from '@xyflow/react
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import {
   alertLevel, BASE, CATEGORIES, categoryOf, guessCategory, isDay, MAX_SCENARIOS, money, monthOf, newRunwayId, parseAmount, planOf, project, proposalTitle,
-  readBank, readMonth, runwayCsv, todayOf, type Candidate, type Category, type Flow, type Projection, type Runway, type RunwayAlert, type RunwayProposal, type Scenario,
+  readBank, readMonth, runwayCsv, tenths, todayOf, type Candidate, type Category, type Flow, type Projection, type Runway, type RunwayAlert, type RunwayProposal, type Scenario,
 } from '../../shared/runway';
 import { getModels } from '../api';
 import { pressed } from '../keys';
@@ -221,7 +221,7 @@ export function RunwayNode({ id, data, selected }: NodeProps<RunwayNodeType>) {
               <div>
                 <dt>Months left</dt>
                 <dd aria-label="Months left" className={level ? `is-${level === 3 ? 'red' : 'amber'}` : undefined}>
-                  {empty || !shown ? <span className="runway__none">—</span> : shown.monthsLeft !== null ? shown.monthsLeft.toFixed(1) : <span className="runway__fine">Not running out</span>}
+                  {empty || !shown ? <span className="runway__none">—</span> : shown.monthsLeft !== null ? tenths(shown.monthsLeft) : <span className="runway__fine">Not running out</span>}
                 </dd>
               </div>
               <div>

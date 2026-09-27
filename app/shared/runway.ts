@@ -152,8 +152,9 @@ export function money(amount: number, currency = 'USD'): string {
   try { return new Intl.NumberFormat('en-US', { style: 'currency', currency, maximumFractionDigits: 0, minimumFractionDigits: 0 }).format(rounded); }
   catch { return `${rounded.toLocaleString('en-US')} ${currency}`; }
 }
-// One decimal, rounded to the nearest: toFixed alone reads 0.15 as 0.1, since binary holds it a hair under.
-export const tenths = (value: number) => (Math.round(value * 10) / 10).toFixed(1);
+// One decimal, rounded down to the tenth: the cautious side, and the way the partner states months left, so the card
+// and the chat never differ by a tenth. The nudge keeps a tenth that binary holds a hair under (0.7 is 6.999… tenths).
+export const tenths = (value: number) => (Math.floor(value * 10 + 1e-9) / 10).toFixed(1);
 export const months = (value: number) => `${tenths(value)} month${tenths(value) === '1.0' ? '' : 's'}`;
 const pct = (value: number) => `${Number(value.toFixed(1))}%`;
 const CATEGORY_ORDER: Category[] = ['people', 'tools', 'rent', 'other'];
