@@ -96,9 +96,9 @@ describe('the brief keeps the name and one row of users', () => {
     const once = keepFacts(companyTemplate(), companyFacts('We have 3 paying beta users.'), '2026-09-27').text;
     expect(keepFacts(once, companyFacts('We have 3 customers.'), '2026-09-28')).toEqual({ text: once, kept: [] });
     // A total, a waitlist, the churned, the active and a target are each their own row, never merged or removed.
-    const others = '# Company\n\n## Numbers\n\n- Total users: 40\n- Waitlist users: 200\n- Churned customers: 1\n- Active users: 25\n- Target 100 users by Dec\n- Paying users: 2 (founder, 2026-09-20)\n';
+    const others = '# Company\n\n## Numbers\n\n- Total users: 40\n- Waitlist users: 200\n- Churned customers: 1\n- Active users: 25\n- Interviewed customers: 12\n- Target 100 users by Dec\n- Paying users: 2 (founder, 2026-09-20)\n';
     const merged = keepFacts(others, companyFacts('We have 3 paying users.'), '2026-09-28').text;
-    for (const row of ['- Total users: 40', '- Waitlist users: 200', '- Churned customers: 1', '- Active users: 25', '- Target 100 users by Dec', '- Paying users: 3 (founder, 2026-09-28)']) expect(merged).toContain(row);
+    for (const row of ['- Total users: 40', '- Waitlist users: 200', '- Churned customers: 1', '- Active users: 25', '- Interviewed customers: 12', '- Target 100 users by Dec', '- Paying users: 3 (founder, 2026-09-28)']) expect(merged).toContain(row);
     expect(merged).not.toContain('Paying users: 2');
     // Free users are their own row.
     expect(keepFacts(once, companyFacts('We have 40 free users.'), '2026-09-28').text).toContain('- Paying beta users: 3 (founder, 2026-09-27)\n- Free users: 40 (founder, 2026-09-28)');

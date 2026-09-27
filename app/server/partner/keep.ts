@@ -99,10 +99,10 @@ const lineOf = (label: string) => new RegExp(`^\\s*[-*]\\s+${label.replace(/[.*+
 
 // A Numbers row that counts people: "- Paying users: 3", "- 3 paying beta users", "- Customers: 3".
 const COUNT_ROW = /^\s*[-*]\s+(?:[\w -]*?\b(?:users|customers|subscribers|clients)\s*:|(?:\d[\d,]*|\w+)\s+(?:[\w-]+\s+){0,2}(?:users|customers|subscribers|clients)\b)/i;
-// Paying, beta and bare users or customers are one count; a total, a waitlist, the churned, the active, a target or
+// Paying, beta and bare users or customers are one count; a total, a waitlist, the churned, the interviewed, the active, a target or
 // the free ones are each their own.
-const OTHER_COUNT = /\b(total|waitlist|wait-list|waiting|churn\w*|lost|active|target|goal|free|trial|new|signups?)\b/i;
-const countFamily = (text: string) => (!/\b(?:users|customers|subscribers|clients)\b/i.test(text) ? null : OTHER_COUNT.exec(text)?.[1].toLowerCase().replace(/^churn\w*$/, 'churned') ?? 'paying');
+const OTHER_COUNT = /\b(total|waitlist|wait-list|waiting|churn\w*|interview\w*|lost|active|target|goal|free|trial|new|signups?)\b/i;
+const countFamily = (text: string) => (!/\b(?:users|customers|subscribers|clients)\b/i.test(text) ? null : OTHER_COUNT.exec(text)?.[1].toLowerCase().replace(/^churn\w*$/, 'churned').replace(/^interview\w*$/, 'interviewed') ?? 'paying');
 
 // The document with the facts in it, and what went in, for the receipt. A figure goes in place of the one it
 // updates and is left alone when it has not changed; Idea and Customer are written only while they are empty, since
