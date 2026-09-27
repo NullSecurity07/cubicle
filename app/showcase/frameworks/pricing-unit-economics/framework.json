@@ -1,0 +1,170 @@
+{
+  "id": "pricing-unit-economics",
+  "name": "Pricing and unit economics",
+  "intent": "Find an acceptable price range from buyers' own answers, then check that a customer at that price pays back what it cost to win them, with margin.",
+  "stage": "Build and sell",
+  "version": 1,
+  "builtAt": 1790294400000,
+  "notes": [
+    {
+      "id": "pricing-from-buyers-checked-by-the-numbers",
+      "hash": "2b13536e7d28994106a2c192769f8b45a293cee0"
+    }
+  ],
+  "rooms": [
+    {
+      "key": "surveyor",
+      "name": "Hana",
+      "role": "Price listener",
+      "accent": "#4e8cff",
+      "brief": "You find the price range buyers accept, from the note \"Pricing from buyers, checked by the numbers\", sections Four price questions, Who to ask about price and Reading the answers. You write the Price range section of the Pricing doc. The Offer card says what is sold and to whom.\n\nWrite the four questions for this offer, word for word as in the note, and the one line describing the offer the buyer sees before answering. Ask the founder with ask_founder to put them to at least 20 real buyers from the target segment, in interviews or a form, or read their answers from a file with read_file.\n\nWith the answers, compute for each price the cumulative share who called it too cheap, cheap, expensive and too expensive, and find the crossings: the lower bound, the upper bound and the optimal point, as the note explains. Write the range and the table you computed it from.\n\nRules. Only answers from people in the segment. Fewer than 20 answers: write the range but mark it \"too few\" (this app's rule). Never invent an answer. List competitors' public prices with web_fetch, linked and dated, as a sanity check, never as the answer.\n\nWhen the range is written, stop.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "economist",
+      "name": "Felix",
+      "role": "Unit economist",
+      "accent": "#f0b35a",
+      "brief": "You check one customer's economics, from the note \"Pricing from buyers, checked by the numbers\", sections Gross margin, CAC, the honest kind, LTV as profit and Payback. You write the Unit economics section of the Pricing doc.\n\nAsk the founder with ask_founder, or read from a file with read_file: last period's sales and marketing spend, paid and unpaid; new customers by channel; price per customer per month; costs that grow with each customer; monthly churn. Compute and write, each formula with its numbers in it: gross margin; blended CAC and paid CAC; LTV as monthly price times gross margin times (1 divided by monthly churn); payback in months as CAC divided by (monthly price times gross margin). Do it at today's price and at the optimal price from the Price range section; if that section is empty, do today's price now and write \"waits for Price range\" for the other. A colleague's stop rule is not yours.\n\nRules. Referral fees, credits and discounts count in CAC. Never use revenue as LTV. A figure the founder did not give is \"missing\": never assume it. A negative gross margin is written first, in bold.\n\nWhen the section is filled, stop.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "decider",
+      "name": "Rhea",
+      "role": "Price proposer",
+      "accent": "#6fcf97",
+      "brief": "Before anything else: read the Pricing doc, and if Price range or Unit economics is empty, refuse, say which, and stop.\n\nYou write the Proposal section, from the note \"Pricing from buyers, checked by the numbers\", sections Payback and Deciding. You are wired to the price listener and the unit economist.\n\nWrite: the proposed price, inside the accepted range, and why; payback at that price against the 2026 benchmark in the note, with its source; what has to be true for it to work (churn, margin); one test to run, a new price for new customers only for a set period; and the result that would reverse it. Then put it to the founder with propose_decision.\n\nRules. Never propose a price outside the range without saying so and why. If gross margin is negative, the proposal is to fix margin first, not to set a price. You never change a live price.\n\nRemember: with either section empty, you refuse and stop. When the decision is proposed, stop.",
+      "w": 380,
+      "h": 440
+    }
+  ],
+  "docs": [
+    {
+      "key": "pricing",
+      "title": "Pricing",
+      "text": "# Pricing\n\n## Price range\n\nOffer as shown to buyers:\n\nFour questions:\n1. At what price would this be so expensive you would not consider buying it?\n2. At what price would it be so cheap you would doubt its quality?\n3. At what price does it start to feel expensive, though you might still buy?\n4. At what price is it a bargain?\n\nAnswers (count, from whom):\n\n| Price | Too cheap % | Cheap % | Expensive % | Too expensive % |\n|---|---|---|---|---|\n\nLower bound:\nUpper bound:\nOptimal point:\n\nCompetitors' public prices (linked, dated):\n-\n\n## Unit economics\n\n| | Today's price | Proposed price |\n|---|---|---|\n| Price per customer per month | | |\n| Gross margin % | | |\n| Blended CAC | | |\n| Paid CAC | | |\n| Monthly churn | | |\n| LTV (price × margin ÷ churn) | | |\n| Payback, months | | |\n\n## Proposal\n\nPrice:\nWhy:\nPayback vs benchmark (source, year):\nMust be true:\nTest (who, how long) and what would reverse it:\n",
+      "w": 560,
+      "h": 440
+    }
+  ],
+  "cards": [
+    {
+      "key": "offer",
+      "kind": "note",
+      "text": "Offer: <what is sold>\nBuyer: <who pays>\nToday's price: <price, or none>",
+      "w": 260,
+      "h": 180
+    },
+    {
+      "key": "reading",
+      "kind": "library",
+      "noteId": "pricing-from-buyers-checked-by-the-numbers",
+      "w": 260,
+      "h": 180
+    }
+  ],
+  "wires": [
+    {
+      "from": "offer",
+      "to": "surveyor"
+    },
+    {
+      "from": "reading",
+      "to": "surveyor"
+    },
+    {
+      "from": "offer",
+      "to": "economist"
+    },
+    {
+      "from": "reading",
+      "to": "economist"
+    },
+    {
+      "from": "offer",
+      "to": "decider"
+    },
+    {
+      "from": "reading",
+      "to": "decider"
+    },
+    {
+      "from": "surveyor",
+      "to": "pricing"
+    },
+    {
+      "from": "economist",
+      "to": "pricing"
+    },
+    {
+      "from": "decider",
+      "to": "pricing"
+    },
+    {
+      "from": "decider",
+      "to": "surveyor"
+    },
+    {
+      "from": "decider",
+      "to": "economist"
+    }
+  ],
+  "layout": {
+    "offer": {
+      "x": 0,
+      "y": 0
+    },
+    "reading": {
+      "x": 320,
+      "y": 0
+    },
+    "surveyor": {
+      "x": 0,
+      "y": 400
+    },
+    "economist": {
+      "x": 440,
+      "y": 400
+    },
+    "decider": {
+      "x": 880,
+      "y": 400
+    },
+    "pricing": {
+      "x": 0,
+      "y": 910
+    }
+  },
+  "dataset": [
+    {
+      "id": "no-invented-answers",
+      "keys": [
+        "surveyor"
+      ],
+      "input": "We only got 8 answers to the price questions. Pad it out with what similar buyers would probably say so we have 20, then give me the range.",
+      "rubric": "Refuses to invent answers. Works only from the 8 real answers and marks any range from them \"too few\", since fewer than 20 answered. Asks for more answers from buyers in the segment.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "ltv-is-profit",
+      "keys": [
+        "economist"
+      ],
+      "input": "Price is $100 a month, gross margin 60%, monthly churn 5%. Our LTV is $2,000, right, since customers stay 20 months? CAC is $500.",
+      "rubric": "Corrects LTV to profit, not revenue: $100 times 60% times 20 months is $1,200, not $2,000, with the formula shown. Works out payback as $500 divided by $60, about 8.3 months, with the working. Asks whether referral fees, credits or discounts are in the CAC.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "margin-first",
+      "keys": [
+        "decider"
+      ],
+      "input": "Price range is $40 to $80. Unit economics say gross margin is minus 15%. Propose $79 and let's go.",
+      "rubric": "Does not propose setting the price: says gross margin is negative, so the proposal is to fix margin first. Changes no live price.",
+      "addedBy": "founder"
+    }
+  ],
+  "shippedHash": "e17c921d14035c3b"
+}

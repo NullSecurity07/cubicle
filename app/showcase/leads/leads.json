@@ -1,0 +1,162 @@
+[
+  {
+    "id": "lead-mujugo6ba19u",
+    "person": {
+      "name": "Priya Nair"
+    },
+    "company": {
+      "name": "Hearthstone Tabletop"
+    },
+    "stage": "meeting",
+    "notes": [
+      {
+        "at": 1790515103843,
+        "by": "Founder",
+        "text": "Two card games on itch.io; asked in the BGG forum how to print bleed right"
+      }
+    ],
+    "source": "founder",
+    "addedAt": 1790515103843,
+    "updatedAt": 1790515103930
+  },
+  {
+    "id": "lead-mujugo6fsuqy",
+    "person": {
+      "name": "Tomas Berg"
+    },
+    "company": {
+      "name": "Northwind Games"
+    },
+    "stage": "replied",
+    "notes": [
+      {
+        "at": 1790515103847,
+        "by": "Founder",
+        "text": "Kickstarter planned for spring; prototypes by hand today"
+      }
+    ],
+    "source": "founder",
+    "addedAt": 1790515103847,
+    "updatedAt": 1790515103936
+  },
+  {
+    "id": "lead-mujugo6p1poh",
+    "person": {
+      "name": "Aiko Tanaka"
+    },
+    "company": {
+      "name": "Paper Lantern Play"
+    },
+    "stage": "contacted",
+    "notes": [
+      {
+        "at": 1790515103857,
+        "by": "Founder",
+        "text": "Runs a monthly playtest night in Leeds, 20 designers"
+      }
+    ],
+    "source": "founder",
+    "addedAt": 1790515103857,
+    "updatedAt": 1790515103943
+  },
+  {
+    "id": "lead-mujugo6xsfnj",
+    "person": {
+      "name": "Marco Ruiz"
+    },
+    "company": {
+      "name": "Solo designer"
+    },
+    "stage": "contacted",
+    "notes": [
+      {
+        "at": 1790515103865,
+        "by": "Founder",
+        "text": "Posted a playtest feedback spreadsheet on Reddit"
+      }
+    ],
+    "source": "founder",
+    "addedAt": 1790515103865,
+    "updatedAt": 1790515103952
+  },
+  {
+    "id": "lead-mujugo7c4ans",
+    "person": {
+      "name": "Hannah Cole"
+    },
+    "company": {
+      "name": "Cardboard Kite"
+    },
+    "stage": "fit",
+    "notes": [
+      {
+        "at": 1790515103880,
+        "by": "Founder",
+        "text": "Beta user, prints weekly, not paying yet"
+      }
+    ],
+    "source": "founder",
+    "addedAt": 1790515103880,
+    "updatedAt": 1790515103954
+  },
+  {
+    "id": "lead-mujugo7mqsja",
+    "person": {
+      "name": "Deji Okafor"
+    },
+    "company": {
+      "name": "Meeple Forge"
+    },
+    "stage": "replied",
+    "notes": [
+      {
+        "at": 1790515103890,
+        "by": "Founder",
+        "text": "Wants per-project pricing, said so on the beta call"
+      }
+    ],
+    "source": "founder",
+    "addedAt": 1790515103890,
+    "updatedAt": 1790515103955
+  },
+  {
+    "id": "lead-mujugo7vwncq",
+    "person": {
+      "name": "Sofia Lind"
+    },
+    "company": {
+      "name": "Unpub Stockholm"
+    },
+    "stage": "new",
+    "notes": [
+      {
+        "at": 1790515103899,
+        "by": "Founder",
+        "text": "Organises protospiel events, could bring a group"
+      }
+    ],
+    "source": "founder",
+    "addedAt": 1790515103899,
+    "updatedAt": 1790515103957
+  },
+  {
+    "id": "lead-mujugo8btseu",
+    "person": {
+      "name": "Ben Archer"
+    },
+    "company": {
+      "name": "Two Rivers Games"
+    },
+    "stage": "new",
+    "notes": [
+      {
+        "at": 1790515103915,
+        "by": "Founder",
+        "text": "Paying beta user, asked for token sheets"
+      }
+    ],
+    "source": "founder",
+    "addedAt": 1790515103915,
+    "updatedAt": 1790515103915
+  }
+]

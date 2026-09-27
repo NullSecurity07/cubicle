@@ -1,0 +1,18 @@
+{
+  "state": "idle",
+  "log": [
+    "drawing it…",
+    "Made room on the graphics card: unloaded qwen3-coder:30b (2.6 GB)",
+    "drawing it on Z-Image Turbo…",
+    "Z-Image Turbo could not: the Space finished without a picture",
+    "drawing it on FLUX.1 schnell…",
+    "done · Hugging Face"
+  ],
+  "results": [
+    {
+      "path": "media/mujuhzv7-warm-overhead-photograph-of-a-kitchen-ta.jpg",
+      "prompt": "Warm overhead photograph of a kitchen table at night: freshly printed prototype playing cards, a folded paper game board and wooden tokens, a home printer in the soft background, ember orange lamp light, no text",
+      "at": 1790515165651
+    }
+  ]
+}

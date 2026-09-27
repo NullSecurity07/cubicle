@@ -1,0 +1,23 @@
+{
+  "promises": [
+    {
+      "id": "promise-mujv7uqv-92wc",
+      "what": "call five beta users by Friday to ask why they have not started paying",
+      "due": "2026-10-02",
+      "said": "2026-09-27",
+      "at": 1790516372071,
+      "roomId": "partner",
+      "status": "open"
+    },
+    {
+      "id": "promise-mujv8drn-nczy",
+      "what": "send the investor update to my two angels today",
+      "due": "2026-09-27",
+      "said": "2026-09-27",
+      "at": 1790516396723,
+      "roomId": "partner",
+      "status": "done",
+      "closed": "2026-09-27"
+    }
+  ]
+}

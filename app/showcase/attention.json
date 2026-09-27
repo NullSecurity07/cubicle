@@ -1,0 +1,12 @@
+{
+  "open": [
+    {
+      "id": "key-rejected:MISTRAL_API_KEY:1",
+      "kind": "key-rejected",
+      "at": 1790514932676,
+      "title": "Mistral's free plan is not on; turn it on at console.mistral.ai",
+      "detail": "MISTRAL_API_KEY was refused (429): its plan allows no requests yet: turn on the free plan at console.mistral.ai. Other models answer meanwhile; this goes away the next time it answers."
+    }
+  ],
+  "dismissed": []
+}

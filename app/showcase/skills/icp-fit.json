@@ -1,0 +1,30 @@
+{
+  "id": "icp-fit",
+  "name": "Score a lead against the ideal customer",
+  "when": "The founder has a person or company and wants to know if they are worth reaching out to.",
+  "procedure": [
+    "Ask for the ideal customer in one sentence if it is not in a doc: who buys, what size, what problem.",
+    "Read what is public about the lead: their profile, company site, recent posts. Note each link.",
+    "Score five criteria 0 to 2 each: role (can they buy), company (size and type), pain (a sign they have the problem), timing (a recent hire, funding, launch or complaint), reach (a shared contact, community or recent post).",
+    "For every score, quote the evidence and its link. No evidence means 0, not a guess.",
+    "Add them up to a score out of 10 and say: reach out now (7 to 10), later (4 to 6), or skip (0 to 3), with the one reason that decided it."
+  ],
+  "pitfalls": [
+    "A famous company is not a fit on its own: score the person and the pain, not the logo.",
+    "Never scrape or bulk-collect profiles: one lead at a time, from public pages the founder can open."
+  ],
+  "verify": "Each of the five criteria has a 0 to 2 score with quoted evidence and a link or \"no evidence\", the total is out of 10, and the answer ends with now, later or skip and its reason.",
+  "state": "active",
+  "by": {
+    "roomId": "",
+    "name": "Built in"
+  },
+  "source": {
+    "kind": "taught",
+    "ref": "builtin"
+  },
+  "uses": 0,
+  "patches": 0,
+  "createdAt": 1790502996900,
+  "history": []
+}

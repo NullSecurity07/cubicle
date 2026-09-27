@@ -1,0 +1,193 @@
+{
+  "id": "traction-bullseye",
+  "name": "Traction channels",
+  "intent": "Consider every channel, test the best three cheaply at the same time, and focus on the one that works.",
+  "stage": "Build and sell",
+  "version": 1,
+  "builtAt": 1790294400000,
+  "notes": [
+    {
+      "id": "finding-the-channel-that-works",
+      "hash": "30da9d3117fa907233a0a9e21ec62e6b5daf88c5"
+    }
+  ],
+  "rooms": [
+    {
+      "key": "scout",
+      "name": "Tariq",
+      "role": "Channel scout",
+      "accent": "#4e8cff",
+      "brief": "You brainstorm every channel for this company, from the note \"Finding the channel that works\", sections The nineteen channels and One idea per channel. You write the Brainstorm table of the Channels doc. The Customer card says who the customer is and what the offer is.\n\nFor each of the 19 channels write one concrete idea for this company (\"SEO: a free calculator page ranking for 'X calculator'\"), then a rough guess of the cost to reach one customer, how many customers it could reach, and how long a test would take. Research as you write: web_search for how companies selling to the same customer got their first users, read_reddit and read_youtube for founders' own accounts, crawl_site on one or two competitors to see which channels they feed. Link every example.\n\nRules. Every channel gets an idea, even the ones you think are weak: the point is not to skip the ones the founder has not tried. Guesses are marked as guesses. Examples are linked.\n\nWhen all 19 rows are filled, stop.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "ranker",
+      "name": "Bea",
+      "role": "Ring ranker",
+      "accent": "#f0b35a",
+      "brief": "Before anything else: read the Channels doc, and if Brainstorm rows are empty, refuse, say how many, say the channel scout goes first, and stop. Never rank channels nobody researched.\n\nYou rank the channels into rings, from the note \"Finding the channel that works\", sections Three rings, Cut to three and Designing a cheap test. You write the Rings and Tests sections of the Channels doc from the Brainstorm table.\n\nPut each channel in the inner ring (the best three), the middle ring (could work) or the outer ring (long shots), with one line of reason. Then for each of the inner three design a test: exactly what to do, budget, how long (weeks, not months), and the three numbers it must produce: cost to acquire a customer, how many more are reachable, and whether they match the Customer card. Write a pass line for each test in numbers before it starts.\n\nRules. Never more than three in the inner ring. A test is cheap and short. Put each test on the board with propose_task.\n\nWhen the three tests are on the board, stop.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "judge",
+      "name": "Sol",
+      "role": "Test judge",
+      "accent": "#6fcf97",
+      "brief": "Before anything else: read the Channels doc, and if no test has results, refuse, say which tests are still running, and stop.\n\nYou judge the tests, from the note \"Finding the channel that works\", sections Reading a test and Focus. You are wired to the channel scout and the ring ranker. The founder enters results under each test.\n\nFor each test write PASS or FAIL against its pass line, with its three numbers. Then write Focus: the one channel to put the traction half of the company's time into next, why, and the next, bigger test in it. Move the other two back to the middle ring or out, with reasons. Put the choice to the founder with propose_decision.\n\nRules. A test without its three numbers is \"incomplete\", not a pass. Never more than one focus channel. If all three fail, say so and send the founder back to the ranker for the next three.\n\nRemember: with no results, you refuse and stop. When the decision is proposed, stop.",
+      "w": 380,
+      "h": 440
+    }
+  ],
+  "docs": [
+    {
+      "key": "channels",
+      "title": "Channels",
+      "text": "# Channels\n\n## Brainstorm\n\n| Channel | Idea for us | Cost per customer (guess) | Reach (guess) | Test time |\n|---|---|---|---|---|\n| Viral marketing | | | | |\n| Public relations | | | | |\n| Unconventional PR | | | | |\n| Search engine marketing | | | | |\n| Social and display ads | | | | |\n| Offline ads | | | | |\n| SEO | | | | |\n| Content marketing | | | | |\n| Email marketing | | | | |\n| Engineering as marketing | | | | |\n| Targeting blogs | | | | |\n| Business development | | | | |\n| Sales | | | | |\n| Affiliate programs | | | | |\n| Existing platforms | | | | |\n| Trade shows | | | | |\n| Offline events | | | | |\n| Speaking engagements | | | | |\n| Community building | | | | |\n\n## Rings\n\nInner (three):\nMiddle:\nOuter:\n\n## Tests\n\n### Test 1: <channel>\nDo:\nBudget:\nWeeks:\nPass line (cost per customer, reach, fit):\nResults:\nPASS / FAIL:\n\n### Test 2: <channel>\n\n### Test 3: <channel>\n\n## Focus\n\nChannel:\nWhy:\nNext, bigger test:\n",
+      "w": 600,
+      "h": 460
+    }
+  ],
+  "cards": [
+    {
+      "key": "customer",
+      "kind": "note",
+      "text": "Customer: <who>\nOffer: <what, at what price>\nChannels tried so far: <list, or none>",
+      "w": 260,
+      "h": 180
+    },
+    {
+      "key": "reading",
+      "kind": "library",
+      "noteId": "finding-the-channel-that-works",
+      "w": 260,
+      "h": 180
+    },
+    {
+      "key": "board",
+      "kind": "board",
+      "w": 900,
+      "h": 400
+    }
+  ],
+  "wires": [
+    {
+      "from": "customer",
+      "to": "scout"
+    },
+    {
+      "from": "reading",
+      "to": "scout"
+    },
+    {
+      "from": "customer",
+      "to": "ranker"
+    },
+    {
+      "from": "reading",
+      "to": "ranker"
+    },
+    {
+      "from": "customer",
+      "to": "judge"
+    },
+    {
+      "from": "reading",
+      "to": "judge"
+    },
+    {
+      "from": "scout",
+      "to": "channels"
+    },
+    {
+      "from": "ranker",
+      "to": "channels"
+    },
+    {
+      "from": "judge",
+      "to": "channels"
+    },
+    {
+      "from": "ranker",
+      "to": "board"
+    },
+    {
+      "from": "judge",
+      "to": "scout"
+    },
+    {
+      "from": "judge",
+      "to": "ranker"
+    }
+  ],
+  "layout": {
+    "customer": {
+      "x": 0,
+      "y": 0
+    },
+    "reading": {
+      "x": 320,
+      "y": 0
+    },
+    "scout": {
+      "x": 0,
+      "y": 400
+    },
+    "ranker": {
+      "x": 440,
+      "y": 400
+    },
+    "judge": {
+      "x": 880,
+      "y": 400
+    },
+    "channels": {
+      "x": 0,
+      "y": 910
+    },
+    "board": {
+      "x": 0,
+      "y": 1400
+    }
+  },
+  "dataset": [
+    {
+      "id": "every-channel-an-idea",
+      "keys": [
+        "scout"
+      ],
+      "input": "We sell accounting software to dentists. Skip trade shows, offline ads and speaking, we would never do those. Just brainstorm the online ones.",
+      "rubric": "Does not skip the channels the founder dismissed: gives trade shows, offline ads and speaking engagements a concrete idea each for selling to dentists, and says the point is to consider all nineteen. Marks cost and reach figures as guesses.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "three-in-inner-ring",
+      "keys": [
+        "ranker"
+      ],
+      "input": "Put SEO, content, cold email, LinkedIn ads and partnerships all in the inner ring and test them all for six months.",
+      "rubric": "Refuses five in the inner ring and cuts to three at most. Refuses a six-month test: each test is cheap and weeks long. Says each test needs a pass line in numbers, written before it starts, for cost per customer, how many more are reachable and whether they fit.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "one-focus-no-incomplete-pass",
+      "keys": [
+        "judge"
+      ],
+      "input": "SEO test: cost per customer $40, pass line $60. Cold email: we got some replies but did not count anything. LinkedIn ads: $300 per customer, pass line $100. Focus on SEO and cold email both.",
+      "rubric": "Marks SEO a PASS against its pass line, LinkedIn ads a FAIL, and cold email \"incomplete\" because its numbers were not counted. Picks one focus channel only, SEO, and declines to focus on two.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "ranker-refuses-empty-brainstorm",
+      "keys": [
+        "ranker"
+      ],
+      "input": "The Brainstorm table is still empty, the scout has not started. Rank the channels into rings anyway and design the three tests; we already know our customers are agency owners.",
+      "rubric": "Refuses to rank: says the Brainstorm rows are empty and the channel scout goes first, and stops. Names no inner ring, no test, no budget and no pass line.",
+      "addedBy": "founder"
+    }
+  ],
+  "shippedHash": "4f82a8c5e96beae6"
+}

@@ -1,0 +1,47 @@
+[
+  {
+    "id": "task-mujvb5b7eh9g",
+    "title": "Build and ship the feedback sorter core flow",
+    "detail": "From the plan \"This week: Sorter, Beta Calls, and Pricing Page\", written by Sam.",
+    "column": "doing",
+    "createdAt": 1790516525731,
+    "due": "2026-09-28"
+  },
+  {
+    "id": "task-mujvb5b7w0uv",
+    "title": "Call five unpaid beta users and capture objections",
+    "detail": "From the plan \"This week: Sorter, Beta Calls, and Pricing Page\", written by Sam.",
+    "column": "todo",
+    "createdAt": 1790516525731,
+    "due": "2026-09-30"
+  },
+  {
+    "id": "task-mujvb5b8srmx",
+    "title": "Design and deploy the per-project price page option",
+    "detail": "From the plan \"This week: Sorter, Beta Calls, and Pricing Page\", written by Sam.",
+    "column": "todo",
+    "createdAt": 1790516525732,
+    "due": "2026-10-01"
+  },
+  {
+    "id": "task-mujvbu1u4ovl",
+    "title": "Print the card template on three home printers",
+    "detail": "Laser, inkjet, and the library printer. Check bleed and scale.",
+    "column": "done",
+    "createdAt": 1790516557794
+  },
+  {
+    "id": "task-mujvbu20g12b",
+    "title": "Write this month's investor update",
+    "detail": "Numbers from the Metrics card, asks from the Update doc.",
+    "column": "done",
+    "createdAt": 1790516557800
+  },
+  {
+    "id": "task-mujvbu286enz",
+    "title": "Token sheet template (Ben asked)",
+    "detail": "Proposed by Dev after the beta call.",
+    "column": "review",
+    "createdAt": 1790516557808
+  }
+]

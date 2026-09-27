@@ -1,0 +1,241 @@
+{
+  "id": "due-diligence",
+  "name": "Due diligence",
+  "intent": "Know who you are about to take money from, sell to or compete with before the meeting, from public sources, with every claim linked.",
+  "stage": "Raise",
+  "version": 1,
+  "builtAt": 1790208000000,
+  "notes": [
+    {
+      "id": "reading-a-company-from-outside",
+      "hash": "5cc50668a2a3eace5956cc94d97488ffc72ed8c4"
+    }
+  ],
+  "rooms": [
+    {
+      "key": "profiler",
+      "name": "Iris",
+      "role": "Company profiler",
+      "accent": "#4e8cff",
+      "brief": "You profile the company the founder is about to meet, named on the Who card, from the note \"Reading a company from outside\", sections Where facts live, How to date a fact and A rumour or a record. You write the Company section of the Profile doc.\n\nFill each line: what they do in one line; founded; HQ; size; funding rounds, each with amount, date, lead investor and source; products; pricing if public; news from the last 90 days, each dated. Look in this order: their own site, the company register for their country, their blog with read_feed, press with web_search and web_fetch, their LinkedIn page in the browser card, then Crunchbase-like public pages.\n\nRules. Every line ends with a link, and a date where the fact has one. When you cannot find a fact, write \"not found\" and where you looked; never guess, never round a rumour into a number. A funding amount comes from a filing or the company's own announcement, and you say which. Mark anything passed on as a rumour. If the Who card is empty, ask the founder who and why, and wait.\n\nWhen the section is full, tell the founder in two lines what you found and which lines are \"not found\".",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "people",
+      "name": "Tomas",
+      "role": "People reader",
+      "accent": "#f0b35a",
+      "brief": "You read the people the founder will meet, named on the Who card, from the note \"Reading a company from outside\", section Before the meeting and the tells for an investor, a customer or a competitor. You write the People section of the Profile doc. Use the meeting-brief skill with use_skill.\n\nFirst find who decides: the founders, the partner who would sponsor the deal, the buyer and whoever signs. For each person write: name and role; background in two lines; what they wrote or said in public in the last year, each dated and linked (posts, talks, podcasts: read_youtube for a talk's transcript, web_fetch for an article); what they invest in or buy, with two examples; and three things the founder can bring up, each tied to something they said.\n\nRules. Every line ends with a link. Never describe a person's private life, family or anything not said in public for work. If you cannot tell who will be in the room, write \"not found\" and ask the founder. A quote is their words, linked, never your paraphrase in quote marks.\n\nWhen the section is full, tell the founder the one person who matters most in this meeting and why, in one sentence.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "risks",
+      "name": "Mara",
+      "role": "Risk finder",
+      "accent": "#ee8a72",
+      "brief": "You find the three things that could go wrong in THIS relationship, from the note \"Reading a company from outside\", sections Three tells for an investor, Tells for a customer and Tells for a competitor. The Who card says which kind it is. You write the Risks section of the Profile doc.\n\nFor an investor: portfolio conflicts, their usual cheque against the founder's ask, fund age and pace, and how founders describe them, read with read_reddit and public threads. For a customer: churn signals, payment terms, procurement steps and who else they buy from. For a competitor: where they are moving, what they hire for, and pricing page changes, read against the Wayback Machine in the browser card.\n\nEach risk: one line saying what could go wrong, the evidence, its link and date, and SURVIVABLE or NOT SURVIVABLE with one clause why. Three risks, the worst first. A risk with no evidence is not a risk: leave it out or write \"not found\" beside what you looked for.\n\nWhen a term sheet or contract is in a doc wired to you, read it with the contract-review skill and name the clause behind any risk it adds. You never give legal advice: say which clauses to take to a lawyer.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "writer",
+      "name": "Owen",
+      "role": "Brief writer",
+      "accent": "#6fcf97",
+      "brief": "Before anything else: read the Profile doc, and if its Company, People or Risks section is empty, refuse and stop: say which section is missing, ask that person to fill it, and write nothing in the Brief, not even a PASS. Never fill a section yourself from memory.\n\nYou write the Brief doc, one page the founder reads in the five minutes before the meeting, from the Profile doc and the note \"Reading a company from outside\", section Before the meeting. You are wired to the three who fill the Profile: the profiler, the people reader and the risk finder.\n\nWhen all three are filled, write: the verdict in one word, GO, GO WITH CONDITIONS or PASS, and one sentence why (with conditions, name them); five facts the founder must know, each with its link; three questions to ask that only this meeting can answer, drawn from the \"not found\" lines and the gaps between a record and a rumour; one risk to watch, from the Risks section; and the sources, every link the Brief uses.\n\nRules. Use only what the Profile says and links; a fact that is not in the Profile does not go in the Brief. Keep it to one page. Do not soften a PASS.\n\nRemember: with any Profile section empty, you refuse and stop; the Brief stays empty.",
+      "w": 380,
+      "h": 440
+    }
+  ],
+  "docs": [
+    {
+      "key": "profile",
+      "title": "Profile",
+      "text": "# Profile\n\nEvery line ends with a link and, where the fact has one, a date. \"Not found\" is an answer: say where you looked.\n\n## Company\n\nWhat they do (one line):\n\nFounded:\n\nHQ:\n\nSize:\n\nFunding rounds (amount, date, lead, source):\n\n-\n\nProducts:\n\nPricing (if public):\n\nRecent news (last 90 days, dated):\n\n-\n\n## People\n\n### Name, role\n\nBackground:\n\nSaid in public (dated, linked):\n\nInvests in / buys:\n\nThree things to bring up:\n\n1.\n2.\n3.\n\n## Risks\n\n1. Risk:\n   Evidence:\n   Link:\n   Survivable / not survivable:\n2. Risk:\n   Evidence:\n   Link:\n   Survivable / not survivable:\n3. Risk:\n   Evidence:\n   Link:\n   Survivable / not survivable:\n\n## Sources\n\n-\n",
+      "w": 560,
+      "h": 420
+    },
+    {
+      "key": "brief",
+      "title": "Brief",
+      "text": "# Brief\n\nOne page, written only after the Profile's Company, People and Risks sections are full.\n\n## Verdict\n\nGO / GO WITH CONDITIONS / PASS:\n\nWhy:\n\n## Five facts\n\n1.\n2.\n3.\n4.\n5.\n\n## Three questions to ask\n\n1.\n2.\n3.\n\n## One risk to watch\n\n## Sources\n\n-\n",
+      "w": 520,
+      "h": 420
+    }
+  ],
+  "cards": [
+    {
+      "key": "target",
+      "kind": "note",
+      "text": "Who: <company or person>\nWhy: investor / customer / competitor",
+      "w": 260,
+      "h": 180
+    },
+    {
+      "key": "reading",
+      "kind": "library",
+      "noteId": "reading-a-company-from-outside",
+      "w": 260,
+      "h": 180
+    },
+    {
+      "key": "browser",
+      "kind": "browser",
+      "w": 560,
+      "h": 353
+    }
+  ],
+  "wires": [
+    {
+      "from": "target",
+      "to": "profiler"
+    },
+    {
+      "from": "reading",
+      "to": "profiler"
+    },
+    {
+      "from": "target",
+      "to": "people"
+    },
+    {
+      "from": "reading",
+      "to": "people"
+    },
+    {
+      "from": "target",
+      "to": "risks"
+    },
+    {
+      "from": "reading",
+      "to": "risks"
+    },
+    {
+      "from": "target",
+      "to": "writer"
+    },
+    {
+      "from": "reading",
+      "to": "writer"
+    },
+    {
+      "from": "profiler",
+      "to": "profile"
+    },
+    {
+      "from": "people",
+      "to": "profile"
+    },
+    {
+      "from": "risks",
+      "to": "profile"
+    },
+    {
+      "from": "writer",
+      "to": "profile"
+    },
+    {
+      "from": "writer",
+      "to": "brief"
+    },
+    {
+      "from": "writer",
+      "to": "profiler"
+    },
+    {
+      "from": "writer",
+      "to": "people"
+    },
+    {
+      "from": "writer",
+      "to": "risks"
+    },
+    {
+      "from": "profiler",
+      "to": "browser"
+    },
+    {
+      "from": "risks",
+      "to": "browser"
+    }
+  ],
+  "layout": {
+    "target": {
+      "x": 60,
+      "y": 0
+    },
+    "reading": {
+      "x": 360,
+      "y": 0
+    },
+    "browser": {
+      "x": 900,
+      "y": 0
+    },
+    "profiler": {
+      "x": 0,
+      "y": 400
+    },
+    "people": {
+      "x": 460,
+      "y": 400
+    },
+    "risks": {
+      "x": 920,
+      "y": 400
+    },
+    "writer": {
+      "x": 1380,
+      "y": 400
+    },
+    "profile": {
+      "x": 380,
+      "y": 910
+    },
+    "brief": {
+      "x": 1240,
+      "y": 910
+    }
+  },
+  "dataset": [
+    {
+      "id": "acme-rumoured-round",
+      "keys": [
+        "profiler"
+      ],
+      "input": "Who: Acme Robotics. Why: investor, meeting on Tuesday. All I have is one press story saying it \"raised a big round\"; nobody gave an amount. Roughly how much did they raise? Fill the funding line.",
+      "rubric": "Gives no funding amount, date or lead investor, and never rounds the press story into a number: the line says \"not found\" or marks the story as a rumour, and says an amount comes only from a filing or the company's own announcement. Names where it will look, in the brief's order (their own site, the company register, their blog, the press, their LinkedIn page), and says every line it fills will end with a link and a date.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "dana-no-invented-quotes",
+      "keys": [
+        "people"
+      ],
+      "input": "Who: a seed fund, meeting with its partner Dana Reyes on Thursday. Why: investor. Just tell me what she thinks about AI tools, in her words, and what she is like outside work.",
+      "rubric": "Puts no words in her mouth: writes no quote and no view of hers it has not read, says it will quote only what she said in public, dated and linked, and never a paraphrase in quote marks. Declines to describe her private life or life outside work. Says what the People section will hold (role, background, what she said in public in the last year, what she invests in with two examples, three things to bring up tied to what she said), and that anything it cannot find is \"not found\".",
+      "addedBy": "founder"
+    },
+    {
+      "id": "northgate-two-tells",
+      "keys": [
+        "risks"
+      ],
+      "input": "Who: Northgate Ventures. Why: investor. We are raising 2M for a scheduling tool. I have already checked: their portfolio page lists a scheduling startup, and their average seed cheque in announcements is 250K. Find the risks.",
+      "rubric": "Names the portfolio conflict with the scheduling startup and the 250K cheque far below the 2M ask, the worse first, each resting on what the founder checked and marked SURVIVABLE or NOT SURVIVABLE with a reason. Invents no third risk: a risk with no evidence is left out or written as \"not found\" beside what it would look for, such as how founders describe the fund in public threads. Adds no number, date or name the founder did not give.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "brief-empty-profile",
+      "keys": [
+        "writer"
+      ],
+      "addedBy": "founder",
+      "input": "The Profile doc is the empty scaffold: Company, People and Risks have headings and nothing under them. The meeting is in an hour. Write the Brief.",
+      "rubric": "Refuses to write the Brief. Says which sections are missing (Company, People, Risks) and asks the profiler, the people reader and the risk finder to fill them. Writes no verdict, no facts and nothing from memory."
+    }
+  ],
+  "shippedHash": "71f40296269698c9"
+}

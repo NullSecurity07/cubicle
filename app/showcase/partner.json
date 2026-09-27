@@ -1,0 +1,35 @@
+{
+  "decided": [
+    "2026-09-27-price-stays-at-39-a-month-through-the-beta",
+    "2026-09-27-build-the-feedback-sorter-before-more-templates",
+    "2026-09-27-no-paid-ads-until-five-beta-users-pay"
+  ],
+  "plans": [],
+  "writtenAt": {},
+  "companyId": "company-brief",
+  "partnerSince": "2026-09-27",
+  "wired": [
+    "partner"
+  ],
+  "tries": {
+    "day": "2026-09-27",
+    "count": 1,
+    "last": 1790516525751
+  },
+  "morning": {
+    "things": [
+      "Build the feedback sorter core flow to test the Evaluation pivot verdict against your 12 beta users.",
+      "Complete the five beta calls by Friday to find out why unpaid users stop after one print.",
+      "Draft a per-project price page based on the closed trial bet where users said a month feels wrong."
+    ],
+    "risk": "Evaluation verdict PIVOT REQUIRED contradicts the open feedback sorter bet in the Evaluation doc.",
+    "question": "Will you price per project since users print once and stop?",
+    "day": "2026-09-27",
+    "at": 1790516525751,
+    "roomId": "partner",
+    "who": "Sam",
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "inputs": "d42f9dc9eac4f28a"
+  }
+}

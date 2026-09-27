@@ -1,0 +1,31 @@
+{
+  "id": "content-plan",
+  "name": "Plan a week of LinkedIn posts",
+  "when": "The founder wants to know what to post this week, or wants a steady rhythm before a launch.",
+  "procedure": [
+    "Ask who the posts are for and what the founder wants from them this month: customers, hires, investors or a launch.",
+    "Choose 3 pillars, e.g. conviction (a point of view), building in public (the real work), proof (customers and results).",
+    "Plan 3 to 5 posts on weekdays, Tuesday to Thursday mornings first in the audience's time zone, never two in one day, at most one about the product itself.",
+    "For each post write: day, pillar, shape, hook pattern, a one-line angle, and the story or number it needs from the founder.",
+    "Use a different hook pattern for each post, and aim each at a different reaction: comments, saves, reposts.",
+    "Add a daily line: 10 to 20 thoughtful comments on peers' posts, written with the \"Comment on a LinkedIn post\" skill and sent by hand."
+  ],
+  "pitfalls": [
+    "A plan full of topics with no story behind them produces generic posts: every row names the material it needs.",
+    "Six or more posts a week compete with each other."
+  ],
+  "verify": "The plan has 3 to 5 posts on different days, 3 pillars with none over 60% of posts, no hook repeated, at most one product post, and each row names the material to get from the founder.",
+  "state": "active",
+  "by": {
+    "roomId": "",
+    "name": "Built in"
+  },
+  "source": {
+    "kind": "taught",
+    "ref": "builtin"
+  },
+  "uses": 0,
+  "patches": 0,
+  "createdAt": 1790502996886,
+  "history": []
+}

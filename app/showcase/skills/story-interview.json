@@ -1,0 +1,32 @@
+{
+  "id": "story-interview",
+  "name": "Interview the founder for stories",
+  "when": "A post, pitch or profile needs real material and the founder has not given any: no number, no moment, no name.",
+  "procedure": [
+    "Ask one question at a time and wait. Start wide: what are you working on that you cannot stop thinking about?",
+    "Ask for moments, not themes: when did this last happen? Walk me through that day.",
+    "Press a soft answer once: \"improved a lot\" becomes \"by how much, measured how?\"; \"a while back\" becomes \"which month?\". Then move on.",
+    "Ask for a reversal: what did you believe a year ago that you no longer do, and what did finding out cost?",
+    "Ask for a position: what do you think is true that most people in your field would argue with?",
+    "Ask what may never be named in public: clients, people, numbers, subjects.",
+    "Write the answers down in the founder's own words, each with its date, number and the names allowed, and name 2 or 3 posts they could become."
+  ],
+  "pitfalls": [
+    "Pressing the same answer twice turns an interview into an interrogation.",
+    "Never fill a gap with a plausible guess: a missing number stays missing until the founder gives it."
+  ],
+  "verify": "The notes hold at least three stories, each with a date or a number in the founder's words, a list of what may not be named, and two or three post ideas drawn from them.",
+  "state": "active",
+  "by": {
+    "roomId": "",
+    "name": "Built in"
+  },
+  "source": {
+    "kind": "taught",
+    "ref": "builtin"
+  },
+  "uses": 0,
+  "patches": 0,
+  "createdAt": 1790502996923,
+  "history": []
+}

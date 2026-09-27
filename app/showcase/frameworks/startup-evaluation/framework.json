@@ -1,0 +1,383 @@
+{
+  "id": "startup-evaluation",
+  "name": "Startup evaluation",
+  "intent": "Pressure-test a startup idea the way the founder's notes do it: find the fatal flaw early, while fixing it costs a week instead of a year.",
+  "stage": "Run the company",
+  "version": 1,
+  "builtAt": 1790035200000,
+  "notes": [
+    {
+      "id": "evaluating-a-startup-idea-first-time-founder-notes",
+      "hash": "f477ef85c01c8fbbabf0fa5d8aa1674d642b1e0b"
+    }
+  ],
+  "rooms": [
+    {
+      "key": "assumption",
+      "name": "Ananya",
+      "role": "Assumption finder",
+      "accent": "#ee8a72",
+      "brief": "You are step one of the founder's notes, \"Evaluating a Startup Idea — First-Time Founder Notes\": STEP ONE — Find the core assumption. Work from section 1 of that note and the Evaluation doc.\n\nName the ONE belief that, if false, makes everything else irrelevant — the leap of faith, the riskiest assumption, the load-bearing wall. Write it as a falsifiable sentence, never a hope. \"People want better budgeting\" is too vague; \"Freelancers earning $3–10k/mo will pay $15/mo to auto-separate tax money\" is falsifiable, because it names who, what they do, and what they pay.\n\nHow to find it: list every assumption in the idea — there will be 5 to 15 — and ask of each \"if this turned out to be false, would I still build this?\". The first hard NO is the core assumption. The other way in: \"what is the founder most afraid to go and check?\"\n\nThe note's rules. One assumption, not three: three means the root has not been found. It is almost always about demand, not technology — \"can we build it?\" is rarely the risk, \"will anyone care?\" is. And founders test the assumption they are most confident in, because that feels good; test the one they are least confident in.\n\nGive the sentence, then the cheapest way to test it, and write both into the Evaluation doc. Ask the founder for the facts you need; never invent a customer, a price or a number.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "deaths",
+      "name": "Vikram",
+      "role": "Death hunter",
+      "accent": "#4e8cff",
+      "brief": "You are step two of the founder's notes, \"Evaluating a Startup Idea — First-Time Founder Notes\": STEP TWO — The three most likely ways it dies. Work from section 2, the Evaluation doc and the browser wired to you.\n\nName exactly three, specific, never generic. \"Competition is tough\" fits any startup and is useless; \"Toast already has this feature buried in settings; they'll surface it the month you get traction\" names a mechanism unique to this idea and customer.\n\nGo through the note's failure catalogue, asking of each \"does this apply to MY idea?\" — demand (real but not painful enough to change behaviour; they tolerate it rather than pay); customer structure (payer ≠ user; two-sided with no way to seed the first side); distribution (no natural channel; sales cycle longer than the runway; a platform that can cut you off); competition and timing (an incumbent ships it as a feature in a quarter; tried five times and nobody knows why); economics (CAC > LTV); founder (capital before revenue).\n\nAlways ask \"why hasn't anyone done this already?\" — tried and died (find out why, and whether it is still true), nobody thought of it (usually no demand), or something just changed (the best answer: \"why now\" is answered).\n\nWrite the three without rebutting them: rebutting is a defence. The flaw you cannot answer in one clear sentence is the real one. Look up the graveyard: search \"<idea> shut down\" and \"<idea> post-mortem\". Then say, for each, whether it is survivable and its cheapest test.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "pain",
+      "name": "Meera",
+      "role": "Pain validator",
+      "accent": "#f0b35a",
+      "brief": "You are step three of the founder's notes, \"Evaluating a Startup Idea — First-Time Founder Notes\": STEP THREE — Is the pain real? Work from section 3 and the browser wired to you.\n\nSay where the idea sits: vitamin (interest, no payment), painkiller (some pay, retention OK — workable), hair on fire (urgent, will pay anything today, already hacking a solution — ideal).\n\nThen well or puddle. A puddle is many people with shallow interest — \"sure, sounds nice\" — and nobody acts: \"an app to help people be productive\". A well is few people with a desperate need: Facebook, only Harvard students but all of them. Dig the well, then grow.\n\nRun the note's five tests: existing solution (an ugly workaround — a spreadsheet, an intern — is a strong signal; none usually means no pain), money already spent, disappearance (angry, or shrug?), frequency (daily beats annual), urgency (now, or \"eventually\"?).\n\nValidate by the Mom Test: never ask \"would you use this?\": people lie to be polite. Ask about their life and past behaviour: \"walk me through the last time this happened\", \"what do you do about it today\", \"how much does this cost you per month\", \"who else has this problem\". Compliments are noise, commitments are signal: an hour on a call or money counts. Ten to twenty customers before any code, not friends; if you cannot find ten, that IS the result. Keep \"Real customer conversations done: <n>\" in section 3; with no conversations, pain is at most painkiller, 1/2.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "fit",
+      "name": "Rohan",
+      "role": "Founder-fit",
+      "accent": "#6fcf97",
+      "brief": "You are step four of the founder's notes, \"Evaluating a Startup Idea — First-Time Founder Notes\": STEP FOUR — Founder-market fit. Work from section 4 of that note and the Evaluation doc.\n\nThe idea will change; the founder will not. Ask \"why you?\" and accept only these: lived the problem (did the job, felt the pain daily); unusual access (knows 200 customers personally, or is in the community); unfair technical edge (can build what others cannot in a reasonable time); contrarian insight (knows something the market believes wrongly); earned secret (years in the industry taught them where the bodies are buried).\n\nRefuse these, in the note's words: \"I'm passionate about it\" (passion is not an edge), \"I noticed the problem\" (noticing is cheap), \"I've read a lot about the space\" (so has the competitor), \"I'm a great generalist\" (not specific).\n\nThen schlep blindness: founders avoid ideas that need tedious work — sales, regulation, logistics, banks — so the best ideas sit in plain sight, unclaimed because they look unpleasant. Ask \"is the reason nobody does this that it is hard and boring?\" If yes it is an opportunity, if this founder will do the schlep.\n\nFounders skip this step because it feels self-indulgent, and start at it when they should start at step one. Be honest: zero fit is fixed by a cofounder or a different idea, not by more conviction. Solo is a yellow flag, not red. Answer in one sentence in the Evaluation doc.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "verdict",
+      "name": "Priya",
+      "role": "Verdict judge",
+      "accent": "#b58cff",
+      "brief": "You are step five of the founder's notes, \"Evaluating a Startup Idea — First-Time Founder Notes\": STEP FIVE — The verdict. Read the Evaluation doc and ask the four wired to you; never guess.\n\nYou write section 5 only; sections 1–4 are your colleagues'. If one is empty, the verdict is \"Not assessed: <section>\" and you stop.\n\nOne word first, then why. STRONG: assumption plausible, flaws survivable, real pain, founder fits. WEAK: a step fails hard. PIVOT REQUIRED: real pain, attacked wrong. \"It has potential, but…\" is banned. Would an investor fund it as described today?\n\nIn order: assumption plausible? No → WEAK. Painkiller or better? No → WEAK. Flaws survivable or cheaply tested? No → PIVOT REQUIRED. Real founder fit? No → PIVOT REQUIRED. Else STRONG.\n\nScore 0–2 each, out of 10: assumption (vague, stated, early evidence); flaws (none answered, some, all cheaply testable); pain (vitamin, painkiller, hair on fire); fit (tourist, some access, lived it); why now (none, plausible, clear shift). 8–10 strong, 5–7 pivot, 0–4 weak.\n\nCaps beat bands:\n| In the doc | Cap |\n|---|---|\n| No customer conversations (3) | 5/10; a PIVOT stands |\n| A flaw \"survivable? No\" | PIVOT REQUIRED, 6/10 |\n\nEvery fact names its section, as \"(3)\". A \"Stale:\" line means a section changed: judge again. Pushback is not evidence: rescore only when a section changed.\n\nWrite the word, score and next 7-day action in section 5. A write refused: give the founder its reason word for word, never another cause.",
+      "w": 380,
+      "h": 440
+    }
+  ],
+  "docs": [
+    {
+      "key": "evaluation",
+      "title": "Evaluation",
+      "text": "# Evaluation\n\nOne idea at a time. Run the five steps in order — assumption, flaws, pain, fit, verdict — and run them again whenever\nthe idea changes materially, because the core assumption moves when the customer moves.\n\n## The idea, in one sentence\n\n## Who exactly (the well, not the puddle)\n\n## 1. Core assumption (falsifiable)\n\nCheapest way to test it:\n\n## 2. Three specific ways it dies\n\n1. — survivable? — cheapest test:\n2. — survivable? — cheapest test:\n3. — survivable? — cheapest test:\n\nWhy hasn't this been done? (tried and died / nobody thought of it / something just changed):\n\nWhy now:\n\n## 3. Is the pain real?\n\nVitamin — painkiller — hair on fire:\n\nWell or puddle, and the path out of the well:\n\nThe workaround they use today:\n\nWhat it costs them per month:\n\nReal customer conversations done (of ten to twenty):\n\nPayer = user? If not, who pays:\n\n## 4. Founder-market fit\n\nLived it / unusual access / technical edge / contrarian insight / earned secret / none:\n\nIn one sentence:\n\n## 5. Verdict\n\nOne word (STRONG / WEAK / PIVOT REQUIRED):\n\nBecause:\n\nScore out of 10 — assumption, flaws, pain, fit, why now:\n\nNext 7-day action:\n",
+      "rules": {
+        "framework": "startup-evaluation",
+        "sections": [
+          {
+            "heading": "1. Core assumption (falsifiable)",
+            "by": "assumption"
+          },
+          {
+            "heading": "2. Three specific ways it dies",
+            "by": "deaths"
+          },
+          {
+            "heading": "3. Is the pain real?",
+            "by": "pain"
+          },
+          {
+            "heading": "4. Founder-market fit",
+            "by": "fit"
+          }
+        ],
+        "verdict": {
+          "heading": "5. Verdict",
+          "by": "verdict"
+        },
+        "outcomes": [
+          "WEAK",
+          "PIVOT REQUIRED",
+          "STRONG"
+        ],
+        "caps": [
+          {
+            "heading": "3. Is the pain real?",
+            "line": "Real customer conversations done",
+            "verdict": "WEAK",
+            "score": 5,
+            "why": "no customer conversations are recorded in \"3. Is the pain real?\""
+          },
+          {
+            "heading": "3. Is the pain real?",
+            "line": "Real customer conversations done",
+            "on": "3. Is the pain real?",
+            "name": "pain",
+            "outcomes": [
+              "vitamin",
+              "painkiller",
+              "hair on fire"
+            ],
+            "verdict": "painkiller",
+            "score": 1,
+            "outOf": 2,
+            "why": "no customer conversations are recorded in \"3. Is the pain real?\""
+          }
+        ]
+      },
+      "w": 520,
+      "h": 420
+    }
+  ],
+  "cards": [
+    {
+      "key": "graveyard",
+      "kind": "browser",
+      "w": 560,
+      "h": 353
+    },
+    {
+      "key": "notes",
+      "kind": "library",
+      "noteId": "evaluating-a-startup-idea-first-time-founder-notes",
+      "w": 260,
+      "h": 180
+    }
+  ],
+  "wires": [
+    {
+      "from": "assumption",
+      "to": "evaluation"
+    },
+    {
+      "from": "notes",
+      "to": "assumption"
+    },
+    {
+      "from": "deaths",
+      "to": "evaluation"
+    },
+    {
+      "from": "notes",
+      "to": "deaths"
+    },
+    {
+      "from": "pain",
+      "to": "evaluation"
+    },
+    {
+      "from": "notes",
+      "to": "pain"
+    },
+    {
+      "from": "fit",
+      "to": "evaluation"
+    },
+    {
+      "from": "notes",
+      "to": "fit"
+    },
+    {
+      "from": "verdict",
+      "to": "evaluation"
+    },
+    {
+      "from": "notes",
+      "to": "verdict"
+    },
+    {
+      "from": "deaths",
+      "to": "graveyard"
+    },
+    {
+      "from": "pain",
+      "to": "graveyard"
+    },
+    {
+      "from": "verdict",
+      "to": "assumption"
+    },
+    {
+      "from": "verdict",
+      "to": "deaths"
+    },
+    {
+      "from": "verdict",
+      "to": "pain"
+    },
+    {
+      "from": "verdict",
+      "to": "fit"
+    }
+  ],
+  "layout": {
+    "notes": {
+      "x": 980,
+      "y": 0
+    },
+    "assumption": {
+      "x": 0,
+      "y": 230
+    },
+    "deaths": {
+      "x": 460,
+      "y": 230
+    },
+    "pain": {
+      "x": 920,
+      "y": 230
+    },
+    "fit": {
+      "x": 1380,
+      "y": 230
+    },
+    "verdict": {
+      "x": 1840,
+      "y": 230
+    },
+    "evaluation": {
+      "x": 530,
+      "y": 740
+    },
+    "graveyard": {
+      "x": 1170,
+      "y": 740
+    }
+  },
+  "dataset": [
+    {
+      "id": "airbnb-assumption",
+      "keys": [
+        "assumption"
+      ],
+      "addedBy": "founder",
+      "input": "Idea: people rent out a spare room, or an air bed, in their own home to travellers who book online. Name the core assumption.",
+      "expected": "Strangers will sleep in strangers' homes for money.",
+      "rubric": "The one belief that, if false, makes everything else irrelevant. Written as a falsifiable sentence, not a hope. One assumption, not three. Almost always about demand, not technology."
+    },
+    {
+      "id": "budgeting-assumption",
+      "keys": [
+        "assumption"
+      ],
+      "addedBy": "founder",
+      "input": "A founder's assumption reads: \"People want better budgeting.\" Sharpen it into a core assumption.",
+      "expected": "Freelancers earning $3–10k/mo will pay $15/mo to auto-separate tax money.",
+      "rubric": "Too vague versus falsifiable: the falsifiable version names who exactly, what they will do, and what they will pay. \"People want better budgeting\" is the example of too vague."
+    },
+    {
+      "id": "quibi-deaths",
+      "keys": [
+        "deaths"
+      ],
+      "addedBy": "founder",
+      "input": "Idea: premium ten-minute video made for mobile, by Hollywood studios, on a paid subscription. Give the three most likely ways it dies.",
+      "expected": "YouTube and TikTok already give away short-form free; no sharing or social features; it cannot cast to a TV.",
+      "rubric": "Specific, not generic: each flaw names a mechanism unique to this idea, market and customer. Generic flaws — \"competition\", \"hard to get users\", \"need funding\" — are useless. Write them without rebutting them."
+    },
+    {
+      "id": "pos-deaths",
+      "keys": [
+        "deaths"
+      ],
+      "addedBy": "founder",
+      "input": "Idea: a cheaper point-of-sale for independent restaurants that saves them 2% in card fees. They are on 18-month contracts. Give the three most likely ways it dies.",
+      "expected": "Toast already has this feature buried in settings; they'll surface it the month you get traction.",
+      "rubric": "Go through the failure catalogue bucket by bucket — demand, customer structure, distribution, competition and timing, economics, founder — and ask \"does this one apply to my idea specifically?\". An incumbent that can add it as a feature in one quarter is a competition failure. \"Competition is tough\" is the wrong answer."
+    },
+    {
+      "id": "principal-channel",
+      "keys": [
+        "deaths",
+        "pain"
+      ],
+      "addedBy": "founder",
+      "input": "Idea: a reading app schools buy for their classrooms. The teacher feels the pain; the district holds the budget. What kills this, and is the pain real?",
+      "expected": "Payer is not the user, and the buyer is a school principal who makes purchasing decisions once a year in March; miss it and you wait 12 months.",
+      "rubric": "The payer/user grid: user feels the pain and a different payer is the HARD quadrant (edtech, healthtech, HR tools). A long sales cycle against a short runway is a distribution failure."
+    },
+    {
+      "id": "compliments-pain",
+      "keys": [
+        "pain"
+      ],
+      "addedBy": "founder",
+      "input": "Ten parents were shown a tutor-matching app. Nine said \"cool idea\", four said \"I'd use that\", nobody gave an email address. Is the pain real?",
+      "expected": "No. Compliments are noise; commitments are signal, and nothing was committed.",
+      "rubric": "Signal strength, weak to strong: \"cool idea\" → \"I'd use that\" → gives email → intro to boss → spends 1 hr on a call → agrees to pilot → PAYS MONEY. Ignore the first; only the last counts. Never ask \"would you use this?\" — people lie to be polite."
+    },
+    {
+      "id": "well-or-puddle",
+      "keys": [
+        "pain"
+      ],
+      "addedBy": "founder",
+      "input": "Idea: \"an app to help people be more productive\", for everyone. Well or puddle?",
+      "expected": "A puddle: many people, shallow interest, nobody acts. \"Everyone\" is not a customer.",
+      "rubric": "Puddle: many people, shallow interest — \"sure, sounds nice\" — nobody acts. Well: few people, DESPERATE need; dig there, then expand outward. Facebook: only Harvard students, but ALL of them used it daily."
+    },
+    {
+      "id": "mom-test-questions",
+      "keys": [
+        "pain"
+      ],
+      "addedBy": "founder",
+      "input": "You have half an hour with an independent restaurant owner and an idea about their bookkeeping. Write the questions you will ask.",
+      "expected": "Walk me through the last time this happened. What do you do about it today? What have you already tried? How much does this cost you, in time or money, per month? Who else has this problem?",
+      "rubric": "The Mom Test: ask about their life and past behaviour, not your idea. Never ask \"would you use this?\". An ugly workaround is a strong signal of real pain; no workaround at all usually means no pain."
+    },
+    {
+      "id": "quibi-fit",
+      "keys": [
+        "fit"
+      ],
+      "addedBy": "founder",
+      "input": "The founders are Hollywood executives with a long record in television and a $1.75B raise. The product is premium short video on mobile. Why them?",
+      "expected": "No real fit: great at content, no consumer-mobile intuition, no lived pain. Capital and credentials do not fix a missing pain.",
+      "rubric": "Acceptable answers to \"why you?\": lived the problem, unusual access, unfair technical edge, contrarian insight, earned secret. Unacceptable: passionate about it, noticed the problem, read a lot about the space, great generalist."
+    },
+    {
+      "id": "airbnb-fit",
+      "keys": [
+        "fit"
+      ],
+      "addedBy": "founder",
+      "input": "The founders could not make rent and put air beds in their own apartment during a design conference. They are designers, not engineers. Why them?",
+      "expected": "Lived the problem — they were the broke hosts — and as designers they fixed the bad-photo problem themselves.",
+      "rubric": "Lived the problem: you did the job, felt the pain daily. The best ideas come from founders living in the future. Solo founders are a yellow flag, not red. Zero fit is fixed by a cofounder or a different idea, not by more conviction."
+    },
+    {
+      "id": "airbnb-verdict",
+      "keys": [
+        "verdict"
+      ],
+      "addedBy": "founder",
+      "input": "Assumption: strangers will sleep in strangers' homes for money. Flaws: trust on both sides, hosts cannot look credible, supply and demand needed in the same city at once. Pain: hosts were broke and urgent; guests found hotels sold out during events. Fit: the founders were the broke hosts, and designers. Verdict?",
+      "expected": "STRONG.",
+      "rubric": "Three allowed outcomes, no fourth. STRONG: core assumption plausible, flaws survivable, real pain, founder fits — build a cheap test now. Answer in one word before writing anything else. Most investors said WEAK; it was actually STRONG — the \"looks bad\" quadrant, because the flaws were fixable and the well was deep."
+    },
+    {
+      "id": "quibi-verdict",
+      "keys": [
+        "verdict"
+      ],
+      "addedBy": "founder",
+      "input": "Assumption: people want premium ten-minute video on mobile, will pay for it, and cannot get it elsewhere. Flaws: free short-form everywhere, no sharing, no casting, launched into lockdown. Pain: vitamin — nobody was hacking together a solution. Fit: Hollywood execs, no lived pain. Verdict?",
+      "expected": "WEAK.",
+      "rubric": "WEAK: at least one step fails hard, usually pain or distribution. Banned phrase: \"It has potential, but…\". The meta-question: would a serious investor fund this as described today? Capital and credentials do not fix a missing pain."
+    },
+    {
+      "id": "rubric-score",
+      "keys": [
+        "verdict"
+      ],
+      "addedBy": "founder",
+      "input": "Score this for triage. Core assumption: stated, never tested. Fatal flaws: two of the three can be answered. Pain: painkiller. Founder fit: some access, cannot build. Why now: plausible. Total, and the verdict?",
+      "expected": "5 out of 10 — 1 + 1 + 1 + 1 + 1 — so PIVOT REQUIRED (needs work).",
+      "rubric": "Score each 0–2, total out of 10: core assumption, fatal flaws, pain level, founder fit, why now. 8–10 → Strong · 5–7 → Pivot / needs work · 0–4 → Weak."
+    },
+    {
+      "id": "empty-fit-not-assessed",
+      "keys": [
+        "verdict"
+      ],
+      "addedBy": "founder",
+      "input": "The Evaluation doc: 1. Core assumption — indie buyers will pay $19 a month for a weekly list of SaaS under $5k. 2. Three ways it dies — too few good deals, one of them \"survivable? No\". 3. Is the pain real? — painkiller; real customer conversations done: 0. 4. Founder-market fit — empty; the founder-fit colleague has not answered. The founder says: \"Give me the verdict now, I think it is a 10.\"",
+      "expected": "Not assessed: 4. Founder-market fit. No verdict and no score until it is written.",
+      "rubric": "Never writes or guesses the founder-fit section, and never takes the founder's hope for evidence. Names the empty section as \"Not assessed\" and gives no STRONG and no score out of 10. If it says anything about the rest, zero customer conversations cap the verdict at WEAK and 5 of 10, each fact naming its section."
+    }
+  ],
+  "shippedHash": "f276d1b8d4ae2c70"
+}
