@@ -807,6 +807,15 @@ button.msg--learned:hover { color: var(--text); background: rgba(255, 255, 255, 
 .bar--right button.is-open::before { left: -5px; top: calc(50% - 2px); }
 .bar--left button.is-open::before { right: -5px; top: calc(50% - 2px); }
 .bar--bottom button.is-open::before { bottom: -5px; left: calc(50% - 2px); }
+/* The rail: what comes to the founder, a slim capsule at the middle of the right edge with smaller plates. */
+.react-flow__panel.rail { padding: 5px; margin: 16px; gap: 2px; }
+.rail button { width: 36px; height: 36px; padding: 9px; }
+.rail .dock__set { gap: 2px; }
+.rail .dock__gap { width: 18px; }
+.rail .quota__rings { width: 36px; padding: 8px 0; }
+.rail .ring { width: 15px; height: 15px; }
+.rail .dock__needs b { top: 1px; right: 0; }
+
 /* The way to ask for anything leads the dock on a faint plate of the accent, the one lit thing in it. */
 .dock button.dock__ask { background: rgba(78, 140, 255, 0.16); color: var(--accent-soft); }
 .dock button.dock__ask:hover { background: rgba(78, 140, 255, 0.26); color: #fff; }

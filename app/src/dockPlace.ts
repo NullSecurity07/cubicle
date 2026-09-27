@@ -21,9 +21,15 @@ function narrowQuery(): MediaQueryList | null {
   try { return globalThis.matchMedia?.(NARROW) ?? null; } catch { return null; }
 }
 
+// The rail (what comes to the founder) stands on the right edge by itself. A dock that takes the right edge, or a
+// window with no room for two bars, gets the rail's buttons folded into the dock instead.
+export const railFolded = (place: DockPlace, narrow: boolean) => narrow || place === 'right';
+
 let chosen: DockPlace | null = null;
 const choice = () => (chosen ??= placeFrom(stored(), false));
-export const dockPlace = (): DockPlace => (narrowQuery()?.matches ? 'bottom' : choice());
+const narrowNow = () => !!narrowQuery()?.matches;
+export const dockPlace = (): DockPlace => (narrowNow() ? 'bottom' : choice());
+export const railIsFolded = () => railFolded(choice(), narrowNow());
 
 const watchers = new Set<() => void>();
 const tell = () => { for (const watcher of watchers) watcher(); };
@@ -50,3 +56,4 @@ function subscribe(watcher: () => void) {
 }
 
 export const useDockPlace = () => useSyncExternalStore(subscribe, dockPlace, (): DockPlace => 'bottom');
+export const useRailFolded = () => useSyncExternalStore(subscribe, railIsFolded, () => false);

@@ -50,4 +50,19 @@ describe('dock place', () => {
     expect(placeFrom(null, false)).toBe('bottom');
     expect(placeFrom('right', false)).toBe('right');
   });
+
+  it('stands the rail on the right by itself, and folds it into the dock when the dock takes that edge or the window is narrow', async () => {
+    browser();
+    const { railFolded, dockPlace, setDockPlace, railIsFolded } = await fresh();
+    expect(railFolded('bottom', false)).toBe(false);
+    expect(railFolded('left', false)).toBe(false);
+    expect(railFolded('right', false)).toBe(true);
+    expect(railFolded('bottom', true)).toBe(true);
+    expect(dockPlace()).toBe('bottom');
+    expect(railIsFolded()).toBe(false);
+    setDockPlace('right');
+    expect(railIsFolded()).toBe(true);
+    browser({ saved: 'left', narrow: true });
+    expect((await fresh()).railIsFolded()).toBe(true);
+  });
 });

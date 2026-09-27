@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { preset, type AppKey } from '../shared/apps';
 import { useAttention } from './overlay/attention';
 import { overlay, useLayers } from './overlay/store';
-import { useDockPlace } from './dockPlace';
+import { useDockPlace, useRailFolded } from './dockPlace';
 import { useAddCard, type CardKind } from './addCard';
 import { openFrameworks } from './frameworks';
 import { openLibrary } from './library';
@@ -227,9 +227,10 @@ function Incoming({ place, open }: { place: string; open: Set<string> }) {
 
 const POSITION = { right: 'center-right', left: 'center-left', bottom: 'bottom-center' } as const;
 
-// The only chrome on the stage. The dock floats at the foot of the window with what the founder does: the command
-// bar, a person, a card, a team, the partner, and the first-run list. It can stand on either edge instead
-// (dockPlace.ts). New cards land at the centre of the view.
+// The only chrome on the stage, in two bars. The dock floats at the foot of the window with what the founder does:
+// the command bar, a person, a card, a team, the partner, and the first-run list. The rail stands at the middle of the
+// right edge with what comes to them. The dock can take either edge instead (dockPlace.ts); on the right edge, or in
+// a narrow window, the rail's buttons fold into the dock. New cards land at the centre of the view.
 export function Dock() {
   const addCard = useAddCard();
   const place = useDockPlace();
@@ -244,58 +245,66 @@ export function Dock() {
   // preset() throws on a missing name or address; the form shows that and stays open.
   const addApp = (key: AppKey, name?: string, home?: string) => { const app = preset(key, name, home); close(); addCard('browser', { app }); };
 
+  const folded = useRailFolded();
+
   return (
-    <Panel position={POSITION[place]} className={`dock bar bar--${place} dock--${place}${place === 'bottom' ? '' : ' bar--vertical dock--vertical'}`}>
-      <div className="dock__set" role="group" aria-label="Ask">
-        <View name="command" label="Command bar" keys={keyHint('command-bar')} open={open.has('command')} className="dock__ask">
-          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.200" /><path d="M13 13l3.800 3.800" /></svg>
-        </View>
-      </div>
-      <span className="dock__gap" aria-hidden="true" />
-      <div className="dock__set" role="group" aria-label="Make">
-        <button type="button" aria-label="Add person" onClick={() => add('room')}>
-          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="7" r="3.2" /><path d="M3.8 17c.6-3.4 3-5.200 6.200-5.200s5.600 1.800 6.200 5.200" /></svg>
-          <Label name="Add person" />
-        </button>
-        <button type="button" aria-label="Add doc" onClick={() => add('doc')}>
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.500 2.500h6L15 6v11.500H5.500zM11.500 2.500V6H15M8 10h4.500M8 13h4.500" /></svg>
-          <Label name="Add doc" />
-        </button>
-        <div className="dock__more" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) close(); }} onKeyDown={(event) => { if (pressed(event, 'cancel')) close(); }}>
-          <button type="button" aria-label="More cards" aria-expanded={more} onClick={() => (more ? close() : setMore(true))}>
-            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.500v11M4.500 10h11" /></svg>
-            <Label name="More cards" />
+    <>
+      <Panel position={POSITION[place]} className={`dock bar bar--${place} dock--${place}${place === 'bottom' ? '' : ' bar--vertical dock--vertical'}`}>
+        <div className="dock__set" role="group" aria-label="Ask">
+          <View name="command" label="Command bar" keys={keyHint('command-bar')} open={open.has('command')} className="dock__ask">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.200" /><path d="M13 13l3.800 3.800" /></svg>
+          </View>
+        </div>
+        <span className="dock__gap" aria-hidden="true" />
+        <div className="dock__set" role="group" aria-label="Make">
+          <button type="button" aria-label="Add person" onClick={() => add('room')}>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="7" r="3.2" /><path d="M3.8 17c.6-3.4 3-5.200 6.200-5.200s5.600 1.800 6.200 5.200" /></svg>
+            <Label name="Add person" />
           </button>
-          {more && !anyApp && (
-            <div ref={menu} className="dock__menu" role="menu" aria-label="More cards">
-              {/* The cards in two columns and the apps in a third, so the menu is short and every row is in view at once. */}
-              <div className="dock__group">
-                <h6 role="presentation">Cards</h6>
-                <div className="dock__cards">
-                  {MORE.map(([kind, label, hint]) => <button key={kind} type="button" role="menuitem" aria-label={`Add ${label.toLowerCase()}`} onClick={() => add(kind)}><b>{label}</b><small>{hint}</small></button>)}
+          <button type="button" aria-label="Add doc" onClick={() => add('doc')}>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.500 2.500h6L15 6v11.500H5.500zM11.500 2.500V6H15M8 10h4.500M8 13h4.500" /></svg>
+            <Label name="Add doc" />
+          </button>
+          <div className="dock__more" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) close(); }} onKeyDown={(event) => { if (pressed(event, 'cancel')) close(); }}>
+            <button type="button" aria-label="More cards" aria-expanded={more} onClick={() => (more ? close() : setMore(true))}>
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.500v11M4.500 10h11" /></svg>
+              <Label name="More cards" />
+            </button>
+            {more && !anyApp && (
+              <div ref={menu} className="dock__menu" role="menu" aria-label="More cards">
+                {/* The cards in two columns and the apps in a third, so the menu is short and every row is in view at once. */}
+                <div className="dock__group">
+                  <h6 role="presentation">Cards</h6>
+                  <div className="dock__cards">
+                    {MORE.map(([kind, label, hint]) => <button key={kind} type="button" role="menuitem" aria-label={`Add ${label.toLowerCase()}`} onClick={() => add(kind)}><b>{label}</b><small>{hint}</small></button>)}
+                  </div>
+                </div>
+                <div className="dock__group dock__group--apps">
+                  <h6 role="presentation">Apps, signed in as you</h6>
+                  {APPS.map(([key, label, hint]) => <button key={key} type="button" role="menuitem" aria-label={`Add ${label}`} onClick={() => addApp(key)}><b>{label}</b><small>{hint}</small></button>)}
+                  <button type="button" role="menuitem" aria-label="Add any app" onClick={() => setAnyApp(true)}><b>Any app</b><small>A site you name, opened as you</small></button>
                 </div>
               </div>
-              <div className="dock__group dock__group--apps">
-                <h6 role="presentation">Apps, signed in as you</h6>
-                {APPS.map(([key, label, hint]) => <button key={key} type="button" role="menuitem" aria-label={`Add ${label}`} onClick={() => addApp(key)}><b>{label}</b><small>{hint}</small></button>)}
-                <button type="button" role="menuitem" aria-label="Add any app" onClick={() => setAnyApp(true)}><b>Any app</b><small>A site you name, opened as you</small></button>
-              </div>
-            </div>
-          )}
-          {more && anyApp && <AnyApp place={place} onAdd={(name, home) => addApp('custom', name, home)} />}
+            )}
+            {more && anyApp && <AnyApp place={place} onAdd={(name, home) => addApp('custom', name, home)} />}
+          </div>
+          <button type="button" aria-label="Frameworks" onClick={() => { close(); openFrameworks(); }}>
+            <BlocksIcon />
+            <Label name="Frameworks" />
+          </button>
+          <Partner />
         </div>
-        <button type="button" aria-label="Frameworks" onClick={() => { close(); openFrameworks(); }}>
-          <BlocksIcon />
-          <Label name="Frameworks" />
-        </button>
-        <Partner />
-      </div>
-      <span className="dock__gap" aria-hidden="true" />
-      <div className="dock__set" role="group" aria-label="Learn">
-        <Started />
-      </div>
-      <span className="dock__gap" aria-hidden="true" />
-      <Incoming place={place} open={open} />
-    </Panel>
+        <span className="dock__gap" aria-hidden="true" />
+        <div className="dock__set" role="group" aria-label="Learn">
+          <Started />
+        </div>
+        {folded && <><span className="dock__gap" aria-hidden="true" /><Incoming place={place} open={open} /></>}
+      </Panel>
+      {!folded && (
+        <Panel position="center-right" className="rail bar bar--right bar--vertical" aria-label="For you">
+          <Incoming place="rail" open={open} />
+        </Panel>
+      )}
+    </>
   );
 }
