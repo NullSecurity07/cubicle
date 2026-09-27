@@ -154,7 +154,9 @@ export function keepFacts(text: string, facts: CompanyFacts, day: string): { tex
       // The row for this figure, however it is labelled ("- Monthly burn: €1,100" is the Burn row): the same amount
       // leaves it as it is, a new one takes its place.
       const key = MONEY_ROWS[fact.label];
-      const at = rows.findIndex((row) => lineOf(fact.label).test(row) || (!!key && key.test(/^\s*[-*]\s+([^:]{1,40}):/.exec(row)?.[1] ?? '')));
+      // A target, a plan, a forecast or a loan is its own row, never the company's figure now.
+      const labelOf = (row: string) => /^\s*[-*]\s+([^:]{1,40}):/.exec(row)?.[1] ?? '';
+      const at = rows.findIndex((row) => lineOf(fact.label).test(row) || (!!key && key.test(labelOf(row)) && !/\b(?:target|goal|plan\w*|forecast|loan|debt)\b/i.test(labelOf(row))));
       const was = at >= 0 ? (/^\s*[-*]\s+[^:]{1,40}:\s*(.+?)(?:\s+\(founder, [\d-]+\))?\s*$/.exec(rows[at])?.[1] ?? '') : '';
       if (at >= 0 && (was.trim() === fact.value || (amount(was) === amount(fact.value) && was.trim()[0] === fact.value[0]))) continue;
       // A Price line the founder typed into the document is theirs: it is never written over from chat.

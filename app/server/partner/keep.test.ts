@@ -144,6 +144,12 @@ describe('only where the company stands now', () => {
     expect(keepFacts(BRIEF, companyFacts('Two of the 5 paying users asked for invoicing.'), '2026-09-28').text).toBe(BRIEF);
   });
 
+  it('never takes a target or a loan row for the figure now', () => {
+    const doc = '# Company\n\n## Numbers\n\n- Revenue target: €10k\n- Bank loan: €5,000\n';
+    const { text } = keepFacts(doc, companyFacts('MRR is €300 a month now. We have €2,000 in the bank.'), '2026-09-28');
+    expect(text).toContain('- Revenue target: €10k\n- Bank loan: €5,000\n- MRR: €300 a month (founder, 2026-09-28)\n- Cash: €2,000 (founder, 2026-09-28)');
+  });
+
   it('keeps one Burn row beside the partner\'s own, and never writes the idea twice', () => {
     const { text } = keepFacts(BRIEF, companyFacts("I'm building Ledgerly: $29/month bookkeeping. I burn €1,100/month."), '2026-09-28');
     expect(text.match(/burn/gi)).toHaveLength(1);
