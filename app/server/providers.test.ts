@@ -364,3 +364,41 @@ describe('the fallback that broke a room (journey 6)', () => {
     expect(fitHistory(history, 20)?.map((one) => one.role)).toEqual(['system', 'user']);
   });
 });
+
+describe('the last model that can take a turn', () => {
+  const slow = (env: Record<string, string>) => {
+    const [gemini] = realClients({ GEMINI_API_KEY: 'g', STAGE_FIRST_TOKEN_MS: '40', ...env } as NodeJS.ProcessEnv);
+    async function* chunks() {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      yield { choices: [{ delta: { content: 'slow but right' } }] };
+    }
+    (gemini.openai!.chat.completions as unknown as { create: unknown }).create = (_body: unknown, { signal }: { signal: AbortSignal }) => ({
+      withResponse: async () => {
+        // The first chunk is the first word: it comes after 150 ms, or the request is aborted first.
+        await new Promise<void>((done, fail) => { const timer = setTimeout(done, 150); signal.addEventListener('abort', () => { clearTimeout(timer); fail(new Error('Request was aborted.')); }, { once: true }); });
+        return { data: chunks(), response: { headers: new Headers() } };
+      },
+    });
+    return gemini;
+  };
+
+  it('is waited for past the first-word clock when nobody is behind it', async () => {
+    const tooSmall: ModelClient = { ...client('groq', ['never']), maxPromptChars: 1 };
+    const result = await complete(messages, { onToken: () => {} }, [slow({}), tooSmall]);
+    expect(result.text).toBe('slow but right');
+  });
+
+  it('is still cut at the clock when another model can answer', async () => {
+    const result = await complete(messages, { onToken: () => {} }, [slow({}), client('groq', ['from groq'])]);
+    expect(result.client.name).toBe('groq');
+  });
+
+  it('says a local model kept off a tool turn as that, not as a failure', () => {
+    expect(plainFailure('no provider answered — gemini: 503 overloaded; ollama: kept off turns with tools')).toBe('gemini down, ollama kept off turns with tools');
+  });
+
+  it('names the models passed over because the prompt would not fit them', async () => {
+    const result = await complete(messages, { onToken: () => {} }, [{ ...client('groq', ['x']), maxPromptChars: 1 }, client('gemini', ['here'])]);
+    expect(result).toMatchObject({ client: { name: 'gemini' }, oversize: ['groq'] });
+  });
+});

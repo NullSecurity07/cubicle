@@ -555,3 +555,19 @@ describe('a turn whose model repeats a tool call id', () => {
     expect(result.tools[6].result).toBe(FALLBACK_REFUSAL);
   });
 });
+
+describe('a pinned model that cannot hold the prompt', () => {
+  it('is said in one line when the next model answers instead', async () => {
+    const store = createStore(await mkdtemp(join(tmpdir(), 'loop-')));
+    const notices: string[] = [];
+    const groq: ModelClient = { ...scripted(['never']), name: 'groq', maxPromptChars: 1 };
+    const gemini: ModelClient = { ...scripted(['Here.']), name: 'gemini' };
+    const result = await runTurn({
+      messages: [{ role: 'user', content: 'where are we?' }], tools: [], clients: [groq, gemini], usage: createUsage(null),
+      context: { stage: await store.loadStage(), roomId: 'build', store, granted: new Map() },
+      events: { token: () => {}, tool: () => {}, notice: (text) => notices.push(text) },
+    });
+    expect(result.provider).toBe('gemini');
+    expect(notices).toEqual(["groq cannot hold this room's prompt; gemini answers."]);
+  });
+});

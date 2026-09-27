@@ -102,6 +102,7 @@ export async function runTurn(input: {
   };
   const primary = input.clients[0];
   let standInCalls = 0;
+  let sizeSaid = false;
 
   // When the model that should have answered could not, the founder hears which one stepped in and why.
   const onFailure = ({ client, error }: Failure) => {
@@ -155,6 +156,12 @@ export async function runTurn(input: {
     if (!turn) break;
 
     // A broken reply handed back after every model failed was already counted among the failures: nobody "answers".
+    // The first model in line (often the one the founder pinned) was passed over because it cannot hold this prompt:
+    // said once, in a line, rather than dropped without a word.
+    if (!sizeSaid && primary && turn.client !== primary && turn.oversize?.includes(primary.name)) {
+      sizeSaid = true;
+      events.notice?.(`${primary.name} cannot hold this room's prompt; ${turn.client.name} answers.`);
+    }
     if (failed.length) events.notice?.(turn.broke ? `${failed.splice(0).join('; ')}, so no model could finish this reply.` : `${failed.splice(0).join('; ')}, so ${turn.client.name} answers.`);
     // Words already shown stay; the founder is told they stop short. (A cut reply with no words moved to the next model already.)
     if (turn.cut && !turn.broke) events.notice?.(`${turn.client.name} hit its length limit, so this reply is cut short. Ask for the rest, or for a shorter answer.`);
