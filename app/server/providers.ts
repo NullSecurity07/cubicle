@@ -313,7 +313,7 @@ export function collectCalls(calls: ToolCall[], parts: CallPart[]) {
   }
 }
 
-export type Entry = (typeof models)[number] & { side?: boolean; sharedPool?: boolean; vision?: boolean; streamUsage?: boolean; callSignature?: string; concurrency?: number; extra?: Record<string, unknown>; limits?: Limits };
+export type Entry = (typeof models)[number] & { side?: boolean; sharedPool?: boolean; pool?: string; vision?: boolean; streamUsage?: boolean; callSignature?: string; concurrency?: number; extra?: Record<string, unknown>; limits?: Limits };
 
 // What the free providers give, as their own pages said on 2026-09-24. A line with only `rpm` has no published daily
 // cap. Groq and Cerebras count each model apart, so `groq-qwen` and `cerebras-qwen` are a second day's worth on the
@@ -338,6 +338,13 @@ export const unset = (entry: { keyEnv: string; baseURL: string }, env: NodeJS.Pr
 // The provider behind a client's name: `groq#2` is Groq's second key. Everything that counts what a key has spent
 // works on the name; everything the founder reads works on this.
 export const providerOf = (name: string) => name.split('#')[0];
+// The account a key's daily requests count against. OpenRouter's 50 free requests a day are the account's, whichever
+// free model asks, so `openrouter` and `openrouter-qwen` share one count; a second key (`#2`) is a second account.
+export function poolOf(name: string): string {
+  const [base, at] = name.split('#');
+  const pool = ENTRIES.find((entry) => entry.name === base)?.pool;
+  return pool ? (at ? `${pool}#${at}` : pool) : name;
+}
 // Groq's free models, whose room is a per-minute token wall (7-8k) rather than what the model can read.
 export const walled = (client: Pick<ModelClient, 'name'>) => providerOf(client.name).startsWith('groq');
 

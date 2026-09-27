@@ -46,9 +46,9 @@ describe('the partner and a model on this machine', () => {
 describe('the partner\'s second hosted model (round 5)', () => {
   const all = ['groq', 'groq-qwen', 'cerebras', 'gemini', 'nvidia', 'mistral', 'sambanova', 'cloudflare-gpt-oss', 'cloudflare-qwen', 'cloudflare', 'openrouter', 'openrouter-qwen'];
 
-  it('asks the strong ones, then Cloudflare gpt-oss, OpenRouter Qwen and Cloudflare Qwen, then the rest, and never Groq', () => {
+  it('asks Gemini, Cloudflare gpt-oss and the other strong ones, then OpenRouter Qwen and Cloudflare Qwen, then the rest, and never Groq', () => {
     const { order } = partnerRoute(all.map((name) => client(name)), createUsage(null), want);
-    expect(order.map((one) => one.name)).toEqual(['gemini', 'nvidia', 'mistral', 'sambanova', 'cloudflare-gpt-oss', 'openrouter-qwen', 'cloudflare-qwen', 'cloudflare', 'openrouter', 'cerebras']);
+    expect(order.map((one) => one.name)).toEqual(['gemini', 'cloudflare-gpt-oss', 'nvidia', 'mistral', 'sambanova', 'openrouter-qwen', 'cloudflare-qwen', 'cloudflare', 'openrouter', 'cerebras']);
   });
 
   it('with only the keys set here today (Gemini, Groq, Cloudflare), gpt-oss stands right behind Gemini', () => {
@@ -58,7 +58,8 @@ describe('the partner\'s second hosted model (round 5)', () => {
     usage.cool('gemini');
     const rested = partnerRoute(today, usage, want);
     expect(rested.order.map((one) => one.name)).toEqual(['cloudflare-gpt-oss', 'cloudflare-qwen', 'cloudflare', 'gemini']);
-    expect(rested.notice).toMatch(/stronger models are resting/);
+    // gpt-oss is one of the strong ones: nothing to say when it answers for Gemini.
+    expect(rested.notice).toBeUndefined();
   });
 
   it('keeps Groq only when it is the one hosted model there is', () => {

@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import type { ModelInfo, Usage } from '../shared/model.ts';
 import { createBreaker, refused } from './breaker.ts';
 import { fromCache, onCache } from './cache.ts';
-import { providerOf, type ModelClient, type Quota } from './providers.ts';
+import { poolOf, providerOf, type ModelClient, type Quota } from './providers.ts';
 import { writeAtomic } from './fsx.ts';
 
 type Count = { requests: number; input: number; output: number };
@@ -47,13 +47,19 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     }).catch(() => {});
   };
 
+  // Today's requests against the daily allowance this key shares with the other models on its account.
+  const pooled = (name: string) => {
+    const pool = poolOf(name);
+    return Object.entries(state.providers).reduce((sum, [one, used]) => sum + (one === name || poolOf(one) === pool ? used.requests : 0), 0);
+  };
+
   function left(client: ModelClient) {
     roll();
     const used = count(client.name);
     const header = quotas[client.name];
     const fromHeader = header && today(header.at) === state.day && header.quota.limitRequests && header.quota.remainingRequests !== undefined
       ? header.quota.remainingRequests / header.quota.limitRequests : 1;
-    return Math.min(share(used.requests, client.limits.rpd), share(used.input + used.output, client.limits.tpd), fromHeader);
+    return Math.min(share(pooled(client.name), client.limits.rpd), share(used.input + used.output, client.limits.tpd), fromHeader);
   }
 
   // The cache's hits and misses for this workspace, counted into the day like everything else.
@@ -134,7 +140,7 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     today() { roll(); return { kinds: { ...state.kinds }, tools: { ...state.tools }, cache: { ...state.cache } }; },
     left,
     // True once this key has made as many requests today as its published daily allowance: the day's free turns are used.
-    spent(client: ModelClient) { roll(); return !!client.limits.rpd && count(client.name).requests >= client.limits.rpd; },
+    spent(client: ModelClient) { roll(); return !!client.limits.rpd && pooled(client.name) >= client.limits.rpd; },
     // True when one more request of this size would likely hit the per-minute wall.
     // A key that takes one request at a time and has one out counts as out of room until it is back.
     hot(client: ModelClient, promptChars: number) {

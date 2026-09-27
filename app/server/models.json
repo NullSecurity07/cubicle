@@ -14,6 +14,6 @@
   { "name": "ollama-cloud", "baseURL": "https://ollama.com/v1", "keyEnv": "OLLAMA_API_KEY", "model": "gpt-oss:120b", "maxPromptChars": 100000, "maxTokens": 4096, "tools": true, "concurrency": 1, "limits": { "rpm": 10 } },
   { "name": "sambanova", "baseURL": "https://api.sambanova.ai/v1", "keyEnv": "SAMBANOVA_API_KEY", "model": "DeepSeek-V3.1", "maxPromptChars": 100000, "maxTokens": 4096, "tools": true, "limits": { "rpm": 20, "rpd": 20, "tpd": 200000 } },
   { "name": "mistral", "baseURL": "https://api.mistral.ai/v1", "keyEnv": "MISTRAL_API_KEY", "model": "mistral-small-latest", "maxPromptChars": 100000, "maxTokens": 4096, "tools": true, "streamUsage": false, "limits": { "rpm": 60, "tpm": 500000 } },
-  { "name": "openrouter", "baseURL": "https://openrouter.ai/api/v1", "keyEnv": "OPENROUTER_API_KEY", "model": "google/gemma-4-31b-it:free", "maxPromptChars": 100000, "maxTokens": 4096, "tools": true, "vision": true, "limits": { "rpm": 20, "rpd": 50 } },
-  { "name": "openrouter-qwen", "baseURL": "https://openrouter.ai/api/v1", "keyEnv": "OPENROUTER_API_KEY", "model": "qwen/qwen3.8-27b:free", "maxPromptChars": 100000, "maxTokens": 4096, "tools": true, "limits": { "rpm": 20, "rpd": 50 } }
+  { "name": "openrouter", "baseURL": "https://openrouter.ai/api/v1", "keyEnv": "OPENROUTER_API_KEY", "model": "google/gemma-4-31b-it:free", "maxPromptChars": 100000, "maxTokens": 4096, "tools": true, "pool": "openrouter", "vision": true, "limits": { "rpm": 20, "rpd": 50 } },
+  { "name": "openrouter-qwen", "baseURL": "https://openrouter.ai/api/v1", "keyEnv": "OPENROUTER_API_KEY", "model": "qwen/qwen3.8-27b:free", "maxPromptChars": 100000, "maxTokens": 4096, "tools": true, "pool": "openrouter", "limits": { "rpm": 20, "rpd": 50 } }
 ]

@@ -6,11 +6,12 @@ import type { UsageBook } from '../usage.ts';
 // models the app has, in this order, and never to the small side model. Gemini held its ground in the live runs;
 // gpt-oss at low reasoning effort (Groq, Cerebras) drafted a raise plan for a company with no users, so it stands last
 // and answers only while every stronger one is resting.
-export const STRONG = ['gemini', 'nvidia', 'mistral', 'sambanova'];
-// Behind them, the hosted models that held a 25-40k room prompt with a tool call in the round-5 probes, best answer
-// first: gpt-oss on Cloudflare said "don't raise" where Scout was generic, and Qwen invented one claim. OpenRouter's
-// Qwen is only there when its key is set. Everything else follows in the router's own order.
-export const SECOND = ['cloudflare-gpt-oss', 'openrouter-qwen', 'cloudflare-qwen'];
+// gpt-oss on Cloudflare stands right behind Gemini: it held a 25-40k room prompt with a tool call in the round-5 probes
+// and gave the best answer of them ("don't raise"), and as a strong model it is not held to a stand-in's limits.
+export const STRONG = ['gemini', 'cloudflare-gpt-oss', 'nvidia', 'mistral', 'sambanova'];
+// Behind them, the Qwens that also held a room prompt: OpenRouter's (only there when its key is set), then
+// Cloudflare's, which invented one claim. Everything else follows in the router's own order.
+export const SECOND = ['openrouter-qwen', 'cloudflare-qwen'];
 export const LOW_EFFORT = ['groq', 'cerebras'];
 const title = (name: string) => name[0].toUpperCase() + name.slice(1);
 

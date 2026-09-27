@@ -556,6 +556,30 @@ describe('a turn whose model repeats a tool call id', () => {
   });
 });
 
+describe('Cloudflare gpt-oss stepping in for Gemini (round 5)', () => {
+  it('is not a stand-in: its writes are not capped at three', async () => {
+    const store = createStore(await mkdtemp(join(tmpdir(), 'loop-')));
+    let steps = 0;
+    const write = (n: number) => ({ id: `w${n}`, name: 'write_file', args: JSON.stringify({ path: `notes/${n}.md`, text: 'x' }) });
+    const gemini: ModelClient = { ...scripted([]), name: 'gemini', async step() { throw Object.assign(new Error('503 overloaded'), { status: 503 }); } };
+    const oss: ModelClient = {
+      ...scripted([]), name: 'cloudflare-gpt-oss',
+      async step(_messages, { onToken }) {
+        steps += 1;
+        if (steps === 1) return { text: '', calls: [0, 1, 2, 3, 4].map(write) };
+        onToken('Done.');
+        return { text: '', calls: [] };
+      },
+    };
+    const result = await runTurn({
+      messages: [{ role: 'user', content: 'go' }], tools: fileTools, clients: [gemini, oss], usage: createUsage(null),
+      context: { stage: await store.loadStage(), roomId: 'build', store, granted: new Map() },
+      events: { token: () => {}, tool: () => {} },
+    });
+    expect(result.tools.map((tool) => tool.ok)).toEqual([true, true, true, true, true]);
+  });
+});
+
 describe('a pinned model that cannot hold the prompt', () => {
   it('is said in one line when the next model answers instead', async () => {
     const store = createStore(await mkdtemp(join(tmpdir(), 'loop-')));

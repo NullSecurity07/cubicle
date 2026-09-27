@@ -152,3 +152,20 @@ describe('a model on a daily pool shared with the pictures (round 5)', () => {
     expect(names(route([client('groq', { limits: { rpd: 3 } }), client('gemini')], usage, { promptChars: 10, tools: true }))).toEqual(['gemini', 'groq']);
   });
 });
+
+describe('two models on one OpenRouter account (round 5)', () => {
+  it('count their requests together against the account\'s 50 a day', () => {
+    const usage = createUsage(null);
+    const gemma = client('openrouter', { limits: { rpd: 4 } });
+    const qwen = client('openrouter-qwen', { limits: { rpd: 4 } });
+    const second = client('openrouter#2', { limits: { rpd: 4 } });
+    for (let i = 0; i < 2; i += 1) { usage.record('openrouter'); usage.record('openrouter-qwen'); }
+    expect(usage.spent(gemma)).toBe(true);
+    expect(usage.spent(qwen)).toBe(true);
+    expect(usage.left(qwen)).toBe(0);
+    // A second key is a second account.
+    expect(usage.spent(second)).toBe(false);
+    usage.record('openrouter-qwen#2');
+    expect(usage.left(second)).toBe(0.75);
+  });
+});
