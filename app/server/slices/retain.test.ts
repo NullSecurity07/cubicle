@@ -63,6 +63,25 @@ describe('retain', () => {
     expect((await memory.read('marketing')).notes).not.toMatch(/contacted|30%/);
   });
 
+  // Journey 10: Priya's chat said "leans toward [not written]", but retain kept "LEANS TOWARD PIVOT REQUIRED" in her memory.
+  it('keeps no verdict word or score while the team doc holds no verdict', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const { resolve } = await import('node:path');
+    const { place } = await import('../frameworks/place.ts');
+    const framework = JSON.parse(await readFile(resolve(import.meta.dirname, '../../frameworks/startup-evaluation/framework.json'), 'utf8'));
+    const lean = 'Assumption: 1/2, Pain: 1/2. With section 4 empty I cannot write a verdict, but it leans toward PIVOT REQUIRED due to low customer conversation count; 5/10 so far.';
+    const { retain, memory, asked, store } = await setup('- LEANS TOWARD PIVOT REQUIRED due to low customer conversation count\n- Section 4, founder-market fit, is still empty and Rohan owns it');
+    const seed = await store.loadStage();
+    const { placed, texts } = place(framework, seed, { x: 2000, y: 0 });
+    await store.saveStage({ ...seed, rooms: [...seed.rooms, ...placed.rooms], docs: [...seed.docs, ...placed.docs], wires: [...seed.wires, ...placed.wires], cards: [...(seed.cards ?? []), ...placed.cards] });
+    for (const [id, text] of Object.entries(texts)) await store.replaceDoc(id, text as string);
+    const kept = await retain.retain(turn({ roomId: 'verdict', query: 'Score each part out of 2 for me, and tell me which way the verdict leans right now please.', text: lean }));
+    expect(asked[0][1].content).not.toMatch(/PIVOT REQUIRED|5\/10|1\/2/);
+    expect(asked[0][1].content).toContain('[not written]');
+    expect(kept).toEqual(['Section 4, founder-market fit, is still empty and Rohan owns it']);
+    expect((await memory.read('verdict')).notes).not.toMatch(/PIVOT|not written/i);
+  });
+
   it('asks no model for a turn that is not the founder\'s, was stopped, or is too short', async () => {
     const { retain, asked } = await setup();
     await retain.retain(turn({ source: 'run' }));

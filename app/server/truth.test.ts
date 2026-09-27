@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PARTNER_STANCE, STANCE } from '../shared/model.ts';
-import { checkReply, dropFlagged, figureCheck, holdVerdict, NOT_WRITTEN, proseToolCall, stripFlagged, turnSources, unreceiptedClaims, unsourcedFigures, verdictRefused, verdictStanding, VERDICT_WRITTEN } from './truth.ts';
+import { checkReply, dropFlagged, figureCheck, holdVerdict, NOT_WRITTEN, proseToolCall, stripFlagged, turnEvidence, turnSources, unreceiptedClaims, unsourcedFigures, verdictRefused, verdictStanding, VERDICT_WRITTEN } from './truth.ts';
 
 const wrote = { name: 'write_doc', ok: true };
 const failedWrite = { name: 'write_doc', ok: false };
@@ -548,3 +548,19 @@ describe('outreach claimed as done', () => {
     expect(lines).toEqual(['Unconfirmed: this reply claims an action no tool confirmed (contacted).']);
   });
 });
+
+// Journey 10: Meera said "two real customer conversations" in chat, recalled it, and wrote it into the Evaluation doc.
+describe('what a team doc may rest on', () => {
+  it('is the prompt\'s facts and the founder\'s words, without the person\'s memory or own replies', () => {
+    const system = 'You are Meera, Pain. Brief.\n\n## Doc: Company brief\nBeta users: 12 (2 paying).\n\nYour memory (the founder can read and edit it).\nNotes you kept:\n- We had 2 real customer conversations.';
+    const { read, said } = turnEvidence([
+      { role: 'system', content: system },
+      { role: 'user', content: 'Write section 3 from the brief.' },
+      { role: 'assistant', content: "We've had two real customer conversations so far." },
+    ]);
+    expect(read.join('\n')).toContain('Beta users: 12 (2 paying).');
+    expect(read.join('\n')).not.toMatch(/customer conversations/);
+    expect(said).toEqual(['Write section 3 from the brief.']);
+  });
+});
+

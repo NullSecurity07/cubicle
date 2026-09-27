@@ -99,6 +99,22 @@ describe('memory', () => {
     expect(asked[0]).not.toMatch(/contacted|Unconfirmed|Unsourced/);
   });
 
+  // Journey 10: a verdict lean the doc does not hold is not folded into memory as the verdict.
+  it('folds what the hold gives back for each line, so a verdict the doc does not hold stays out', async () => {
+    const store = await fresh();
+    const asked: string[] = [];
+    const held: string[] = [];
+    const hold = async (roomId: string, text: string) => { held.push(roomId); return text.replace('PIVOT REQUIRED', '[not written]'); };
+    const memory = createMemory(store, async (messages) => { asked.push(messages[1].content); return 'Kept.'; }, () => NOON, hold);
+    for (let index = 0; index < 16; index += 1) {
+      await store.appendChat('verdict', index === 1 ? { ...message(index), text: 'It leans toward PIVOT REQUIRED.' } : message(index));
+    }
+    expect(await memory.fold('verdict')).toBe(true);
+    expect(asked[0]).toContain('You: It leans toward [not written].');
+    expect(asked[0]).not.toContain('PIVOT');
+    expect(new Set(held)).toEqual(new Set(['verdict']));
+  });
+
   it('stamps a new note with the day it was kept, and still matches a note written before there were days', async () => {
     const store = await fresh();
     const memory = createMemory(store, async () => '', () => NOON);

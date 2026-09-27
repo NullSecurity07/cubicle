@@ -272,7 +272,10 @@ export const STANCE =
   + 'there is a real choice. Ask when the request is unclear. Act only through your tools, and never claim an action that a tool result '
   + 'does not confirm. '
   + 'You know about the founder, the product, the customers and the numbers only what this chat and the connected '
-  + 'documents say. Do not invent such facts; when you need one, ask for it.';
+  + 'documents say. Do not invent such facts; when you need one, ask for it. '
+  // Journey 10: Lena, asked who contacted the beta users, put a yes/no in Needs you and waited 90 s for an answer the
+  // record already gave: nobody, as far as anything says.
+  + 'Asked who did something or how many, with nothing on record: say "none on record", do not ask the founder.';
 
 // The partner's stance, in place of STANCE for that one person: they own the picture of the company and say what they
 // would do, and they say so when the founder goes against what the record shows. Every other rule of honesty stays.

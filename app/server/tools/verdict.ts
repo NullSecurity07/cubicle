@@ -211,8 +211,9 @@ const PLANNED = /\b(planned|plan|booked|scheduled|will|next)\b/i;
 const TO_COME = /\b(planned|plan|booked|scheduled|will|next|target|goal|aim)\b/i;
 const AIMED = /^\W*(?:our\s+|the\s+)?(?:target|goal|aim)/i;
 export function conversations(text: string, label: string): number | null {
-  // A struck-out count is a count taken back: "~~12~~ 0" is none.
-  const section = unmarked(text).replace(/~~[^~]*~~/g, ' ');
+  // A struck-out count is a count taken back: "~~12~~ 0" is none. A count its writer marked "(unsourced)" or
+  // "(assumption)" is no conversation held either: journey 10's invented "2" would have lifted the cap so marked.
+  const section = unmarked(text).replace(/~~[^~]*~~/g, ' ').replace(/\S+\s*\((?:unsourced|assumption)\)/gi, ' ');
   const lines = section.split('\n').map(bare);
   // What follows the label, past the template's own "(of ten to twenty)" and whatever separates the two.
   const after = (line: string) => line.slice(line.toLowerCase().indexOf(label.toLowerCase()) + label.length).replace(/^\s*\([^)]*\)/, '').replace(/^[\s:=\-–—]+/, '');
@@ -296,11 +297,12 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
     throw new Error('not written: a "(From chat:" line is written only by ask_person, when a colleague\'s answer goes into their section. Write your own words without it.');
   }
   let after = input.after;
-  // Under a refusal on no conversations: the paying users the company has, when it has any.
+  // Under a refusal on no conversations: the paying users the company has, when it has any. Journey 10's Meera, told
+  // "count them if you talked to them", wrote the 2 paying users down as 2 conversations nobody had.
   const paying = input.numbers ? payingUsers(input.numbers) : null;
   const payers = (section: string, label: string) => {
     const count = conversations(section, label);
-    return paying && !count ? ` ${count === 0 ? '0' : 'No'} conversations recorded; the Numbers section says ${paying}; count them if you talked to them.` : '';
+    return paying && !count ? ` ${count === 0 ? '0' : 'No'} conversations recorded; the Numbers section says ${paying}; count them only if the founder says those talks happened.` : '';
   };
   // A section has changed when its words have: a whole rewrite that only re-spaced or re-bulleted a colleague's
   // section, as models do when they copy a doc back, was refused whole, the writer's own section with it.

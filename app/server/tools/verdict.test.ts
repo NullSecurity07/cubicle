@@ -147,6 +147,9 @@ describe('the verdict judge on a team doc', () => {
     expect(conversations(`${L} (of ten to twenty):\n\nPayer = user? If not, who pays: the agency; 2 of 3 pay`, L)).toBeNull();
     expect(conversations(`${L} (of ten to twenty):\n\nNote: target is ${L}: 10`, L)).toBeNull();
     expect(conversations(`${L} (of ten to twenty): target 10`, L)).toBeNull();
+    // A count its writer marked as unsourced or a guess is no conversation held.
+    expect(conversations(`${L} (of ten to twenty): 2 (unsourced)`, L)).toBeNull();
+    expect(conversations(`${L} (of ten to twenty): 2 (assumption)`, L)).toBeNull();
     const { as, fill } = await setup();
     await fill();
     expect((await as('pain')('replace_section', { heading: '3. Is the pain real?', text: pain })).ok).toBe(true);
@@ -538,10 +541,10 @@ describe('a cap on no conversations while the company has paying users', () => {
     const zero = 'Vitamin — painkiller — hair on fire: hair on fire\n\nReal customer conversations done (of ten to twenty): 0 / 20';
     const pain = await as('pain')('replace_section', { heading: '3. Is the pain real?', text: zero });
     expect(pain.ok).toBe(false);
-    expect(pain.text).toContain('0 conversations recorded; the Numbers section says 3 paying users; count them if you talked to them.');
+    expect(pain.text).toContain('0 conversations recorded; the Numbers section says 3 paying users; count them only if the founder says those talks happened.');
     expect((await as('pain')('replace_section', { heading: '3. Is the pain real?', text: zero.replace('hair on fire\n', 'painkiller\n') })).ok).toBe(true);
     const verdict = await as('verdict')('replace_section', { heading: '5. Verdict', text: 'STRONG\n\nScore: 8/10' });
-    expect(verdict.text).toContain('0 conversations recorded; the Numbers section says 3 paying users; count them if you talked to them.');
+    expect(verdict.text).toContain('0 conversations recorded; the Numbers section says 3 paying users; count them only if the founder says those talks happened.');
   });
 
   it('reads the row the Company brief keeps itself, "Paying beta users: 3"', () => {
