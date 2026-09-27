@@ -6,8 +6,9 @@ import { readableDocIds, wiredDocIds } from '../prompt.ts';
 import { addedTwice, replaceSection, rewriteLoss } from './sections.ts';
 import { text, type Tool, type ToolContext } from './registry.ts';
 import { shortDay } from '../clock.ts';
-import { HELD_BACK } from '../truth.ts';
-import { filled, guardWrite, sectionBody, unmarked } from './verdict.ts';
+import { figureCheck, HELD_BACK } from '../truth.ts';
+import { findCompanyDoc } from '../../shared/partner.ts';
+import { filled, guardWrite, sectionBody, unmarked, WHOLE } from './verdict.ts';
 
 // A new doc card's size, and the gap kept round it: the same the window uses when it places one.
 const [WIDTH, HEIGHT, GAP] = [340, 300, 40];
@@ -86,13 +87,36 @@ async function rulesOf(stage: Stage, id: string): Promise<DocRules | undefined> 
 
 // Every write goes through here. A team's shared doc carries rules for whose each section is and when its verdict may
 // stand, so what is saved may be the writer's words with a stale mark or a "not assessed" verdict put in.
-async function save(context: ToolContext, id: string, before: string, after: string, done: string) {
+// Figures a write adds that nothing this turn read gives, and are not already marked "(unsourced)" after them: what the
+// truth net would flag under the reply. A live person's accountant costs, flagged in chat, went into the doc plain.
+// The doc's own text counts as read. Outside a turn there is nothing to check against.
+const MARK = ' (unsourced)';
+const at = (label: string) => new RegExp(`(?<![\\d.,])${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\d])(?!\\s*\\(unsourced\\))`, 'g');
+function unsourcedIn(context: ToolContext, before: string, after: string): string[] {
+  if (!context.sources) return [];
+  return figureCheck(after, [...context.sources(), before]).unsourced.filter((label) => at(label).test(after));
+}
+
+// The Company brief's Numbers section, which a cap on no conversations reads for paying users.
+async function numbersOf(context: Pick<ToolContext, 'stage' | 'store'>): Promise<string> {
+  const company = findCompanyDoc(context.stage.docs);
+  return company ? sectionBody(await context.store.readDoc(company.id).catch(() => ''), 'Numbers') ?? '' : '';
+}
+
+async function save(context: ToolContext, id: string, before: string, written: string, done: string, touches?: string | typeof WHOLE) {
   const rules = await rulesOf(context.stage, id);
+  // A team doc with rules is held to its evidence, so an unsourced figure is refused there; anywhere else it is marked.
+  const unsourced = unsourcedIn(context, before, written);
+  if (unsourced.length && rules) {
+    throw new Error(`not written: ${unsourced.join(', ')} ${unsourced.length > 1 ? 'are' : 'is'} not in anything this turn read. Search or read for them first, take them out, or write "(unsourced)" right after each.`);
+  }
+  const after = unsourced.reduce((text, label) => text.replace(at(label), `${label}${MARK}`), written);
+  if (unsourced.length) done = `${done} Marked as unsourced, since nothing this turn read gives them: ${unsourced.join(', ')}.`;
   // Only a team doc's own sections are kept to one copy, where a second would slip past the checks; a plain doc such
   // as a running log repeats "## Monday" on purpose.
   const twice = rules ? addedTwice(before, after, [...rules.sections, rules.verdict].map((one) => one.heading)) : null;
   if (twice) throw new Error(`not written: "${twice}" is already a section of this document; change it with replace_section instead of adding it again.`);
-  const guarded = rules ? guardWrite({ rules, stage: context.stage, docId: id, writerId: context.roomId, before, after, now: Date.now() }) : { text: after };
+  const guarded = rules ? guardWrite({ rules, stage: context.stage, docId: id, writerId: context.roomId, before, after, now: Date.now(), touches, numbers: await numbersOf(context) }) : { text: after };
   await context.store.replaceDoc(id, guarded.text);
   const said = guarded.held ? guarded.note! : [done, guarded.note].filter(Boolean).join(' ');
   return { text: said, effect: { kind: 'doc-changed' as const, id } };
@@ -127,6 +151,37 @@ function echoes(answer: string, question: string, heading: string): boolean {
   return said.filter((word) => asked.has(word)).length / said.length >= 0.7;
 }
 
+// A colleague answering in chat wraps their section in chat talk: a live one opened "✅ **Section 4 – Founder-market
+// fit** in the Evaluation doc is now completed:" and closed "You can now proceed to write the verdict.", and both went
+// into the doc. A leading heading or status line (one that names the section or a doc and says it is done) and a
+// closing "you can now ..." sentence are taken off; the rest is the section. An answer with nothing left is kept whole.
+const STATUS = /\b(?:completed?|done|written|updated|filled(?: in)?|finished|ready|here is|here's|below)\b/i;
+const CLOSE = /^(?:you can now|you may now|now you can|you(?:'re| are) (?:now )?(?:ready|free|good) to|feel free|let me know|next,? you can)\b/i;
+export function substance(answer: string, heading: string): string {
+  const lines = answer.trim().split('\n');
+  const plain = (line: string) => line.replace(/[*_`#>]/g, '').replace(/^[^\p{L}\p{N}]+/u, '').trim();
+  const names = (line: string) => /\b(?:section|doc|document)\b/i.test(line) || plain(line).toLowerCase().includes(heading.replace(/^\d+[.)]\s*/, '').toLowerCase().replace(/-/g, ' ').slice(0, 12));
+  const first = lines[0] ?? '';
+  if (/^#{1,6}\s/.test(first.trim())) lines.shift();
+  // A status line only: one that ends in a colon, opens with a mark or bold, or says the section is done after naming it.
+  // "Lived it: I filed VAT by hand, all done in a spreadsheet doc." is the answer itself.
+  else if (STATUS.test(plain(first)) && names(plain(first).replace(/[‐‑–—-]/g, ' '))
+    && (/:\s*$/.test(first.trim()) || /^(?:[^\p{L}\p{N}\s]|\*\*)/u.test(first.trim()) || /\bsection\b[^:]*\b(?:is|are)\s+(?:now\s+)?(?:completed?|done|written|filled|finished|ready)\b/i.test(first))) {
+    const colon = first.search(new RegExp(`${STATUS.source}[^:]*:`, 'i'));
+    const rest = colon >= 0 ? first.slice(first.indexOf(':', colon) + 1).trim() : '';
+    if (colon >= 0 || /[:.!]\s*$/.test(first.trim())) { if (rest) lines[0] = rest; else lines.shift(); }
+  }
+  while (lines.length && !lines.at(-1)!.trim()) lines.pop();
+  const last = lines.at(-1) ?? '';
+  if (CLOSE.test(plain(last))) lines.pop();
+  else {
+    const sentences = last.split(/(?<=[.!?])\s+/);
+    if (sentences.length > 1 && CLOSE.test(plain(sentences.at(-1)!))) lines[lines.length - 1] = sentences.slice(0, -1).join(' ');
+  }
+  const kept = lines.join('\n').trim();
+  return filled(kept).length ? kept : answer.trim();
+}
+
 // A colleague asked with ask_person answers in words, without tools, so their answer never reached their own section of
 // a team doc, and a verdict waiting on it waited until the founder answered in the Needs you box. When the asker and
 // the colleague share such a doc, the colleague's section there is empty and the question is about it, the answer is
@@ -156,12 +211,12 @@ export async function answerIntoSection(context: ToolContext, targetId: string, 
     if (!saying(answer, heading).length) return `${target.name} answered but did not fill "${heading}"; it stays empty. Ask ${target.name} what goes in it.`;
     if (hedges(answer) || echoes(answer, question, heading)) return `${target.name} answered but did not fill "${heading}"; it stays empty.`;
     const asking = question.replace(/\s+/g, ' ').trim();
-    const body = `${answer.trim()}\n\n(From chat: ${target.name} answered ${asker.name} on ${shortDay(Date.now())}, asked "${asking.length > 200 ? `${asking.slice(0, 199)}…` : asking}".)`;
+    const body = `${substance(answer, heading)}\n\n(From chat: ${target.name} answered ${asker.name} on ${shortDay(Date.now())}, asked "${asking.length > 200 ? `${asking.slice(0, 199)}…` : asking}".)`;
     const next = replaceSection(before, heading, body);
     if ('error' in next) continue;
     // The section's own checks hold as for any write of theirs; one that fails is said, and the answer still stands.
     let guarded;
-    try { guarded = guardWrite({ rules, stage, docId: id, writerId: targetId, before, after: next.text, now: Date.now(), fromChat: true }); } catch (error) {
+    try { guarded = guardWrite({ rules, stage, docId: id, writerId: targetId, before, after: next.text, now: Date.now(), fromChat: true, numbers: await numbersOf(context) }); } catch (error) {
       // The guard speaks to the writer ("Write it again", "Ask Priya with ask_person"); the asker gets only the reason.
       const why = (error as Error).message.replace(/^not written:\s*/, '').replace(/\s+(?:Write it again|Ask \S+ with ask_person)[\s\S]*$/, '');
       return `Not written into "${heading}": ${why} The section stays empty until ${target.name} writes it within the section's rules.`;
@@ -203,7 +258,7 @@ export const docTools: Tool[] = [
         const loss = rewriteLoss(before, body);
         if (loss) throw new Error(`not written: this would replace the whole document, and ${loss}. Change one section with replace_section, or add with append_doc; the rest is a colleague's or the founder's work.`);
       }
-      return save(context, id, before, body, `Wrote ${body.length} characters.`);
+      return save(context, id, before, body, `Wrote ${body.length} characters.`, WHOLE);
     },
   },
   {
@@ -224,7 +279,7 @@ export const docTools: Tool[] = [
       const before = await context.store.readDoc(id);
       const swapped = replaceSection(before, heading, text(args, 'text'));
       if ('error' in swapped) throw new Error(swapped.error);
-      return save(context, id, before, swapped.text, `Replaced the section "${heading.replace(/^#+\s*/, '').trim()}".`);
+      return save(context, id, before, swapped.text, `Replaced the section "${heading.replace(/^#+\s*/, '').trim()}".`, heading);
     },
   },
   {

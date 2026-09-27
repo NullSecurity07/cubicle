@@ -1,5 +1,6 @@
 import type { DocRules, Room, Stage } from '../../shared/model.ts';
 import { shortDay } from '../clock.ts';
+import { VERDICT_WRITTEN, verdictRefused } from '../truth.ts';
 import { wiredDocIds } from '../prompt.ts';
 import { headingKey, headings } from './sections.ts';
 
@@ -95,6 +96,40 @@ export function verdictOf(written: string, outcomes: string[], outOf = 10): { wo
   return { word: found[0]?.word, score: out ? Number(out[1]) : undefined };
 }
 
+// A score its breakdown in brackets does not reach: "5/10 (Assumption: 1, Flaws: 3, Pain: 1, Fit: 8, Why Now: 2)" is
+// 15 of 50, which is 3 of 10, and a live judge wrote it with nothing to catch it. Each part is a label and one number,
+// or "a/b" out of its own b; anything else in the brackets ("see sections 1, 2 and 4") is no breakdown. A cap's words
+// and a stated sum ("capped from 7: ...", "= 7") are not parts. Parts with no maximum of their own are read as out of
+// the total together (when they add up to it at most) or out of the total each, and the score passes when either
+// reading reaches it. Only a score above its parts is refused: one below them is a cap the evidence set, or parts
+// out of more than it seems.
+// Returns the reason to refuse, or null.
+export function breakdownMismatch(written: string, outOf = 10): string | null {
+  const plain = (value: number) => String(Number(value.toFixed(1)));
+  for (const line of filled(unmarked(written)).map(bare)) {
+    const group = /\(([^)]*)\)/.exec(line);
+    if (!group) continue;
+    const head = line.slice(0, group.index);
+    const stated = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(?:\\/|out of|of)\\s*${outOf}\\b`, 'i').exec(head) ?? (/^score\b/i.test(head) ? /:\s*(\d+(?:\.\d+)?)\s*$/.exec(head.trim()) : null);
+    if (!stated) continue;
+    const inner = group[1].replace(/\bcapped\s+(?:from|at)\s+\d+(?:\.\d+)?\s*[:;,]?/gi, '').replace(/=\s*\d+(?:\.\d+)?\s*$/, '').replace(/^\s*parts?\b\s*:?/i, '');
+    const parts = inner.split(/[,;+]/).map((part) => /^(?:[\p{L}][\p{L}\s'-]*:\s*)?(\d+(?:\.\d+)?)(?:\s*\/\s*(\d+(?:\.\d+)?))?$/u.exec(part.trim()));
+    if (parts.length < 2 || parts.some((part) => !part)) continue;
+    const values = parts.map((part) => Number(part![1]));
+    const sum = values.reduce((a, b) => a + b, 0);
+    const totals = parts.every((part) => part![2]) ? [parts.reduce((all, part) => all + Number(part![2]), 0)]
+      : [outOf, outOf * values.length].filter((total) => sum <= total && values.every((value) => value <= outOf));
+    if (!totals.length) continue;
+    const reach = Math.max(...totals.map((total) => (sum * outOf) / total));
+    const score = Number(stated[1]);
+    if (score <= reach + 0.5) continue;
+    const total = totals.find((one) => (sum * outOf) / one === reach)!;
+    return `the score says ${plain(score)} of ${outOf}, but its parts (${values.map(plain).join(', ')}) add up to ${plain(sum)} of ${plain(total)}`
+      + `${total === outOf ? '' : `, which is ${plain(reach)} of ${outOf}`}. Write the score as ${plain(Math.round(reach))}/${outOf}, or change the parts.`;
+  }
+  return null;
+}
+
 // Where a rating word stands in a text, or -1. Verdict words are capitals and matched as written, so "a strong signal"
 // is no STRONG; lower-case words ("hair on fire") match any case, and a hyphen for a space.
 function wordAt(text: string, word: string): number {
@@ -150,11 +185,28 @@ function countRead(section: string, label: string): string {
   return line ? `The count line reads "${line}".` : `There is no "${label}" line, and no count of conversations in the section.`;
 }
 
+// The paying users the Company brief's Numbers section records, as "3 paying users", or null. A cap on no conversations
+// said "0 / 20" to a team whose founder had 3 paying beta users asking for the feature; each of them is a customer
+// the founder may well have talked to, and the writer is told so.
+export function payingUsers(numbers: string): string | null {
+  const count = `(\\d+|${SPELLED.join('|')})`;
+  const unit = '(users|customers|clients)';
+  const text = unmarked(numbers);
+  const hit = new RegExp(`\\b${count}\\s+paying\\s+(?:beta\\s+)?${unit}\\b`, 'i').exec(text)
+    ?? new RegExp(`\\b${count}\\s+(?:beta\\s+)?${unit}\\s+(?:who\\s+)?pay`, 'i').exec(text);
+  const labelled = new RegExp(`\\bpaying\\s+${unit}\\s*[:=\\-–—]\\s*(\\d+)\\b`, 'i').exec(text);
+  const [n, what] = hit ? [countOf(hit[1]), hit[2]] : labelled ? [Number(labelled[2]), labelled[1]] : [0, ''];
+  return n > 0 ? `${n} paying ${what.toLowerCase()}` : null;
+}
+
 export type Guarded = { text: string; note?: string; held?: boolean };
+// What a write touched, when the guard cannot tell from the text alone: a heading written again word for word, or
+// the whole document.
+export const WHOLE = Symbol('whole document');
 
 // `before` and `after` are the whole doc either side of one write by `writerId`. Returns the text to save (with a
 // "not assessed" verdict or a stale mark put in) and a note for the writer, or throws the reason nothing is written.
-export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string; writerId: string; before: string; after: string; now: number; fromChat?: boolean }): Guarded {
+export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string; writerId: string; before: string; after: string; now: number; fromChat?: boolean; touches?: string | typeof WHOLE; numbers?: string }): Guarded {
   const { rules, stage, docId, writerId, before, now } = input;
   // A marker line is read past by the caps and the verdict reader, so one written by hand hid "STRONG, Score: 9/10"
   // from them. Only a colleague's answer put in by ask_person carries one.
@@ -172,6 +224,12 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
     throw new Error('not written: a "(From chat:" line is written only by ask_person, when a colleague\'s answer goes into their section. Write your own words without it.');
   }
   let after = input.after;
+  // Under a refusal on no conversations: the paying users the company has, when it has any.
+  const paying = input.numbers ? payingUsers(input.numbers) : null;
+  const payers = (section: string, label: string) => {
+    const count = conversations(section, label);
+    return paying && !count ? ` ${count === 0 ? '0' : 'No'} conversations recorded; the Numbers section says ${paying}; count them if you talked to them.` : '';
+  };
   // A section has changed when its words have: a whole rewrite that only re-spaced or re-bulleted a colleague's
   // section, as models do when they copy a doc back, was refused whole, the writer's own section with it.
   const changed = (heading: string) => words(sectionBody(before, heading)) !== words(sectionBody(after, heading));
@@ -199,13 +257,53 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
     const { word, score } = verdictOf(body, order, outOf);
     if ((word && order.indexOf(word) > order.indexOf(cap.verdict)) || (score !== undefined && score > cap.score)) {
       throw new Error(`not written: ${cap.why}, so ${cap.name ?? 'this section'} is at most ${cap.verdict} and ${cap.score} of ${outOf}. `
-        + `This one says ${[word, score !== undefined ? `${score} of ${outOf}` : ''].filter(Boolean).join(', ')}. ${countRead(sectionBody(after, cap.heading) ?? '', cap.line)} `
-        + 'Write it again within the cap, and mark what is unproven.');
+        + `This one says ${[word, score !== undefined ? `${score} of ${outOf}` : ''].filter(Boolean).join(', ')}. ${countRead(sectionBody(after, cap.heading) ?? '', cap.line)}`
+        + `${payers(sectionBody(after, cap.heading) ?? '', cap.line)} Write it again within the cap, and mark what is unproven.`);
     }
   }
 
   const verdictAt = rules.verdict.heading;
   const verdictBefore = sectionBody(before, verdictAt);
+  const judge = ownerOf(stage, rules, rules.verdict.by, docId);
+  // The verdict's own checks, on the verdict as it would stand: "not assessed" while a section it rests on is empty,
+  // and the caps. Returns what to save instead, or throws.
+  const judged = (text: string, verdict: string, byJudge: boolean): Guarded | null => {
+    const empty = rules.sections.filter(({ heading }) => sectionBody(text, heading) !== null && !filled(sectionBody(text, heading)).length);
+    if (empty.length) {
+      const names = empty.map(({ heading }) => titleOf(text, heading));
+      const owners = empty.map(({ by }) => ownerOf(stage, rules, by, docId)?.name);
+      const who = [...new Set(owners.filter((name): name is string => !!name))];
+      // Each empty section with the person who has not written it: the truth, said so the judge repeats it.
+      const missing = names.map((name, at) => (owners[at] ? `${owners[at]} has not written "${name}" yet` : `"${name}" is empty and nobody on the stage is placed to write it`));
+      const body = `${names.map((name, at) => `Not assessed: ${name}${owners[at] ? ` (${owners[at]} has not written it yet)` : ''}`).join('\n')}\n\nNo verdict and no score until ${names.length > 1 ? 'these sections are' : 'this section is'} written.`;
+      return {
+        text: withBody(text, verdictAt, body),
+        held: byJudge,
+        note: byJudge
+          ? `Not written: the verdict waits because ${missing.join(', and ')}. The verdict section now says "Not assessed". `
+            + `${who.length ? `Ask ${who.join(' or ')} with ask_person, or tell the founder exactly that` : 'Tell the founder exactly that'}: nothing else in the document is wrong. Never write that section yourself. `
+            + verdictRefused(missing.join(', and '), rules.outcomes ?? [])
+          : `The verdict now says "Not assessed": ${missing.join(', and ')}.`,
+      };
+    }
+    if (!byJudge) return null;
+    const sum = breakdownMismatch(verdict);
+    if (sum) throw new Error(`not written: ${sum} ${verdictRefused(`its score does not add up: ${sum.slice(0, sum.indexOf('. Write'))}`, rules.outcomes ?? [])}`);
+    const { word, score } = verdictOf(verdict, rules.outcomes ?? []);
+    for (const cap of (rules.caps ?? []).filter((one) => !one.on)) {
+      if (conversations(sectionBody(text, cap.heading) ?? '', cap.line)) continue;
+      const order = rules.outcomes ?? [];
+      const over = (word && order.indexOf(word) > order.indexOf(cap.verdict)) || (score !== undefined && score > cap.score);
+      if (over) {
+        const why = `${cap.why}, so the verdict is at most ${cap.verdict} and the score at most ${cap.score} of 10`;
+        throw new Error(`not written: ${why}. `
+          + `This one says ${[word, score !== undefined ? `${score} of 10` : ''].filter(Boolean).join(', ')}. ${countRead(sectionBody(text, cap.heading) ?? '', cap.line)}`
+          + `${payers(sectionBody(text, cap.heading) ?? '', cap.line)} Write it again within the cap, and say which section each fact comes from. ${verdictRefused(why, rules.outcomes ?? [])}`);
+      }
+    }
+    return null;
+  };
+
   if (changed(verdictAt)) {
     // A verdict written anew answers every stale mark on the old one.
     // Where a doc holds two copies, the verdict is the copy that was written just now: an old copy's words left
@@ -214,35 +312,19 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
     const written = bodies(after, verdictAt).filter((one) => !was.has(one));
     const fresh = (written.length ? written.join('\n\n') : sectionBody(after, verdictAt) ?? '').split('\n').filter((line) => !STALE.test(line.trim())).join('\n').trim();
     after = withBody(after, verdictAt, fresh);
-    if (filled(fresh).length) {
-      const empty = rules.sections.filter(({ heading }) => sectionBody(after, heading) !== null && !filled(sectionBody(after, heading)).length);
-      if (empty.length) {
-        const names = empty.map(({ heading }) => titleOf(after, heading));
-        const owners = empty.map(({ by }) => ownerOf(stage, rules, by, docId)?.name);
-        const who = [...new Set(owners.filter((name): name is string => !!name))];
-        // Each empty section with the person who has not written it: the truth, said so the judge repeats it.
-        const missing = names.map((name, at) => (owners[at] ? `${owners[at]} has not written "${name}" yet` : `"${name}" is empty and nobody on the stage is placed to write it`));
-        const body = `${names.map((name, at) => `Not assessed: ${name}${owners[at] ? ` (${owners[at]} has not written it yet)` : ''}`).join('\n')}\n\nNo verdict and no score until ${names.length > 1 ? 'these sections are' : 'this section is'} written.`;
-        return {
-          text: withBody(after, verdictAt, body),
-          held: true,
-          note: `Not written: the verdict waits because ${missing.join(', and ')}. The verdict section now says "Not assessed". `
-            + `${who.length ? `Ask ${who.join(' or ')} with ask_person, or tell the founder exactly that` : 'Tell the founder exactly that'}: nothing else in the document is wrong. Never write that section yourself.`,
-        };
-      }
-      const { word, score } = verdictOf(fresh, rules.outcomes ?? []);
-      for (const cap of (rules.caps ?? []).filter((one) => !one.on)) {
-        if (conversations(sectionBody(after, cap.heading) ?? '', cap.line)) continue;
-        const order = rules.outcomes ?? [];
-        const over = (word && order.indexOf(word) > order.indexOf(cap.verdict)) || (score !== undefined && score > cap.score);
-        if (over) {
-          throw new Error(`not written: ${cap.why}, so the verdict is at most ${cap.verdict} and the score at most ${cap.score} of 10. `
-            + `This one says ${[word, score !== undefined ? `${score} of 10` : ''].filter(Boolean).join(', ')}. ${countRead(sectionBody(after, cap.heading) ?? '', cap.line)} `
-            + 'Write it again within the cap, and say which section each fact comes from.');
-        }
-      }
-    }
-    return { text: after };
+    if (!filled(fresh).length) return { text: after };
+    // A verdict that stands says so, for the truth net: a refusal earlier in the turn no longer holds.
+    return judged(after, fresh, true) ?? { text: after, note: VERDICT_WRITTEN };
+  }
+
+  // A verdict written again word for word, or kept by a write of the whole doc, is checked as if new: a live judge
+  // asked to rewrite hers over a section the founder had emptied wrote the same text, and "Fit: 8" stood over nothing.
+  const touched = input.touches === WHOLE || (!!input.touches && headingKey(input.touches) === headingKey(verdictAt));
+  if (touched && verdictBefore && filled(verdictBefore).length) {
+    const byJudge = !judge || writerId === judge.id;
+    const standing = judged(after, sectionBody(after, verdictAt) ?? '', byJudge);
+    if (standing) return standing;
+    if (byJudge && !rules.sections.some(({ heading }) => changed(heading))) return { text: after, note: VERDICT_WRITTEN };
   }
 
   // A section the verdict rests on changed under a verdict that stands: the verdict says so, once per section.
@@ -251,7 +333,6 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
   if (!moved.length) return { text: after };
   const kept = (sectionBody(after, verdictAt) ?? '').split('\n').filter((line) => !moved.some((name) => line.trim().startsWith(`Stale: ${name} changed`)));
   const marks = moved.map((name) => `Stale: ${name} changed after this verdict on ${shortDay(now)}.`);
-  const judge = ownerOf(stage, rules, rules.verdict.by, docId);
   return {
     text: withBody(after, verdictAt, [...marks, ...kept].join('\n').trim()),
     note: `The verdict was written before this change, so it is now marked stale${judge && judge.id !== writer?.id ? `; ${judge.name} judges it again` : ''}.`,

@@ -91,3 +91,44 @@ describe('doc tools', () => {
     expect((await call('replace_section', { doc: 'Brand doc', heading: 'Build', text: 'x' })).text).toMatch(/more than one heading is called "Build".*write_doc/);
   });
 });
+
+// A figure the truth net would flag under the reply went into the doc unflagged: Meera's "€80–€200/month" for an
+// accountant was flagged in chat and written plain into the Evaluation doc.
+describe('a figure nothing this turn read', () => {
+  it('is marked "(unsourced)" in a plain doc, and a figure the turn read or proposed is not', async () => {
+    const { store, call, context } = await setup();
+    const sourced = { ...context, sources: () => ['The founder: we charge $29 a month and have 3 paying users.'] };
+    const out = await runTool(docTools, 'replace_section', JSON.stringify({ doc: 'Brand doc', heading: 'Build', text: 'At $29 a month, against an accountant at €80–€200/month. I suggest a target of $49 next.' }), sourced);
+    expect(out.ok).toBe(true);
+    expect(out.text).toBe('Replaced the section "Build". Marked as unsourced, since nothing this turn read gives them: €80, €200.');
+    expect(await store.readDoc('brand-doc')).toContain('At $29 a month, against an accountant at €80 (unsourced)–€200 (unsourced)/month. I suggest a target of $49 next.');
+    // Written again as it now stands, nothing is marked twice.
+    const again = await runTool(docTools, 'write_doc', JSON.stringify({ doc: 'Brand doc', text: await store.readDoc('brand-doc') }), sourced);
+    expect(again.text).toBe(`Wrote ${(await store.readDoc('brand-doc')).length} characters.`);
+    expect((await store.readDoc('brand-doc')).match(/\(unsourced\)/g)).toHaveLength(2);
+    // A figure the doc itself marked is no source for saying it again; one the doc states plainly is.
+    expect((await runTool(docTools, 'append_doc', JSON.stringify({ doc: 'Brand doc', text: 'Still €80 for an accountant.' }), sourced)).text).toMatch(/Marked as unsourced.*: €80\.$/);
+    expect((await runTool(docTools, 'append_doc', JSON.stringify({ doc: 'Brand doc', text: 'The review found 3 rivals.' }), sourced)).text).toBe('Added 26 characters.');
+    // Outside a turn there is nothing to check against, and nothing is marked.
+    expect((await call('append_doc', { doc: 'Brand doc', text: 'Rent is $900.' })).text).toBe('Added 13 characters.');
+  });
+
+  it('is refused in a team doc with rules, with the figures named', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const { resolve } = await import('node:path');
+    const { place } = await import('../frameworks/place.ts');
+    const framework = JSON.parse(await readFile(resolve(import.meta.dirname, '../../frameworks/startup-evaluation/framework.json'), 'utf8'));
+    const store = createStore(await mkdtemp(join(tmpdir(), 'docs-figures-')));
+    const seed = await store.loadStage();
+    const { placed, texts } = place(framework, seed, { x: 2000, y: 0 });
+    const stage = { ...seed, rooms: [...seed.rooms, ...placed.rooms], docs: [...seed.docs, ...placed.docs], wires: [...seed.wires, ...placed.wires], cards: [...(seed.cards ?? []), ...placed.cards] };
+    for (const [id, text] of Object.entries(texts)) await store.replaceDoc(id, text as string);
+    const context = { stage, roomId: 'pain', store, granted: new Map<string, string>(), sources: () => ['Ledgerly: $29 a month, 3 paying users.'] };
+    const text = 'Vitamin — painkiller — hair on fire: painkiller\n\nWhat it costs them per month: an accountant at €80–€200/month.\n\nReal customer conversations done (of ten to twenty): 3';
+    const out = await runTool(docTools, 'replace_section', JSON.stringify({ doc: 'Evaluation', heading: '3. Is the pain real?', text }), context);
+    expect(out.ok).toBe(false);
+    expect(out.text).toMatch(/not written: €80, €200 (?:are|is) not in anything this turn read\. Search or read for them first, take them out, or write "\(unsourced\)" right after each\./);
+    const marked = text.replace('€80', '€80 (unsourced)').replace('€200', '€200 (unsourced)');
+    expect((await runTool(docTools, 'replace_section', JSON.stringify({ doc: 'Evaluation', heading: '3. Is the pain real?', text: marked }), context)).ok).toBe(true);
+  });
+});

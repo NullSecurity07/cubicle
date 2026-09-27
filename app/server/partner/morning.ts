@@ -5,7 +5,7 @@ import { bare, morningText, readMorning, type Bet, type Morning, type MorningNot
 import { localDay, weekDay } from '../clock.ts';
 import type { ModelMessage } from '../prompt.ts';
 import { sectionBody, filled, verdictOf } from '../tools/verdict.ts';
-import { checkReply, stripFlagged, turnSources } from '../truth.ts';
+import { checkReply, FLAG_LINE, stripFlagged, turnSources } from '../truth.ts';
 import { gatherMonth } from '../slices/month.ts';
 import { cardOf } from './bets.ts';
 import type { PartnerState } from './state.ts';
@@ -88,8 +88,6 @@ export type MorningSources = {
 const VERDICT_CHARS = 400;
 // The Company document's Numbers section, the one place a person's figure should agree with.
 const numbersOf = (company: string) => filled(sectionBody(company, 'Numbers')).join('\n');
-// A flag line as the truth net writes it under a reply.
-const FLAGS = /^(?:Unconfirmed: this reply claims|Unsourced figures: ).*$/gm;
 
 const betLine = (bet: Bet) => (bet.status === 'open'
   ? `- Open: ${bare(bet.what)}. Bet: ${bare(bet.hypothesis) || 'unsaid'}. Measured by "${bet.metric}" on ${cardOf(bet.metric)}: ${bet.target} by ${bet.checkDate}.`
@@ -137,7 +135,7 @@ export async function gatherMorning(from: MorningSources): Promise<string> {
   const flagged: string[] = [];
   for (const room of from.stage.rooms) {
     const lines = (await from.chat(room.id).catch(() => [] as ChatMessage[])).filter((message) => message.role === 'assistant' && message.at >= start)
-      .flatMap((message) => message.text.match(FLAGS) ?? []);
+      .flatMap((message) => message.text.match(FLAG_LINE) ?? []);
     if (lines.length) flagged.push(`${room.name} (${room.role}):`, ...[...new Set(lines)].slice(-4));
   }
   const numbers = numbersOf(from.company ?? '');
