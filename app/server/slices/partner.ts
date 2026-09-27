@@ -10,6 +10,7 @@ import { hub } from '../events.ts';
 import { saysSomething } from '../missions.ts';
 import { FAKE_MORNING, MOST_TRIES, morningDue, morningInputs, morningMessage, writeMorning, type MorningSources } from '../partner/morning.ts';
 import { addPlan, boardFor, boardForPlan, NO_BOARD, planAttention, stepsFrom } from '../partner/plans.ts';
+import { chaseLine, keptPromiseLine, promiseLine, promisesAttention, promisesBook, promisesIn } from '../partner/promises.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import { staleNeeds, standingBlock, standingParts, teamVerdict, type StandingParts } from '../partner/standing.ts';
 import { companyFacts, keepFacts, keptLine, runwayFix } from '../partner/keep.ts';
@@ -170,6 +171,7 @@ export function createPartner(options: PartnerOptions = {}) {
     const morningOnTick = !deps.fake || process.env.STAGE_PARTNER_MORNING === '1';
     const book = betsBook(deps.workspace, now);
     const bets = (): Promise<Bet[]> => book.list();
+    const promises = promisesBook(deps.workspace, now);
     // A bet changed: the Company document's Bets section is written again from the ledger, and Needs you is told.
     const betsChanged = async () => {
       standing = null;
@@ -235,8 +237,9 @@ export function createPartner(options: PartnerOptions = {}) {
         standing = gathering;
         gathering.catch(() => { if (standing === gathering) standing = null; });
       }
-      const [parts, waiting] = await Promise.all([standing, deps.attention.list().catch(() => [])]);
-      return standingBlock(parts, waiting);
+      // The founder's open promises are read fresh too: one closed a moment ago is gone from the next turn.
+      const [parts, waiting, promised] = await Promise.all([standing, deps.attention.list().catch(() => []), promises.list().catch(() => [])]);
+      return standingBlock({ ...parts, promised: promised.filter((one) => one.status === 'open').map(promiseLine) }, waiting);
     }
 
     // What the note is read from, as it stands now.
@@ -292,7 +295,7 @@ export function createPartner(options: PartnerOptions = {}) {
       }
       const stage = await deps.store.loadStage();
       const verdict = await teamVerdict(stage, (id) => deps.store.readDoc(id)).catch(() => null);
-      return [...found, ...planAttention(held.plans), ...await betsAttention(await book.list(), stage, deps.workspace, localDay(now()), verdict)];
+      return [...found, ...planAttention(held.plans), ...await betsAttention(await book.list(), stage, deps.workspace, localDay(now()), verdict), ...promisesAttention(await promises.list(), localDay(now()))];
     });
     // A person wrote a doc that is a plan (by its title or its first heading): its day-by-day steps are offered as tasks.
     const afterTool: Handler<'tool:after'> = async (payload, next) => {
@@ -373,6 +376,34 @@ export function createPartner(options: PartnerOptions = {}) {
     };
     const offReply = deps.seams.on('turn:reply', onReply);
 
+    // The founder said they would do something, in any room: it is kept as a dated promise, with a line under the
+    // reply saying so. A reply the founder stopped keeps nothing.
+    const onPromise: Handler<'turn:reply'> = async (payload, next) => {
+      if (payload.reply.stopped) return next(payload);
+      const kept = [];
+      for (const said of promisesIn(payload.query, now())) if (await promises.add({ ...said, roomId: payload.roomId })) kept.push(said);
+      if (!kept.length) return next(payload);
+      await deps.attention.refresh().catch(() => {});
+      return next({ ...payload, reply: { ...payload.reply, text: `${payload.reply.text.replace(/\s+$/, '')}\n\n${keptPromiseLine(kept)}` } });
+    };
+    const offPromise = deps.seams.on('turn:reply', onPromise);
+
+    // A promise a day late is asked about once in the partner's room, and said to the founder once. Never beside a
+    // turn of the partner's own.
+    async function chasePromises() {
+      const today = localDay(now());
+      const late = (await promises.list()).filter((one) => one.status === 'open' && one.due < today && !one.chased);
+      if (!late.length) return;
+      const partner = partnerOf(await deps.store.loadStage());
+      if (partner && deps.busy.has(partner.id)) return;
+      for (const one of late) {
+        if (!await promises.chased(one.id)) continue;
+        if (partner) await deps.store.appendChat(partner.id, { id: newMessageId(), role: 'assistant', text: chaseLine(one), at: now() });
+      }
+      await deps.attention.refresh().catch(() => {});
+      deps.notify?.('A promise is late', late[0].what);
+    }
+
     // A bet whose day has come is posted once in the partner's room with its number read from the card, and said to
     // the founder once; which ones were posted is kept, so a restart does not post them again. Never beside a turn of
     // the partner's own: it waits for the next tick.
@@ -412,6 +443,7 @@ export function createPartner(options: PartnerOptions = {}) {
         await keepCompany();
         await sync();
         await checkBets();
+        await chasePromises();
         await morning(false);
       },
       async route(req, res, path) {
@@ -455,6 +487,16 @@ export function createPartner(options: PartnerOptions = {}) {
             deps.json(res, 200, closed);
             return true;
           }
+          // The founder closes a promise from Needs you: done, or dropped.
+          const promised = /^\/api\/partner\/promises\/(promise-[a-z0-9-]{1,40})$/.exec(path);
+          if (promised && method === 'POST') {
+            const sent = await deps.body(req);
+            const closed = await promises.close(promised[1], sent?.done !== false);
+            standing = null;
+            await deps.attention.refresh();
+            deps.json(res, 200, closed);
+            return true;
+          }
           const plan = /^\/api\/partner\/plans\/(plan-[a-z0-9-]{1,40})$/.exec(path);
           if (plan && method === 'POST') {
             const sent = await deps.body(req);
@@ -487,10 +529,12 @@ export function createPartner(options: PartnerOptions = {}) {
         offSeam();
         offTurn();
         offReply();
+        offPromise();
         await syncing?.catch(() => {});
         await writing?.catch(() => {});
         await state.settled();
         await book.settled();
+        await promises.settled();
       },
     };
   };

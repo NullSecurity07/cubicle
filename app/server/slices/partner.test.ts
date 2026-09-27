@@ -641,3 +641,42 @@ describe('the partner slice: plans become tasks', () => {
     await part.close!();
   });
 });
+
+// Program 6: "I'll call five users by Friday" was gone the moment it was said. A co-founder remembers it, brings it up
+// on the day, asks once when it is late, and lets the founder close it.
+describe('the partner slice: the founder\'s promises', () => {
+  it('keeps a promise said in any room, brings it to Needs you and Today\'s five on its day, chases it once, and lets the founder close it', async () => {
+    let clock = new Date('2026-09-28T10:00').getTime();
+    const told: string[] = [];
+    const { deps, part } = await installed({ notify: (title) => { told.push(title); }, json: () => {} }, { now: () => clock, ask: async () => SHAPED });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    const reply = async (roomId: string, query: string, stopped = false) => (await deps.seams.run('turn:reply', { roomId, query, reply: { text: 'Good.', tools: [], provider: '', model: '', usage: { input: 0, output: 0 }, stopped } })).reply.text;
+    expect(await reply('marketing', 'OK. I\'ll call 5 beta users by Friday.')).toBe('Good.\n\n*Kept as a promise: call 5 beta users by Friday (due 2026-10-02). It comes to Needs you on the day.*');
+    expect(await reply('marketing', 'I\'ll call 5 beta users by Friday.')).toBe('Good.');
+    expect(await reply('marketing', 'I\'ll email the bank tomorrow.', true)).toBe('Good.');
+    expect(await reply('marketing', 'Should I raise the price this week?')).toBe('Good.');
+    expect((await deps.attention.list()).some((one) => one.kind === 'promise')).toBe(false);
+    const system = async () => (await deps.seams.run('turn:before', { roomId: 'p1', source: 'chat', query: 'what now?', messages: [{ role: 'system', content: 'You are Sam.' }] })).messages[0].content as string;
+    expect(await system()).toContain('The founder\'s promises:\n- call 5 beta users by Friday (due 2026-10-02)');
+
+    clock = new Date('2026-10-02T10:00').getTime();
+    await part.tick!();
+    const due = (await deps.attention.list()).find((one) => one.kind === 'promise')!;
+    expect(due).toMatchObject({ title: 'You said you would call 5 beta users by Friday', detail: 'Due today. Said on 2026-09-28.', roomId: 'marketing' });
+    expect((await todayFive(deps, clock)).find((one) => one.kind === 'promise')).toMatchObject({ reason: expect.stringContaining('Something you said you would do') });
+    const chases = async () => (await deps.store.readChat('p1')).filter((one) => one.text.startsWith('You said you would'));
+    expect(await chases()).toHaveLength(0);
+
+    clock = new Date('2026-10-03T10:00').getTime();
+    await part.tick!();
+    await part.tick!();
+    expect((await chases()).map((one) => one.text)).toEqual(['You said you would call 5 beta users by Friday (due 2026-10-02). Done? Close it in Needs you, or tell me what got in the way.']);
+    expect(told.filter((one) => one === 'A promise is late')).toHaveLength(1);
+
+    deps.body = async () => ({ done: true });
+    await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/promises/${due.id.split(':')[1]}`);
+    expect((await deps.attention.list()).some((one) => one.kind === 'promise')).toBe(false);
+    expect(await system()).not.toContain('The founder\'s promises');
+    await part.close!();
+  });
+});

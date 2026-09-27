@@ -25,6 +25,8 @@ export const WEIGHTS: Record<string, { weight: number; label: string }> = {
   'metric-alert': { weight: 70, label: 'A number to look at' },
   'bet-check': { weight: 65, label: 'A bet is due for a check' },
   'proposed-decision': { weight: 60, label: 'A decision is yours to make' },
+  // Only once its day has come: something the founder said they would do.
+  promise: { weight: 60, label: 'Something you said you would do' },
   'review-due': { weight: 55, label: 'A decision is due for a second look' },
   'key-rejected': { weight: 65, label: 'A model key was refused' },
   'file-damaged': { weight: 80, label: 'A file could not be read' },

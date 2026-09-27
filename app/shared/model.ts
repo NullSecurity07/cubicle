@@ -159,7 +159,9 @@ export type AttentionKind = 'approval' | 'run-approval' | 'proposed-task' | 'pro
   // The daily backup that could not be made, until one is.
   | 'backup-failed'
   // The partner's: the morning note, a bet to check or to take on, and a plan's steps to put on the board.
-  | 'morning-note' | 'bet-check' | 'proposed-bet' | 'proposed-plan';
+  | 'morning-note' | 'bet-check' | 'proposed-bet' | 'proposed-plan'
+  // Something the founder said they would do, on its day and after.
+  | 'promise';
 export type Attention = {
   id: string; kind: AttentionKind; title: string; detail?: string; at: number; who?: string;
   roomId?: string; cardId?: string; taskId?: string; decisionId?: string; event?: ToolEvent; lapsed?: boolean;
