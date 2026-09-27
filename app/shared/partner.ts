@@ -97,10 +97,11 @@ export const MOST_STEPS = 40;
 const WEEKDAY = '(?:mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)(?:day|sday|nesday|rsday|urday)?';
 const MONTH = '(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*';
 // What makes a heading or a label a day of the plan: "Day 3", "Week 2", a weekday, "28 Sep", "Sep 28", or 2026-09-28.
-const DAYISH = new RegExp(`\\b(?:day|week|phase)\\s*\\d+\\b|\\b${WEEKDAY}\\b|\\b\\d{1,2}\\s+${MONTH}\\b|\\b${MONTH}\\s+\\d{1,2}\\b|\\b\\d{4}-\\d{2}-\\d{2}\\b`, 'i');
+const DAYISH = new RegExp(`\\b(?:days?|weeks?|phase)\\s*\\d+\\b|\\b${WEEKDAY}\\b|\\b\\d{1,2}\\s+${MONTH}\\b|\\b${MONTH}\\s+\\d{1,2}\\b|\\b\\d{4}-\\d{2}-\\d{2}\\b`, 'i');
 // One day as a plan writes it: "Day 3", "Week 2", "Mon", "Mon 28 Sep", "28 Sep", "Sep 28", 2026-09-28, each with an
-// optional "(28–29 Sep)" after it. A label is one day or a range of two ("Mon–Tue (28–29 Sep)", "Mon 28 Sep – Tue 29 Sep").
-const ONE_DAY = `(?:(?:day|week|phase)\\s*\\d+|${WEEKDAY}(?:\\s+\\d{1,2}(?:\\s+${MONTH})?)?|\\d{1,2}\\s+${MONTH}|${MONTH}\\s+\\d{1,2}|\\d{4}-\\d{2}-\\d{2})(?:\\s*\\([^)]{1,40}\\))?`;
+// optional "(28–29 Sep)" after it. A label is one day or a range of two ("Mon–Tue (28–29 Sep)", "Mon 28 Sep – Tue 29 Sep",
+// "Day 1–2", "Days 4-5").
+const ONE_DAY = `(?:(?:days?|weeks?|phase)\\s*\\d+(?:\\s*[–—-]\\s*\\d+(?!\\s*(?:[a-z]|\\d)))?|${WEEKDAY}(?:\\s+\\d{1,2}(?:\\s+${MONTH})?)?|\\d{1,2}\\s+${MONTH}|${MONTH}\\s+\\d{1,2}|\\d{4}-\\d{2}-\\d{2})(?:\\s*\\([^)]{1,40}\\))?`;
 const LABEL = `${ONE_DAY}(?:\\s*(?:[–—-]|to)\\s*${ONE_DAY})?`;
 // A day written at the front of a line, then a colon, or a dash with space after it: "Day 1: …", "Day 2 – …",
 // "**Mon–Tue (28–29 Sep):** …", "Mon 28 Sep – Tue 29 Sep: …".
@@ -151,11 +152,12 @@ export const stepText = (step: PlanStep) => (step.day && step.text.toLowerCase()
 // The day once, then the step, as the founder is asked about it and as a plan's steps are told apart.
 export const planStepLine = (step: PlanStep) => { const text = stepText(step); return (step.day ? `${step.day}: ${text}` : text).slice(0, 160); };
 export const TITLE_MOST = 80;
-// A task's title on the board. A label that names a calendar day goes, since the card shows its due date; one that
-// names none ("Day 3", "Mon") stays, since nothing else says it. A long step is cut at a word, never mid-word.
-export const planTaskTitle = (step: PlanStep) => {
+// A task's title on the board. A label that names a day goes, since the card shows its due date; one that names
+// none ("Mon", or "Day 3" with no start to count from) stays, since nothing else says it. A long step is cut at a
+// word, never mid-word. `start` is the day the plan starts, from which "Day 3" is counted.
+export const planTaskTitle = (step: PlanStep, start?: string) => {
   const text = stepText(step);
-  const whole = step.day && !dueOf(step.day, '2026-01-01') ? `${step.day}: ${text}` : text;
+  const whole = step.day && !dueOf(step.day, '2026-01-01', start) ? `${step.day}: ${text}` : text;
   return cutAtWord(whole, TITLE_MOST);
 };
 export const cutAtWord = (text: string, most: number) => {
@@ -167,11 +169,19 @@ export const cutAtWord = (text: string, most: number) => {
 
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 const pad = (value: number) => String(value).padStart(2, '0');
-// The first calendar day a label names, as YYYY-MM-DD, or undefined when it names none ("Day 3", "Mon"). The year is
-// the one that puts the day nearest `today`, so a plan written in late December for "4 Jan" lands in the new year.
-export function dueOf(label: string, today: string): string | undefined {
+// The first calendar day a label names, as YYYY-MM-DD, or undefined when it names none ("Mon"). The year is the one
+// that puts the day nearest `today`, so a plan written in late December for "4 Jan" lands in the new year. With the
+// day the plan starts, "Day 3" is two days after it and "Week 2" seven, and a range counts from its first day; a
+// calendar day in the label still wins.
+export function dueOf(label: string, today: string, start?: string): string | undefined {
   const iso = /\b(\d{4})-(\d{2})-(\d{2})\b/.exec(label);
   if (iso) return iso[0];
+  const counted = start ? /^\s*(days?|weeks?)\s*(\d+)/i.exec(label) : null;
+  if (counted && !/\b\d{1,2}\s+[a-z]{3}|\b[a-z]{3}\s+\d{1,2}\b/i.test(label.slice(counted[0].length).replace(/^\s*[–—-]\s*\d+/, ''))) {
+    const first = new Date(`${start}T12:00:00`);
+    first.setDate(first.getDate() + (Number(counted[2]) - 1) * (/^w/i.test(counted[1]) ? 7 : 1));
+    if (!Number.isNaN(first.getTime())) return `${first.getFullYear()}-${pad(first.getMonth() + 1)}-${pad(first.getDate())}`;
+  }
   const dayMonth = /\b(\d{1,2})(?:\s*[–—-]\s*\d{1,2})?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/i.exec(label);
   const monthDay = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{1,2})\b/i.exec(label);
   // Whichever form comes first names the day: "Sep 28 – 2 Oct" is Sep 28, "28–29 Sep" the 28th.
