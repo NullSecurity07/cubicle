@@ -90,7 +90,7 @@ const halfUnit = (value: number) => (value === 0 ? 0.5 : 0.5 * 10 ** (Math.floor
 // named as unsourced, so an invented figure does not become "sourced" by having been said once already. Anything that
 // squeezes a past message into one line (the morning note's talk, a colleague's excerpt) runs it through here first,
 // while the flag line still starts a line of its own.
-const FLAG_LINE = /^(?:Unconfirmed: this reply claims|Unsourced figures: ).*$/gm;
+const FLAG_LINE = /^(?:Unconfirmed: this reply claims|Unconfirmed: the verdict was not written|Unsourced figures: ).*$/gm;
 export function stripFlagged(source: string): string {
   const named = [...source.matchAll(/^Unsourced figures: (.+?) \(not found/gm)].flatMap((match) => match[1].split(', '));
   // Taken out whole only: a flagged "2%" must not eat the end of a real "32%".
@@ -343,11 +343,35 @@ export function withoutFlags(text: string, flags: string[] = []): string {
   return flags.reduce((kept, flag) => kept.replace(`\n\n${flag}`, '').replace(flag, ''), text).trimEnd();
 }
 
+// A team doc's verdict write that the guard refused or held ends its result with these words, and one that stood with
+// VERDICT_WRITTEN; the claim net reads them back. A live judge whose write was held gave "WEAK ... Score 5/10" in chat
+// anyway while the doc said "Not assessed", and never told the founder why.
+export const verdictRefused = (reason: string, outcomes: string[]) =>
+  `Tell the founder the verdict was not written because ${reason}. Give no verdict word (${outcomes.join(', ')}) and no score in chat until it is written.`;
+export const VERDICT_WRITTEN = 'The verdict is written.';
+const REFUSED = /the verdict was not written because (.+?)\. Give no verdict word \(([^)]*)\) and no score in chat/;
+// A score as a verdict gives one: "Score: 5", "5/10", "8 out of 10".
+const SCORE = /\bscore\b\W{0,4}\d|\b\d+(?:\.\d+)?\s*(?:\/|out of)\s*\d+\b/i;
+export function verdictUnwritten(reply: string, receipts: Receipt[]): string | null {
+  let last: RegExpExecArray | null = null;
+  for (const receipt of receipts) {
+    const refused = REFUSED.exec(receipt.result ?? '');
+    if (refused) last = refused;
+    else if (receipt.ok && (receipt.result ?? '').includes(VERDICT_WRITTEN)) last = null;
+  }
+  if (!last) return null;
+  // The verdict words as written, capitals and all: "a weak signal" gives no verdict.
+  const words = last[2].split(', ').map((word) => new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '[\\s-]+')}\\b`));
+  return words.some((word) => word.test(reply)) && SCORE.test(reply) ? `Unconfirmed: the verdict was not written; ${last[1]}.` : null;
+}
+
 // The lines the founder sees under a reply that says more than this turn can back.
 export function checkReply(input: { reply: string; receipts: Receipt[]; sources: string[] }): string[] {
   const lines: string[] = [];
   const claims = unreceiptedClaims(input.reply, input.receipts);
   if (claims.length) lines.push(`Unconfirmed: this reply claims an action no tool confirmed (${claims.join(', ')}).`);
+  const verdict = verdictUnwritten(input.reply, input.receipts);
+  if (verdict) lines.push(verdict);
   const figures = unsourcedFigures(input.reply, input.sources);
   if (figures.length) lines.push(`Unsourced figures: ${figures.slice(0, 8).join(', ')} (not found in anything this turn read).`);
   return lines;

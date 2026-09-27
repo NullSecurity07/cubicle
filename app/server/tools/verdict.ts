@@ -1,5 +1,6 @@
 import type { DocRules, Room, Stage } from '../../shared/model.ts';
 import { shortDay } from '../clock.ts';
+import { VERDICT_WRITTEN, verdictRefused } from '../truth.ts';
 import { wiredDocIds } from '../prompt.ts';
 import { headingKey, headings } from './sections.ts';
 
@@ -226,7 +227,8 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
         held: byJudge,
         note: byJudge
           ? `Not written: the verdict waits because ${missing.join(', and ')}. The verdict section now says "Not assessed". `
-            + `${who.length ? `Ask ${who.join(' or ')} with ask_person, or tell the founder exactly that` : 'Tell the founder exactly that'}: nothing else in the document is wrong. Never write that section yourself.`
+            + `${who.length ? `Ask ${who.join(' or ')} with ask_person, or tell the founder exactly that` : 'Tell the founder exactly that'}: nothing else in the document is wrong. Never write that section yourself. `
+            + verdictRefused(missing.join(', and '), rules.outcomes ?? [])
           : `The verdict now says "Not assessed": ${missing.join(', and ')}.`,
       };
     }
@@ -237,9 +239,10 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
       const order = rules.outcomes ?? [];
       const over = (word && order.indexOf(word) > order.indexOf(cap.verdict)) || (score !== undefined && score > cap.score);
       if (over) {
-        throw new Error(`not written: ${cap.why}, so the verdict is at most ${cap.verdict} and the score at most ${cap.score} of 10. `
+        const why = `${cap.why}, so the verdict is at most ${cap.verdict} and the score at most ${cap.score} of 10`;
+        throw new Error(`not written: ${why}. `
           + `This one says ${[word, score !== undefined ? `${score} of 10` : ''].filter(Boolean).join(', ')}. ${countRead(sectionBody(text, cap.heading) ?? '', cap.line)} `
-          + 'Write it again within the cap, and say which section each fact comes from.');
+          + `Write it again within the cap, and say which section each fact comes from. ${verdictRefused(why, rules.outcomes ?? [])}`);
       }
     }
     return null;
@@ -253,15 +256,19 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
     const written = bodies(after, verdictAt).filter((one) => !was.has(one));
     const fresh = (written.length ? written.join('\n\n') : sectionBody(after, verdictAt) ?? '').split('\n').filter((line) => !STALE.test(line.trim())).join('\n').trim();
     after = withBody(after, verdictAt, fresh);
-    return (filled(fresh).length && judged(after, fresh, true)) || { text: after };
+    if (!filled(fresh).length) return { text: after };
+    // A verdict that stands says so, for the truth net: a refusal earlier in the turn no longer holds.
+    return judged(after, fresh, true) ?? { text: after, note: VERDICT_WRITTEN };
   }
 
   // A verdict written again word for word, or kept by a write of the whole doc, is checked as if new: a live judge
   // asked to rewrite hers over a section the founder had emptied wrote the same text, and "Fit: 8" stood over nothing.
   const touched = input.touches === WHOLE || (!!input.touches && headingKey(input.touches) === headingKey(verdictAt));
   if (touched && verdictBefore && filled(verdictBefore).length) {
-    const standing = judged(after, sectionBody(after, verdictAt) ?? '', !judge || writerId === judge.id);
+    const byJudge = !judge || writerId === judge.id;
+    const standing = judged(after, sectionBody(after, verdictAt) ?? '', byJudge);
     if (standing) return standing;
+    if (byJudge && !rules.sections.some(({ heading }) => changed(heading))) return { text: after, note: VERDICT_WRITTEN };
   }
 
   // A section the verdict rests on changed under a verdict that stands: the verdict says so, once per section.

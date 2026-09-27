@@ -479,6 +479,51 @@ describe('a team run with one section blank', () => {
   });
 });
 
+describe('the judge told her verdict was refused', () => {
+  const script = (steps: ({ name: string; args: unknown }[] | string)[]): ModelClient => ({
+    name: 'script', model: 's-1', maxPromptChars: Infinity, tools: true, limits: {},
+    async step(_messages, { onToken }): Promise<ModelTurn> {
+      const next = steps.shift() ?? 'done';
+      if (typeof next === 'string') { onToken(next); return { text: '', calls: [], usage: { input: 1, output: 1 } }; }
+      return { text: '', calls: next.map((call, index) => ({ id: `c${steps.length}-${index}`, name: call.name, args: JSON.stringify(call.args) })), usage: { input: 1, output: 1 } };
+    },
+  });
+
+  it('is asked in the refusal to repeat its reason and give no verdict in chat', async () => {
+    const { as, fill } = await setup();
+    await fill(['4. Founder-market fit']);
+    const held = await as('verdict')('replace_section', { heading: '5. Verdict', text: 'WEAK\n\nScore: 4/10' });
+    expect(held.text).toContain('Tell the founder the verdict was not written because Rohan has not written "4. Founder-market fit" yet. Give no verdict word (WEAK, PIVOT REQUIRED, STRONG) and no score in chat until it is written.');
+    const capped = await setup();
+    await capped.fill();
+    await capped.as('pain')('replace_section', { heading: '3. Is the pain real?', text: 'Vitamin — painkiller — hair on fire: painkiller\n\nReal customer conversations done (of ten to twenty): 0' });
+    const thrown = await capped.as('verdict')('replace_section', { heading: '5. Verdict', text: 'STRONG\n\nScore: 9/10' });
+    expect(thrown.ok).toBe(false);
+    expect(thrown.text).toMatch(/Tell the founder the verdict was not written because no customer conversations are recorded in "3\. Is the pain real\?", so the verdict is at most WEAK and the score at most 5 of 10\. Give no verdict word/);
+  });
+
+  it('gets the truth net\'s line under a chat reply that states the refused verdict anyway', async () => {
+    const { stage, store, fill } = await setup();
+    await fill(['4. Founder-market fit']);
+    const run = (reply: string, ...writes: string[]) => runTurn({
+      messages: [{ role: 'user', content: 'Rewrite your verdict now.' }], tools: docTools, usage: createUsage(null),
+      clients: [script([...writes.map((text) => [{ name: 'replace_section', args: { doc: 'Evaluation', heading: '5. Verdict', text } }]), reply])],
+      context: { stage, roomId: 'verdict', store, granted: new Map() }, events: { token: () => {}, tool: () => {} },
+    });
+    const said = await run('WEAK\n\nScore: 5/10 (Assumption: 1, Flaws: 3, Pain: 1, Fit: 8, Why Now: 2)', 'WEAK\n\nScore: 5/10');
+    expect(said.flags).toContain('Unconfirmed: the verdict was not written; Rohan has not written "4. Founder-market fit" yet.');
+    expect(said.text).toMatch(/Unconfirmed: the verdict was not written; Rohan has not written "4\. Founder-market fit" yet\.$/);
+    // The reason relayed, no verdict given: nothing to flag.
+    const relayed = await run('No verdict yet: Rohan has not written "4. Founder-market fit". Ask him, and I will judge it.', 'WEAK\n\nScore: 5/10');
+    expect(relayed.flags ?? []).toEqual([]);
+    // Once the section is written, the verdict stands and the reply may say it.
+    await store.replaceDoc('evaluation', (await store.readDoc('evaluation')).replace('In one sentence:', 'In one sentence: filed VAT by hand for years.'));
+    const stood = await run('WEAK\n\nScore: 4/10', 'WEAK\n\nScore: 4/10');
+    expect(stood.tools[0].result).toContain('The verdict is written.');
+    expect(stood.flags ?? []).toEqual([]);
+  });
+});
+
 describe('the judge asking a colleague about their empty section', () => {
   // Priya on a script: ask Rohan about his empty section, then write the verdict. Rohan answers on his own script.
   async function run(question: string, ...answers: string[]) {

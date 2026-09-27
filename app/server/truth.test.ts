@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PARTNER_STANCE, STANCE } from '../shared/model.ts';
-import { checkReply, figureCheck, proseToolCall, turnSources, unreceiptedClaims, unsourcedFigures } from './truth.ts';
+import { checkReply, figureCheck, proseToolCall, stripFlagged, turnSources, unreceiptedClaims, unsourcedFigures, verdictRefused, VERDICT_WRITTEN } from './truth.ts';
 
 const wrote = { name: 'write_doc', ok: true };
 const failedWrite = { name: 'write_doc', ok: false };
@@ -321,5 +321,33 @@ describe('what a turn counts as its sources', () => {
   it('keeps a document paragraph that happens to start like a rule', () => {
     const doc = [{ role: 'system', content: 'You are Sam, Partner. Brief.\n\n## Doc: Notes\nFirst line.\n\nToday is launch day and we have 140 customers.\n\nYou are paying $300 a month.' }];
     expect(unsourcedFigures('We have 140 customers and pay $300.', turnSources(doc))).toEqual([]);
+  });
+});
+
+// A judge whose verdict write was refused, and who then gives the verdict in chat anyway: the doc says "Not assessed",
+// the chat said "WEAK ... Score 5/10 ... Fit: 8", and nothing told the founder the two disagree.
+describe('a verdict stated without a written one', () => {
+  const OUTCOMES = ['WEAK', 'PIVOT REQUIRED', 'STRONG'];
+  const refused = { name: 'replace_section', ok: true, result: `Not written: the verdict waits. ${verdictRefused('Rohan has not written "4. Founder-market fit" yet', OUTCOMES)}` };
+  const LINE = 'Unconfirmed: the verdict was not written; Rohan has not written "4. Founder-market fit" yet.';
+
+  it('gets a line when the reply gives a verdict word and a score after a refused write', () => {
+    expect(checkReply({ reply: 'WEAK. Score: 5/10 (Assumption: 1, Flaws: 3, Pain: 1, Fit: 8, Why Now: 2).', receipts: [refused], sources: [] })).toContain(LINE);
+    // Refused by a thrown error counts the same.
+    const thrown = { name: 'write_doc', ok: false, result: `Failed: not written: the cap. ${verdictRefused('no customer conversations are recorded, so the verdict is at most WEAK and the score at most 5 of 10', OUTCOMES)}` };
+    expect(checkReply({ reply: '**STRONG**, 8 out of 10.', receipts: [thrown], sources: [] }))
+      .toContain('Unconfirmed: the verdict was not written; no customer conversations are recorded, so the verdict is at most WEAK and the score at most 5 of 10.');
+  });
+
+  it('says nothing when the reply relays the reason, gives no score, or a later write stood', () => {
+    expect(checkReply({ reply: 'No verdict yet: Rohan has not written "4. Founder-market fit". I asked him.', receipts: [refused], sources: [] })).not.toContain(LINE);
+    expect(checkReply({ reply: 'It leans WEAK, but I cannot score it until Rohan writes his section.', receipts: [refused], sources: [] })).not.toContain(LINE);
+    const stood = { name: 'replace_section', ok: true, result: `Replaced the section "5. Verdict". ${VERDICT_WRITTEN}` };
+    expect(checkReply({ reply: 'WEAK. Score: 3/10.', receipts: [refused, stood], sources: [] })).toEqual([]);
+    expect(checkReply({ reply: 'WEAK. Score: 3/10.', receipts: [], sources: [] })).toEqual([]);
+  });
+
+  it('is taken out of a past reply before it counts as a source', () => {
+    expect(stripFlagged(`WEAK.\n\n${LINE}`)).toBe('WEAK.\n\n');
   });
 });
