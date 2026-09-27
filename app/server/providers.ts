@@ -73,18 +73,36 @@ export function retryAfter(error: unknown): number | undefined {
 }
 
 const MALFORMED_CALL = /failed_generation|failed to call a function|tool call validation|failed to parse tool/i;
-// Why a stream broke off, in words the founder can read, for the line under a reply that stops short.
-export function plainBreak(message: string): string {
+const REJECTED = /INVALID_ARGUMENT|invalid argument|\b400\b.*invalid/i;
+const TOO_LARGE = /\b413\b|request too large|payload too large|context length|maximum context/i;
+// A provider's own text with what must never reach the founder taken out: JSON bodies, and account, organisation and
+// request ids ("org_01m24…", "req_…", "in organization `…`").
+export function scrubProvider(message: string): string {
+  return message
+    .replace(/\[?\{[\s\S]*\}\]?/g, '')
+    .replace(/\s*in organi[sz]ation\s+`[^`]*`/gi, '')
+    .replace(/\b(?:org|req|request|proj|user|acct)[_-][\w-]+/gi, '')
+    .replace(/`[^`]*`/g, 'the model')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+// Why a model could not answer or a stream broke off, in words the founder can read: for the notice when another
+// model steps in and the line under a reply that stops short. `provider` names who, when the words need it.
+export function plainBreak(message: string, provider?: string): string {
   if (MALFORMED_CALL.test(message)) return 'its tool call came out malformed';
   if (/no first word/i.test(message)) return message;
+  if (TOO_LARGE.test(message)) return `the prompt is too large for ${provider ?? 'this model'}`;
+  if (REJECTED.test(message)) return 'the model rejected the request';
   if (/timed? ?out|timeout/i.test(message)) return 'it stopped answering (timed out)';
-  return (message || 'the stream broke off').slice(0, 160);
+  return scrubProvider(message || 'the stream broke off').slice(0, 160) || 'it failed';
 }
 
 // What one model's failure was, in a few plain words: never the provider's own text, which means nothing to a founder.
 function failureWords(message: string): string {
   if (MALFORMED_CALL.test(message)) return 'tool call came out malformed';
   if (/no first word/i.test(message)) return 'said nothing for too long';
+  if (TOO_LARGE.test(message) || /prompt too large/i.test(message)) return 'prompt too large';
+  if (REJECTED.test(message)) return 'rejected the request';
   if (/\b429\b|too many requests|rate limit|already answering/i.test(message)) return 'busy';
   if (/timed? ?out|timeout/i.test(message)) return 'timed out';
   if (/\b40[13]\b|unauthori[sz]ed|forbidden|invalid api key/i.test(message)) return 'refused the key';
@@ -106,6 +124,30 @@ export function plainFailure(message: string): string {
   }).join(', ');
 }
 
+// The conversation cut to fit `cap` characters: the system prompt and everything from the founder's latest message
+// on stay whole, and the oldest history goes first, never leaving a tool result without the call it answers. Null when
+// even that much does not fit.
+export function fitHistory(messages: ModelMessage[], cap: number): ModelMessage[] | null {
+  if (promptSize(messages) <= cap) return messages;
+  const head = messages[0]?.role === 'system' ? 1 : 0;
+  const latest = Math.max(head, messages.findLastIndex((message) => message.role === 'user'));
+  const top = messages.slice(0, head);
+  const tail = messages.slice(latest);
+  let middle = messages.slice(head, latest);
+  const fits = () => promptSize([...top, ...middle, ...tail]) <= cap;
+  while (middle.length && !fits()) {
+    middle = middle.slice(1);
+    while (middle[0]?.role === 'tool') middle = middle.slice(1);
+  }
+  return fits() ? [...top, ...middle, ...tail] : null;
+}
+
+// A small model on this machine (or one kept for side calls) never takes a turn with tools while a hosted model is
+// there: a local 7B made six calls under one id and broke the room for the week. With no hosted model at all it
+// still answers, since it is all there is.
+const smallFor = (client: ModelClient, options: StepOptions, clients: ModelClient[]) =>
+  !!options.tools?.length && (!!client.local || !!client.side) && clients.some((other) => !other.local && !other.side);
+
 // Tries each client in order. Moves on when one throws before saying anything, answers with nothing,
 // or cannot hold the prompt. A reply that breaks off mid-stream moves on too when the caller can take its words back
 // (`onRestart`): the next model answers from the start, and the broken words come back, marked as cut, only when no
@@ -115,14 +157,18 @@ export async function complete(
   // Asked right before a client is tried: a key whose breaker is open is passed over, as one too small would be.
   admit: (client: ModelClient) => boolean = () => true,
 ): Promise<Completion> {
-  const size = promptSize(messages);
+  // The tool definitions go to the model too, and count against what it can hold.
+  const toolChars = options.tools?.length ? JSON.stringify(wireTools(options.tools)).length : 0;
   const failures: string[] = [];
   // The longest reply that broke off part way, kept in case nobody does better; and what the window shows right now.
   let broken: Completion | undefined;
   let showing = '';
   for (const client of clients) {
-    if (size > client.maxPromptChars) { failures.push(`${client.name}: prompt too large`); continue; }
     if (options.tools?.length && !client.tools) { failures.push(`${client.name}: no tool support`); continue; }
+    if (smallFor(client, options, clients)) { failures.push(`${client.name}: kept off turns with tools`); continue; }
+    // A model that holds less gets the oldest history cut, not the whole turn refused.
+    let sent = fitHistory(messages, client.maxPromptChars - toolChars);
+    if (!sent) { failures.push(`${client.name}: prompt too large`); continue; }
     if (!admit(client)) { failures.push(`${client.name}: resting after failing several times in a row`); continue; }
     if (client.busy?.()) { failures.push(`${client.name}: already answering another request`); continue; }
     // Another model is really about to answer: the broken words go from the window first.
@@ -136,7 +182,7 @@ export async function complete(
     };
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       try {
-        const turn = await client.step(messages, { ...options, onToken });
+        const turn = await client.step(sent, { ...options, onToken });
         if (text.trim() || turn.calls.length) return { ...turn, text, client };
         failures.push(`${client.name}: empty reply`);
       } catch (error) {
@@ -151,6 +197,11 @@ export async function complete(
           failures.push(`${client.name}: ${message}`);
           if (!broken || text.length > broken.text.length) broken = { ...cut, reported: true };
           break;
+        }
+        // Too large after all (a provider counts in tokens, not characters): asked once more with the history cut harder.
+        if (attempt === 1 && ((error as { status?: number }).status === 413 || TOO_LARGE.test(message))) {
+          const smaller = fitHistory(sent, Math.floor(promptSize(sent) * 0.6));
+          if (smaller && smaller.length < sent.length) { sent = smaller; continue; }
         }
         // A per-minute limit that clears in a few seconds is worth waiting out once; anything longer goes to the next model.
         const wait = retryAfter(error);

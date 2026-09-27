@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { ToolEvent } from '../shared/model.ts';
-import { runTurn, SAY_SOMETHING } from './loop.ts';
+import { FALLBACK_REFUSAL, runTurn, SAY_SOMETHING } from './loop.ts';
 import { CALL_THE_TOOL, HELD_BACK } from './truth.ts';
 import type { ModelMessage } from './prompt.ts';
 import type { ModelClient, ModelTurn } from './providers.ts';
@@ -501,5 +501,55 @@ describe('runTurn, the truth net', () => {
     const { reply, notices } = await turn(client);
     expect(reply.text).toBe('The plan has three par\n\n(reply cut short: terminated)');
     expect(notices.join(' ')).not.toMatch(/length limit/);
+  });
+});
+
+describe('a turn whose model repeats a tool call id', () => {
+  it('gives every call a name of its own before it is run, shown or paired', async () => {
+    const store = createStore(await mkdtemp(join(tmpdir(), 'loop-')));
+    const shown: string[] = [];
+    let steps = 0;
+    let second: ModelMessage[] = [];
+    const qwen: ModelClient = {
+      ...scripted([]), name: 'gemini',
+      async step(messages, { onToken }) {
+        steps += 1;
+        if (steps === 1) return { text: '', calls: [0, 1, 2].map(() => ({ id: 'call_propose__0', name: 'list_files', args: '{}' })) };
+        second = messages;
+        onToken('Listed.');
+        return { text: '', calls: [] };
+      },
+    };
+    const result = await runTurn({
+      messages: [{ role: 'user', content: 'go' }], tools: fileTools, clients: [qwen], usage: createUsage(null),
+      context: { stage: await store.loadStage(), roomId: 'build', store, granted: new Map() },
+      events: { token: () => {}, tool: (event) => { if (event.ok !== undefined) shown.push(event.id); } },
+    });
+    expect(result.tools.map((tool) => tool.id)).toEqual(['call_propose__0', 'call_propose__0-1', 'call_propose__0-2']);
+    expect(shown).toEqual(result.tools.map((tool) => tool.id));
+    const asked = second.find((message) => message.role === 'assistant' && message.tool_calls)!;
+    expect(asked.role === 'assistant' && asked.tool_calls!.map((call) => call.id)).toEqual(result.tools.map((tool) => tool.id));
+    expect(second.filter((message) => message.role === 'tool').map((message) => message.role === 'tool' && message.tool_call_id)).toEqual(result.tools.map((tool) => tool.id));
+  });
+
+  it('lets a stand-in model make at most three tool calls in a turn', async () => {
+    const store = createStore(await mkdtemp(join(tmpdir(), 'loop-')));
+    let steps = 0;
+    const ollama: ModelClient = {
+      ...scripted([]), name: 'ollama', local: true,
+      async step(_messages, { onToken }) {
+        steps += 1;
+        if (steps === 1) return { text: '', calls: [0, 1, 2, 3, 4].map((n) => ({ id: `c${n}`, name: 'list_files', args: '{}' })) };
+        onToken('Done.');
+        return { text: '', calls: [] };
+      },
+    };
+    const result = await runTurn({
+      messages: [{ role: 'user', content: 'go' }], tools: fileTools, clients: [ollama], usage: createUsage(null),
+      context: { stage: await store.loadStage(), roomId: 'build', store, granted: new Map() },
+      events: { token: () => {}, tool: () => {} },
+    });
+    expect(result.tools.map((tool) => tool.ok)).toEqual([true, true, true, false, false]);
+    expect(result.tools[3].result).toBe(FALLBACK_REFUSAL);
   });
 });

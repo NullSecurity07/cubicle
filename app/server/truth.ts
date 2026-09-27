@@ -113,7 +113,8 @@ export function stripFlagged(source: string): string {
 // dollars, never a source for "2%" or "2x".
 type Kind = 'money' | 'share' | 'other';
 // `stamp`: a piece of a date or a time ("2026-09-26", "09:00"), which may match a figure but is never worked with.
-type Known = { value: number; digits: number; kind: Kind; stamp?: boolean };
+// `currency`: the sign money was written with, so "$29" is not taken as the source of "€29".
+type Known = { value: number; digits: number; kind: Kind; stamp?: boolean; currency?: string };
 // A figure in an input, taken whole: its currency, its number, its scale and whether a % or an x closes it.
 const TOKEN = new RegExp(String.raw`([$€£]\s?)?${AMOUNT}(?:\s?(k|mm|m|bn|b|thousand|million|billion)\b)?(\s?(?:%|percent\b)|(?:x|×)(?![\w]))?`, 'gi');
 const MONTHS = 'Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sept?(?:ember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?';
@@ -244,7 +245,8 @@ function otherFrom(a: Known, b: Known): number[] {
   return [a.value + b.value, Math.abs(a.value - b.value), a.value * b.value, ...ratios, (a.value * b.value) / 100];
 }
 
-export function figureCheck(reply: string, sources: string[]): { unsourced: string[]; proposals: string[] } {
+// `drifted`: money the reply gives in another currency than the sources hold it in ("€87" from "$29 × 3").
+export function figureCheck(reply: string, sources: string[]): { unsourced: string[]; proposals: string[]; drifted?: { label: string; source: string }[] } {
   const known: Known[] = [];
   for (const source of sources) {
     for (const match of stripFlagged(source).matchAll(TOKEN)) {
@@ -255,14 +257,17 @@ export function figureCheck(reply: string, sources: string[]): { unsourced: stri
       const end = match.index + match[0].length;
       const stamp = !match[1] && !closer && (/\d[-/:.]$/.test(text.slice(Math.max(0, match.index - 2), match.index)) || /^[-/:]\d/.test(text.slice(end, end + 2))
         || /^(?:19|20)\d\d$/.test(match[0].trim()) || MONTH_AFTER.test(text.slice(end, end + 12)) || MONTH_BEFORE.test(text.slice(Math.max(0, match.index - 12), match.index)));
-      known.push({ value: match[4] ? valueOf(match[2], match[3], match[4]) : raw, digits: exactness(raw), kind, ...(stamp ? { stamp } : {}) });
+      known.push({ value: match[4] ? valueOf(match[2], match[3], match[4]) : raw, digits: exactness(raw), kind, ...(stamp ? { stamp } : {}), ...(match[1] ? { currency: match[1].trim() } : {}) });
     }
   }
   const close = (value: number, target: number) => Math.abs(value - target) <= Math.abs(target) * 0.01 + 1e-9;
   // A worked-out figure has to agree to the last digit the reply gives, and never by more than 1%: 26.67 is $8,000 /
   // $300, but $8,005 is not $8k plus anything.
   const agrees = (result: number, target: number) => Math.abs(result - target) <= Math.min(Math.abs(target) * 0.01, halfUnit(target)) + 1e-9;
-  const found = (value: number, kind: Kind) => known.some((one) => !one.stamp && close(one.value, value) && exactness(value) <= one.digits && !clash(one.kind, kind));
+  // Money counts as found only in its own currency when one is asked for; a figure that is not money has none.
+  const same = (one: Known, currency?: string) => currency === undefined || one.kind !== 'money' || one.currency === currency;
+  const matching = (value: number, kind: Kind, currency?: string) => known.find((one) => !one.stamp && close(one.value, value) && exactness(value) <= one.digits && !clash(one.kind, kind) && same(one, currency));
+  const found = (value: number, kind: Kind, currency?: string) => !!matching(value, kind, currency);
   // One step of arithmetic on any two figures this turn read, or on one of them and a month count, that gives the
   // same kind of figure. Money comes from money plus or minus money, money times a count or a share, or money over a
   // count ($2k / 40 = $50 each); a count or a number of months from counts, or from one amount over another ($8,000 /
@@ -270,8 +275,9 @@ export function figureCheck(reply: string, sources: string[]): { unsourced: stri
   // emails less 1 reply never makes a price of $29. Dates and times are never worked with.
   // At least one of the two has to be written near the figure in the reply, and be known: a figure alone in its
   // sentence is never taken as worked out, because any two of a doc's figures make almost any number.
-  const derived = (value: number, kind: Kind, around: string) => {
-    const operands = [...new Map(known.filter((one) => !one.stamp).map((one) => [`${one.value}:${one.kind}`, one])).values()].slice(0, MAX_OPERANDS)
+  // Gives back false, or for money the currency its money operand was written in.
+  const derived = (value: number, kind: Kind, around: string, currency?: string): false | { currency?: string } => {
+    const operands = [...new Map(known.filter((one) => !one.stamp && same(one, currency)).map((one) => [`${one.value}:${one.kind}:${one.currency ?? ''}`, one])).values()].slice(0, MAX_OPERANDS)
       .concat(CONSTANTS.map((constant) => ({ value: constant, digits: 12, kind: 'other' as Kind })));
     const shown = [...around.matchAll(TOKEN)].map((match) => valueOf(match[2], match[3], match[4]));
     const starts = operands.filter((one) => shown.some((near) => close(near, one.value)));
@@ -281,17 +287,18 @@ export function figureCheck(reply: string, sources: string[]): { unsourced: stri
         const ratios = [a.value / b.value, b.value / a.value];
         if (kind === 'share') {
           if ((a.kind === 'money') !== (b.kind === 'money')) continue;
-          if (ratios.some((ratio) => agrees(ratio, value) || agrees(ratio * 100, value))) return true;
+          if (ratios.some((ratio) => agrees(ratio, value) || agrees(ratio * 100, value))) return {};
           continue;
         }
         const results = kind === 'money' ? moneyFrom(a, b) : otherFrom(a, b);
-        if (results.some((result) => Number.isFinite(result) && agrees(result, value))) return true;
+        if (results.some((result) => Number.isFinite(result) && agrees(result, value))) return { currency: (a.kind === 'money' ? a : b).currency };
       }
     }
     return false;
   };
   const unsourced: string[] = [];
   const proposals: string[] = [];
+  const drifted: { label: string; source: string }[] = [];
   const note = (list: string[], label: string) => { if (!unsourced.includes(label) && !proposals.includes(label)) list.push(label); };
   for (const match of reply.matchAll(FIGURE)) {
     const label = match[0].trim();
@@ -311,7 +318,18 @@ export function figureCheck(reply: string, sources: string[]): { unsourced: stri
     }
     // A figure may be quoted in its bare form too ("18" for "18 months"), so the unscaled number also counts.
     const bare = match[1] === undefined && match[4] === undefined ? valueOf(match[7] ?? match[11], match[8] ?? match[12]) : undefined;
-    if (found(value, kind) || (bare !== undefined && found(bare, kind)) || derived(value, kind, nearby(reply, match.index, match[0].length))) {
+    const around = nearby(reply, match.index, match[0].length);
+    // Money in its own currency first; the same amount found only in another currency is a changed currency, not a
+    // source: "$29/month" never backs "€87 / month".
+    const currency = kind === 'money' ? /^[$€£]/.exec(label)?.[0] : undefined;
+    if (currency && !found(value, kind, currency) && !derived(value, kind, around, currency)) {
+      const other = matching(value, kind)?.currency ?? (derived(value, kind, around) || {}).currency;
+      if (other && other !== currency) {
+        if (!drifted.some((one) => one.label === label)) drifted.push({ label, source: other });
+        continue;
+      }
+    }
+    if (found(value, kind) || (bare !== undefined && found(bare, kind)) || derived(value, kind, around)) {
       // Worked out once, it is known for the next figure in the reply ($1,960 a month, so $23,520 a year).
       known.push({ value, digits: 12, kind });
       continue;
@@ -323,7 +341,7 @@ export function figureCheck(reply: string, sources: string[]): { unsourced: stri
     if ((match[3] === undefined && match[6] === undefined) || Math.max(...ends) <= 10 || ends.every((end) => found(end, 'other'))) continue;
     note(proposed(reply, match.index) ? proposals : unsourced, match[0].trim());
   }
-  return { unsourced, proposals };
+  return { unsourced, proposals, ...(drifted.length ? { drifted } : {}) };
 }
 
 export const unsourcedFigures = (reply: string, sources: string[]): string[] => figureCheck(reply, sources).unsourced;
@@ -416,7 +434,8 @@ export function checkReply(input: { reply: string; receipts: Receipt[]; sources:
   if (claims.length) lines.push(`Unconfirmed: this reply claims an action no tool confirmed (${claims.join(', ')}).`);
   const verdict = verdictUnwritten(input.reply, input.receipts);
   if (verdict) lines.push(verdict);
-  const figures = unsourcedFigures(input.reply, input.sources);
+  const { unsourced: figures, drifted = [] } = figureCheck(input.reply, input.sources);
   if (figures.length) lines.push(`Unsourced figures: ${figures.slice(0, 8).join(', ')} (not found in anything this turn read).`);
+  if (drifted.length) lines.push(`Currency changed: ${drifted.slice(0, 8).map((one) => `${one.label} (source ${one.source})`).join(', ')}.`);
   return lines;
 }

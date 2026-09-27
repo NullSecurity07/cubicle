@@ -1,6 +1,7 @@
 import type { ToolEvent, Usage } from '../shared/model.ts';
 import type { ModelMessage } from './prompt.ts';
-import { complete, plainBreak, type Failure, type ModelClient } from './providers.ts';
+import { STRONG } from './partner/route.ts';
+import { complete, plainBreak, providerOf, type Failure, type ModelClient } from './providers.ts';
 import type { Answer } from './approvals.ts';
 import { limitWords } from './breaker.ts';
 import { resultCap } from './context/shrink.ts';
@@ -11,6 +12,10 @@ import { ANSWER_IN_WORDS, CALL_THE_TOOL, checkReply, HELD_BACK, proseToolCall, t
 import type { UsageBook } from './usage.ts';
 
 const MAX_STEPS = 8;
+// The most tool calls a stand-in model (one that answers because the first could not, or one on this machine) may
+// make in a turn: a local 7B that took over a partner turn called propose_bet seven times.
+export const FALLBACK_CALLS = 3;
+export const FALLBACK_REFUSAL = `A stand-in model may make at most ${FALLBACK_CALLS} tool calls in one turn. Do not call more; answer in words with what you have.`;
 // What the founder's receipt keeps of a result. The model is handed the whole of it: a five-page read, the last of
 // several searches and the error at the end of a long run all sit past this, and the shrinker at the door knows how
 // to make a long result small without throwing its end away.
@@ -84,11 +89,22 @@ export async function runTurn(input: {
   let nudged = false;
   let held = false;
   let summarised = false;
+  // Every tool call id this conversation already holds, so a model that repeats one ("call_propose__0" six times) gets
+  // its calls renamed before anything is paired, run, shown or saved under them. Providers reject a history with two.
+  const ids = new Set(input.messages.flatMap((message) => (message.role === 'assistant' && message.tool_calls ? message.tool_calls.map((call) => call.id) : message.role === 'tool' ? [message.tool_call_id] : [])));
+  const unique = (id: string) => {
+    let name = id || 'call';
+    for (let n = 1; ids.has(name); n += 1) name = `${id}-${n}`;
+    ids.add(name);
+    return name;
+  };
+  const primary = input.clients[0];
+  let standInCalls = 0;
 
   // When the model that should have answered could not, the founder hears which one stepped in and why.
   const onFailure = ({ client, error }: Failure) => {
     const status = (error as { status?: number }).status;
-    failed.push(`${client.name} could not answer (${status === 429 ? limitWords(error) : plainBreak(error.message || 'error').slice(0, 120)})`);
+    failed.push(`${client.name} could not answer (${status === 429 ? limitWords(error) : plainBreak(error.message || 'error', providerOf(client.name)).slice(0, 120)})`);
     // A 429 rests the key, five breakdowns in a row open its breaker; either way its siblings serve meanwhile.
     usage.failed(client.name, error);
   };
@@ -166,16 +182,21 @@ export async function runTurn(input: {
     }
     if (!turn.calls.length || signal?.aborted) break;
 
+    const calls = turn.calls.map((call) => ({ ...call, id: unique(call.id) }));
+    // A model on this machine, or a weaker one that stepped in for the first: a strong one stepping in keeps its room.
+    const standIn = !!turn.client.local || (turn.client !== primary && !STRONG.includes(providerOf(turn.client.name)));
     messages.push({
       role: 'assistant', content: turn.text,
-      tool_calls: turn.calls.map((call) => ({ id: call.id, type: 'function', function: { name: call.name, arguments: call.args || '{}' }, ...(call.extra === undefined ? {} : { extra_content: call.extra }) })),
+      tool_calls: calls.map((call) => ({ id: call.id, type: 'function', function: { name: call.name, arguments: call.args || '{}' }, ...(call.extra === undefined ? {} : { extra_content: call.extra }) })),
     });
-    for (const call of turn.calls) {
+    for (const call of calls) {
       let args: Record<string, unknown> = {};
       try { args = call.args.trim() ? JSON.parse(call.args) : {}; } catch { /* runTool reports it */ }
       const tool = tools.find((candidate) => candidate.name === call.name);
       let rawArgs = call.args;
       let refusal = tool?.ready?.() ?? null;
+      if (standIn && tool) refusal = refusal ?? (standInCalls >= FALLBACK_CALLS ? FALLBACK_REFUSAL : null);
+      if (standIn && tool && !refusal) standInCalls += 1;
       // The founder may have said yes in advance to calls that reach exactly this far. It only skips the asking.
       let approved = false;
       if (seams) {

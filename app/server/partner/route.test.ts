@@ -29,3 +29,15 @@ describe('the partner\'s model route', () => {
     expect(partnerRoute([client('groq'), client('gemini'), client('gemini#2')], createUsage(null), want).order.map((one) => one.name)).toEqual(['gemini', 'gemini#2', 'groq']);
   });
 });
+
+describe('the partner and a model on this machine', () => {
+  it('never routes the partner to a local or side model while a hosted one is set up', () => {
+    const { order } = partnerRoute([client('ollama', { local: true }), client('gemini'), client('groq-small', { side: true })], createUsage(null), want);
+    expect(order.map((one) => one.name)).toEqual(['gemini']);
+  });
+
+  it('keeps the local model when it is all there is', () => {
+    const { order } = partnerRoute([client('ollama', { local: true })], createUsage(null), want);
+    expect(order.map((one) => one.name)).toEqual(['ollama']);
+  });
+});

@@ -406,3 +406,13 @@ describe('a verdict stated without a written one', () => {
     expect(stripFlagged(`WEAK.\n\n${LINE}`)).toBe('WEAK.\n\n');
   });
 });
+
+describe('money in another currency than its source', () => {
+  it('flags "€87" worked out from "$29 × 3", as the journey wrote it', () => {
+    const sources = ['We charge $29/month and have 3 paying beta users.'];
+    const lines = checkReply({ reply: 'Revenue €29 × 3 ≈ €87 / month (≈ $95 / month).', receipts: [], sources });
+    expect(lines).toContain('Currency changed: €29 (source $), €87 (source $).');
+    expect(lines).toContain('Unsourced figures: $95 (not found in anything this turn read).');
+    expect(checkReply({ reply: 'Revenue $29 × 3 = $87 a month.', receipts: [], sources })).toEqual([]);
+  });
+});
