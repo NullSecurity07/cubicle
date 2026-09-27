@@ -392,6 +392,63 @@ describe('a second copy of a section', () => {
   });
 });
 
+describe('a verdict written again over a section emptied since', () => {
+  // The founder empties a section in the doc editor, which no guard sees; the judge is then asked to rewrite her verdict.
+  const STANDING = 'WEAK: the founder lived it, but no pain is proven (4).\n\nScore: 5/10';
+  async function standing() {
+    const all = await setup();
+    await all.fill();
+    expect((await all.as('verdict')('replace_section', { heading: '5. Verdict', text: STANDING })).ok).toBe(true);
+    const text = await all.doc();
+    await all.store.replaceDoc('evaluation', text.replace(sectionBody(text, '4. Founder-market fit')!, 'Lived it / unusual access / technical edge / contrarian insight / earned secret / none:\n\nIn one sentence:'));
+    return all;
+  }
+
+  it('is held when the judge writes the same text again, and says "not assessed"', async () => {
+    const { as, doc } = await standing();
+    const out = await as('verdict')('replace_section', { heading: '5. Verdict', text: STANDING });
+    expect(out.ok).toBe(true);
+    expect(out.text).toMatch(/^Not written: the verdict waits because Rohan has not written "4\. Founder-market fit" yet/);
+    expect(sectionBody(await doc(), '5. Verdict')).toMatch(/^Not assessed: 4\. Founder-market fit \(Rohan has not written it yet\)/);
+  });
+
+  it('is held on a whole-doc write that keeps the verdict, by the judge or anyone else', async () => {
+    const judge = await standing();
+    const out = await judge.as('verdict')('write_doc', { text: await judge.doc() });
+    expect(out.text).toMatch(/^Not written: the verdict waits because Rohan/);
+    expect(sectionBody(await judge.doc(), '5. Verdict')).toMatch(/^Not assessed: 4\. Founder-market fit/);
+    // A colleague's whole-doc write of their own section still goes in; the verdict under it becomes "not assessed".
+    const other = await standing();
+    const before = await other.doc();
+    const mine = await other.as('assumption')('write_doc', { text: before.replace('Cheapest way to test it: a landing page with a paid pre-order.', 'Cheapest way to test it: ten paid pre-orders.') });
+    expect(mine.ok).toBe(true);
+    expect(mine.text).toMatch(/^Wrote \d+ characters\. The verdict now says "Not assessed": Rohan has not written "4\. Founder-market fit" yet\./);
+    const after = await other.doc();
+    expect(after).toContain('ten paid pre-orders');
+    expect(sectionBody(after, '5. Verdict')).toMatch(/^Not assessed: 4\. Founder-market fit/);
+  });
+
+  it('is refused by the cap when the conversations were taken out since, though its text did not change', async () => {
+    const all = await setup();
+    await all.fill();
+    const strong = 'STRONG (1)(3)(4)\n\nScore: 8/10';
+    expect((await all.as('verdict')('replace_section', { heading: '5. Verdict', text: strong })).ok).toBe(true);
+    await all.store.replaceDoc('evaluation', (await all.doc()).replace('Real customer conversations done (of ten to twenty): 12', 'Real customer conversations done (of ten to twenty): 0'));
+    const out = await all.as('verdict')('replace_section', { heading: '5. Verdict', text: strong });
+    expect(out.ok).toBe(false);
+    expect(out.text).toMatch(/at most WEAK and the score at most 5 of 10\. This one says STRONG, 8 of 10/);
+  });
+
+  it('leaves a whole-doc write alone when every section is written', async () => {
+    const all = await setup();
+    await all.fill();
+    expect((await all.as('verdict')('replace_section', { heading: '5. Verdict', text: STANDING })).ok).toBe(true);
+    const out = await all.as('verdict')('write_doc', { text: await all.doc() });
+    expect(out).toMatchObject({ ok: true });
+    expect(sectionBody(await all.doc(), '5. Verdict')).toContain('WEAK: the founder lived it');
+  });
+});
+
 describe('a team run with one section blank', () => {
   it('ends with "not assessed" in the verdict, not the judge\'s own fill-in', async () => {
     const { stage, store, doc, fill } = await setup();

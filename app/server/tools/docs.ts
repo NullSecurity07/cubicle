@@ -7,7 +7,7 @@ import { addedTwice, replaceSection, rewriteLoss } from './sections.ts';
 import { text, type Tool, type ToolContext } from './registry.ts';
 import { shortDay } from '../clock.ts';
 import { HELD_BACK } from '../truth.ts';
-import { filled, guardWrite, sectionBody, unmarked } from './verdict.ts';
+import { filled, guardWrite, sectionBody, unmarked, WHOLE } from './verdict.ts';
 
 // A new doc card's size, and the gap kept round it: the same the window uses when it places one.
 const [WIDTH, HEIGHT, GAP] = [340, 300, 40];
@@ -86,13 +86,13 @@ async function rulesOf(stage: Stage, id: string): Promise<DocRules | undefined> 
 
 // Every write goes through here. A team's shared doc carries rules for whose each section is and when its verdict may
 // stand, so what is saved may be the writer's words with a stale mark or a "not assessed" verdict put in.
-async function save(context: ToolContext, id: string, before: string, after: string, done: string) {
+async function save(context: ToolContext, id: string, before: string, after: string, done: string, touches?: string | typeof WHOLE) {
   const rules = await rulesOf(context.stage, id);
   // Only a team doc's own sections are kept to one copy, where a second would slip past the checks; a plain doc such
   // as a running log repeats "## Monday" on purpose.
   const twice = rules ? addedTwice(before, after, [...rules.sections, rules.verdict].map((one) => one.heading)) : null;
   if (twice) throw new Error(`not written: "${twice}" is already a section of this document; change it with replace_section instead of adding it again.`);
-  const guarded = rules ? guardWrite({ rules, stage: context.stage, docId: id, writerId: context.roomId, before, after, now: Date.now() }) : { text: after };
+  const guarded = rules ? guardWrite({ rules, stage: context.stage, docId: id, writerId: context.roomId, before, after, now: Date.now(), touches }) : { text: after };
   await context.store.replaceDoc(id, guarded.text);
   const said = guarded.held ? guarded.note! : [done, guarded.note].filter(Boolean).join(' ');
   return { text: said, effect: { kind: 'doc-changed' as const, id } };
@@ -203,7 +203,7 @@ export const docTools: Tool[] = [
         const loss = rewriteLoss(before, body);
         if (loss) throw new Error(`not written: this would replace the whole document, and ${loss}. Change one section with replace_section, or add with append_doc; the rest is a colleague's or the founder's work.`);
       }
-      return save(context, id, before, body, `Wrote ${body.length} characters.`);
+      return save(context, id, before, body, `Wrote ${body.length} characters.`, WHOLE);
     },
   },
   {
@@ -224,7 +224,7 @@ export const docTools: Tool[] = [
       const before = await context.store.readDoc(id);
       const swapped = replaceSection(before, heading, text(args, 'text'));
       if ('error' in swapped) throw new Error(swapped.error);
-      return save(context, id, before, swapped.text, `Replaced the section "${heading.replace(/^#+\s*/, '').trim()}".`);
+      return save(context, id, before, swapped.text, `Replaced the section "${heading.replace(/^#+\s*/, '').trim()}".`, heading);
     },
   },
   {
