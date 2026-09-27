@@ -412,8 +412,7 @@ export const verdictRefused = (reason: string, outcomes: string[]) =>
   `Tell the founder the verdict was not written because ${reason}. Give no verdict word (${outcomes.join(', ')}) and no score in chat until it is written.`;
 export const VERDICT_WRITTEN = 'The verdict is written.';
 const REFUSED = /the verdict was not written because (.+?)\. Give no verdict word \(([^)]*)\) and no score in chat/;
-// A score as a verdict gives one: "Score: 5", "5/10", "8 out of 10"; "0 out of 20 interviews" is a count.
-const SCORE = /\bscore\b\W{0,4}\d|\b\d+(?:\.\d+)?\s*(?:\/|out of)\s*10\b/i;
+// After a refused write, any verdict word in the reply reads as the verdict, with or without a score ("it leans WEAK").
 export function verdictUnwritten(reply: string, receipts: Receipt[]): string | null {
   let last: RegExpExecArray | null = null;
   for (const receipt of receipts) {
@@ -424,7 +423,7 @@ export function verdictUnwritten(reply: string, receipts: Receipt[]): string | n
   if (!last) return null;
   // The verdict words as written, capitals and all: "a weak signal" gives no verdict.
   const words = last[2].split(', ').map((word) => new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '[\\s-]+')}\\b`));
-  return words.some((word) => word.test(reply)) && SCORE.test(reply) ? `Unconfirmed: the verdict was not written; ${last[1]}.` : null;
+  return words.some((word) => word.test(reply)) ? `Unconfirmed: the verdict was not written; ${last[1]}.` : null;
 }
 
 // The lines the founder sees under a reply that says more than this turn can back.
