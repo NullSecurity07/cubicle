@@ -221,4 +221,7 @@ export async function betsAttention(bets: Bet[], stage: Stage, workspace: string
   return found;
 }
 
+// What the partner posts in their own room on a bet's check day, with the number as it was read in code.
+export const checkLine = (bet: Bet, reading: Reading) => `**Check the bet:** ${bare(bet.what)}. The target was ${bet.target} by ${bet.checkDate}; now ${reading.said}. Did it work? Say so here, or in Needs you.`;
+
 export const closedLine = (bet: Bet) => `Closed "${bet.what}": it ${VERDICT_WORDS[bet.result!.verdict]}; ${bet.metric} was ${bet.result!.value ?? 'unread'} against ${bet.target}.`;

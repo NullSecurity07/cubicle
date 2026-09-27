@@ -4,7 +4,7 @@ import { bare, companyLine, isPlanDoc, SHARED_RECORD, parsePlan, PARTNER_CHANNEL
 import { localDay } from '../clock.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
 import { leadsFor } from '../leads/store.ts';
-import { askedInstead, betDue, betsAttention, betsBook, cannotLose, closedLine, metricChoices, missingMetric, readMetric, type BetsBook } from '../partner/bets.ts';
+import { askedInstead, betDue, betsAttention, betsBook, cannotLose, checkLine, closedLine, metricChoices, missingMetric, readMetric, type BetsBook } from '../partner/bets.ts';
 import { companyDocOf, ensureCompany, sectionText, syncDecisions, writeBets } from '../partner/company.ts';
 import { hub } from '../events.ts';
 import { saysSomething } from '../missions.ts';
@@ -373,14 +373,24 @@ export function createPartner(options: PartnerOptions = {}) {
     };
     const offReply = deps.seams.on('turn:reply', onReply);
 
-    // Which bets were due at the last look, so a bet whose day has just come is said once, not every half minute.
-    let due: Set<string> | null = null;
+    // A bet whose day has come is posted once in the partner's room with its number read from the card, and said to
+    // the founder once; which ones were posted is kept, so a restart does not post them again. Never beside a turn of
+    // the partner's own: it waits for the next tick.
     async function checkBets() {
       const today = localDay(now());
-      const list = (await book.list()).filter((bet) => betDue(bet, today));
-      const fresh = due ? list.filter((bet) => !due!.has(bet.id)) : [];
-      due = new Set(list.map((bet) => bet.id));
+      const posted = new Set((await state.read()).betChecks ?? []);
+      const fresh = (await book.list()).filter((bet) => betDue(bet, today) && !posted.has(bet.id));
       if (!fresh.length) return;
+      const stage = await deps.store.loadStage();
+      const partner = partnerOf(stage);
+      if (partner && deps.busy.has(partner.id)) return;
+      if (partner) {
+        for (const bet of fresh) {
+          const reading = await readMetric(deps.workspace, stage, bet.metric);
+          await deps.store.appendChat(partner.id, { id: newMessageId(), role: 'assistant', text: checkLine(bet, reading), at: now() });
+        }
+      }
+      await state.change((draft) => { draft.betChecks = [...(draft.betChecks ?? []), ...fresh.map((bet) => bet.id)].slice(-200); });
       await deps.attention.refresh().catch(() => {});
       deps.notify?.('A bet is due for a check', fresh[0].what);
     }

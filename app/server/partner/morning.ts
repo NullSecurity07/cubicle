@@ -8,7 +8,7 @@ import { sectionBody, filled, verdictOf } from '../tools/verdict.ts';
 import { checkReply, FLAG_LINE, stripFlagged, turnSources } from '../truth.ts';
 import { gatherMonth } from '../slices/month.ts';
 import { cardOf } from './bets.ts';
-import { sectionText } from './company.ts';
+import { learnedSection, sectionText } from './company.ts';
 import { runwayFix } from './keep.ts';
 import type { PartnerState } from './state.ts';
 
@@ -45,6 +45,7 @@ export const MORNING_ASK = 'Nobody asked you for this. It is your own daily look
   + 'A move that repeats a plan step or a board task word for word is no move, unless it says why it is today\'s. '
   + 'Do not restate the Company document or the brief: the founder wrote it and knows it. '
   + 'Use only these facts: name the number or the line each move rests on, and never invent one. '
+  + 'When a move rests on what a closed bet taught, cite its What we learned line. '
   + 'The risk is the biggest contradiction or risk across the rooms today (a verdict against the plan, a flagged figure, two numbers that disagree), '
   + 'and it names the room, the document or the number it rests on. '
   + 'Reply in exactly this shape and nothing else, each line under thirty words, with no "My call" line here:\n'
@@ -165,6 +166,7 @@ export async function gatherMorning(from: MorningSources): Promise<string> {
     `Company Numbers:\n${got.numbers || '- none written'}`,
     'On the board for today:', ...(got.planned.length ? got.planned.slice(0, 12) : ['- nothing dated today']),
     'Bets:', ...(got.open.length || got.closed.length ? [...got.open, ...got.closed].map(betLine) : ['- none on record']),
+    ...(got.closed.length ? ['What we learned (closed bets):', ...learnedSection(got.closed)] : []),
   ].join('\n');
 }
 

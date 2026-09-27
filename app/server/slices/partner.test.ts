@@ -388,6 +388,48 @@ describe('the partner slice: the bets ledger', () => {
     await part.close!();
   });
 
+  // Program 6: a bet ran end to end only on paper. On its day the check is posted in the partner's room with the
+  // number read in code, once, even across a restart; a close lands in Bets and What we learned, and the partner's
+  // standing facts and morning note carry the lesson.
+  it('posts the check with its number once on the day, and a close reaches Bets, What we learned, the standing facts and the morning note', async () => {
+    let clock = new Date('2026-09-26T10:00').getTime();
+    const asked: string[] = [];
+    const options: PartnerOptions = { now: () => clock, ask: async (messages) => { asked.push(String(messages.at(-1)!.content)); return SHAPED; } };
+    const { deps, part, workspace } = await installed({ json: () => {} }, options);
+    await mkdir(join(workspace, 'metrics'), { recursive: true });
+    await writeFile(join(workspace, 'metrics', 'metrics-1.json'), JSON.stringify({ updatedAt: 0, metrics: [{ key: 'signups', label: 'Signups', unit: '', better: 'up', points: [{ at: '2026-09-20', value: 4, from: 'founder' }] }] }));
+    const stage = await deps.store.loadStage();
+    await deps.store.saveStage({ ...stage, rooms: [...stage.rooms, room('p1', 'Sam', { partner: true })], cards: [{ id: 'metrics-1', kind: 'metrics', x: 0, y: 0, w: 1, h: 1 }] });
+    await part.tools!.find((one) => one.name === 'propose_bet')!.run({ what: 'Post in r/SaaS', hypothesis: 'founders sign up', metric: 'signups', target: 20, check_date: '2026-10-03' }, { stage: await deps.store.loadStage(), roomId: 'marketing', store: deps.store, granted: new Map() } as never);
+    const id = (await deps.attention.list()).find((one) => one.kind === 'proposed-bet')!.id.split(':')[1];
+    deps.body = async () => ({ accept: true });
+    await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/bets/${id}`);
+    const checks = async () => (await deps.store.readChat('p1')).filter((one) => one.text.startsWith('**Check the bet:**'));
+    await part.tick!();
+    expect(await checks()).toHaveLength(0);
+
+    clock = new Date('2026-10-03T10:00').getTime();
+    await part.tick!();
+    await part.tick!();
+    expect((await checks()).map((one) => one.text)).toEqual(['**Check the bet:** Post in r/SaaS. The target was 20 by 2026-10-03; now Signups is 4 (2026-09-20), read from the Metrics card. Did it work? Say so here, or in Needs you.']);
+    await part.close!();
+    const again = (await createPartner(options)(deps)) as Installed;
+    await again.tick!();
+    expect(await checks()).toHaveLength(1);
+
+    deps.body = async () => ({ verdict: 'did-not', note: 'only 4 came' });
+    await again.route!({ method: 'POST' } as never, {} as never, `/api/partner/bets/${id}/close`);
+    const company = await deps.store.readDoc(companyDocOf(await deps.store.loadStage())!.id);
+    const LEARNED = '- 2026-10-03: Post in r/SaaS did not work; "signups" was 4 against 20. only 4 came.';
+    expect(company).toContain('- Did not work: Post in r/SaaS. Measured by "signups" on the Metrics card: was 4 against 20 (checked 2026-10-03). only 4 came.');
+    expect(company).toContain(`## What we learned\n\n${LEARNED}`);
+    const system = (await deps.seams.run('turn:before', { roomId: 'p1', source: 'chat', query: 'what now?', messages: [{ role: 'system', content: 'You are Sam.' }] })).messages[0].content as string;
+    expect(system).toContain(`What we learned (closed bets; cite the line when advice rests on it):\n${LEARNED}`);
+    await again.route!({ method: 'POST' } as never, {} as never, '/api/partner/morning');
+    expect(asked.at(-1)).toContain(`What we learned (closed bets):\n${LEARNED}`);
+    await again.close!();
+  });
+
   it('lets the founder say how a due bet went from Needs you', async () => {
     const answers: [number, unknown][] = [];
     const { deps, part } = await installed({ json: (_res, status, body) => { answers.push([status, body]); } }, { now: () => new Date('2026-10-05T10:00').getTime(), ask: async () => SHAPED });

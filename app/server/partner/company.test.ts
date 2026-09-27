@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { Decision } from '../../shared/model.ts';
 import type { Bet } from '../../shared/partner.ts';
 import { createStore } from '../store.ts';
-import { addToSection, betsSection, companyDocOf, decisionLine, ensureCompany, hasLine, placeOf, RESTORE_FOR, sectionText, syncDecisions, withSections, writeBets } from './company.ts';
+import { addToSection, betsSection, learnedLine, learnedSection, companyDocOf, decisionLine, ensureCompany, hasLine, placeOf, RESTORE_FOR, sectionText, syncDecisions, withSections, writeBets } from './company.ts';
 
 const decided = (id: string, title: string, chosen: string, day: string): Decision => ({ id, title, status: 'decided', at: new Date(`${day}T09:00`).getTime(), decidedAt: new Date(`${day}T10:00`).getTime(), context: '', options: [], chosen });
 
@@ -152,5 +152,25 @@ describe('the Company document', () => {
     expect(text).toContain('## Bets\n\n- Open: Post in r/SaaS');
     expect(text.match(/Post in r\/SaaS/g)).toHaveLength(1);
     expect(text).toContain('## Open questions');
+  });
+
+  // A closed bet is the company learning something: one line each, under What we learned, as the ledger says.
+  it('writes one What we learned line per closed bet, newest first, and no section while none is closed', async () => {
+    const store = createStore(await mkdtemp(join(tmpdir(), 'company-')));
+    const { id } = await ensureCompany(store);
+    const open: Bet = { id: 'b1', made: '2026-09-26', what: 'Post in r/SaaS', hypothesis: 'founders sign up', metric: 'signups', target: 20, checkDate: '2026-10-03', status: 'open', at: 1 };
+    await writeBets(store, id, [open]);
+    expect(await store.readDoc(id)).not.toContain('What we learned');
+    const older: Bet = { id: 'b2', made: '2026-09-01', what: 'Price at $9.', hypothesis: '', metric: 'leads:customer', target: 5, checkDate: '2026-09-20', status: 'closed', at: 1, result: { at: 2, verdict: 'did-not', value: 2, note: 'nobody paid.', by: 'Founder' } };
+    const newer: Bet = { ...open, status: 'closed', result: { at: 3, verdict: 'worked', value: 24, note: '', by: 'Sam' } };
+    expect(learnedLine(older)).toBe('- 2026-09-20: Price at $9 did not work; "leads:customer" was 2 against 5. nobody paid.');
+    expect(learnedLine({ ...older, result: { ...older.result!, value: null, note: '' } })).toBe('- 2026-09-20: Price at $9 did not work; "leads:customer" could not be read against 5.');
+    expect(learnedSection([older, newer])).toEqual(['- 2026-10-03: Post in r/SaaS worked; "signups" was 24 against 20.', learnedLine(older)]);
+    await writeBets(store, id, [older, newer]);
+    await writeBets(store, id, [older, newer]);
+    const text = await store.readDoc(id);
+    expect(text).toContain('## What we learned\n\n- 2026-10-03: Post in r/SaaS worked; "signups" was 24 against 20.\n- 2026-09-20: Price at $9 did not work');
+    expect(text.match(/## What we learned/g)).toHaveLength(1);
+    expect(text).toContain('- Worked: Post in r/SaaS.');
   });
 });

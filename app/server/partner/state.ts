@@ -23,6 +23,8 @@ export type PartnerState = {
   companyId?: string;
   // The partners already wired to it once: a wire the founder takes away is not drawn again.
   wired?: string[];
+  // The bets whose check was already posted in the partner's room: said once, across restarts too.
+  betChecks?: string[];
 };
 
 export function partnerState(workspace: string) {
