@@ -21,7 +21,7 @@ const MRR = /\b(?:mrr|revenue|making|bringing in)\b/i;
 const PRICE = /\b(?:charge|charging|price[ds]?|pricing|costs?|subscription|plan)\b/i;
 const IDEA = /\b(?:(?:i'?m|i am|we'?re|we are)\s+building|we (?:make|build|sell|help)|(?:it|this) is an?)\b/i;
 
-const sentences = (said: string) => said.replace(/\s+/g, ' ').split(/(?<=[.!?])\s+|\n+/).map((one) => one.trim()).filter(Boolean);
+const sentences = (said: string) => said.split(/\n+/).flatMap((line) => line.replace(/\s+/g, ' ').split(/(?<=[.!?])\s+/)).map((one) => one.trim()).filter(Boolean);
 const capital = (text: string) => `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
 
 export function companyFacts(said: string): CompanyFacts {
@@ -89,3 +89,36 @@ export function keepFacts(text: string, facts: CompanyFacts, day: string): { tex
 }
 
 export const keptLine = (kept: string[]) => `*Kept in the Company document: ${kept.join(', ')}.*`;
+
+// ---------------------------------------------------------------- runway in months
+
+// A money figure as a number: "€4,200" is 4200, "$80k" is 80000.
+const amount = (value: string) => {
+  const found = /(\d[\d,]*(?:\.\d+)?)\s?(k|m)?/i.exec(value);
+  if (!found) return null;
+  return Number(found[1].replace(/,/g, '')) * ({ k: 1e3, m: 1e6 }[(found[2] ?? '').toLowerCase() as 'k'] ?? 1);
+};
+const MONTHS = /(\d+(?:\.\d+)?)(\s?(?:-|–)?\s?months?)\b/gi;
+const RUNWAY_WORDS = /\b(?:runway|cash|bank|burn|run out|left|remaining)\b/i;
+// Said as a bound, not a figure: "under 4 months" is true of 3.8.
+const BOUND = /\b(?:under|less than|below|nearly|almost|short of|not even|at most|up to)\s*(?:~|\*\*)?\s*$/i;
+
+// Runway is never rounded toward the better side. A months figure in a sentence about runway or cash that is a
+// rounded-up version of cash over burn, as the Company numbers or the founder have them, gets the months to one
+// decimal, rounded down, beside it: "4 months (3.8 months)". A figure past the next whole month is left alone, since
+// it may count revenue against the burn.
+export function runwayFix(reply: string, facts: string): string {
+  const numbers = companyFacts(facts).numbers;
+  const cash = amount(numbers.find((one) => one.label === 'Cash')?.value ?? '');
+  const burn = amount(numbers.find((one) => one.label === 'Burn')?.value ?? '');
+  if (!cash || !burn) return reply;
+  const exact = cash / burn;
+  const down = Math.floor(exact * 10) / 10;
+  return reply.replace(MONTHS, (whole, figure: string, unit: string, at: number) => {
+    const value = Number(figure);
+    const sentence = reply.slice(Math.max(reply.lastIndexOf('.', at - 1), reply.lastIndexOf('\n', at - 1)) + 1).split(/[.!?](?:\s|$)|\n/)[0];
+    const before = reply.slice(Math.max(0, at - 30), at);
+    if (value <= exact + 1e-9 || value - exact >= 1 || /\.\d{2,}/.test(figure) || BOUND.test(before) || !RUNWAY_WORDS.test(sentence) || /\bif\b/i.test(sentence)) return whole;
+    return `${figure}${unit} (${down} months)`;
+  });
+}

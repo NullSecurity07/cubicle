@@ -8,6 +8,8 @@ import { sectionBody, filled, verdictOf } from '../tools/verdict.ts';
 import { checkReply, stripFlagged, turnSources } from '../truth.ts';
 import { gatherMonth } from '../slices/month.ts';
 import { cardOf } from './bets.ts';
+import { sectionText } from './company.ts';
+import { runwayFix } from './keep.ts';
 import type { PartnerState } from './state.ts';
 
 // The partner's morning: once a day, unasked, they read the Company document (it is in their prompt), what changed
@@ -202,8 +204,12 @@ export async function writeMorning(input: {
   let reply = await once(messages);
   // At fault: asked once more in the same try, with the reason in front of it, not the same prompt half an hour on.
   if (reply.fault) reply = await once([...messages, { role: 'assistant', content: reply.text }, { role: 'user', content: `${reply.fault} Write the note again, in exactly the same shape.` }]);
-  const { read, provider, model, fault } = reply;
-  if (!read || (fault && !input.last)) return null;
+  const { provider, model, fault } = reply;
+  if (!reply.read || (fault && !input.last)) return null;
+  // Runway is never rounded toward the better side, in the note either.
+  const numbers = `${sectionText(sources.company ?? '', 'Numbers')}`;
+  const fix = (line: string) => runwayFix(line, numbers);
+  const read: Morning = { things: reply.read.things.map(fix), risk: fix(reply.read.risk), question: fix(reply.read.question) };
   // The truth net, as every turn has it: a figure in the note that nothing it was given holds is flagged under it,
   // and the note is posted all the same, so the founder sees both.
   // Checked as posted: the reshaped note, not the raw reply, so the flags name only what the founder reads.

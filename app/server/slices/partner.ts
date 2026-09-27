@@ -5,14 +5,14 @@ import { localDay } from '../clock.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
 import { leadsFor } from '../leads/store.ts';
 import { askedInstead, betDue, betsAttention, betsBook, cannotLose, closedLine, metricChoices, missingMetric, readMetric, type BetsBook } from '../partner/bets.ts';
-import { companyDocOf, ensureCompany, syncDecisions, writeBets } from '../partner/company.ts';
+import { companyDocOf, ensureCompany, sectionText, syncDecisions, writeBets } from '../partner/company.ts';
 import { hub } from '../events.ts';
 import { saysSomething } from '../missions.ts';
 import { FAKE_MORNING, MOST_TRIES, morningDue, morningInputs, morningMessage, writeMorning, type MorningSources } from '../partner/morning.ts';
 import { addPlan, boardFor, boardForPlan, NO_BOARD, planAttention, stepsFrom } from '../partner/plans.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import { standingBlock, standingParts, type StandingParts } from '../partner/standing.ts';
-import { companyFacts, keepFacts, keptLine } from '../partner/keep.ts';
+import { companyFacts, keepFacts, keptLine, runwayFix } from '../partner/keep.ts';
 import { wired } from '../prompt.ts';
 import type { ModelMessage } from '../prompt.ts';
 import { complete, fakeClient, promptSize } from '../providers.ts';
@@ -333,26 +333,31 @@ export function createPartner(options: PartnerOptions = {}) {
 
     // The founder told the partner where the company stands (a price, the cash, the burn, the users, what it does):
     // it goes into the Company document's own section, with a receipt under the reply. Never with the wire taken away.
+    // Then a runway rounded toward the better side is put right against the Company numbers.
     const onReply: Handler<'turn:reply'> = async (payload, next) => {
       const stage = await deps.store.loadStage();
       const me = stage.rooms.find((one) => one.id === payload.roomId && one.partner);
+      if (!me || payload.reply.stopped || !payload.reply.text.trim()) return next(payload);
       const facts = companyFacts(payload.query);
-      if (!me || payload.reply.stopped || (!facts.numbers.length && !facts.idea && !facts.customer)) return next(payload);
-      let line = '';
+      let text = payload.reply.text;
       try {
         const doc = await companyNow(stage);
-        if (doc) {
-          const before = await deps.store.readDoc(doc.id);
-          const kept = keepFacts(before, facts, localDay(now()));
+        let company = doc ? await deps.store.readDoc(doc.id) : '';
+        if (doc && (facts.numbers.length || facts.idea || facts.customer)) {
+          const kept = keepFacts(company, facts, localDay(now()));
+          let line = '';
           if (kept.kept.length && wired(stage, me.id, [doc.id]).length) {
             await deps.store.writeDoc(doc.id, kept.text);
             changed(doc.id);
             standing = null;
+            company = kept.text;
             line = keptLine(kept.kept);
           } else if (kept.kept.length) line = `*Not kept: the "${doc.title}" document is not wired to ${me.name}, so ${kept.kept.join(', ')} are not in it. Wire it to ${me.name} to keep it current.*`;
+          if (line) text = `${text.replace(/\s+$/, '')}\n\n${line}`;
         }
+        text = runwayFix(text, `${sectionText(company, 'Numbers')}\n${payload.query}`);
       } catch (error) { console.error(`partner keep: ${(error as Error).message}`); }
-      return next(line ? { ...payload, reply: { ...payload.reply, text: `${payload.reply.text.replace(/\s+$/, '')}\n\n${line}` } } : payload);
+      return next(text === payload.reply.text ? payload : { ...payload, reply: { ...payload.reply, text } });
     };
     const offReply = deps.seams.on('turn:reply', onReply);
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { companyTemplate } from '../../shared/partner.ts';
-import { companyFacts, keepFacts, keptLine } from './keep.ts';
+import { companyFacts, keepFacts, keptLine, runwayFix } from './keep.ts';
 
 // Journey 4's first message, as the founder wrote it on Day 1.
 export const DAY_ONE = "I'm building Ledgerly: $29/month bookkeeping for EU solo consultants that drafts VAT returns from bank feeds. "
@@ -51,5 +51,22 @@ describe('keeping the Company document current', () => {
     expect(again.text).not.toContain('invoicing tool for freelancers');
     expect(again.kept).toEqual(['Numbers (Cash €3,900)']);
     expect(keepFacts(again.text, companyFacts(DAY_ONE.replace('€4,200', '€3,900')), '2026-09-30').kept).toEqual([]);
+  });
+});
+
+// Journey 5: "You have 4 months of runway" from €4,200 and €1,100 a month, which is 3.82: rounded toward the better side.
+describe('runway said in months', () => {
+  const NUMBERS = '- Cash: €4,200 (founder, 2026-09-27)\n- Burn: €1,100/month (founder, 2026-09-27)';
+  it('puts the months to one decimal, rounded down, beside a runway rounded up', () => {
+    expect(runwayFix('You have **4 months** of operational runway remaining (based on €4,200 in cash and a €1,100 monthly burn).', NUMBERS))
+      .toBe('You have **4 months (3.8 months)** of operational runway remaining (based on €4,200 in cash and a €1,100 monthly burn).');
+    expect(runwayFix('Risk: with the remaining 4 months of runway, coding first is the gamble.', NUMBERS)).toBe('Risk: with the remaining 4 months (3.8 months) of runway, coding first is the gamble.');
+    expect(runwayFix('Runway: 3.9 months.', NUMBERS)).toBe('Runway: 3.9 months (3.8 months).');
+  });
+
+  it('leaves a right figure, a figure said as under, a longer one and months that are not runway alone', () => {
+    for (const reply of ['You have ~3.8 months of runway.', 'You have under 4 months of runway.', 'Runway is less than 4 months.', 'Ship the invoice feature in 4 months.', 'With revenue, runway is 5 months.', 'Runway: 3 months if burn rises.'])
+      expect(runwayFix(reply, NUMBERS), reply).toBe(reply);
+    expect(runwayFix('You have 4 months of runway.', '- Cash: €4,200')).toBe('You have 4 months of runway.');
   });
 });

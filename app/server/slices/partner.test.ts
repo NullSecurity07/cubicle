@@ -475,6 +475,19 @@ describe('the partner slice: the founder\'s facts kept in the Company document',
     await part.close!();
   });
 
+  it('puts a runway rounded up right against the Company numbers, in a reply and in the morning note', async () => {
+    const note = 'Three moves for today:\n1. Call the three beta users.\n2. Pause the invoicing code.\n3. Log paying users.\nRisk: remaining 4 months of runway against the Evaluation verdict.\nQuestion: Will you pause coding today?';
+    const { deps, part } = await installed({}, { now: () => new Date('2026-09-27T10:00').getTime(), ask: async () => note });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    await deps.seams.run('turn:reply', { roomId: 'p1', query: DAY_ONE, reply: reply('Ok.') });
+    const out = await deps.seams.run('turn:reply', { roomId: 'p1', query: 'How much runway do I have?', reply: reply('You have **4 months** of runway.') });
+    expect(out.reply.text).toBe('You have **4 months (3.8 months)** of runway.');
+    await part.route!({ method: 'POST' } as never, {} as never, '/api/partner/morning');
+    expect((await deps.store.readChat('p1')).at(-1)!.text).toContain('Risk: remaining 4 months (3.8 months) of runway against the Evaluation verdict.');
+    await part.close!();
+  });
+
   it('writes nothing when the founder took the partner\'s wire to it away, and says so', async () => {
     const { deps, part } = await installed({}, { now: () => new Date('2026-09-27T10:00').getTime(), ask: async () => SHAPED });
     await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
