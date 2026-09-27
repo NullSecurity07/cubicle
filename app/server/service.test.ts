@@ -92,19 +92,23 @@ describe('the state of the service', () => {
 describe('the row that says whether it runs while closed', () => {
   const state = (over: Partial<ServiceState>): ServiceState => ({ systemd: true, installed: true, enabled: true, active: 'active', path: '/x', ...over });
 
-  it('says yes only when it starts at login and is running', () => {
+  it('says yes, and Fine, only when it starts at login and is running', () => {
     expect(serviceRow(state({}))).toMatchObject({ name: 'Runs while closed', ok: true });
+    expect(serviceRow(state({})).warn).toBeUndefined();
     expect(serviceRow(state({})).detail).toMatch(/^yes/);
   });
 
-  it('says no, without calling it a fault, when it was never installed or not switched on', () => {
+  it('says no as worth a look, with the command that switches it on as the fix, when it was never installed or not switched on', () => {
     const never = serviceRow(state({ installed: false, enabled: false, active: 'inactive' }));
-    expect(never.ok).toBe(true);
+    expect(never).toMatchObject({ ok: true, warn: true });
     expect(never.detail).toMatch(/^no/);
     expect(never.detail).toContain('pnpm service:install');
+    expect(never.fix).toContain('pnpm service:install');
+    expect(never.fix).toContain(enableLine);
     const off = serviceRow(state({ enabled: false, active: 'inactive' }));
+    expect(off).toMatchObject({ ok: true, warn: true });
     expect(off.detail).toMatch(/^no/);
-    expect(off.detail).toContain(`systemctl --user enable --now ${SERVICE}`);
+    expect(off.fix).toContain(`systemctl --user enable --now ${SERVICE}`);
   });
 
   it('is a fault when it is switched on and not running', () => {
@@ -117,7 +121,9 @@ describe('the row that says whether it runs while closed', () => {
   });
 
   it('says plainly when the machine has no systemd', () => {
-    expect(serviceRow(state({ systemd: false, installed: false, enabled: false })).detail).toMatch(/^no.*systemd/);
+    const none = serviceRow(state({ systemd: false, installed: false, enabled: false }));
+    expect(none.detail).toMatch(/^no.*systemd/);
+    expect(none).toMatchObject({ ok: true, warn: true });
   });
 });
 
