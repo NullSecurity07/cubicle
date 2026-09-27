@@ -271,6 +271,17 @@ describe('preconditions the partner sets', () => {
     expect(checkReply({ reply: list, receipts: [], sources: ['Should we raise?'] })).toEqual([]);
   });
 
+  it('still flags where the partner says how things stand, inside a precondition line or item', () => {
+    const sources = ['MRR is $4,210.'];
+    expect(figureCheck('Preconditions:\n- $10k MRR: not met, you are at $6,300.', sources)).toEqual({ unsourced: ['$6,300'], proposals: ['$10k'] });
+    expect(figureCheck('Preconditions:\n- Churn under 3%: yours is 7%.', sources)).toEqual({ unsourced: ['7%'], proposals: ['3%'] });
+    expect(figureCheck('All preconditions are met: churn is 1.5% and NPS is 62.', sources).unsourced).toEqual(['1.5%']);
+    expect(figureCheck('Preconditions: investors expect 3x growth year on year.', sources).unsourced).toEqual(['3x']);
+    expect(figureCheck('Preconditions:\n- Currently 7% churn', sources).unsourced).toEqual(['7%']);
+    expect(figureCheck('Not yet. Preconditions before a raise:\n- $10k MRR\n- 150 customers', sources)).toEqual({ unsourced: [], proposals: ['$10k', '150 customers'] });
+    expect(figureCheck('Raise when MRR reaches $10k.', sources).proposals).toEqual(['$10k']);
+  });
+
   it('still flags a plain claim, and a list that is not preconditions', () => {
     expect(figureCheck('Good SaaS churn is under 3%.', []).unsourced).toEqual(['3%']);
     expect(figureCheck('Benchmarks:\n- Churn under 3%', []).unsourced).toEqual(['3%']);

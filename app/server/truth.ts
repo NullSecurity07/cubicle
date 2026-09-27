@@ -128,19 +128,37 @@ const MILESTONE = String.raw`^[\s*\-\d.)]*(?:get\s+to|reach|hit)`;
 const THRESHOLD = String.raw`(?:when|until|once|before|after)\s+(?:[\w'-]+\s+){0,4}?(?:reach(?:es)?|hits?|gets?\s+to|is\s+(?:over|above|at\s+least)|passes|crosses|tops)`;
 const PHRASE = String.raw`(?:targets?\s+of|goal\s+(?:of|is)|what\s+if|(?:could|should|would|might)\s+charge|price\s+(?:it|them|this)\s+at|${THRESHOLD})`;
 const PROPOSING = new RegExp(String.raw`(?:${LEAD}${VERB}|${MILESTONE}|\b${PHRASE})(?:\s+\S+){0,3}\s*$`, 'i');
-// A line that names a precondition, or an item of a list that a line naming preconditions opens: every figure there is
-// a condition the partner sets ("- Churn under 3%"), where the same words alone would be a claim.
+// A line that names a precondition, or an item of a list that a line naming preconditions opens: a figure in the
+// first clause of it is a condition the partner sets ("- Churn under 3%", "Precondition: 18 months of runway"), where
+// the same words alone would be a claim. What follows a ":", "(", "," or ";" in the item is the partner saying how
+// things stand ("- $10k MRR: not met, you are at $6,300"), and so is a first clause with status words before the
+// figure ("yours is 7%", "investors expect 3x"): those stay claims.
 const PRECONDITION = /\bpre-?conditions?\b/i;
 const ITEM = /^\s*(?:[-*+]|\d+[.)])\s/;
+const STATUS = /\b(?:is|are|was|were|yours|you(?:'re| are| have)|we(?:'re| are| have)|currently|now|met|expects?|sees?|shows?)\b/i;
 function inPreconditions(reply: string, at: number): boolean {
   const lines = reply.slice(0, at).split('\n');
-  if (PRECONDITION.test(lines.at(-1)!)) return true;
-  if (!ITEM.test(lines.at(-1)!)) return false;
-  for (let index = lines.length - 2; index >= 0; index -= 1) {
-    if (ITEM.test(lines[index])) continue;
-    return PRECONDITION.test(lines[index]);
+  const line = lines.at(-1)!;
+  let clause: string;
+  if (ITEM.test(line)) {
+    let heading = false;
+    for (let index = lines.length - 2; index >= 0; index -= 1) {
+      if (ITEM.test(lines[index])) continue;
+      heading = PRECONDITION.test(lines[index]);
+      break;
+    }
+    if (!heading && !PRECONDITION.test(line)) return false;
+    clause = line.replace(ITEM, '');
+    // "- Precondition: 18 months": the label is not the clause.
+    if (/^\s*pre-?conditions?\s*:/i.test(clause)) clause = clause.slice(clause.indexOf(':') + 1);
+  } else {
+    if (!PRECONDITION.test(line)) return false;
+    // The line after the label: "Precondition: 18 months of runway".
+    const colon = line.search(/pre-?conditions?[^:]*:/i);
+    if (colon < 0) return false;
+    clause = line.slice(line.indexOf(':', colon) + 1);
   }
-  return false;
+  return !/[:(,;]/.test(clause) && !STATUS.test(clause);
 }
 
 function proposed(reply: string, at: number): boolean {
