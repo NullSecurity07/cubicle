@@ -8,6 +8,7 @@ import { watchRoom } from '../rooms';
 import { SLICES } from '../slices';
 import { useFlushStage } from '../sync';
 import { Message } from './Message';
+import { askLine } from './askLine';
 import { pressed } from '../keys';
 import { SEND_ICON, STOP_ICON } from './icons';
 
@@ -18,7 +19,7 @@ type Live = { text: string; tools: ToolEvent[] };
 type Outside = Live & { turn: string; via?: ChatVia };
 
 // The conversation with one person: the log, the reply as it streams (words and tool chips), and the ask box.
-export function Chat({ id, name, role, onStatus }: { id: string; name: string; role: string; onStatus: (status: Status, lastAsk?: string) => void }) {
+export function Chat({ id, name, role, partner, onStatus }: { id: string; name: string; role: string; partner?: boolean; onStatus: (status: Status, lastAsk?: string) => void }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState('');
   const [live, setLive] = useState<Live | null>(null);
@@ -189,7 +190,7 @@ export function Chat({ id, name, role, onStatus }: { id: string; name: string; r
         className="chat nodrag nowheel" data-tail ref={log} onDragOver={(event) => event.preventDefault()} onDrop={onDrop}
         onScroll={(event) => { const box = event.currentTarget; tail.current = box.scrollHeight - box.scrollTop - box.clientHeight < 40; }}
       >
-        {messages.length === 0 && !draw && <p className="chat__empty">Ask {name} anything about {role.toLowerCase()}.</p>}
+        {messages.length === 0 && !draw && <p className="chat__empty">{askLine({ name, role, partner })}</p>}
         {messages.map((message) => (
           <Message
             key={message.id} message={message} roomId={id}

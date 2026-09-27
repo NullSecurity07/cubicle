@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { LEAD_STAGES, STAGE_NAMES, type LeadStage } from '../../shared/leads.ts';
-import { findMetric, formatValue, isDay, type Metrics } from '../../shared/metrics.ts';
+import { findMetric, formatValue, guessBetter, isDay, type Metrics } from '../../shared/metrics.ts';
 import type { Attention, Stage } from '../../shared/model.ts';
 import { bare, VERDICT_WORDS, type Bet, type BetVerdict } from '../../shared/partner.ts';
 import { localDay } from '../clock.ts';
@@ -9,6 +9,7 @@ import { writeAtomic } from '../fsx.ts';
 import { leadsFor } from '../leads/store.ts';
 import { newId } from '../slice-kit.ts';
 import { createSurveys } from '../surveys/store.ts';
+import { BUILDS, isWeak, verdictName, type TeamVerdict } from './pushback.ts';
 
 // The bets ledger, in `workspace/bets.json`: what the company tried, what it expected to move, and on which day to
 // look. A person proposes a bet and the founder takes it or not; on the check day the number is read here, in code,
@@ -63,8 +64,9 @@ export type BetsBook = ReturnType<typeof betsBook>;
 
 // ---------------------------------------------------------------- the number a bet is measured by
 
-// Read in code from where it lives. `value` is null when the card or the number is not on the stage.
-export type Reading = { value: number | null; said: string };
+// Read in code from where it lives. `value` is null when the card or the number is not on the stage. `better` is
+// which way that number should move: a count of leads or answers goes up, a Metrics row says for itself.
+export type Reading = { value: number | null; said: string; better?: 'up' | 'down' };
 const readJson = async <T>(path: string, fallback: T): Promise<T> => { try { return JSON.parse(await readFile(path, 'utf8')) as T; } catch { return fallback; } };
 
 export async function readMetric(workspace: string, stage: Stage, spec: string): Promise<Reading> {
@@ -77,14 +79,14 @@ export async function readMetric(workspace: string, stage: Stage, spec: string):
     if (asked !== 'leads' && !LEAD_STAGES.includes(wanted)) return { value: null, said: `"${spec}" is not a lead stage` };
     let count = 0;
     for (const card of leadCards) count += (await leadsFor(workspace).list(card.id)).filter((lead) => asked === 'leads' || lead.stage === wanted).length;
-    return { value: count, said: `${count} ${asked === 'leads' ? 'leads' : `leads in ${STAGE_NAMES[wanted]}`}, read from the Leads card` };
+    return { value: count, said: `${count} ${asked === 'leads' ? 'leads' : `leads in ${STAGE_NAMES[wanted]}`}, read from the Leads card`, better: 'up' };
   }
   if (asked === 'survey') {
     const surveyCards = cards.filter((card) => card.kind === 'survey');
     if (!surveyCards.length) return { value: null, said: 'no Survey card is on the stage' };
     let count = 0;
     for (const card of surveyCards) count += (await createSurveys(workspace).list(card.id)).length;
-    return { value: count, said: `${count} survey answers, read from the Survey card` };
+    return { value: count, said: `${count} survey answers, read from the Survey card`, better: 'up' };
   }
   for (const card of cards.filter((one) => one.kind === 'metrics')) {
     const data = await readJson<Partial<Metrics>>(join(workspace, 'metrics', `${card.id}.json`), {});
@@ -92,7 +94,7 @@ export async function readMetric(workspace: string, stage: Stage, spec: string):
     if (!metric) continue;
     const last = metric.points.at(-1);
     if (!last) return { value: null, said: `${metric.label} has no reading yet` };
-    return { value: last.value, said: `${metric.label} is ${formatValue(last.value, metric.unit)} (${last.at}), read from the Metrics card` };
+    return { value: last.value, said: `${metric.label} is ${formatValue(last.value, metric.unit)} (${last.at}), read from the Metrics card`, better: metric.better };
   }
   return { value: null, said: `no number called "${spec}" is on a Metrics card` };
 }
@@ -174,17 +176,42 @@ export async function askedInstead(workspace: string, stage: Stage, pick: string
   return `The founder's ask counts ${asked.replace(/^leads:/, 'leads in ')}: propose it again measured by "${asked}".${missing}`;
 }
 
+// A bet has to be able to lose: its target beats the number as it stands, up for most numbers and down for one that
+// is better lower (churn, burn, cost). Null when it does; else what to tell the person, with the number read now.
+// A hold is about this number: keep, hold, retain or maintain in the same clause as the number or the metric's name
+// ("keep our 3 paying users"), never "make the bet, keep it simple".
+function holds(ask: string, metric: string, target: number): boolean {
+  const words = metric.toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 2).map((word) => word.replace(/s$/, ''));
+  return ask.toLowerCase().split(/[,;.!?]|\band\b|\bbut\b/).some((clause) => /\b(?:keep|hold|retain|maintain)\b/.test(clause)
+    && (new RegExp(`(?<![\\d.])${target}(?![\\d.])`).test(clause) || words.some((word) => new RegExp(`\\b${word}`).test(clause))));
+}
+
+// A row that does not say which way is better is read by its name, as the Metrics card guesses it. A hold ("keep our 3
+// paying users") can lose too, through churn, so an equal target stands when the ask says keep, hold or retain.
+export function cannotLose(metric: string, target: number, reading: Reading, ask = ''): string | null {
+  if (reading.value === null) return null;
+  const lower = (reading.better ?? guessBetter(metric)) === 'down';
+  if (lower ? target < reading.value : target > reading.value) return null;
+  if (target === reading.value && holds(ask, metric, target)) return null;
+  const where = /read from (the \w+ card)/.exec(reading.said)?.[1] ?? 'its card';
+  const way = lower ? `${metric.charAt(0).toUpperCase()}${metric.slice(1)} is better lower: propose a target below ${reading.value}` : `Propose a target above ${reading.value}`;
+  return `"${metric}" is ${reading.value} now, read from ${where}: a target of ${target} cannot lose. ${way}, one this bet could miss, and tell the founder the number it starts from.`;
+}
+
 // A bet's check is due from its check day on, while nobody has said how it went.
 export const betDue = (bet: Bet, today: string) => bet.status === 'open' && !bet.result && isDay(bet.checkDate) && bet.checkDate <= today;
 
 // What the ledger has waiting for the founder: bets to take or leave, and bets whose day has come, each with the
 // number as it stands now.
-export async function betsAttention(bets: Bet[], stage: Stage, workspace: string, today: string): Promise<Attention[]> {
+// A proposed bet that builds the thing a weak team verdict pauses says so in its row, with the verdict quoted, so the
+// founder takes it knowing.
+export async function betsAttention(bets: Bet[], stage: Stage, workspace: string, today: string, verdict?: TeamVerdict | null): Promise<Attention[]> {
   const found: Attention[] = [];
   for (const bet of bets) {
     if (bet.status === 'proposed') {
+      const against = verdict && isWeak(verdict) && BUILDS.test(`${bet.what} ${bet.hypothesis}`) ? ` The team's verdict is ${verdictName(verdict)}: this bet builds before it.` : '';
       found.push({ id: `proposed-bet:${bet.id}`, kind: 'proposed-bet', title: bet.what, at: bet.at, ...(bet.proposedBy ? { who: bet.proposedBy } : {}), ...(bet.roomId ? { roomId: bet.roomId } : {}),
-        detail: `${bare(bet.hypothesis) ? `${bare(bet.hypothesis)}. ` : ''}Measured by "${bet.metric}" on ${cardOf(bet.metric)}: ${bet.target} by ${bet.checkDate}.` });
+        detail: `${bare(bet.hypothesis) ? `${bare(bet.hypothesis)}. ` : ''}Measured by "${bet.metric}" on ${cardOf(bet.metric)}: ${bet.target} by ${bet.checkDate}.${against}` });
     } else if (betDue(bet, today)) {
       const reading = await readMetric(workspace, stage, bet.metric);
       found.push({ id: `bet-check:${bet.id}`, kind: 'bet-check', title: `Check the bet: ${bet.what}`, at: new Date(`${bet.checkDate}T00:00:00`).getTime(),

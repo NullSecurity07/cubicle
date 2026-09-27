@@ -5,9 +5,11 @@ import { bare, morningText, readMorning, type Bet, type Morning, type MorningNot
 import { localDay, weekDay } from '../clock.ts';
 import type { ModelMessage } from '../prompt.ts';
 import { sectionBody, filled, verdictOf } from '../tools/verdict.ts';
-import { checkReply, stripFlagged, turnSources } from '../truth.ts';
+import { checkReply, FLAG_LINE, stripFlagged, turnSources } from '../truth.ts';
 import { gatherMonth } from '../slices/month.ts';
 import { cardOf } from './bets.ts';
+import { sectionText } from './company.ts';
+import { runwayFix } from './keep.ts';
 import type { PartnerState } from './state.ts';
 
 // The partner's morning: once a day, unasked, they read the Company document (it is in their prompt), what changed
@@ -88,14 +90,21 @@ export type MorningSources = {
 const VERDICT_CHARS = 400;
 // The Company document's Numbers section, the one place a person's figure should agree with.
 const numbersOf = (company: string) => filled(sectionBody(company, 'Numbers')).join('\n');
-// A flag line as the truth net writes it under a reply.
-const FLAGS = /^(?:Unconfirmed: this reply claims|Unsourced figures: ).*$/gm;
 
-const betLine = (bet: Bet) => (bet.status === 'open'
+export const betLine = (bet: Bet) => (bet.status === 'open'
   ? `- Open: ${bare(bet.what)}. Bet: ${bare(bet.hypothesis) || 'unsaid'}. Measured by "${bet.metric}" on ${cardOf(bet.metric)}: ${bet.target} by ${bet.checkDate}.`
   : `- Closed ${bet.checkDate}: ${bare(bet.what)}. ${bet.result?.verdict === 'worked' ? 'Worked' : 'Did not work'}; "${bet.metric}" was ${bet.result?.value ?? 'unread'} against ${bet.target}.${bet.result?.note ? ` ${bet.result.note}` : ''}`);
 
-export async function gatherMorning(from: MorningSources): Promise<string> {
+// What the partner reads across the rooms, gathered once from the stores: the morning note is written from all of
+// it, and every partner turn carries the standing part of it (server/partner/standing.ts).
+export type CompanyGather = {
+  yesterday: string; changed: string; chats: string; planned: string[]; verdicts: string[];
+  // The truth net's lines since yesterday, grouped by room with the room's name first, and how many each room had.
+  flagged: string[]; flagCounts: { room: string; count: number }[];
+  numbers: string; open: Bet[]; closed: Bet[];
+};
+
+export async function gatherCompany(from: MorningSources, options: { verdictChars?: number } = {}): Promise<CompanyGather> {
   const yesterday = localDay(from.now - DAY);
   const start = new Date(`${yesterday}T00:00:00`).getTime();
   // The partner holds the whole company, so every card is read as if it were wired to them.
@@ -105,10 +114,16 @@ export async function gatherMorning(from: MorningSources): Promise<string> {
     .split('\n').map((line) => line.replace(/^Not wired to you: (.+)\. Say so in the update rather than guessing\.$/, 'Not on the stage: $1.')).join('\n');
 
   const talk: string[] = [];
+  const flagged: string[] = [];
+  const flagCounts: { room: string; count: number }[] = [];
   for (const room of from.stage.rooms) {
-    const said = (await from.chat(room.id).catch(() => [] as ChatMessage[])).filter((message) => !message.failed && message.at >= start && message.text.trim()).slice(-CHAT_LINES);
-    if (!said.length) continue;
-    talk.push(`${room.name} (${room.role}):`, ...said.map((message) => `  ${message.role === 'assistant' ? room.name : message.from ?? 'Founder'}: ${stripFlagged(message.text).replace(/\s+/g, ' ').trim().slice(0, CHAT_CHARS)}`));
+    const all = await from.chat(room.id).catch(() => [] as ChatMessage[]);
+    const said = all.filter((message) => !message.failed && message.at >= start && message.text.trim()).slice(-CHAT_LINES);
+    if (said.length) talk.push(`${room.name} (${room.role}):`, ...said.map((message) => `  ${message.role === 'assistant' ? room.name : message.from ?? 'Founder'}: ${stripFlagged(message.text).replace(/\s+/g, ' ').trim().slice(0, CHAT_CHARS)}`));
+    // What the truth net flagged since yesterday, each flag on a line of its own: the model reads it, and the net
+    // itself still treats the figure it names as unsourced when the note repeats it.
+    const lines = all.filter((message) => message.role === 'assistant' && message.at >= start).flatMap((message) => message.text.match(FLAG_LINE) ?? []);
+    if (lines.length) { flagged.push(`${room.name} (${room.role}):`, ...[...new Set(lines)].slice(-4)); flagCounts.push({ room: `${room.name} (${room.role})`, count: lines.length }); }
   }
   let chats = talk.join('\n');
   if (chats.length > CHAT_MOST) chats = `${chats.slice(0, CHAT_MOST)}\n  …(more was said)`;
@@ -122,6 +137,7 @@ export async function gatherMorning(from: MorningSources): Promise<string> {
 
   // Every team's verdict and score, as its own document has it: a WEAK beside a plan is the first thing to weigh.
   const verdicts: string[] = [];
+  const most = options.verdictChars ?? VERDICT_CHARS;
   for (const doc of from.stage.docs.filter((one) => one.rules)) {
     const rules = doc.rules!;
     const body = sectionBody(from.doc ? await from.doc(doc.id).catch(() => '') : '', rules.verdict.heading);
@@ -129,30 +145,26 @@ export async function gatherMorning(from: MorningSources): Promise<string> {
     if (!lines.length) { verdicts.push(`- ${doc.title}, ${rules.verdict.heading}: not written yet.`); continue; }
     const { word, score } = verdictOf(body ?? '', rules.outcomes ?? []);
     const read = [word, score !== undefined ? `score ${score}/10` : ''].filter(Boolean).join(', ');
-    verdicts.push(`- ${doc.title}, ${rules.verdict.heading}: ${read ? `${read}. ` : ''}${lines.join(' ').replace(/\s+/g, ' ').slice(0, VERDICT_CHARS)}`);
+    verdicts.push(`- ${doc.title}, ${rules.verdict.heading}: ${read ? `${read}. ` : ''}${lines.join(' ').replace(/\s+/g, ' ').slice(0, most)}`);
   }
-
-  // What the truth net flagged since yesterday, each flag on a line of its own: the model reads it, and the net
-  // itself still treats the figure it names as unsourced when the note repeats it.
-  const flagged: string[] = [];
-  for (const room of from.stage.rooms) {
-    const lines = (await from.chat(room.id).catch(() => [] as ChatMessage[])).filter((message) => message.role === 'assistant' && message.at >= start)
-      .flatMap((message) => message.text.match(FLAGS) ?? []);
-    if (lines.length) flagged.push(`${room.name} (${room.role}):`, ...[...new Set(lines)].slice(-4));
-  }
-  const numbers = numbersOf(from.company ?? '');
 
   const bets = (await from.bets().catch(() => [] as Bet[])).filter((bet) => bet.status !== 'proposed');
-  const open = bets.filter((bet) => bet.status === 'open');
-  const closed = bets.filter((bet) => bet.status === 'closed').slice(-5);
+  return {
+    yesterday, changed, chats, planned, verdicts, flagged, flagCounts, numbers: numbersOf(from.company ?? ''),
+    open: bets.filter((bet) => bet.status === 'open'), closed: bets.filter((bet) => bet.status === 'closed').slice(-5),
+  };
+}
+
+export async function gatherMorning(from: MorningSources): Promise<string> {
+  const got = await gatherCompany(from);
   return [
-    changed,
-    `Said since ${yesterday}:`, chats || '- nothing',
-    ...(verdicts.length ? ['Team verdicts:', ...verdicts] : []),
-    ...(flagged.length ? [`Flagged by the truth net since ${yesterday} (figures nothing backed):`, ...flagged] : []),
-    `Company Numbers:\n${numbers || '- none written'}`,
-    'On the board for today:', ...(planned.length ? planned.slice(0, 12) : ['- nothing dated today']),
-    'Bets:', ...(open.length || closed.length ? [...open, ...closed].map(betLine) : ['- none on record']),
+    got.changed,
+    `Said since ${got.yesterday}:`, got.chats || '- nothing',
+    ...(got.verdicts.length ? ['Team verdicts:', ...got.verdicts] : []),
+    ...(got.flagged.length ? [`Flagged by the truth net since ${got.yesterday} (figures nothing backed):`, ...got.flagged] : []),
+    `Company Numbers:\n${got.numbers || '- none written'}`,
+    'On the board for today:', ...(got.planned.length ? got.planned.slice(0, 12) : ['- nothing dated today']),
+    'Bets:', ...(got.open.length || got.closed.length ? [...got.open, ...got.closed].map(betLine) : ['- none on record']),
   ].join('\n');
 }
 
@@ -190,8 +202,12 @@ export async function writeMorning(input: {
   let reply = await once(messages);
   // At fault: asked once more in the same try, with the reason in front of it, not the same prompt half an hour on.
   if (reply.fault) reply = await once([...messages, { role: 'assistant', content: reply.text }, { role: 'user', content: `${reply.fault} Write the note again, in exactly the same shape.` }]);
-  const { read, provider, model, fault } = reply;
-  if (!read || (fault && !input.last)) return null;
+  const { provider, model, fault } = reply;
+  if (!reply.read || (fault && !input.last)) return null;
+  // Runway is never rounded toward the better side, in the note either.
+  const numbers = `${sectionText(sources.company ?? '', 'Numbers')}`;
+  const fix = (line: string) => runwayFix(line, numbers);
+  const read: Morning = { things: reply.read.things.map(fix), risk: fix(reply.read.risk), question: fix(reply.read.question) };
   // The truth net, as every turn has it: a figure in the note that nothing it was given holds is flagged under it,
   // and the note is posted all the same, so the founder sees both.
   // Checked as posted: the reshaped note, not the raw reply, so the flags name only what the founder reads.

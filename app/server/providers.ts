@@ -17,7 +17,8 @@ export type Quota = { remainingRequests?: number; limitRequests?: number; remain
 export type ModelTurn = { text: string; calls: ToolCall[]; usage?: Usage; quota?: Quota; cut?: boolean; broke?: string };
 // `onRestart`: the words streamed so far are dropped, because another model is about to answer from the start. A caller
 // that does not pass it keeps the old way: a reply that breaks part way is kept as it stands.
-type StepOptions = { tools?: ToolSpec[]; signal?: AbortSignal; onToken: (token: string) => void; onRestart?: () => void };
+// `patient`: this is the last model that can take the turn, so a slow first word is waited for rather than cut off.
+type StepOptions = { tools?: ToolSpec[]; signal?: AbortSignal; onToken: (token: string) => void; onRestart?: () => void; patient?: boolean };
 
 export type ModelClient = {
   name: string;
@@ -45,7 +46,8 @@ export type ModelClient = {
 
 // `reported`: a broken reply handed back after its model's failure was already told to `onFailure`; whoever records
 // usage must not count it as a good answer, which would close the breaker the failure just moved.
-export type Completion = ModelTurn & { client: ModelClient; reported?: boolean };
+// `oversize`: models passed over before this one because the prompt would not fit them, for a line to the founder.
+export type Completion = ModelTurn & { client: ModelClient; reported?: boolean; oversize?: string[] };
 export type Failure = { client: ModelClient; error: Error };
 
 // A name for one tool call that no other call anywhere shares. Some providers send none, and numbering them from
@@ -73,23 +75,50 @@ export function retryAfter(error: unknown): number | undefined {
 }
 
 const MALFORMED_CALL = /failed_generation|failed to call a function|tool call validation|failed to parse tool/i;
-// Why a stream broke off, in words the founder can read, for the line under a reply that stops short.
-export function plainBreak(message: string): string {
+const REJECTED = /INVALID_ARGUMENT|invalid argument|\b400\b.*invalid/i;
+const TOO_LARGE = /\b413\b|request too large|payload too large|context length|maximum context/i;
+// A provider's own text with what must never reach the founder taken out: JSON bodies, and account, organisation and
+// request ids ("org_01m24…", "req_…", "in organization `…`").
+export function scrubProvider(message: string): string {
+  return message
+    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/\b(?:sk|gsk|csk|nvapi|AIza|hf|key)[-_][\w*.…-]+/gi, '')
+    .replace(/\[?\{[\s\S]*\}\]?/g, '')
+    .replace(/\s*in organi[sz]ation\s+`[^`]*`/gi, '')
+    .replace(/\b(?:org|req|request|proj|user|acct)[_-][\w-]+/gi, '')
+    .replace(/`[^`]*`/g, 'the model')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+// Why a model could not answer or a stream broke off, in words the founder can read: for the notice when another
+// model steps in and the line under a reply that stops short. `provider` names who, when the words need it.
+export function plainBreak(message: string, provider?: string): string {
   if (MALFORMED_CALL.test(message)) return 'its tool call came out malformed';
   if (/no first word/i.test(message)) return message;
+  if (TOO_LARGE.test(message)) return `the prompt is too large for ${provider ?? 'this model'}`;
+  if (REJECTED.test(message)) return 'the model rejected the request';
   if (/timed? ?out|timeout/i.test(message)) return 'it stopped answering (timed out)';
-  return (message || 'the stream broke off').slice(0, 160);
+  // Anything else is said by its kind (down, busy, the key refused) before the provider's own words are ever used, and
+  // those only with their tags, keys, addresses and ids taken out.
+  const words = failureWords(message);
+  if (words !== 'failed') return words;
+  return scrubProvider(message || 'the stream broke off').slice(0, 160) || 'it failed';
 }
 
 // What one model's failure was, in a few plain words: never the provider's own text, which means nothing to a founder.
 function failureWords(message: string): string {
   if (MALFORMED_CALL.test(message)) return 'tool call came out malformed';
   if (/no first word/i.test(message)) return 'said nothing for too long';
+  if (TOO_LARGE.test(message)) return 'prompt too large';
+  if (REJECTED.test(message)) return 'rejected the request';
   if (/\b429\b|too many requests|rate limit|already answering/i.test(message)) return 'busy';
   if (/timed? ?out|timeout/i.test(message)) return 'timed out';
   if (/\b40[13]\b|unauthori[sz]ed|forbidden|invalid api key/i.test(message)) return 'refused the key';
   if (/\b5\d\d\b|overloaded|unavailable|ECONNRESET|ECONNREFUSED|fetch failed|connection error/i.test(message)) return 'down';
   if (/prompt too large/i.test(message)) return 'prompt too large';
+  if (/kept off turns with tools/i.test(message)) return 'kept off turns with tools';
   if (/resting/i.test(message)) return 'resting';
   if (/no tool support/i.test(message)) return 'cannot use tools';
   if (/empty reply/i.test(message)) return 'answered with nothing';
@@ -106,6 +135,31 @@ export function plainFailure(message: string): string {
   }).join(', ');
 }
 
+// The conversation cut to fit `cap` characters: the system prompt and everything from the founder's latest message
+// on stay whole, and the oldest history goes first, never leaving a tool result without the call it answers. Null when
+// even that much does not fit.
+export function fitHistory(messages: ModelMessage[], cap: number): ModelMessage[] | null {
+  if (promptSize(messages) <= cap) return messages;
+  const head = messages[0]?.role === 'system' ? 1 : 0;
+  const latest = Math.max(head, messages.findLastIndex((message) => message.role === 'user'));
+  const top = messages.slice(0, head);
+  const tail = messages.slice(latest);
+  let middle = messages.slice(head, latest);
+  const fits = () => promptSize([...top, ...middle, ...tail]) <= cap;
+  while (middle.length && !fits()) {
+    middle = middle.slice(1);
+    while (middle[0]?.role === 'tool') middle = middle.slice(1);
+  }
+  return fits() ? [...top, ...middle, ...tail] : null;
+}
+
+// A small model on this machine (or one kept for side calls) never takes a turn with tools while a hosted model is
+// there: a local 7B made six calls under one id and broke the room for the week. With no hosted model at all it
+// still answers, since it is all there is.
+// One the founder pinned (first in the order) keeps its turn: the pin is theirs to make.
+const smallFor = (client: ModelClient, options: StepOptions, clients: ModelClient[]) =>
+  !!options.tools?.length && (!!client.local || !!client.side) && client !== clients[0] && clients.some((other) => !other.local && !other.side);
+
 // Tries each client in order. Moves on when one throws before saying anything, answers with nothing,
 // or cannot hold the prompt. A reply that breaks off mid-stream moves on too when the caller can take its words back
 // (`onRestart`): the next model answers from the start, and the broken words come back, marked as cut, only when no
@@ -115,14 +169,22 @@ export async function complete(
   // Asked right before a client is tried: a key whose breaker is open is passed over, as one too small would be.
   admit: (client: ModelClient) => boolean = () => true,
 ): Promise<Completion> {
-  const size = promptSize(messages);
+  // The tool definitions go to the model too, and count against what it can hold.
+  const toolChars = options.tools?.length ? JSON.stringify(wireTools(options.tools)).length : 0;
   const failures: string[] = [];
   // The longest reply that broke off part way, kept in case nobody does better; and what the window shows right now.
   let broken: Completion | undefined;
   let showing = '';
-  for (const client of clients) {
-    if (size > client.maxPromptChars) { failures.push(`${client.name}: prompt too large`); continue; }
+  const oversize: string[] = [];
+  // Whether a model could take this turn at all, apart from how it is doing today.
+  const able = (client: ModelClient) => (!options.tools?.length || client.tools) && !smallFor(client, options, clients)
+    && fitHistory(messages, client.maxPromptChars - toolChars) !== null && !client.busy?.();
+  for (const [index, client] of clients.entries()) {
     if (options.tools?.length && !client.tools) { failures.push(`${client.name}: no tool support`); continue; }
+    if (smallFor(client, options, clients)) { failures.push(`${client.name}: kept off turns with tools`); continue; }
+    // A model that holds less gets the oldest history cut, not the whole turn refused.
+    let sent = fitHistory(messages, client.maxPromptChars - toolChars);
+    if (!sent) { failures.push(`${client.name}: prompt too large`); oversize.push(client.name); continue; }
     if (!admit(client)) { failures.push(`${client.name}: resting after failing several times in a row`); continue; }
     if (client.busy?.()) { failures.push(`${client.name}: already answering another request`); continue; }
     // Another model is really about to answer: the broken words go from the window first.
@@ -136,8 +198,10 @@ export async function complete(
     };
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       try {
-        const turn = await client.step(messages, { ...options, onToken });
-        if (text.trim() || turn.calls.length) return { ...turn, text, client };
+        // With nobody behind it, a slow model is the answer: its first word is waited for, not cut off at the clock.
+        const patient = !clients.slice(index + 1).some(able);
+        const turn = await client.step(sent, { ...options, onToken, patient });
+        if (text.trim() || turn.calls.length) return { ...turn, text, client, ...(oversize.length ? { oversize } : {}) };
         failures.push(`${client.name}: empty reply`);
       } catch (error) {
         if (options.signal?.aborted) return { text, calls: [], client };
@@ -151,6 +215,11 @@ export async function complete(
           failures.push(`${client.name}: ${message}`);
           if (!broken || text.length > broken.text.length) broken = { ...cut, reported: true };
           break;
+        }
+        // Too large after all (a provider counts in tokens, not characters): asked once more with the history cut harder.
+        if (attempt === 1 && ((error as { status?: number }).status === 413 || TOO_LARGE.test(message))) {
+          const smaller = fitHistory(sent, Math.floor(promptSize(sent) * 0.6));
+          if (smaller && smaller.length < sent.length) { sent = smaller; continue; }
         }
         // A per-minute limit that clears in a few seconds is worth waiting out once; anything longer goes to the next model.
         const wait = retryAfter(error);
@@ -267,6 +336,7 @@ type Shape = { model: string; maxPromptChars: number; maxTokens: number; tools: 
 // How long a hosted model may keep silent before its first word: a hanging Gemini costs this, not the whole 45 s
 // request timeout, and the next model is asked. Once anything streams, the model has all the time the request has.
 const FIRST_WORD_MS = 20_000;
+const PATIENT_MS = 90_000;
 
 function clientOf(name: string, entry: Shape, api: OpenAI, firstWordMs?: number): ModelClient {
   // Requests out on this key now. Kept here, beside the one handle every copy of the client shares, so a caller that
@@ -291,11 +361,14 @@ function clientOf(name: string, entry: Shape, api: OpenAI, firstWordMs?: number)
     },
   };
 
-  async function ask(history: ModelMessage[], { tools, signal, onToken }: StepOptions): Promise<ModelTurn> {
+  async function ask(history: ModelMessage[], { tools, signal, onToken, patient }: StepOptions): Promise<ModelTurn> {
     const messages = withImages(portable(history, entry.callSignature), !!entry.vision);
     // The founder's Stop and the first-word clock both end the request; only the clock's is this model's failure.
-    const silent = firstWordMs ? new AbortController() : undefined;
-    const timer = silent ? setTimeout(() => silent.abort(), firstWordMs) : undefined;
+    // The last model that can take a turn gets four times as long, and never less than a minute and a half: Gemini
+    // took 58.8 s to its first word on a verdict, and cutting it left the founder with no answer at all.
+    const wait = firstWordMs && patient ? Math.max(PATIENT_MS, firstWordMs * 4) : firstWordMs;
+    const silent = wait ? new AbortController() : undefined;
+    const timer = silent ? setTimeout(() => silent.abort(), wait) : undefined;
     const either = silent ? (signal ? AbortSignal.any([signal, silent.signal]) : silent.signal) : signal;
     try {
       const { data: stream, response } = await api.chat.completions.create({
@@ -303,7 +376,7 @@ function clientOf(name: string, entry: Shape, api: OpenAI, firstWordMs?: number)
         ...(entry.streamUsage === false ? {} : { stream_options: { include_usage: true } }),
         ...(tools?.length ? { tools: wireTools(tools) } : {}),
         ...(entry.extra ?? {}),
-      } as OpenAI.Chat.ChatCompletionCreateParamsStreaming, { signal: either }).withResponse();
+      } as OpenAI.Chat.ChatCompletionCreateParamsStreaming, { signal: either, ...(patient && wait ? { timeout: wait + 15_000 } : {}) }).withResponse();
 
       const calls: ToolCall[] = [];
       let usage: Usage | undefined;
@@ -318,7 +391,7 @@ function clientOf(name: string, entry: Shape, api: OpenAI, firstWordMs?: number)
       }
       return { text: '', calls: calls.filter(Boolean).map((call, index) => ({ ...call, id: call.id || callId() })), usage, quota: readQuota(response.headers), ...(cut ? { cut } : {}) };
     } catch (error) {
-      if (silent?.signal.aborted && !signal?.aborted) throw new Error(`no first word within ${Math.round(firstWordMs! / 100) / 10} s (timed out)`);
+      if (silent?.signal.aborted && !signal?.aborted) throw new Error(`no first word within ${Math.round(wait! / 100) / 10} s (timed out)`);
       throw error;
     } finally {
       clearTimeout(timer);

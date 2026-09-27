@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PARTNER_STANCE, STANCE } from '../shared/model.ts';
-import { checkReply, figureCheck, proseToolCall, turnSources, unreceiptedClaims, unsourcedFigures } from './truth.ts';
+import { checkReply, figureCheck, proseToolCall, stripFlagged, turnSources, unreceiptedClaims, unsourcedFigures, verdictRefused, VERDICT_WRITTEN } from './truth.ts';
 
 const wrote = { name: 'write_doc', ok: true };
 const failedWrite = { name: 'write_doc', ok: false };
@@ -35,6 +35,26 @@ describe('unreceiptedClaims', () => {
   it('takes a closed or proposed bet as the record and the schedule it is', () => {
     expect(unreceiptedClaims("I've recorded the bet as worked.", [{ name: 'close_bet', ok: true }])).toEqual([]);
     expect(unreceiptedClaims("I've scheduled a check on it for Friday.", [{ name: 'propose_bet', ok: true }])).toEqual([]);
+  });
+
+  it('catches a proposal the tool refused, the way the partner said it proposed a bet that was never put on record', () => {
+    const refused = { name: 'propose_bet', ok: false, result: 'there is no Metrics card with a "signups" row.' };
+    const said = 'I have proposed a bet for the next two weeks, but the system requires a Metrics card with a signups row.';
+    expect(unreceiptedClaims(said, [refused])).toEqual(['proposed']);
+    expect(checkReply({ reply: said, receipts: [refused], sources: [] })[0]).toMatch(/^Unconfirmed: .*\(proposed\)/);
+    expect(unreceiptedClaims("I've just proposed the decision.", [])).toEqual(['proposed']);
+    // A proposal that went through backs it, whatever was proposed.
+    expect(unreceiptedClaims(said, [refused, { name: 'propose_bet', ok: true }])).toEqual([]);
+    expect(unreceiptedClaims("I've proposed the tasks for your board.", [{ name: 'propose_tasks', ok: true }])).toEqual([]);
+    // The plain past is history or a suggestion in words, not a record made this turn.
+    expect(unreceiptedClaims('The price I proposed yesterday still holds.', [])).toEqual([]);
+    expect(unreceiptedClaims('As I proposed, start with invoicing.', [])).toEqual([]);
+    // Talk about what waits, or a proposal made on another turn, is not a claim about this one.
+    expect(unreceiptedClaims('Two bets have been proposed and wait for you in Needs you.', [])).toEqual([]);
+    expect(unreceiptedClaims('What has been proposed so far is thin.', [])).toEqual([]);
+    expect(unreceiptedClaims('I have proposed this twice already, so here it is plainly.', [])).toEqual([]);
+    expect(unreceiptedClaims("I've proposed it before: start with invoicing.", [])).toEqual([]);
+    expect(unreceiptedClaims('I have proposed it again, with a lower target.', [])).toEqual([]);
   });
 
   it('does not count a write the doc guard held back', () => {
@@ -262,6 +282,35 @@ describe('what counts as a proposal', () => {
 });
 
 
+// Journey 5: the partner's own price options, "$49, $79", were flagged as unsourced.
+describe('options the partner lays out', () => {
+  const sources = ['We charge $29/month.'];
+  it('counts figures offered as options, either/or, a range between two, or lettered choices as proposals', () => {
+    expect(figureCheck('Options: keep $29, raise to $49, or go to $79.', sources)).toEqual({ unsourced: [], proposals: ['$49', '$79'] });
+    expect(figureCheck('Three options:\n- Keep $29/month\n- Raise to $49/month\n- Raise to $79/month\n\nMy call: keep $29.', sources)).toEqual({ unsourced: [], proposals: ['$49', '$79'] });
+    expect(figureCheck('Here are three options for the VAT tier:\n1. $49/month\n2. $79/month', sources)).toEqual({ unsourced: [], proposals: ['$49', '$79'] });
+    expect(figureCheck('Option B: $49/month for new users.', sources)).toEqual({ unsourced: [], proposals: ['$49'] });
+    expect(figureCheck('You could either charge $49 or $79 for the VAT tier.', sources)).toEqual({ unsourced: [], proposals: ['$49', '$79'] });
+    expect(figureCheck('Price the VAT tier between $49 and $79.', sources)).toEqual({ unsourced: [], proposals: ['$49', '$79'] });
+    expect(figureCheck('A: $49/month\nB: $79/month', sources)).toEqual({ unsourced: [], proposals: ['$49', '$79'] });
+    expect(figureCheck('Keep $29 or move to $49 once retention holds.', sources)).toEqual({ unsourced: [], proposals: ['$49'] });
+  });
+
+  it('still flags a claim that only sits near those words', () => {
+    expect(figureCheck('Accountants cost $150 a month, or more.', sources).unsourced).toEqual(['$150']);
+    expect(figureCheck('The best option is clear: churn in this market is 7%.', sources).unsourced).toEqual(['7%']);
+    expect(figureCheck('Competitors charge between them an average of $60.', sources).unsourced).toEqual(['$60']);
+    expect(figureCheck('Option A: you are at $6,300 MRR.', sources).unsourced).toEqual(['$6,300']);
+    // Review round 4: the market's own figures said as a pair or a range are claims, not the partner's options.
+    expect(figureCheck('The market pays $49 or $79.', sources).unsourced).toEqual(['$49', '$79']);
+    expect(figureCheck('Competitors charge either $49 or $79.', sources).unsourced).toEqual(['$49', '$79']);
+    expect(figureCheck('Accountants charge between €80 and €200 a month.', sources).unsourced).toEqual(['€80', '€200']);
+    expect(figureCheck('Your MRR is $87 or $90.', sources).unsourced).toEqual(['$87', '$90']);
+    expect(figureCheck('Competitors offer either $49 or $79.', sources).unsourced).toEqual(['$49', '$79']);
+    expect(figureCheck('Benchmarks:\n- Accountants charge $150 a month', sources).unsourced).toEqual(['$150']);
+  });
+});
+
 describe('preconditions the partner sets', () => {
   it('counts a threshold, a milestone and a preconditions list as proposals', () => {
     for (const reply of ['Raise when MRR reaches $10k.', 'Hold off until you hit 150 customers.', 'Get to 150 customers first.', 'Precondition: 18 months of runway.'])
@@ -321,5 +370,51 @@ describe('what a turn counts as its sources', () => {
   it('keeps a document paragraph that happens to start like a rule', () => {
     const doc = [{ role: 'system', content: 'You are Sam, Partner. Brief.\n\n## Doc: Notes\nFirst line.\n\nToday is launch day and we have 140 customers.\n\nYou are paying $300 a month.' }];
     expect(unsourcedFigures('We have 140 customers and pay $300.', turnSources(doc))).toEqual([]);
+  });
+});
+
+// A judge whose verdict write was refused, and who then gives the verdict in chat anyway: the doc says "Not assessed",
+// the chat said "WEAK ... Score 5/10 ... Fit: 8", and nothing told the founder the two disagree.
+describe('a verdict stated without a written one', () => {
+  const OUTCOMES = ['WEAK', 'PIVOT REQUIRED', 'STRONG'];
+  const refused = { name: 'replace_section', ok: true, result: `Not written: the verdict waits. ${verdictRefused('Rohan has not written "4. Founder-market fit" yet', OUTCOMES)}` };
+  const LINE = 'Unconfirmed: the verdict was not written; Rohan has not written "4. Founder-market fit" yet.';
+
+  it('gets a line when the reply gives a verdict word and a score after a refused write', () => {
+    expect(checkReply({ reply: 'WEAK. Score: 5/10 (Assumption: 1, Flaws: 3, Pain: 1, Fit: 8, Why Now: 2).', receipts: [refused], sources: [] })).toContain(LINE);
+    // Refused by a thrown error counts the same.
+    const thrown = { name: 'write_doc', ok: false, result: `Failed: not written: the cap. ${verdictRefused('no customer conversations are recorded, so the verdict is at most WEAK and the score at most 5 of 10', OUTCOMES)}` };
+    expect(checkReply({ reply: '**STRONG**, 8 out of 10.', receipts: [thrown], sources: [] }))
+      .toContain('Unconfirmed: the verdict was not written; no customer conversations are recorded, so the verdict is at most WEAK and the score at most 5 of 10.');
+  });
+
+  it('says nothing when the reply relays the reason with no verdict word, or a later write stood', () => {
+    expect(checkReply({ reply: 'No verdict yet: Rohan has not written "4. Founder-market fit". I asked him.', receipts: [refused], sources: [] })).not.toContain(LINE);
+    // A verdict word after a refused write flags even with no score: "it leans WEAK" reads as the verdict.
+    expect(checkReply({ reply: 'It leans WEAK, but I cannot score it until Rohan writes his section.', receipts: [refused], sources: [] })).toContain(LINE);
+    // Any verdict word counts now, even one named to be set aside: the founder still reads WEAK under a refused write.
+    expect(checkReply({ reply: 'No verdict. The earlier draft said WEAK; ignore it. 0 out of 20 interviews logged.', receipts: [refused], sources: ['0 out of 20'] })).toEqual([LINE]);
+    const stood = { name: 'replace_section', ok: true, result: `Replaced the section "5. Verdict". ${VERDICT_WRITTEN}` };
+    expect(checkReply({ reply: 'WEAK. Score: 3/10.', receipts: [refused, stood], sources: [] })).toEqual([]);
+    expect(checkReply({ reply: 'WEAK. Score: 3/10.', receipts: [], sources: [] })).toEqual([]);
+  });
+
+  it('leaves a figure a doc marked "(unsourced)" out of the sources', () => {
+    expect(unsourcedFigures('An accountant costs €80 a month.', ['## Doc: Evaluation\n\nAn accountant at €80 (unsourced)–€200 (unsourced)/month.'])).toEqual(['€80']);
+    expect(unsourcedFigures('An accountant costs €80 a month.', ['An accountant at €80 a month.'])).toEqual([]);
+  });
+
+  it('is taken out of a past reply before it counts as a source', () => {
+    expect(stripFlagged(`WEAK.\n\n${LINE}`)).toBe('WEAK.\n\n');
+  });
+});
+
+describe('money in another currency than its source', () => {
+  it('flags "€87" worked out from "$29 × 3", as the journey wrote it', () => {
+    const sources = ['We charge $29/month and have 3 paying beta users.'];
+    const lines = checkReply({ reply: 'Revenue €29 × 3 ≈ €87 / month (≈ $95 / month).', receipts: [], sources });
+    expect(lines).toContain('Currency changed: €29 (source $), €87 (source $).');
+    expect(lines).toContain('Unsourced figures: $95 (not found in anything this turn read).');
+    expect(checkReply({ reply: 'Revenue $29 × 3 = $87 a month.', receipts: [], sources })).toEqual([]);
   });
 });

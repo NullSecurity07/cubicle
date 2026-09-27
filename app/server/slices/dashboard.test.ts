@@ -134,7 +134,7 @@ describe('the dashboard', () => {
     await expect.poll(row, { timeout: 30_000 }).toMatchObject({ ok: false });
     await mkdir(join(workspace, 'backups'), { recursive: true });
     await writeFile(join(workspace, 'backups', 'cubicle-2026-09-25-0900.tar.gz'), 'x');
-    await expect.poll(async () => (await row())?.detail, { timeout: 30_000, interval: 200 }).toMatch(/1 kept in .*the newest made/);
+    await expect.poll(async () => (await row())?.detail, { timeout: 30_000, interval: 200 }).toMatch(/1 kept, the newest made/);
   });
 
   it('says the same about backups on its line and in its Backup row, in the same answer, from one reading', { timeout: 60_000 }, async () => {
@@ -147,7 +147,7 @@ describe('the dashboard', () => {
     const body = (await get()).body;
     expect(body.backup?.at).toBeTruthy();
     // Fresh, but in the workspace's own folder, so on its disk: fine, with a warning that says why.
-    expect(body.health.find((one) => one.name === 'Backup')).toMatchObject({ ok: true, warn: true, detail: expect.stringMatching(/1 kept in .*the newest made today, on the same disk as the workspace/) });
+    expect(body.health.find((one) => one.name === 'Backup')).toMatchObject({ ok: true, warn: true, detail: expect.stringMatching(/^1 kept, the newest made today, on the same disk as the workspace: a copy here dies with this disk; pick another disk\nKept in /) });
   });
 
   it('reads the founder\'s day, each row carrying where it lives', async () => {

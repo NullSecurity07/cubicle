@@ -1,6 +1,7 @@
 import type { ToolEvent, Usage } from '../shared/model.ts';
 import type { ModelMessage } from './prompt.ts';
-import { complete, plainBreak, type Failure, type ModelClient } from './providers.ts';
+import { STRONG } from './partner/route.ts';
+import { complete, plainBreak, providerOf, type Failure, type ModelClient } from './providers.ts';
 import type { Answer } from './approvals.ts';
 import { limitWords } from './breaker.ts';
 import { resultCap } from './context/shrink.ts';
@@ -11,6 +12,12 @@ import { ANSWER_IN_WORDS, CALL_THE_TOOL, checkReply, HELD_BACK, proseToolCall, t
 import type { UsageBook } from './usage.ts';
 
 const MAX_STEPS = 8;
+// The most tool calls that change something a stand-in model (one that answers because the first could not, or one on this machine) may
+// make in a turn: a local 7B that took over a partner turn called propose_bet seven times.
+export const FALLBACK_CALLS = 3;
+// Tools that only read: they cost a stand-in none of its calls.
+const READS = /^(read_|list_|web_search|web_fetch|recall|search_|gather_|crawl_site|ask_person)/;
+export const FALLBACK_REFUSAL = `A stand-in model may make at most ${FALLBACK_CALLS} tool calls that change something in one turn. Do not make more; answer in words with what you have.`;
 // What the founder's receipt keeps of a result. The model is handed the whole of it: a five-page read, the last of
 // several searches and the error at the end of a long run all sit past this, and the shrinker at the door knows how
 // to make a long result small without throwing its end away.
@@ -84,11 +91,23 @@ export async function runTurn(input: {
   let nudged = false;
   let held = false;
   let summarised = false;
+  // Every tool call id this conversation already holds, so a model that repeats one ("call_propose__0" six times) gets
+  // its calls renamed before anything is paired, run, shown or saved under them. Providers reject a history with two.
+  const ids = new Set(input.messages.flatMap((message) => (message.role === 'assistant' && message.tool_calls ? message.tool_calls.map((call) => call.id) : message.role === 'tool' ? [message.tool_call_id] : [])));
+  const unique = (id: string) => {
+    let name = id || 'call';
+    for (let n = 1; ids.has(name); n += 1) name = `${id}-${n}`;
+    ids.add(name);
+    return name;
+  };
+  const primary = input.clients[0];
+  let standInCalls = 0;
+  let sizeSaid = false;
 
   // When the model that should have answered could not, the founder hears which one stepped in and why.
   const onFailure = ({ client, error }: Failure) => {
     const status = (error as { status?: number }).status;
-    failed.push(`${client.name} could not answer (${status === 429 ? limitWords(error) : plainBreak(error.message || 'error').slice(0, 120)})`);
+    failed.push(`${client.name} could not answer (${status === 429 ? limitWords(error) : plainBreak(error.message || 'error', providerOf(client.name)).slice(0, 120)})`);
     // A 429 rests the key, five breakdowns in a row open its breaker; either way its siblings serve meanwhile.
     usage.failed(client.name, error);
   };
@@ -137,6 +156,12 @@ export async function runTurn(input: {
     if (!turn) break;
 
     // A broken reply handed back after every model failed was already counted among the failures: nobody "answers".
+    // The first model in line (often the one the founder pinned) was passed over because it cannot hold this prompt:
+    // said once, in a line, rather than dropped without a word.
+    if (!sizeSaid && primary && turn.client !== primary && turn.oversize?.includes(primary.name)) {
+      sizeSaid = true;
+      events.notice?.(`${primary.name} cannot hold this room's prompt; ${turn.client.name} answers.`);
+    }
     if (failed.length) events.notice?.(turn.broke ? `${failed.splice(0).join('; ')}, so no model could finish this reply.` : `${failed.splice(0).join('; ')}, so ${turn.client.name} answers.`);
     // Words already shown stay; the founder is told they stop short. (A cut reply with no words moved to the next model already.)
     if (turn.cut && !turn.broke) events.notice?.(`${turn.client.name} hit its length limit, so this reply is cut short. Ask for the rest, or for a shorter answer.`);
@@ -166,16 +191,23 @@ export async function runTurn(input: {
     }
     if (!turn.calls.length || signal?.aborted) break;
 
+    const calls = turn.calls.map((call) => ({ ...call, id: unique(call.id) }));
+    // A model on this machine, or a weaker one that stepped in for the first: a strong one stepping in keeps its room.
+    const standIn = !!turn.client.local || (turn.client !== primary && !STRONG.includes(providerOf(turn.client.name)));
     messages.push({
       role: 'assistant', content: turn.text,
-      tool_calls: turn.calls.map((call) => ({ id: call.id, type: 'function', function: { name: call.name, arguments: call.args || '{}' }, ...(call.extra === undefined ? {} : { extra_content: call.extra }) })),
+      tool_calls: calls.map((call) => ({ id: call.id, type: 'function', function: { name: call.name, arguments: call.args || '{}' }, ...(call.extra === undefined ? {} : { extra_content: call.extra }) })),
     });
-    for (const call of turn.calls) {
+    for (const call of calls) {
       let args: Record<string, unknown> = {};
       try { args = call.args.trim() ? JSON.parse(call.args) : {}; } catch { /* runTool reports it */ }
       const tool = tools.find((candidate) => candidate.name === call.name);
       let rawArgs = call.args;
       let refusal = tool?.ready?.() ?? null;
+      // Only calls that change something count: a stand-in that searched three times may still write what it found.
+      const changes = !!tool && !READS.test(call.name);
+      if (standIn && changes) refusal = refusal ?? (standInCalls >= FALLBACK_CALLS ? FALLBACK_REFUSAL : null);
+      if (standIn && changes && !refusal) standInCalls += 1;
       // The founder may have said yes in advance to calls that reach exactly this far. It only skips the asking.
       let approved = false;
       if (seams) {
@@ -198,6 +230,8 @@ export async function runTurn(input: {
       events.tool({ id: call.id, name: call.name, args });
       context.signal = signal;
       context.query = query;
+      // What the turn has read up to this call, so a doc write can mark a figure nothing backs as the reply would.
+      context.sources = () => [...turnSources(inputs), ...results, query];
       context.report = (effect) => events.tool({ id: call.id, name: call.name, args, effect });
       // A tool that runs a turn of its own inside itself asks the founder on this turn's path, not on one of its own.
       context.approve = input.approve;

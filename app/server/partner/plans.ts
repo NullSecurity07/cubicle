@@ -42,14 +42,17 @@ export async function boardForPlan(store: Pick<Store, 'patchStage'>, roomId: str
 }
 
 // The founder's yes: every step a task to do, in the order written.
-// Each task carries the calendar day its label names, read against today in the founder's time zone.
+// Each task carries the calendar day its label names, read against today in the founder's time zone, or counted
+// from the day the plan was offered when the label is "Day 3" or "Week 2".
 export async function addPlan(boards: Pick<Boards, 'add'>, stage: Stage, plan: PlanProposal, now = Date.now()): Promise<{ boardId: string; added: number }> {
   const boardId = boardFor(stage, plan.roomId);
   if (!boardId) throw new Error(NO_BOARD);
   const today = localDay(now);
+  // "Day 1" is the day the plan was offered.
+  const start = localDay(plan.at);
   for (const step of plan.steps) {
-    const due = step.day ? dueOf(step.day, today) : undefined;
-    const title = planTaskTitle(step);
+    const due = step.day ? dueOf(step.day, today, start) : undefined;
+    const title = planTaskTitle(step, start);
     // A title cut short keeps the whole step in its detail.
     const whole = title.endsWith('\u2026') ? `${due ? stepText(step) : planStepLine(step)}\n\n` : '';
     await boards.add(boardId, { title, detail: `${whole}From the plan "${plan.title}", written by ${plan.who}.`, column: 'todo', ...(due ? { due } : {}) });

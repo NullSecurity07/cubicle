@@ -65,11 +65,16 @@ export function backupRow(state: { dir: string; backups: { at: number }[]; writa
   const fresh = !!newest && now - newest < DAY;
   return {
     name: 'Backup', ok: fresh && state.writable, ...(fresh && state.writable && state.sameDisk ? { warn: true } : {}),
+    // What is so, in one sentence, then the folder on a line of its own: a long path set inside the sentence pushed
+    // the same-disk warning past the end of a dashboard tile, and the warning is the part the founder must read.
     detail: [
-      newest ? `${state.backups.length} kept in ${state.dir}, the newest made ${ago(newest, now)}` : `nothing has been backed up yet (they would go to ${state.dir})`,
-      ...(state.writable ? [] : ['and that folder cannot be written to']),
-      ...(state.sameDisk ? ['on the same disk as the workspace: a copy here dies with this disk; pick another disk'] : []),
-    ].join(', '),
+      [
+        newest ? `${state.backups.length} kept, the newest made ${ago(newest, now)}` : 'nothing has been backed up yet',
+        ...(state.writable ? [] : ['and that folder cannot be written to']),
+        ...(state.sameDisk ? ['on the same disk as the workspace: a copy here dies with this disk; pick another disk'] : []),
+      ].join(', '),
+      newest ? `Kept in ${state.dir}` : `They would go to ${state.dir}`,
+    ].join('\n'),
     fix: 'One is made by itself once a day, and five are kept. Point "Back up to…" in Health at a second disk or a synced folder: a copy on this same disk is gone with it.',
   };
 }

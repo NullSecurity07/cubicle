@@ -1,10 +1,12 @@
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Lapsed } from '../shared/lapsed.ts';
 import type { Attention } from '../shared/model.ts';
-import { backupAttention, boardAttention, createAttention, damageAttention, keyAttention } from './attention.ts';
+import { backupAttention, boardAttention, createAttention, damageAttention, doneAttention, keyAttention } from './attention.ts';
+import { createDecisions, decisionAttention } from './decisions.ts';
+import { betsBook } from './partner/bets.ts';
 import { createUsage } from './usage.ts';
 import { createBoards } from './boards.ts';
 import { createStore } from './store.ts';
@@ -271,5 +273,127 @@ describe('a daily backup that failed', () => {
     expect(await createAttention(dir, () => NOON).list()).toHaveLength(0);
     await first.dismiss('backup-failed');
     expect(await first.list()).toHaveLength(0);
+  });
+});
+
+describe('what is already done leaves Needs you', () => {
+  const setUp = async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'attention-done-'));
+    // One clock for the boards, the bets and the decisions, moved by a test that needs one thing earlier than another.
+    const time = { now: NOON, decisions: NOON - 60_000 };
+    const store = createStore(dir); const boards = createBoards(dir, () => time.now); const decisions = createDecisions(dir, () => time.decisions); const bets = betsBook(dir, () => time.now);
+    const stage = await store.loadStage();
+    await store.saveStage({ ...stage, cards: [{ id: 'b1', kind: 'board', x: 0, y: 0, w: 900, h: 400 }] });
+    const attention = createAttention(dir, () => NOON);
+    attention.source(boardAttention(store, boards));
+    attention.source(decisionAttention(decisions));
+    attention.settle(doneAttention({ workspace: dir, store, boards, decisions }));
+    return { dir, store, boards, decisions, bets, attention, time };
+  };
+  const plan = (id: string, steps: string[]) => ({ id, at: NOON, who: 'Sam', roomId: 'partner', title: 'Invoicing week', steps: steps.map((text) => ({ text })) });
+
+  it('drops a plan whose steps are already tasks on a board, and keeps one that is not', async () => {
+    const { dir, boards, attention } = await setUp();
+    await writeFile(join(dir, 'partner.json'), JSON.stringify({ decided: [], plans: [plan('plan-a', ['Ship the invoice form', 'Call the three beta users']), plan('plan-b', ['Write the pricing page', 'Email the waitlist'])] }));
+    const shown = async () => (await attention.list()).filter((one) => one.kind === 'proposed-plan').map((one) => one.id);
+    const source = async () => [{ id: 'proposed-plan:plan-a', kind: 'proposed-plan' as const, title: 'Add these 2 tasks to the board? (Invoicing week)', at: NOON }, { id: 'proposed-plan:plan-b', kind: 'proposed-plan' as const, title: 'Add these 2 tasks to the board? (Pricing)', at: NOON }];
+    attention.source(source);
+    expect(await shown()).toEqual(['proposed-plan:plan-a', 'proposed-plan:plan-b']);
+    // One step on the board is not the plan done.
+    await boards.add('b1', { title: 'Ship the invoice form' });
+    expect(await shown()).toEqual(['proposed-plan:plan-a', 'proposed-plan:plan-b']);
+    await boards.add('b1', { title: 'call the three beta users', column: 'done' });
+    expect(await shown()).toEqual(['proposed-plan:plan-b']);
+  });
+
+  it('drops a proposed bet once the same bet is taken, and a decision to choose a bet once one is taken after it', async () => {
+    const { bets, decisions, attention } = await setUp();
+    const input = { what: 'Retain 5 paying beta users', hypothesis: 'Invoicing keeps them', metric: 'paying_users', target: 5, checkDate: '2026-10-04' };
+    const first = await bets.propose(input);
+    const again = await bets.propose({ ...input, what: 'Retain 5 paying beta users.' });
+    const choose = await decisions.propose({ title: 'Choose a 2-week validation bet', options: ['Retention', 'Signups'] });
+    const other = await decisions.propose({ title: 'Raise the price?', options: ['Yes', 'No'] });
+    const source = async () => (await bets.list()).filter((bet) => bet.status === 'proposed').map((bet) => ({ id: `proposed-bet:${bet.id}`, kind: 'proposed-bet' as const, title: bet.what, at: bet.at }));
+    attention.source(source);
+    const ids = async () => (await attention.list()).map((one) => one.id).sort();
+    expect(await ids()).toEqual([`proposed-bet:${again.id}`, `proposed-bet:${first.id}`, `proposed-decision:${choose.id}`, `proposed-decision:${other.id}`].sort());
+    await bets.answer(first.id, true);
+    // The copy of the bet the founder already took, and the question the bet answered, both go; the price stays.
+    expect(await ids()).toEqual([`proposed-decision:${other.id}`]);
+  });
+
+  it('drops a proposed decision once the same decision is on record as decided', async () => {
+    const { decisions, attention } = await setUp();
+    const proposed = await decisions.propose({ title: 'Build invoicing first', options: ['Invoicing', 'Profiles'] });
+    expect((await attention.list()).map((one) => one.id)).toEqual([`proposed-decision:${proposed.id}`]);
+    await decisions.record({ title: 'Build invoicing first.', chosen: 'Invoicing' });
+    expect(await attention.list()).toEqual([]);
+  });
+
+  it('counts only tasks made since the plan was offered, so a weekly plan is not hidden by last week\'s tasks', async () => {
+    const { dir, boards, attention, time } = await setUp();
+    await writeFile(join(dir, 'partner.json'), JSON.stringify({ decided: [], plans: [plan('plan-a', ['Ship the invoice form', 'Call the three beta users'])] }));
+    attention.source(async () => [{ id: 'proposed-plan:plan-a', kind: 'proposed-plan' as const, title: 'Add these 2 tasks', at: NOON }]);
+    time.now = NOON - 7 * 86_400_000;
+    await boards.add('b1', { title: 'Ship the invoice form', column: 'done' });
+    await boards.add('b1', { title: 'Call the three beta users', column: 'done' });
+    expect((await attention.list()).map((one) => one.id)).toEqual(['proposed-plan:plan-a']);
+    // Made in the same turn, a moment before the offer was written down, they count.
+    time.now = NOON - 60_000;
+    await boards.add('b1', { title: 'Ship the invoice form' });
+    await boards.add('b1', { title: 'Call the three beta users' });
+    expect(await attention.list()).toEqual([]);
+  });
+
+  it('keeps a question asked again after an old decision on the same title', async () => {
+    const { decisions, attention, time } = await setUp();
+    time.decisions = NOON - 7 * 86_400_000;
+    await decisions.record({ title: 'Raise the price?', chosen: 'No' });
+    time.decisions = NOON;
+    const again = await decisions.propose({ title: 'Raise the price?', options: ['Yes', 'No'] });
+    expect((await attention.list()).map((one) => one.id)).toEqual([`proposed-decision:${again.id}`]);
+  });
+
+  it('answers only a question that asks to choose a bet, only with an open bet taken after it, and never with a closed twin', async () => {
+    const { bets, decisions, attention, time } = await setUp();
+    const input = { what: 'Retain 5 paying beta users', hypothesis: 'Invoicing keeps them', metric: 'paying_users', target: 5, checkDate: '2026-10-04' };
+    // A bet taken and closed a week ago: neither its words proposed again nor a new question to pick a bet are answered by it.
+    time.now = NOON - 7 * 86_400_000;
+    const old = await bets.propose(input);
+    await bets.answer(old.id, true);
+    await bets.close(old.id, { verdict: 'did-not', value: 3, note: '', by: 'Founder' });
+    time.now = NOON; time.decisions = NOON - 60_000;
+    const rerun = await bets.propose(input);
+    const pick = await decisions.propose({ title: 'Pick the next bet', options: ['Retention', 'Signups'] });
+    const kill = await decisions.propose({ title: 'Kill the retention bet?', options: ['Yes', 'No'] });
+    const source = async () => (await bets.list()).filter((bet) => bet.status === 'proposed').map((bet) => ({ id: `proposed-bet:${bet.id}`, kind: 'proposed-bet' as const, title: bet.what, at: bet.at }));
+    attention.source(source);
+    const ids = async () => (await attention.list()).map((one) => one.id).sort();
+    expect(await ids()).toEqual([`proposed-bet:${rerun.id}`, `proposed-decision:${kill.id}`, `proposed-decision:${pick.id}`].sort());
+    // Taken now, the rerun answers "pick the next bet"; "kill the retention bet" is not a question about choosing one.
+    await bets.answer(rerun.id, true);
+    expect(await ids()).toEqual([`proposed-decision:${kill.id}`]);
+  });
+
+  it('does not take a bet proposed and taken before the question as its answer', async () => {
+    const { bets, decisions, attention, time } = await setUp();
+    time.now = NOON - 3_600_000;
+    const early = await bets.propose({ what: 'Retain 5 paying beta users', hypothesis: '', metric: 'paying_users', target: 5, checkDate: '2026-10-04' });
+    await bets.answer(early.id, true);
+    time.decisions = NOON;
+    const which = await decisions.propose({ title: 'Which bet next?', options: ['Retention', 'Signups'] });
+    expect((await attention.list()).map((one) => one.id)).toEqual([`proposed-decision:${which.id}`]);
+  });
+
+  it('tells whoever watches when a board change makes a plan done', async () => {
+    const { dir, boards, attention } = await setUp();
+    await writeFile(join(dir, 'partner.json'), JSON.stringify({ decided: [], plans: [plan('plan-a', ['Ship the invoice form', 'Call the three beta users'])] }));
+    attention.source(async () => [{ id: 'proposed-plan:plan-a', kind: 'proposed-plan' as const, title: 'Add these 2 tasks', at: NOON }]);
+    const told: number[] = [];
+    attention.watch((list) => told.push(list.length));
+    boards.onChange(() => { void attention.refresh(); });
+    await boards.add('b1', { title: 'Ship the invoice form' });
+    await boards.add('b1', { title: 'Call the three beta users' });
+    await expect.poll(() => told.at(-1)).toBe(0);
   });
 });

@@ -369,6 +369,25 @@ describe('the partner slice: the bets ledger', () => {
     await part.close!();
   });
 
+  // Journey 5: with paying users at 3, the partner proposed a bet with target 3, one that could not lose.
+  it('refuses a bet whose target does not beat the number as it stands, the right way for that number', async () => {
+    const { deps, part, workspace } = await installed({}, { now: () => new Date('2026-09-27T10:00').getTime(), ask: async () => SHAPED });
+    await mkdir(join(workspace, 'metrics'), { recursive: true });
+    await writeFile(join(workspace, 'metrics', 'metrics-1.json'), JSON.stringify({ updatedAt: 0, metrics: [
+      { key: 'paying_users', label: 'paying_users', unit: '', better: 'up', points: [{ at: '2026-09-25', value: 2, from: 'founder' }, { at: '2026-09-27', value: 3, from: 'founder' }] },
+      { key: 'churn', label: 'Churn', unit: '%', better: 'down', points: [{ at: '2026-09-27', value: 8, from: 'founder' }] },
+    ] }));
+    const stage = await deps.store.loadStage();
+    await deps.store.saveStage({ ...stage, rooms: [...stage.rooms, room('p1', 'Sam', { partner: true })], cards: [{ id: 'metrics-1', kind: 'metrics', x: 0, y: 0, w: 1, h: 1 }] });
+    const propose = async (metric: string, target: number) => part.tools!.find((one) => one.name === 'propose_bet')!.run({ what: 'Ship PDF invoices to the beta users', hypothesis: 'they stay and pay', metric, target, check_date: '2026-10-11' }, { stage: await deps.store.loadStage(), roomId: 'p1', store: deps.store, granted: new Map(), query: 'make the 2-week bet' } as never);
+    await expect(propose('paying_users', 3)).rejects.toThrow('"paying_users" is 3 now, read from the Metrics card: a target of 3 cannot lose. Propose a target above 3');
+    await expect(propose('paying_users', 2)).rejects.toThrow('a target of 2 cannot lose');
+    await expect(propose('churn', 9)).rejects.toThrow('"churn" is 8 now, read from the Metrics card: a target of 9 cannot lose. Churn is better lower: propose a target below 8');
+    expect((await propose('paying_users', 5)).text).toContain('(paying_users to 5 by 2026-10-11)');
+    expect((await propose('churn', 5)).text).toContain('(churn to 5 by 2026-10-11)');
+    await part.close!();
+  });
+
   it('lets the founder say how a due bet went from Needs you', async () => {
     const answers: [number, unknown][] = [];
     const { deps, part } = await installed({ json: (_res, status, body) => { answers.push([status, body]); } }, { now: () => new Date('2026-10-05T10:00').getTime(), ask: async () => SHAPED });
@@ -382,6 +401,127 @@ describe('the partner slice: the bets ledger', () => {
     deps.body = async () => ({ verdict: 'worked' });
     await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/bets/${id}/close`);
     expect(answers.at(-1)).toEqual([200, expect.objectContaining({ status: 'closed', result: expect.objectContaining({ verdict: 'worked', value: 0, by: 'Founder' }) })]);
+    await part.close!();
+  });
+});
+
+// Journey 5: the verdict reached the morning note only; minutes later the partner's answers said "ship invoicing" and
+// "approve the tasks waiting in Needs you" after they had been approved.
+describe('the partner slice: standing facts in every partner turn', () => {
+  const EVAL = '# Evaluation\n\n## 4. Founder-market fit\n\nFit 8.\n\n## 6. Verdict\n\nVerdict: WEAK\nScore: 5/10\nNext 7-day action: conduct 10 discovery conversations before writing further code.\n';
+  async function setUp() {
+    const { deps, part, workspace } = await installed({}, { now: () => new Date('2026-09-27T10:00').getTime(), ask: async () => SHAPED });
+    await mkdir(join(workspace, 'metrics'), { recursive: true });
+    await writeFile(join(workspace, 'metrics', 'metrics-1.json'), JSON.stringify({ updatedAt: 0, metrics: [{ key: 'paying_users', label: 'paying_users', unit: '', better: 'up', points: [{ at: '2026-09-27', value: 3, from: 'founder' }] }] }));
+    const stage = await deps.store.loadStage();
+    await deps.store.saveStage({ ...stage, rooms: [...stage.rooms, room('p1', 'Sam', { partner: true })], cards: [{ id: 'metrics-1', kind: 'metrics', x: 0, y: 0, w: 1, h: 1 }],
+      docs: [...stage.docs, { id: 'eval', title: 'Evaluation', x: 0, y: 0, w: 1, h: 1, rules: { framework: 'startup-evaluation', sections: [{ heading: '4. Founder-market fit', by: 'fit' }], verdict: { heading: '6. Verdict', by: 'judge' }, outcomes: ['PIVOT REQUIRED', 'WEAK', 'STRONG'] } }] } as Stage);
+    await deps.store.writeDoc('eval', EVAL);
+    await part.tick!();
+    const system = async (roomId: string, query = 'what do I do now?') => (await deps.seams.run('turn:before', { roomId, source: 'chat', query, messages: [{ role: 'system', content: 'You are someone.' }] })).messages[0].content as string;
+    return { deps, part, system };
+  }
+
+  it('carries the team verdict into a partner turn, and not into a staff turn', async () => {
+    const { part, system } = await setUp();
+    const said = await system('p1');
+    expect(said).toContain('Standing facts, read in code from every room just now. When one contradicts the founder\'s ask or your own advice, say so first:');
+    expect(said).toMatch(/- Evaluation, 6\. Verdict: WEAK, score 5\/10\. .*before writing further code/);
+    expect(said).toContain('Waiting in Needs you: nothing.');
+    expect(await system('marketing')).not.toContain('Standing facts');
+    await part.close!();
+  });
+
+  it('lists what waits in Needs you by kind and count, and drops it the moment it is answered', async () => {
+    const { deps, part, system } = await setUp();
+    await part.tools!.find((one) => one.name === 'propose_bet')!.run({ what: 'Five paying users', hypothesis: 'invoices bring two more', metric: 'paying_users', target: 5, check_date: '2026-10-11' }, { stage: await deps.store.loadStage(), roomId: 'p1', store: deps.store, granted: new Map() } as never);
+    await deps.decisions.propose({ title: 'Raise the price?', options: ['$29', '$49'] });
+    deps.attention.source(decisionAttention(deps.decisions));
+    const before = await system('p1');
+    expect(before).toContain('1 bet to take or leave ("Five paying users")');
+    expect(before).toContain('1 decision to make ("Raise the price?")');
+    deps.body = async () => ({ accept: true });
+    const id = (await deps.attention.list()).find((one) => one.kind === 'proposed-bet')!.id.split(':')[1];
+    await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/bets/${id}`);
+    const after = await system('p1');
+    expect(after).not.toContain('bet to take');
+    expect(after).toContain('Waiting in Needs you: 1 decision to make ("Raise the price?"). Nothing else waits there');
+    expect(after).toMatch(/Bets on record:\n- Open: Five paying users\./);
+    await part.close!();
+  });
+});
+
+// Journey 5: after a week, Idea, Customer and Numbers were still empty, so a new person knew neither the name nor the cash.
+describe('the partner slice: the founder\'s facts kept in the Company document', () => {
+  const DAY_ONE = "I'm building Ledgerly: $29/month bookkeeping for EU solo consultants that drafts VAT returns from bank feeds. "
+    + 'We have 3 paying beta users; two of them asked for invoicing. I have €4,200 in the bank and burn €1,100/month. I\'m a solo technical founder. Tear it apart.';
+  const reply = (text: string) => ({ text, tools: [], provider: 'p', model: 'm', usage: { input: 1, output: 1 }, stopped: false });
+
+  it('writes the Day-1 facts into Numbers, Idea and Customer, with a receipt under the partner\'s reply', async () => {
+    const { deps, part } = await installed({}, { now: () => new Date('2026-09-27T10:00').getTime(), ask: async () => SHAPED });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    const out = await deps.seams.run('turn:reply', { roomId: 'p1', query: DAY_ONE, reply: reply('Runway is short.\n\nMy call: call the three users.') });
+    const doc = await deps.store.readDoc(companyDocOf(await deps.store.loadStage())!.id);
+    expect(doc).toMatch(/## Idea\n\n- I'm building Ledgerly: \$29\/month bookkeeping/);
+    expect(doc).toContain('- Price: $29/month (founder, 2026-09-27)');
+    expect(doc).toContain('- Cash: €4,200 (founder, 2026-09-27)');
+    expect(doc).toContain('- Burn: €1,100/month (founder, 2026-09-27)');
+    expect(doc).toContain('- Paying beta users: 3 (founder, 2026-09-27)');
+    expect(out.reply.text).toBe('Runway is short.\n\nMy call: call the three users.\n\n*Kept in the Company document: Numbers (Price $29/month, Paying beta users 3, Cash €4,200, Burn €1,100/month), Idea, Customer.*');
+    // Said again, nothing new: no second write, no receipt. A staff room never writes it.
+    expect((await deps.seams.run('turn:reply', { roomId: 'p1', query: DAY_ONE, reply: reply('Ok.') })).reply.text).toBe('Ok.');
+    expect((await deps.seams.run('turn:reply', { roomId: 'marketing', query: 'We have 9 paying users.', reply: reply('Ok.') })).reply.text).toBe('Ok.');
+    await part.close!();
+  });
+
+  it('puts a runway rounded up right against the Company numbers, in a reply and in the morning note', async () => {
+    const note = 'Three moves for today:\n1. Call the three beta users.\n2. Pause the invoicing code.\n3. Log paying users.\nRisk: remaining 4 months of runway against the Evaluation verdict.\nQuestion: Will you pause coding today?';
+    const { deps, part } = await installed({}, { now: () => new Date('2026-09-27T10:00').getTime(), ask: async () => note });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    await deps.seams.run('turn:reply', { roomId: 'p1', query: DAY_ONE, reply: reply('Ok.') });
+    const out = await deps.seams.run('turn:reply', { roomId: 'p1', query: 'How much runway do I have?', reply: reply('You have **4 months** of runway.') });
+    expect(out.reply.text).toBe('You have **4 months (3.8 months)** of runway.');
+    await part.route!({ method: 'POST' } as never, {} as never, '/api/partner/morning');
+    expect((await deps.store.readChat('p1')).at(-1)!.text).toContain('Risk: remaining 4 months (3.8 months) of runway against the Evaluation verdict.');
+    await part.close!();
+  });
+
+  it('holds a beta-user update to what customers may read, and tells the partner so before it writes', async () => {
+    const { deps, part } = await installed({}, { now: () => new Date('2026-09-27T10:00').getTime(), ask: async () => SHAPED });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    await deps.seams.run('turn:reply', { roomId: 'p1', query: DAY_ONE, reply: reply('Ok.') });
+    const ask = 'Draft a short update for our 3 beta users about what we are building';
+    const system = (await deps.seams.run('turn:before', { roomId: 'p1', source: 'chat', query: ask, messages: [{ role: 'system', content: 'You are Sam.' }] })).messages[0].content as string;
+    expect(system).toContain('This is for the company\'s customers to read, not for investors');
+    const draft = 'Hi all,\n\nWe are building PDF invoicing first [Decisions].\n\n### Numbers\n- We have €4,200 in the bank.\n\n### Asks\n- (founder to add)\n\nReady to send.';
+    const out = await deps.seams.run('turn:reply', { roomId: 'p1', query: ask, reply: reply(draft) });
+    expect(out.reply.text).toBe('Hi all,\n\nWe are building PDF invoicing first.\n\n### Numbers\n- We have €4,200 in the bank.\n\nNot for customers: cash. Take them out before this goes to anyone outside the company.');
+    // An investor update is left as the partner wrote it.
+    const investor = await deps.seams.run('turn:reply', { roomId: 'p1', query: 'help me write an investor update', reply: reply(draft) });
+    expect(investor.reply.text).toBe(draft);
+    await part.close!();
+  });
+
+  it('says nothing is waiting under a reply that sends the founder to an empty Needs you', async () => {
+    const { deps, part } = await installed({}, { now: () => new Date('2026-09-27T10:00').getTime(), ask: async () => SHAPED });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    const out = await deps.seams.run('turn:reply', { roomId: 'p1', query: 'so what do I do right now?', reply: reply('1. Approve the task board: check your Needs you list.\n\nMy call: call the users.') });
+    expect(out.reply.text).toBe('1. Approve the task board: check your Needs you list.\n\nMy call: call the users.\n\n(Nothing is waiting in Needs you.)');
+    await part.close!();
+  });
+
+  it('writes nothing when the founder took the partner\'s wire to it away, and says so', async () => {
+    const { deps, part } = await installed({}, { now: () => new Date('2026-09-27T10:00').getTime(), ask: async () => SHAPED });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    await deps.store.patchStage((stage) => { stage.wires = stage.wires.filter((wire) => wire.from !== 'p1'); });
+    const out = await deps.seams.run('turn:reply', { roomId: 'p1', query: DAY_ONE, reply: reply('Ok.') });
+    expect(out.reply.text).toBe('Ok.\n\n*Not kept: the "Company brief" document is not wired to Sam, so Numbers (Price $29/month, Paying beta users 3, Cash €4,200, Burn €1,100/month), Idea, Customer are not in it. Wire it to Sam to keep it current.*');
+    expect(await deps.store.readDoc(companyDocOf(await deps.store.loadStage())!.id)).not.toContain('€4,200');
     await part.close!();
   });
 });

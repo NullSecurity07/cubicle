@@ -295,3 +295,58 @@ describe('a turn when models fail', () => {
     expect(tokens.split('<restart>').at(-1)).toBe('Phase 1: SAFE with a $2M cap.');
   });
 });
+
+describe('the last look at a reply', () => {
+  it('keeps and shows what a slice adds under the reply, in the saved message and as a token', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'chat-'));
+    const store = createStore(dir);
+    const seams = createSeams();
+    const asked: string[] = [];
+    seams.on('turn:reply', async (payload, next) => { asked.push(payload.query); return next({ ...payload, reply: { ...payload.reply, text: `${payload.reply.text}\n\n*Kept.*` } }); });
+    const client: ModelClient = { name: 'gemini', model: 'm', maxPromptChars: Infinity, tools: true, limits: { rpd: 1000 }, async step(_messages, { onToken }) { onToken('Fine.'); return { text: '', calls: [] }; } };
+    const { chat } = createChat({
+      store, roomFeed: createRoomFeed(), busy: new Set(), clients: [client], usage: createUsage(null), seams,
+      attention: createAttention(dir), approvals: createApprovals(), memory: { fold: async () => false },
+      promptFor: async () => [{ role: 'system', content: 'You are Maya.' }, { role: 'user', content: 'q' }], toolsFor: () => [],
+    });
+    const out = new PassThrough();
+    const events: Record<string, unknown>[] = [];
+    out.on('data', (chunk: Buffer) => { for (const line of chunk.toString().split('\n')) if (line.startsWith('data: ')) events.push(JSON.parse(line.slice(6))); });
+    const res = Object.assign(out, { writeHead: () => res }) as unknown as ServerResponse;
+    await chat('marketing', 'We have 3 paying users.', res);
+    expect(asked).toEqual(['We have 3 paying users.']);
+    expect(events.filter((one) => 'token' in one).map((one) => one.token).join('')).toBe('Fine.\n\n*Kept.*');
+    expect((await store.readChat('marketing')).at(-1)!.text).toBe('Fine.\n\n*Kept.*');
+  });
+});
+
+// Journey 6: a scripted stage with the team's PIVOT REQUIRED verdict, and a partner who answers "build invoicing".
+describe('a partner\'s turn against the team\'s verdict', () => {
+  it('asks again with the verdict quoted, says why in a notice, and keeps the answer that weighs it', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'chat-'));
+    const store = createStore(dir);
+    const stage = await store.loadStage();
+    const rules = { framework: 'startup-evaluation', sections: [], verdict: { heading: '6. Verdict', by: 'judge' }, outcomes: ['PIVOT REQUIRED', 'WEAK', 'STRONG'] };
+    await store.saveStage({ ...stage, rooms: [...stage.rooms, { id: 'sam', name: 'Sam', role: 'Partner', accent: '#fff', brief: '', partner: true, x: 0, y: 0, w: 1, h: 1 }],
+      docs: [...stage.docs, { id: 'eval', title: 'Evaluation', x: 0, y: 0, w: 1, h: 1, rules }] });
+    await store.writeDoc('eval', '# Evaluation\n\n## 6. Verdict\n\nVerdict: PIVOT REQUIRED\nScore: 6/10\nPause coding; run 10 discovery calls.\n');
+    const replies = ['My call: dive straight into building the client profile form today.', 'The team\'s PIVOT REQUIRED verdict comes first.\n\nMy call: run the 10 discovery calls before any code.'];
+    const steps: ModelMessage[][] = [];
+    let at = 0;
+    const client: ModelClient = { name: 'gemini', model: 'm', maxPromptChars: Infinity, tools: true, limits: { rpd: 1000 }, async step(messages, { onToken }) { steps.push(messages); onToken(replies[at++] ?? 'done'); return { text: '', calls: [] }; } };
+    const { chat } = createChat({
+      store, roomFeed: createRoomFeed(), busy: new Set(), clients: [client], usage: createUsage(null), seams: createSeams(),
+      attention: createAttention(dir), approvals: createApprovals(), memory: { fold: async () => false },
+      promptFor: async () => [{ role: 'system', content: 'You are Sam, Partner.' }, { role: 'user', content: 'q' }], toolsFor: () => [],
+    });
+    const out = new PassThrough();
+    const events: Record<string, unknown>[] = [];
+    out.on('data', (chunk: Buffer) => { for (const line of chunk.toString().split('\n')) if (line.startsWith('data: ')) events.push(JSON.parse(line.slice(6))); });
+    const res = Object.assign(out, { writeHead: () => res }) as unknown as ServerResponse;
+    await chat('sam', 'so what do I do right now?', res);
+    expect(steps).toHaveLength(2);
+    expect(String(steps[1].at(-1)!.content)).toBe('The team\'s verdict is PIVOT REQUIRED 6/10 (Evaluation); answer in its light or say why you overrule it. Name the verdict in your reply.');
+    expect(events).toContainEqual({ notice: 'Sam is taking another look: weighing the team\'s verdict.' });
+    expect((await store.readChat('sam')).at(-1)!.text).toBe(replies[1]);
+  });
+});

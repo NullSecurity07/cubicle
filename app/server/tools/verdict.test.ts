@@ -392,6 +392,135 @@ describe('a second copy of a section', () => {
   });
 });
 
+describe('a verdict written again over a section emptied since', () => {
+  // The founder empties a section in the doc editor, which no guard sees; the judge is then asked to rewrite her verdict.
+  const STANDING = 'WEAK: the founder lived it, but no pain is proven (4).\n\nScore: 5/10';
+  async function standing() {
+    const all = await setup();
+    await all.fill();
+    expect((await all.as('verdict')('replace_section', { heading: '5. Verdict', text: STANDING })).ok).toBe(true);
+    const text = await all.doc();
+    await all.store.replaceDoc('evaluation', text.replace(sectionBody(text, '4. Founder-market fit')!, 'Lived it / unusual access / technical edge / contrarian insight / earned secret / none:\n\nIn one sentence:'));
+    return all;
+  }
+
+  it('is held when the judge writes the same text again, and says "not assessed"', async () => {
+    const { as, doc } = await standing();
+    const out = await as('verdict')('replace_section', { heading: '5. Verdict', text: STANDING });
+    expect(out.ok).toBe(true);
+    expect(out.text).toMatch(/^Not written: the verdict waits because Rohan has not written "4\. Founder-market fit" yet/);
+    expect(sectionBody(await doc(), '5. Verdict')).toMatch(/^Not assessed: 4\. Founder-market fit \(Rohan has not written it yet\)/);
+  });
+
+  it('is held on a whole-doc write that keeps the verdict, by the judge or anyone else', async () => {
+    const judge = await standing();
+    const out = await judge.as('verdict')('write_doc', { text: await judge.doc() });
+    expect(out.text).toMatch(/^Not written: the verdict waits because Rohan/);
+    expect(sectionBody(await judge.doc(), '5. Verdict')).toMatch(/^Not assessed: 4\. Founder-market fit/);
+    // A colleague's whole-doc write of their own section still goes in; the verdict under it becomes "not assessed".
+    const other = await standing();
+    const before = await other.doc();
+    const mine = await other.as('assumption')('write_doc', { text: before.replace('Cheapest way to test it: a landing page with a paid pre-order.', 'Cheapest way to test it: ten paid pre-orders.') });
+    expect(mine.ok).toBe(true);
+    expect(mine.text).toMatch(/^Wrote \d+ characters\. The verdict now says "Not assessed": Rohan has not written "4\. Founder-market fit" yet\./);
+    const after = await other.doc();
+    expect(after).toContain('ten paid pre-orders');
+    expect(sectionBody(after, '5. Verdict')).toMatch(/^Not assessed: 4\. Founder-market fit/);
+  });
+
+  it('is refused by the cap when the conversations were taken out since, though its text did not change', async () => {
+    const all = await setup();
+    await all.fill();
+    const strong = 'STRONG (1)(3)(4)\n\nScore: 8/10';
+    expect((await all.as('verdict')('replace_section', { heading: '5. Verdict', text: strong })).ok).toBe(true);
+    await all.store.replaceDoc('evaluation', (await all.doc()).replace('Real customer conversations done (of ten to twenty): 12', 'Real customer conversations done (of ten to twenty): 0'));
+    const out = await all.as('verdict')('replace_section', { heading: '5. Verdict', text: strong });
+    expect(out.ok).toBe(false);
+    expect(out.text).toMatch(/at most WEAK and the score at most 5 of 10\. This one says STRONG, 8 of 10/);
+  });
+
+  it('leaves a whole-doc write alone when every section is written', async () => {
+    const all = await setup();
+    await all.fill();
+    expect((await all.as('verdict')('replace_section', { heading: '5. Verdict', text: STANDING })).ok).toBe(true);
+    const out = await all.as('verdict')('write_doc', { text: await all.doc() });
+    expect(out).toMatchObject({ ok: true });
+    expect(sectionBody(await all.doc(), '5. Verdict')).toContain('WEAK: the founder lived it');
+  });
+});
+
+describe('a score with its breakdown in brackets', () => {
+  const write = async (text: string) => {
+    const all = await setup();
+    await all.fill();
+    return { out: await all.as('verdict')('replace_section', { heading: '5. Verdict', text }), doc: all.doc };
+  };
+
+  it('is refused when the parts do not add up to it, with the figure they do add up to', async () => {
+    // The live judge's: five parts out of ten each, 15 of 50, which is 3 of 10 and not 5.
+    const { out, doc } = await write('WEAK\n\nScore: 5/10 (Assumption: 1, Flaws: 3, Pain: 1, Fit: 8, Why Now: 2)');
+    expect(out.ok).toBe(false);
+    expect(out.text).toMatch(/not written: the score says 5 of 10, but its parts \(1, 3, 1, 8, 2\) add up to 15 of 50, which is 3 of 10\. Write the score as 3\/10, or change the parts\./);
+    expect(out.text).toContain('Tell the founder the verdict was not written because');
+    expect(sectionBody(await doc(), '5. Verdict')).not.toContain('5/10');
+    // Parts out of two each, as the template's five parts of ten are.
+    expect((await write('WEAK\n\nScore: 7/10 (1, 1, 1, 1, 0)')).out.text).toMatch(/add up to 4 of 10\. Write the score as 4\/10/);
+    // Labels without a colon, as the live judge wrote them: 1 + 0 + 1 + 2 + 2 is 6, not 8.
+    for (const text of ['PIVOT REQUIRED\n\nScore out of 10: 8/10 (assumption 1, flaws 0, pain 1, fit 2, why now 2)', 'PIVOT REQUIRED\n\nScore: 8/10 (Assumption - 1, Why-now 2, fit 2, pain 1, flaws 0)']) {
+      expect((await write(text)).out.text, text).toMatch(/add up to 6 of 10\. Write the score as 6\/10/);
+    }
+    expect((await write('PIVOT REQUIRED\n\nScore: 6/10 (assumption 1, flaws 0, pain 1, fit 2, why now 2)')).out.ok).toBe(true);
+  });
+
+  it('lets a score through that its parts add up to, rounded, or out of their own stated maximum', async () => {
+    for (const text of ['WEAK\n\nScore: 3/10 (Assumption: 1, Flaws: 3, Pain: 1, Fit: 8, Why Now: 2)', 'WEAK\n\nScore: 4/10 (1, 1, 1, 1, 0)',
+      'WEAK\n\nScore: 3/10 (2, 3, 1, 8, 3)', 'WEAK\n\nScore: 5/10 (1/2, 2/2, 1/2, 1/2, 0/2)', 'WEAK\n\nScore out of 10 — assumption, flaws, pain, fit, why now:\n\n4/10 (1, 1, 1, 1, 0)',
+      'WEAK because of (3).\n\nScore: 4/10', 'WEAK\n\nScore: 7/10 (1, 1, 1, 1, 1, 2)', 'WEAK\n\nScore: 6/10 (see sections 1, 2 and 4)',
+      // Under the parts is not over them: a score the evidence caps, or parts out of ten each.
+      'WEAK\n\nScore: 2/10 (2, 2, 2, 2, 2)']) {
+      expect((await write(text)).out.ok, text).toBe(true);
+    }
+  });
+});
+
+describe('a capped score with its breakdown', () => {
+  it('is written, where the cap once sent the judge round between the sum and the cap', async () => {
+    for (const text of ['WEAK\n\nScore: 5/10 (capped from 7: 2, 1, 2, 1, 1)', 'WEAK\n\nScore: 5/10 (capped at 5; parts 2, 1, 2, 1, 1 = 7)']) {
+      const all = await setup();
+      await all.fill();
+      await all.as('pain')('replace_section', { heading: '3. Is the pain real?', text: 'painkiller\n\nReal customer conversations done (of ten to twenty): 0' });
+      const out = await all.as('verdict')('replace_section', { heading: '5. Verdict', text });
+      expect(out.ok, text).toBe(true);
+      expect(sectionBody(await all.doc(), '5. Verdict'), text).toContain('Score: 5/10');
+    }
+  });
+});
+
+describe('a cap on no conversations while the company has paying users', () => {
+  it('names the paying users from the Company brief\'s Numbers, so the writer counts them if they talked', async () => {
+    const { as, fill, store } = await setup();
+    await store.replaceDoc('company-brief', '# Company brief\n\n## Numbers\n\n- Price: $29/month\n- 3 paying users (beta), asked for invoicing\n');
+    await fill();
+    const zero = 'Vitamin — painkiller — hair on fire: hair on fire\n\nReal customer conversations done (of ten to twenty): 0 / 20';
+    const pain = await as('pain')('replace_section', { heading: '3. Is the pain real?', text: zero });
+    expect(pain.ok).toBe(false);
+    expect(pain.text).toContain('0 conversations recorded; the Numbers section says 3 paying users; count them if you talked to them.');
+    expect((await as('pain')('replace_section', { heading: '3. Is the pain real?', text: zero.replace('hair on fire\n', 'painkiller\n') })).ok).toBe(true);
+    const verdict = await as('verdict')('replace_section', { heading: '5. Verdict', text: 'STRONG\n\nScore: 8/10' });
+    expect(verdict.text).toContain('0 conversations recorded; the Numbers section says 3 paying users; count them if you talked to them.');
+  });
+
+  it('says nothing of users when the Numbers section has none', async () => {
+    const { as, fill, store } = await setup();
+    await store.replaceDoc('company-brief', '# Company brief\n\n## Numbers\n\nRunway: €4,200.\n');
+    await fill();
+    await as('pain')('replace_section', { heading: '3. Is the pain real?', text: 'painkiller\n\nReal customer conversations done (of ten to twenty): 0' });
+    const verdict = await as('verdict')('replace_section', { heading: '5. Verdict', text: 'STRONG\n\nScore: 8/10' });
+    expect(verdict.ok).toBe(false);
+    expect(verdict.text).not.toMatch(/paying users/);
+  });
+});
+
 describe('a team run with one section blank', () => {
   it('ends with "not assessed" in the verdict, not the judge\'s own fill-in', async () => {
     const { stage, store, doc, fill } = await setup();
@@ -422,10 +551,59 @@ describe('a team run with one section blank', () => {
   });
 });
 
+describe('the judge told her verdict was refused', () => {
+  const script = (steps: ({ name: string; args: unknown }[] | string)[]): ModelClient => ({
+    name: 'script', model: 's-1', maxPromptChars: Infinity, tools: true, limits: {},
+    async step(_messages, { onToken }): Promise<ModelTurn> {
+      const next = steps.shift() ?? 'done';
+      if (typeof next === 'string') { onToken(next); return { text: '', calls: [], usage: { input: 1, output: 1 } }; }
+      return { text: '', calls: next.map((call, index) => ({ id: `c${steps.length}-${index}`, name: call.name, args: JSON.stringify(call.args) })), usage: { input: 1, output: 1 } };
+    },
+  });
+
+  it('is asked in the refusal to repeat its reason and give no verdict in chat', async () => {
+    const { as, fill } = await setup();
+    await fill(['4. Founder-market fit']);
+    const held = await as('verdict')('replace_section', { heading: '5. Verdict', text: 'WEAK\n\nScore: 4/10' });
+    expect(held.text).toContain('Tell the founder the verdict was not written because Rohan has not written "4. Founder-market fit" yet. Give no verdict word (WEAK, PIVOT REQUIRED, STRONG) and no score in chat until it is written.');
+    // Not even as the verdict it would be once the section is written: a live judge led with "**PIVOT REQUIRED**" after one.
+    expect(held.text).toMatch(/until it is written\. Do not name a verdict word at all, not even as the one it would be\.$/);
+    const capped = await setup();
+    await capped.fill();
+    await capped.as('pain')('replace_section', { heading: '3. Is the pain real?', text: 'Vitamin — painkiller — hair on fire: painkiller\n\nReal customer conversations done (of ten to twenty): 0' });
+    const thrown = await capped.as('verdict')('replace_section', { heading: '5. Verdict', text: 'STRONG\n\nScore: 9/10' });
+    expect(thrown.ok).toBe(false);
+    expect(thrown.text).toMatch(/Tell the founder the verdict was not written because no customer conversations are recorded in "3\. Is the pain real\?", so the verdict is at most WEAK and the score at most 5 of 10\. Give no verdict word/);
+  });
+
+  it('gets the truth net\'s line under a chat reply that states the refused verdict anyway', async () => {
+    const { stage, store, fill } = await setup();
+    await fill(['4. Founder-market fit']);
+    const run = (reply: string, ...writes: string[]) => runTurn({
+      messages: [{ role: 'user', content: 'Rewrite your verdict now.' }], tools: docTools, usage: createUsage(null),
+      clients: [script([...writes.map((text) => [{ name: 'replace_section', args: { doc: 'Evaluation', heading: '5. Verdict', text } }]), reply])],
+      context: { stage, roomId: 'verdict', store, granted: new Map() }, events: { token: () => {}, tool: () => {} },
+    });
+    const said = await run('WEAK\n\nScore: 5/10 (Assumption: 1, Flaws: 3, Pain: 1, Fit: 8, Why Now: 2)', 'WEAK\n\nScore: 5/10');
+    expect(said.flags).toContain('Unconfirmed: the verdict was not written; Rohan has not written "4. Founder-market fit" yet.');
+    expect(said.text).toMatch(/Unconfirmed: the verdict was not written; Rohan has not written "4\. Founder-market fit" yet\.$/);
+    // The reason relayed, no verdict given: nothing to flag.
+    const relayed = await run('No verdict yet: Rohan has not written "4. Founder-market fit". Ask him, and I will judge it.', 'WEAK\n\nScore: 5/10');
+    expect(relayed.flags ?? []).toEqual([]);
+    // Once the section is written, the verdict stands and the reply may say it.
+    await store.replaceDoc('evaluation', (await store.readDoc('evaluation')).replace('In one sentence:', 'In one sentence: filed VAT by hand for years.'));
+    const stood = await run('WEAK\n\nScore: 4/10', 'WEAK\n\nScore: 4/10');
+    expect(stood.tools[0].result).toContain('The verdict is written.');
+    expect(stood.flags ?? []).toEqual([]);
+  });
+});
+
 describe('the judge asking a colleague about their empty section', () => {
   // Priya on a script: ask Rohan about his empty section, then write the verdict. Rohan answers on his own script.
-  async function run(question: string, ...answers: string[]) {
+  async function run(question: string, ...rest: (string | { chat: string })[]) {
+    const answers = rest.filter((one): one is string => typeof one === 'string');
     const { stage, store, doc, fill } = await setup();
+    for (const one of rest) if (typeof one !== 'string') await store.appendChat('fit', { id: 'f1', role: 'user', text: one.chat, at: Date.now() });
     await fill(['4. Founder-market fit']);
     const consult: Consult = async () => answers.shift() ?? '';
     const steps: ({ name: string; args: unknown }[] | string)[] = [
@@ -544,6 +722,44 @@ describe('the judge asking a colleague about their empty section', () => {
     const { result, text } = await run('What is the founder-market fit in section 4?', 'The founder-market fit in section 4.');
     expect(result.tools[0].result).toContain('it stays empty');
     expect(filled(sectionBody(text, '4. Founder-market fit'))).toEqual([]);
+  });
+
+  it('takes out a line that repeats the section\'s own heading', async () => {
+    const { text } = await run('What goes in section 4?', '**4. Founder‑market fit**\n\n| Kind | What |\n|---|---|\n| Lived it | freelance consulting for six years |\n\n## 4. Founder-market fit\nIn one sentence: lived it.');
+    const fit = sectionBody(text, '4. Founder-market fit')!;
+    expect(fit).toMatch(/^\| Kind \| What \|/);
+    expect(fit).not.toMatch(/Founder.market fit\*\*|^## /m);
+    expect(fit).toContain('In one sentence: lived it.');
+  });
+
+  it('refuses a figure in a colleague\'s answer that nothing they read gives, and writes one they were told', async () => {
+    // Rohan, asked by Priya, gave a count the founder never said; the net was silent and it went into the doc.
+    const invented = await run('What goes in section 4, the founder-market fit?', 'Earned secret: during those 6 years you built relationships with ~200 solo-consultant peers who pay €150/month for bookkeeping.');
+    expect(invented.result.tools[0].result).toMatch(/Not written into "4\. Founder-market fit": Rohan's answer gives ~200, €150 that nothing Rohan read gives\. The section stays empty/);
+    expect(filled(sectionBody(invented.text, '4. Founder-market fit'))).toEqual([]);
+    // A figure the founder told Rohan in his own room is his to write.
+    const told = await run('What goes in section 4?', 'Lived it: consulted for 6 years and served ~200 clients.', { chat: 'I freelanced for six years and served about 200 clients.' });
+    expect(sectionBody(told.text, '4. Founder-market fit')).toMatch(/^Lived it: consulted for 6 years and served ~200 clients\./);
+  });
+
+  it('keeps only the substance of a chatty answer, not its status heading or its "you can now" close', async () => {
+    // Rohan's live answer, which went into the doc whole.
+    const chatty = '✅ **Section 4 – Founder‑market fit** in the Evaluation doc is now completed:\n\n'
+      + '- **Lived it / technical edge:** The founder filed EU VAT returns by hand for their own studio for three years and builds the product.\n'
+      + '- **In one sentence:** They have lived the pain and can build the fix.\n\nYou can now proceed to write the verdict.';
+    // A first line of real content that happens to say "done" and "doc" stays.
+    const real = await run('What goes in section 4?', 'Lived it: I filed VAT by hand for six years, all done in a spreadsheet doc.\nIn one sentence: lived the pain.');
+    expect(sectionBody(real.text, '4. Founder-market fit')).toMatch(/^Lived it: I filed VAT by hand for six years/);
+    const { text } = await run('What goes in section 4, the founder-market fit?', chatty);
+    const fit = sectionBody(text, '4. Founder-market fit')!;
+    expect(fit).toMatch(/^- \*\*Lived it \/ technical edge:\*\* The founder filed EU VAT returns.*\n- \*\*In one sentence:\*\* They have lived the pain and can build the fix\.\n\n\(From chat:/);
+    expect(fit).not.toMatch(/completed|You can now|✅/);
+    // The same on one line: the close is taken off the end of the last sentence.
+    const inline = await run('What goes in section 4?', 'Section 4 is done: Lived it: filed VAT by hand for years. You can now write the verdict.');
+    expect(sectionBody(inline.text, '4. Founder-market fit')).toMatch(/^Lived it: filed VAT by hand for years\.\n\n\(From chat:/);
+    // An answer that is all substance is kept whole.
+    const plain = await run('What goes in section 4?', 'Lived it: ran a micro-SaaS for two years. Next, the founder should talk to ten accountants.');
+    expect(sectionBody(plain.text, '4. Founder-market fit')).toMatch(/^Lived it: ran a micro-SaaS for two years\. Next, the founder should talk to ten accountants\./);
   });
 
   it('writes nothing when the answer was held back', async () => {

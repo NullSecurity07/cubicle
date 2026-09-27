@@ -14,6 +14,8 @@
 .health__row > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .health__row b { font-size: 13.5px; font-weight: 600; }
 .health__row small, .health__files small, .outside__head small, .outside__what small { font-size: 11.5px; line-height: 1.45; color: var(--muted); overflow-wrap: anywhere; }
+/* A row's detail may put a folder on a line of its own. */
+.health__row > div > small { white-space: pre-line; }
 .health__row .playbook__note { margin: 4px 0 0; }
 .health__verdict { flex: none; align-self: center; font-size: 11.5px; color: var(--muted); }
 .health__row.is-bad .health__verdict { color: var(--needs); }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { plainFailure, wireTools, collectCalls, complete, expand, portable, readQuota, realClients, unset, type ModelClient, type ToolCall } from './providers.ts';
+import { fitHistory, plainBreak, plainFailure, scrubProvider, wireTools, collectCalls, complete, expand, portable, readQuota, realClients, unset, type ModelClient, type ToolCall } from './providers.ts';
 
 const client = (name: string, tokens: string[] | Error, maxPromptChars = Infinity): ModelClient => ({
   name, model: `${name}-1`, maxPromptChars, tools: true, limits: {},
@@ -290,5 +290,115 @@ describe('a failure in plain words', () => {
   it('says what each model did, never the raw provider text', () => {
     expect(plainFailure("no provider answered — gemini: Request timed out.; groq-qwen: 400 Failed to call a function. See 'failed_generation'.; groq: 429 Too Many Requests; openrouter: prompt too large"))
       .toBe('gemini timed out, groq-qwen tool call came out malformed, groq busy, openrouter prompt too large');
+  });
+});
+
+describe('the fallback that broke a room (journey 6)', () => {
+  const tool = [{ name: 'propose_bet', description: 'Propose a bet.', parameters: {} }];
+  const failing = (name: string, message: string, status: number): ModelClient => ({ ...client(name, []), async step() { throw Object.assign(new Error(message), { status }); } });
+  const GEMINI_400 = '400 [{"error":{"code":400,"message":"Request contains an invalid argument.","status":"INVALID_ARGUMENT"}}]';
+  const GROQ_413 = '413 Request too large for model `qwen/qwen3.8-27b` in organization `org_01m24v86abcdef` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Requested 9120, please reduce your message size and try again.';
+
+  it('keeps a local model off a turn with tools while a hosted one is set up, and says no model could answer', async () => {
+    let asked = 0;
+    const ollama: ModelClient = { ...client('ollama', ['我']), local: true, async step(_messages, { onToken }) { asked += 1; onToken('hi'); return { text: '', calls: [] }; } };
+    await expect(complete(messages, { onToken: () => {}, tools: tool }, [failing('gemini', GEMINI_400, 400), ollama])).rejects.toThrow(/no provider answered/);
+    expect(asked).toBe(0);
+    // Without tools, or when it is the only model there is, it still answers.
+    expect((await complete(messages, { onToken: () => {} }, [failing('gemini', GEMINI_400, 400), ollama])).client.name).toBe('ollama');
+    expect((await complete(messages, { onToken: () => {}, tools: tool }, [ollama])).client.name).toBe('ollama');
+  });
+
+  it('keeps a local model the founder pinned, first in the order, on a turn with tools', async () => {
+    const ollama: ModelClient = { ...client('ollama', ['from ollama']), local: true };
+    expect((await complete(messages, { onToken: () => {}, tools: tool }, [ollama, client('gemini', ['from gemini'])])).client.name).toBe('ollama');
+    // Behind a hosted model it is still kept off.
+    await expect(complete(messages, { onToken: () => {}, tools: tool }, [failing('gemini', GEMINI_400, 400), ollama])).rejects.toThrow(/ollama: kept off turns with tools/);
+  });
+
+  it('says an HTML error page and a refused key by their kind, with no tags, key or address', () => {
+    const page = '500 <!DOCTYPE html><html><head><title>Error</title><style>body{color:red}</style></head><body><h1>Internal Server Error</h1><p>Ray ID: 8a1b2c</p></body></html>';
+    expect(plainBreak(page, 'cloudflare')).toBe('down');
+    const key = '401 Incorrect API key provided: gsk_abcd****************wxyz. You can find your API key at https://console.groq.com/keys.';
+    expect(plainBreak(key, 'groq')).toBe('refused the key');
+    expect(scrubProvider(page)).not.toMatch(/[<>]|DOCTYPE/);
+    expect(scrubProvider(key)).not.toMatch(/gsk_|https?:|console\./);
+  });
+
+  it('says the journey\'s two errors in words, with no JSON and no organisation id', () => {
+    expect(plainBreak(GEMINI_400, 'gemini')).toBe('the model rejected the request');
+    expect(plainBreak(GROQ_413, 'groq')).toBe('the prompt is too large for groq');
+    const plain = plainFailure(`no provider answered — gemini: ${GEMINI_400}; groq-qwen: ${GROQ_413}`);
+    expect(plain).toBe('gemini rejected the request, groq-qwen prompt too large');
+    expect(scrubProvider('502 upstream for org_01m24v86abcdef, request req_9f8e7d: {"error":"bad"}')).not.toMatch(/org_|req_|\{/);
+  });
+
+  it('cuts the oldest history to fit a small model and keeps the tools, rather than refusing the turn', async () => {
+    const long: typeof messages = [{ role: 'system', content: 'You are Sam.' } as never,
+      ...Array.from({ length: 30 }, (_, n) => ({ role: (n % 2 ? 'assistant' : 'user') as 'user', content: `old message ${n} ${'x'.repeat(400)}` })),
+      { role: 'user', content: 'what now?' }];
+    let seen: { count: number; last: string; tools: number } | undefined;
+    const groq: ModelClient = { ...client('groq', []), maxPromptChars: 6000, async step(sent, { onToken, tools }) { seen = { count: sent.length, last: String(sent.at(-1)!.content), tools: tools?.length ?? 0 }; onToken('ok'); return { text: '', calls: [] }; } };
+    const result = await complete(long, { onToken: () => {}, tools: tool }, [groq]);
+    expect(result.client.name).toBe('groq');
+    expect(seen!.count).toBeLessThan(long.length);
+    expect(seen!.last).toBe('what now?');
+    expect(seen!.tools).toBe(1);
+  });
+
+  it('asks a model that answers 413 once more with the history cut harder', async () => {
+    const long = [{ role: 'system' as const, content: 'You are Sam.' }, ...Array.from({ length: 10 }, (_, n) => ({ role: 'user' as const, content: `old ${n} ${'x'.repeat(300)}` })), { role: 'user' as const, content: 'now' }];
+    const sizes: number[] = [];
+    const groq: ModelClient = { ...client('groq', []), async step(sent, { onToken }) { sizes.push(sent.length); if (sizes.length === 1) throw Object.assign(new Error(GROQ_413), { status: 413 }); onToken('fits'); return { text: '', calls: [] }; } };
+    expect((await complete(long, { onToken: () => {} }, [groq])).text).toBe('fits');
+    expect(sizes[1]).toBeLessThan(sizes[0]);
+  });
+
+  it('fits a history without leaving a tool result whose call was cut', () => {
+    const history = [
+      { role: 'system' as const, content: 's' },
+      { role: 'assistant' as const, content: 'x'.repeat(50), tool_calls: [{ id: 'c1', type: 'function' as const, function: { name: 'a', arguments: '{}' } }] },
+      { role: 'tool' as const, tool_call_id: 'c1', content: 'y'.repeat(50) },
+      { role: 'user' as const, content: 'now' },
+    ];
+    expect(fitHistory(history, 20)?.map((one) => one.role)).toEqual(['system', 'user']);
+  });
+});
+
+describe('the last model that can take a turn', () => {
+  const slow = (env: Record<string, string>) => {
+    const [gemini] = realClients({ GEMINI_API_KEY: 'g', STAGE_FIRST_TOKEN_MS: '40', ...env } as NodeJS.ProcessEnv);
+    async function* chunks() {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      yield { choices: [{ delta: { content: 'slow but right' } }] };
+    }
+    (gemini.openai!.chat.completions as unknown as { create: unknown }).create = (_body: unknown, { signal }: { signal: AbortSignal }) => ({
+      withResponse: async () => {
+        // The first chunk is the first word: it comes after 150 ms, or the request is aborted first.
+        await new Promise<void>((done, fail) => { const timer = setTimeout(done, 150); signal.addEventListener('abort', () => { clearTimeout(timer); fail(new Error('Request was aborted.')); }, { once: true }); });
+        return { data: chunks(), response: { headers: new Headers() } };
+      },
+    });
+    return gemini;
+  };
+
+  it('is waited for past the first-word clock when nobody is behind it', async () => {
+    const tooSmall: ModelClient = { ...client('groq', ['never']), maxPromptChars: 1 };
+    const result = await complete(messages, { onToken: () => {} }, [slow({}), tooSmall]);
+    expect(result.text).toBe('slow but right');
+  });
+
+  it('is still cut at the clock when another model can answer', async () => {
+    const result = await complete(messages, { onToken: () => {} }, [slow({}), client('groq', ['from groq'])]);
+    expect(result.client.name).toBe('groq');
+  });
+
+  it('says a local model kept off a tool turn as that, not as a failure', () => {
+    expect(plainFailure('no provider answered — gemini: 503 overloaded; ollama: kept off turns with tools')).toBe('gemini down, ollama kept off turns with tools');
+  });
+
+  it('names the models passed over because the prompt would not fit them', async () => {
+    const result = await complete(messages, { onToken: () => {} }, [{ ...client('groq', ['x']), maxPromptChars: 1 }, client('gemini', ['here'])]);
+    expect(result).toMatchObject({ client: { name: 'gemini' }, oversize: ['groq'] });
   });
 });

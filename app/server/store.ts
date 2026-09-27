@@ -30,6 +30,27 @@ const safe = (id: string) => safeId(id, 64);
 // half-dozen callers so that a writer added later cannot forget it: there is nowhere else a message can be written.
 // `onStage` is told the stage as saved, revision and all, after every save, for the same reason.
 // `rescue` says where the backups are and whom to tell when a file could not be read; see `recover` below.
+// Every tool call in a conversation under an id of its own: a repeat becomes "id-1", "id-2", in the order said. A local
+// model once saved six calls as "call_propose__0"; a provider then refuses the whole history on every later turn, and
+// the window draws two receipts under one key. Changes the list in place and hands it back.
+export function uniqueToolIds(messages: ChatMessage[]): ChatMessage[] {
+  const seen = new Set<string>();
+  for (const [at, message] of messages.entries()) {
+    if (!message.tools?.length) continue;
+    let touched = false;
+    const tools = message.tools.map((tool) => {
+      let name = tool.id || 'call';
+      for (let n = 1; seen.has(name); n += 1) name = `${tool.id || 'call'}-${n}`;
+      seen.add(name);
+      if (name === tool.id) return tool;
+      touched = true;
+      return { ...tool, id: name };
+    });
+    if (touched) messages[at] = { ...message, tools };
+  }
+  return messages;
+}
+
 export function createStore(dir: string, onChat: (roomId: string) => void = () => {}, onStage: (stage: Stage) => void = () => {}, rescue: Rescue = {}) {
   const stagePath = join(dir, 'stage.json');
   const docPath = (id: string) => join(dir, 'docs', `${safe(id)}.md`);
@@ -143,6 +164,7 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
     const path = chatPath(id);
     const messages = await parse<ChatMessage[]>(path, await readHere(path), { ...LIST, holding: true });
     const out = edit(messages);
+    uniqueToolIds(messages);
     await writeAtomic(path, JSON.stringify(messages, null, 2), { mkdir: true });
     return out;
   });
@@ -280,7 +302,8 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
     },
     // Conversations saved before messages had ids get them once, here.
     async readChat(id: string): Promise<ChatMessage[]> {
-      const messages = await parse<ChatMessage[]>(chatPath(id), await read(chatPath(id)), LIST);
+      // Repaired as it is read too: a conversation saved before ids were kept apart recovers on its next turn.
+      const messages = uniqueToolIds(await parse<ChatMessage[]>(chatPath(id), await read(chatPath(id)), LIST));
       if (messages.every((message) => message.id)) return messages;
       return editChat(id, (held) => {
         for (const [at, message] of held.entries()) if (!message.id) held[at] = { ...message, id: newMessageId() };

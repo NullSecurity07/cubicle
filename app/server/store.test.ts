@@ -323,3 +323,29 @@ describe('store, a file that cannot be read', () => {
     expect(damaged.map((one) => one.file)).toEqual(['rooms/marketing.memory.json']);
   });
 });
+
+describe('tool call ids in a conversation', () => {
+  const poisoned = [
+    { id: 'q', role: 'user', text: 'Propose a bet', at: 1 },
+    { id: 'a', role: 'assistant', text: 'Done.', at: 2, tools: [0, 1, 2].map((n) => ({ id: 'call_propose__0', name: 'propose_bet', args: { n }, ok: true, result: `bet ${n}` })) },
+    { id: 'q2', role: 'user', text: 'Again', at: 3 },
+    { id: 'a2', role: 'assistant', text: 'Done.', at: 4, tools: [{ id: 'call_propose__0', name: 'propose_bet', args: {}, ok: true, result: 'bet' }] },
+  ];
+
+  it('repairs a conversation saved with one id on several calls, as it is read', async () => {
+    await import('node:fs/promises').then(({ mkdir }) => mkdir(join(dir, 'rooms'), { recursive: true }));
+    await writeFile(join(dir, 'rooms', 'p1.json'), JSON.stringify(poisoned));
+    const talk = await store.readChat('p1');
+    const ids = talk.flatMap((message) => (message.tools ?? []).map((tool) => tool.id));
+    expect(ids).toEqual(['call_propose__0', 'call_propose__0-1', 'call_propose__0-2', 'call_propose__0-3']);
+    // Read twice, the names are the same: nothing that pairs by them moves.
+    expect((await store.readChat('p1')).flatMap((message) => (message.tools ?? []).map((tool) => tool.id))).toEqual(ids);
+  });
+
+  it('never saves two calls under one id', async () => {
+    await store.appendChat('p1', poisoned[0] as never);
+    await store.putMessage('p1', poisoned[1] as never);
+    const saved = JSON.parse(await readFile(join(dir, 'rooms', 'p1.json'), 'utf8')) as { tools?: { id: string }[] }[];
+    expect(saved[1].tools!.map((tool) => tool.id)).toEqual(['call_propose__0', 'call_propose__0-1', 'call_propose__0-2']);
+  });
+});
