@@ -21,7 +21,7 @@ describe('company facts in what the founder says', () => {
   });
 
   it('reads other ways of saying them, and nothing from a question with no facts', () => {
-    expect(companyFacts('We charge €49 a month. Cash: $80k. We spend $6,500 per month. 120 customers so far.').numbers).toEqual([
+    expect(companyFacts('We charge €49 a month. Cash: $80k. Our total spend is $6,500 per month. 120 customers so far.').numbers).toEqual([
       { label: 'Price', value: '€49 a month' }, { label: 'Cash', value: '$80k' }, { label: 'Burn', value: '$6,500 per month' }, { label: 'Customers', value: '120' },
     ]);
     expect(companyFacts('should we raise the price? Give me a number.')).toEqual({ numbers: [] });
@@ -47,6 +47,28 @@ describe('a price is the company\'s own', () => {
   it('never writes over a Price line the founder wrote themselves', () => {
     const mine = '# Company\n\n## Numbers\n\n- Price: $29/month, annual $290 (my note)\n';
     expect(keepFacts(mine, companyFacts('We charge $39/month now.'), '2026-09-28')).toEqual({ text: mine, kept: [] });
+  });
+});
+
+// Final review, round 4: a passing remark became the Idea, revenue became the Price, and one bill became the Burn.
+describe('only what the company is, charges and burns', () => {
+  it('takes no idea from a remark, from money the company makes, and no customer from a length of time', () => {
+    for (const said of ['This is a hard week.', 'It is a mess, cash is €3,000.', 'We make $300 a month.', 'Sales are slow and we make $300 MRR.'])
+      expect(companyFacts(said).idea, said).toBeUndefined();
+    expect(companyFacts('We are building this for the next 3 years.').customer).toBeUndefined();
+    expect(companyFacts('We are building this for the next few months.').customer).toBeUndefined();
+  });
+
+  it('takes no price from money the company makes', () => {
+    for (const said of ['We make $300 a month.', 'Sales are slow and we make $300 MRR.', 'We build websites and make $300 a month.'])
+      expect(companyFacts(said).numbers.filter((one) => one.label === 'Price'), said).toEqual([]);
+  });
+
+  it('takes the burn only from burn, expenses or total spend, never from one bill', () => {
+    for (const said of ['We spend $300/month on ads.', 'Hosting costs us $50/month.', 'We spend $40 a month for hosting.', 'Our burn includes $300/month on ads.'])
+      expect(companyFacts(said).numbers.filter((one) => one.label === 'Burn'), said).toEqual([]);
+    for (const said of ['We burn €1,100/month.', 'Monthly expenses are $2,000/month.', 'Our total spend is $2,000 a month.'])
+      expect(companyFacts(said).numbers.filter((one) => one.label === 'Burn'), said).toHaveLength(1);
   });
 });
 

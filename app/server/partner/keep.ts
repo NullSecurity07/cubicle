@@ -15,7 +15,9 @@ const WORD_COUNTS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seve
 const COUNT = new RegExp(`\\b(\\d[\\d,]*|${WORD_COUNTS.join('|')})\\s+((?:(?:paying|active|beta|trial|free|pilot)\\s+){0,2})(users|customers|subscribers|clients)\\b`, 'gi');
 // A sentence about what might be, what was or what is wanted is not where the company stands.
 const NOT_NOW = /\b(?:if|would|could|should|plan(?:ning|s)?\s+(?:to|how)|planned|help me plan|want|goal|target|aim|will|next (?:week|month|year|quarter)|last (?:week|month|year|quarter)|ago|was|were|used to|by (?:the end|q\d))\b/i;
-const BURN = /\b(?:burn\w*|spend\w*|expenses?|costs? us)\b/i;
+// The burn is the whole month's outgoing, said as such: one bill ("$300/month on ads", "hosting costs us $50/month")
+// is not it, and never takes its place.
+const BURN = /\b(?:burn\w*|expenses?|total\s+(?:spend\w*|costs?)|monthly\s+spend\w*|spend\w*\s+in\s+total)\b/i;
 const CASH = /\b(?:bank|cash|savings|saved|left|runway)\b/i;
 const MRR = /\b(?:mrr|revenue|making|bringing in)\b/i;
 // A request to the partner ("draft an update about what we are building") says what the founder wants, not what the company does.
@@ -28,7 +30,9 @@ const OURS_BEFORE = /\b(?:we|i)\s+(?:charge|sell|bill|price)\w*|\bour\s+(?!compe
 const BARE_PRICE = /^\s*(?:(?:the|its|this|my)\s+(?:\w+\s+)?)?(?:price|priced|pricing)\s+(?:is|at|of)\b/i;
 const OURS_AFTER = /^\s*(?:for\s+(?:our|the\s+(?:base|pro|starter|team))\b|per\s+(?:user|seat)\s+for\s+our\b)/i;
 const THEIRS = /\b(?:competitors?|rivals?|they|their|customers?|clients?|users?|accountants?|agenc(?:y|ies)|freelancers?|hosting|hiring|pay\w*|wrote|said|market)\b/i;
-function ours(sentence: string, at: number, length: number, isIdea: boolean): boolean {
+// "I'm building Ledgerly: $29/month bookkeeping": the price of the thing the founder says they are building.
+const BUILDING_PRICE = /\b(?:i'?m|i am|we'?re|we are)\s+building\s+[\w-]+\s*[:,\u2013\u2014-]\s*$/i;
+function ours(sentence: string, at: number, length: number): boolean {
   const before = sentence.slice(0, at);
   // Words in quotes are somebody else's.
   if ((before.match(/["\u201c\u201d]/g) ?? []).length % 2 === 1 || /\b(?:wrote|said|says)\s*:/i.test(before)) return false;
@@ -38,9 +42,17 @@ function ours(sentence: string, at: number, length: number, isIdea: boolean): bo
   // "We have 3 users and charge $29/month": the "we" of the sentence charges in the second clause too.
   if (OURS_BEFORE.test(clause) || (/^\s*(?:charge|sell|bill)\w*\b/i.test(clause) && /^\s*(?:we|i)\b/i.test(sentence))) return true;
   if (THEIRS.test(clause)) return false;
-  return isIdea || BARE_PRICE.test(clause) || OURS_AFTER.test(sentence.slice(at + length));
+  return BUILDING_PRICE.test(before) || BARE_PRICE.test(clause) || OURS_AFTER.test(sentence.slice(at + length));
 }
-const IDEA = /\b(?:(?:i'?m|i am|we'?re|we are)\s+building|we (?:make|build|sell|help)|(?:it|this) is an?)\b/i;
+// What the company does: "I'm building …", or "we make / build / sell / help …" when what follows is not money
+// ("we make $300 a month" is revenue). A remark ("this is a hard week") is not the idea, and neither is a sentence
+// that holds money, unless it is the "building" line itself.
+const BUILDING = /\b(?:i'?m|i am|we'?re|we are)\s+building\b/i;
+const WE_DO = /\bwe (?:make|build|sell|help)\b(?!\s+(?:about\s+|around\s+|roughly\s+)?(?:[$€£\d]|money\b))/i;
+const HAS_MONEY = /[$€£]\s?\d|\b\d[\d,.]*\s?(?:k|m)?\s?(?:mrr|arr|dollars|euros|pounds)\b/i;
+const isIdea = (sentence: string) => BUILDING.test(sentence) || (WE_DO.test(sentence) && !HAS_MONEY.test(sentence));
+// Who it is for is a group of people, never a length of time.
+const TIME = /\d|\b(?:years?|months?|weeks?|days?|time|now|while|future|long)\b/i;
 
 const sentences = (said: string) => said.split(/\n+/).flatMap((line) => line.replace(/\s+/g, ' ').split(/(?<=[.!?])\s+/)).map((one) => one.trim()).filter(Boolean);
 const capital = (text: string) => `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
@@ -51,7 +63,7 @@ export function companyFacts(said: string): CompanyFacts {
   let idea: string | undefined;
   for (const sentence of sentences(said)) {
     const plain = sentence.replace(/[.!]+$/, '');
-    if (!idea && !sentence.endsWith('?') && !ASKING.test(plain) && IDEA.test(plain)) idea = plain.slice(0, 200);
+    if (!idea && !sentence.endsWith('?') && !ASKING.test(plain) && isIdea(plain)) idea = plain.slice(0, 200);
     if (NOT_NOW.test(plain) || sentence.endsWith('?')) continue;
     for (const match of plain.matchAll(MONEY)) {
       // What the figure is: the words before it back to a comma, a colon or an "and", and the few words after it.
@@ -59,10 +71,10 @@ export function companyFacts(said: string): CompanyFacts {
       const after = plain.slice(match.index + match[0].length).split(/[,;]|\band\b|\bbut\b|[$€£]/)[0].slice(0, 24);
       const value = match[0].trim();
       const period = !!match[4];
-      if (BURN.test(before) && period) put('Burn', value);
+      if (BURN.test(before) && period) { if (!/^\s*(?:on|for)\b/i.test(after)) put('Burn', value); }
       else if (CASH.test(before) || CASH.test(after)) put('Cash', value);
       else if (MRR.test(before) || MRR.test(after)) put('MRR', value);
-      else if (ours(plain, match.index, match[0].length, idea === plain.slice(0, 200))) put('Price', value);
+      else if (ours(plain, match.index, match[0].length)) put('Price', value);
     }
     for (const match of plain.matchAll(COUNT)) {
       // "an update for our 3 beta users" names who a thing is for, not how many there are now.
@@ -72,7 +84,7 @@ export function companyFacts(said: string): CompanyFacts {
     }
   }
   const customer = idea ? /\bfor\s+(.+?)(?=\s+(?:that|who|which|to|so|by|with|from)\b|[,;:.]|$)/i.exec(idea.replace(/^[^:]*:\s*/, (head) => (/\bfor\b/i.test(head) ? head : '')))?.[1] : undefined;
-  return { numbers, ...(idea ? { idea } : {}), ...(customer ? { customer: customer.trim() } : {}) };
+  return { numbers, ...(idea ? { idea } : {}), ...(customer && !TIME.test(customer) ? { customer: customer.trim() } : {}) };
 }
 
 // Where a Numbers line for one label is: "- Cash: €4,200 (founder, 2026-09-27)".
