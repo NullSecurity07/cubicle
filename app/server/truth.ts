@@ -109,6 +109,26 @@ export function stripFlagged(source: string): string {
   return named.reduce((kept, label) => kept.replace(whole(label), ''), marked);
 }
 
+// For what is kept to read later (a person's memory): stripFlagged takes the flagged figure out and leaves the rest of
+// the claim standing, so journey 9's "10 non-paying beta users contacted for testing" came back as a fact. Here each
+// sentence that holds a figure or a claimed action the truth net flagged goes whole, then the flag lines themselves.
+const CLAIMED = /^Unconfirmed: this reply claims an action no tool confirmed \((.+?)\)\.?$/gm;
+export function dropFlagged(text: string): string {
+  const named = [...text.matchAll(/^Unsourced figures: (.+?) \(not found/gm)].flatMap((match) => match[1].split(', '));
+  const verbs = [...text.matchAll(CLAIMED)].flatMap((match) => match[1].split(', '));
+  const quote = (label: string) => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const marks = [
+    ...named.map((label) => new RegExp(`(?<![\\d.,])${quote(label)}(?![\\d])`)),
+    ...verbs.map((verb) => new RegExp(`\\b${quote(verb)}\\b`, 'i')),
+  ];
+  const lines = text.replace(FLAG_LINE, '').split('\n').flatMap((line) => {
+    if (!marks.length || !line.trim()) return [line];
+    const kept = line.split(/(?<=[.!?])\s+/).filter((sentence) => !marks.some((mark) => mark.test(sentence)));
+    return kept.length ? [kept.join(' ')] : [];
+  });
+  return stripFlagged(lines.join('\n')).replace(/\n{3,}/g, '\n\n').trim();
+}
+
 // What kind of thing a figure in the inputs is. Money and a share never stand for each other: "$2k" is two thousand
 // dollars, never a source for "2%" or "2x".
 type Kind = 'money' | 'share' | 'other';

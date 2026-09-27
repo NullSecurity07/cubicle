@@ -81,6 +81,19 @@ describe('memory', () => {
     expect(asked[0]).not.toContain('No model could answer');
   });
 
+  // Journey 9: an invented figure the truth net flagged under a reply was folded into memory as a fact.
+  it('folds a flagged reply without its flagged sentences or the flag lines', async () => {
+    const store = await fresh();
+    const asked: string[] = [];
+    const memory = createMemory(store, async (messages) => { asked.push(messages[1].content); return 'Kept.'; }, () => NOON);
+    for (let index = 0; index < 16; index += 1) {
+      await store.appendChat('marketing', index === 1 ? { ...message(index), text: 'Hosts like the €19 tier. 10 non-paying beta users contacted for testing.\n\nUnsourced figures: 10 (not found in anything this turn read).' } : message(index));
+    }
+    expect(await memory.fold('marketing')).toBe(true);
+    expect(asked[0]).toContain('You: Hosts like the €19 tier.');
+    expect(asked[0]).not.toMatch(/contacted|Unsourced/);
+  });
+
   it('stamps a new note with the day it was kept, and still matches a note written before there were days', async () => {
     const store = await fresh();
     const memory = createMemory(store, async () => '', () => NOON);

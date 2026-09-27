@@ -1,4 +1,4 @@
-import { KEPT_MARK, MEMORY_CHANNEL, type Stage } from '../../shared/model.ts';
+import { KEPT_MARK, MEMORY_CHANNEL, type ChatMessage, type Stage } from '../../shared/model.ts';
 import { fullDay } from '../clock.ts';
 import { hub } from '../events.ts';
 import type { Slice } from '../install.ts';
@@ -8,6 +8,7 @@ import { readableDocIds } from '../prompt.ts';
 import type { ModelClient } from '../providers.ts';
 import type { Handler, Payloads } from '../seams.ts';
 import { reflectTools } from '../tools/reflect.ts';
+import { dropFlagged } from '../truth.ts';
 import type { UsageBook } from '../usage.ts';
 
 // Retain: after a conversation turn, a person writes down on its own the one or two things worth keeping from it —
@@ -18,7 +19,7 @@ import type { UsageBook } from '../usage.ts';
 // What asks the model: the exchange in, its raw answer out. Tests hand in their own; the app hands in the local model.
 export type Extract = (messages: ModelMessage[]) => Promise<string>;
 type Memory = ReturnType<typeof createMemory>;
-type Store = { readDoc(id: string): Promise<string>; loadStage(): Promise<Stage> };
+type Store = { readDoc(id: string): Promise<string>; loadStage(): Promise<Stage>; readChat(roomId: string): Promise<ChatMessage[]> };
 
 export const ASKED_CHARS = 80;
 export const SAID_CHARS = 120;
@@ -97,6 +98,15 @@ export function fromDoc(fact: string, docs: string[]): boolean {
   return docs.some((doc) => ` ${wordsOf(doc).join(' ')} `.includes(phrase));
 }
 
+// A figure only the person said: journey 9's "10 non-paying beta users" was 12 beta users less 2 paying, worked out by
+// the person and kept as a fact. Every number in a kept line has to be one the founder said, a document the person
+// reads holds, or a tool this turn brought back, as written.
+const bare = (number: string) => number.replace(/,/g, '');
+export function ownFigure(fact: string, sources: string[]): boolean {
+  const known = new Set(sources.flatMap((source) => numbersOf(source).map(bare)));
+  return numbersOf(fact).some((number) => !known.has(bare(number)));
+}
+
 export function createRetain(deps: {
   memory: Pick<Memory, 'read' | 'remember'>; store: Store; extract?: Extract;
   // The room's memory changed: the panel reads itself again.
@@ -143,17 +153,20 @@ export function createRetain(deps: {
       const name = stage.rooms.find((room) => room.id === roomId)?.name || 'Someone';
       const raw = await deps.extract!([
         { role: 'system', content: retainPrompt(now()) },
-        { role: 'user', content: `Founder: ${payload.query.trim().slice(0, 2000)}\n\n${name}: ${payload.reply.text.trim().slice(0, 3000)}` },
+        // The reply without what the truth net flagged in it: an invented figure or action is never shown as a fact.
+        { role: 'user', content: `Founder: ${payload.query.trim().slice(0, 2000)}\n\n${name}: ${dropFlagged(payload.reply.text).slice(0, 3000)}` },
       ]);
       const facts = parseFacts(raw, [name, 'Founder']);
       if (!facts.length) return [];
       const docs = await Promise.all(readableDocIds(stage, roomId).map((id) => deps.store.readDoc(id).catch(() => '')));
+      const founder = (await deps.store.readChat(roomId).catch(() => [] as ChatMessage[])).filter((message) => message.role === 'user').map((message) => message.text);
+      const sources = [payload.query, ...founder, ...docs, ...payload.reply.tools.map((tool) => (tool.ok ? tool.result ?? '' : ''))];
       const kept: string[] = [];
       for (const fact of facts) {
         // Read again right before each line is written, not once before the model was asked: a remember from this
         // same turn, and the line kept just before, are in the notes by now.
         const notes = (await deps.memory.read(roomId)).notes;
-        if (isKnown(fact, notes) || fromDoc(fact, docs)) continue;
+        if (isKnown(fact, notes) || fromDoc(fact, docs) || ownFigure(fact, sources)) continue;
         // Through the same door as the remember tool, so its cap and its dedupe hold here too. Full is the end.
         try { if (await deps.memory.remember(roomId, `${KEPT_MARK} ${fact}`) === 'Remembered.') kept.push(fact); } catch { break; }
       }

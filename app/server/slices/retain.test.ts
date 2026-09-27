@@ -11,7 +11,8 @@ import { createRetain, EVERY_MS, fromDoc, isKnown, localExtract, parseFacts } fr
 
 // Thursday 24 September 2026, noon where the machine is.
 const NOON = new Date(2026, 8, 24, 12).getTime();
-const ASKED = 'We talked it over with the two pilots this morning, and I have made up my mind about what we charge from now on.';
+// The founder gives the figures: a figure only the person said is never kept.
+const ASKED = 'We talked it over with the two pilots this morning, and I have made up my mind: we charge 19 a month from now on, and 190 for the year.';
 const SAID = 'Understood. The price is 19 a month from today, the annual plan stays at 190, and I will tell both pilots on Friday as you asked.';
 
 const turn = (over: Partial<{ source: Source; query: string; text: string; stopped: boolean; roomId: string }> = {}): Payloads['turn:after'] => ({
@@ -48,6 +49,18 @@ describe('retain', () => {
     expect(asked[0][1].content).toContain(`Maya: ${SAID}`);
     expect(changed).toEqual(['marketing']);
     expect(logged[0]).toMatch(/^retain · Maya kept 3 lines on its own/);
+  });
+
+  // Journey 9: Ananya kept "10 non-paying beta users contacted for testing", a figure and an action nobody backed.
+  it('never shows the model a flagged sentence, and never keeps a figure only the person said', async () => {
+    const flagged = 'The €19 tier suits hobby hosts and I would keep the €39 Pro tier beside it for now. 10 non-paying beta users contacted for testing.\n\n'
+      + 'Unsourced figures: 10 (not found in anything this turn read).';
+    const { retain, memory, asked, store } = await setup('- 10 non-paying beta users contacted for testing\n- Churn among hosts runs at 30% a month\n- The founder picked the €19 tier for hobby hosts');
+    await store.appendChat('marketing', { id: 'f1', role: 'user', text: 'Let us go with €19 for hobby hosts.', at: NOON - 60_000 });
+    expect(await retain.retain(turn({ query: 'We have 12 beta users and 2 of them pay. Which tier should hobby hosts get, and what do you make of it?', text: flagged }))).toEqual(['The founder picked the €19 tier for hobby hosts']);
+    expect(asked[0][1].content).not.toContain('contacted');
+    expect(asked[0][1].content).not.toContain('Unsourced');
+    expect((await memory.read('marketing')).notes).not.toMatch(/contacted|30%/);
   });
 
   it('asks no model for a turn that is not the founder\'s, was stopped, or is too short', async () => {

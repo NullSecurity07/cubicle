@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PARTNER_STANCE, STANCE } from '../shared/model.ts';
-import { checkReply, figureCheck, holdVerdict, NOT_WRITTEN, proseToolCall, stripFlagged, turnSources, unreceiptedClaims, unsourcedFigures, verdictRefused, verdictStanding, VERDICT_WRITTEN } from './truth.ts';
+import { checkReply, dropFlagged, figureCheck, holdVerdict, NOT_WRITTEN, proseToolCall, stripFlagged, turnSources, unreceiptedClaims, unsourcedFigures, verdictRefused, verdictStanding, VERDICT_WRITTEN } from './truth.ts';
 
 const wrote = { name: 'write_doc', ok: true };
 const failedWrite = { name: 'write_doc', ok: false };
@@ -504,5 +504,17 @@ describe('a verdict word held out of a reply', () => {
     expect(holdVerdict('Priya says PIVOT REQUIRED, 6/10.', [relayed], [], OUTCOMES)).toBe(`Priya says ${NOT_WRITTEN}.\n\n${LINE}`);
     // Without the stage's words there is nothing to hold it to.
     expect(holdVerdict('Priya says PIVOT REQUIRED.', [relayed])).toBe('Priya says PIVOT REQUIRED.');
+  });
+});
+
+// Journey 9: Ananya's memory kept "10 non-paying beta users contacted for testing". Nobody contacted anyone.
+describe('a reply with its flagged sentences taken out, for memory', () => {
+  it('drops each sentence holding a flagged figure or a claimed action, and the flag lines, and keeps the rest', () => {
+    const reply = 'The €19 tier fits hobby hosts. 10 non-paying beta users contacted for testing. I emailed the 2 paying hosts about it.\n- Churn sits near 30% between games.\n- Keep the €39 Pro tier.\n\n'
+      + 'Unconfirmed: this reply claims an action no tool confirmed (emailed).\nUnsourced figures: 10, 30% (not found in anything this turn read).';
+    expect(dropFlagged(reply)).toBe('The €19 tier fits hobby hosts.\n- Keep the €39 Pro tier.');
+    // A flagged "2" never takes out a sentence with a real "12".
+    expect(dropFlagged('We have 12 beta users.\n\nUnsourced figures: 2 (not found in anything this turn read).')).toBe('We have 12 beta users.');
+    expect(dropFlagged('Nothing flagged here.')).toBe('Nothing flagged here.');
   });
 });
