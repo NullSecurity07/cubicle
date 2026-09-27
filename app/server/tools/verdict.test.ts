@@ -12,7 +12,7 @@ import { docTools } from './docs.ts';
 import { HELD_BACK } from '../truth.ts';
 import { runTool } from './registry.ts';
 import { teamTools, type Consult } from './team.ts';
-import { breakdownMismatch, conversations, filled, guardWrite, sectionBody, verdictOf, verdictState } from './verdict.ts';
+import { breakdownMismatch, conversations, filled, guardWrite, payingUsers, sectionBody, verdictOf, verdictState } from './verdict.ts';
 import { createPromptFor } from '../turn-prompt.ts';
 
 const OUTCOMES = ['WEAK', 'PIVOT REQUIRED', 'STRONG'];
@@ -542,6 +542,12 @@ describe('a cap on no conversations while the company has paying users', () => {
     expect((await as('pain')('replace_section', { heading: '3. Is the pain real?', text: zero.replace('hair on fire\n', 'painkiller\n') })).ok).toBe(true);
     const verdict = await as('verdict')('replace_section', { heading: '5. Verdict', text: 'STRONG\n\nScore: 8/10' });
     expect(verdict.text).toContain('0 conversations recorded; the Numbers section says 3 paying users; count them if you talked to them.');
+  });
+
+  it('reads the row the Company brief keeps itself, "Paying beta users: 3"', () => {
+    expect(payingUsers('- Paying beta users: 3 (founder, 2026-09-27)\n- Burn: €1,100/month')).toBe('3 paying users');
+    expect(payingUsers('- Paying users: 5')).toBe('5 paying users');
+    expect(payingUsers('- Free users: 40')).toBeNull();
   });
 
   it('says nothing of users when the Numbers section has none', async () => {

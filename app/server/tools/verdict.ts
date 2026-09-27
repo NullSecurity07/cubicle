@@ -264,7 +264,8 @@ export function payingUsers(numbers: string): string | null {
   const text = unmarked(numbers);
   const hit = new RegExp(`\\b${count}\\s+paying\\s+(?:beta\\s+)?${unit}\\b`, 'i').exec(text)
     ?? new RegExp(`\\b${count}\\s+(?:beta\\s+)?${unit}\\s+(?:who\\s+)?pay`, 'i').exec(text);
-  const labelled = new RegExp(`\\bpaying\\s+${unit}\\s*[:=\\-–—]\\s*(\\d+)\\b`, 'i').exec(text);
+  // The row the Company brief keeps itself reads "Paying beta users: 3".
+  const labelled = new RegExp(`\\bpaying\\s+(?:beta\\s+)?${unit}\\s*[:=\\-–—]\\s*(\\d+)\\b`, 'i').exec(text);
   const [n, what] = hit ? [countOf(hit[1]), hit[2]] : labelled ? [Number(labelled[2]), labelled[1]] : [0, ''];
   return n > 0 ? `${n} paying ${what.toLowerCase()}` : null;
 }
