@@ -14,13 +14,25 @@ const MONEY = /([$€£])\s?(\d[\d,]*(?:\.\d+)?)(?:\s?(k|m)\b)?((?:\s?\/\s?(?:mo
 const WORD_COUNTS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty'];
 const COUNT = new RegExp(`\\b(\\d[\\d,]*|${WORD_COUNTS.join('|')})\\s+((?:(?:paying|active|beta|trial|free|pilot)\\s+){0,2})(users|customers|subscribers|clients)\\b`, 'gi');
 // A sentence about what might be, what was or what is wanted is not where the company stands.
-const NOT_NOW = /\b(?:if|would|could|should|plan\w*|want|goal|target|aim|will|next (?:week|month|year|quarter)|last (?:week|month|year|quarter)|ago|was|were|used to|by (?:the end|q\d))\b/i;
+const NOT_NOW = /\b(?:if|would|could|should|plan(?:ning|s)?\s+(?:to|how)|planned|help me plan|want|goal|target|aim|will|next (?:week|month|year|quarter)|last (?:week|month|year|quarter)|ago|was|were|used to|by (?:the end|q\d))\b/i;
 const BURN = /\b(?:burn\w*|spend\w*|expenses?|costs? us)\b/i;
 const CASH = /\b(?:bank|cash|savings|saved|left|runway)\b/i;
 const MRR = /\b(?:mrr|revenue|making|bringing in)\b/i;
-const PRICE = /\b(?:charge|charging|price[ds]?|pricing|costs?|subscription|plan)\b/i;
 // A request to the partner ("draft an update about what we are building") says what the founder wants, not what the company does.
 const ASKING = /^(?:please\s+)?(?:draft|write|help|make|create|send|give|tell|show|plan|prepare|put|email|can you|could you|would you)\b|\b(?:what|how|why)\s+(?:i'?m|i am|we'?re|we are)\s+building\b/i;
+// A price is the company's own only when the company is the one charging: "we charge", "our price is", "we sell at",
+// "$39/month for our base plan", or the line that says what the company is. A competitor's price, a cost the company
+// pays, a hire, a customer's words and a market range are not.
+const OURS_BEFORE = /\b(?:we|i)\s+(?:charge|sell|bill|price)\w*|\bour\s+(?:\w+\s+)?(?:price|pricing|plan|subscription|tier)\b|\b(?:price|priced|pricing)\s+(?:is|at|of)\b|\bsell\s+(?:it\s+)?at\b/i;
+const OURS_AFTER = /^\s*(?:for\s+(?:our|the\s+(?:base|pro|starter|team))\b|per\s+(?:user|seat)\s+for\s+our\b)/i;
+const THEIRS = /\b(?:competitors?|rivals?|they|their|customers?|clients?|users?|accountants?|agenc(?:y|ies)|freelancers?|hosting|hiring|pay\w*|wrote|said|market)\b/i;
+function ours(sentence: string, at: number, length: number, isIdea: boolean): boolean {
+  const before = sentence.slice(0, at);
+  // Words in quotes are somebody else's.
+  if ((before.match(/["\u201c\u201d]/g) ?? []).length % 2 === 1 || /\b(?:wrote|said|says)\s*:/i.test(before)) return false;
+  if (THEIRS.test(before)) return false;
+  return isIdea || OURS_BEFORE.test(before) || OURS_AFTER.test(sentence.slice(at + length));
+}
 const IDEA = /\b(?:(?:i'?m|i am|we'?re|we are)\s+building|we (?:make|build|sell|help)|(?:it|this) is an?)\b/i;
 
 const sentences = (said: string) => said.split(/\n+/).flatMap((line) => line.replace(/\s+/g, ' ').split(/(?<=[.!?])\s+/)).map((one) => one.trim()).filter(Boolean);
@@ -43,7 +55,7 @@ export function companyFacts(said: string): CompanyFacts {
       if (BURN.test(before) && period) put('Burn', value);
       else if (CASH.test(before) || CASH.test(after)) put('Cash', value);
       else if (MRR.test(before) || MRR.test(after)) put('MRR', value);
-      else if (period || PRICE.test(before)) put('Price', value);
+      else if (ours(plain, match.index, match[0].length, idea === plain.slice(0, 200))) put('Price', value);
     }
     for (const match of plain.matchAll(COUNT)) {
       // "an update for our 3 beta users" names who a thing is for, not how many there are now.
@@ -73,6 +85,8 @@ export function keepFacts(text: string, facts: CompanyFacts, day: string): { tex
     for (const fact of facts.numbers) {
       const at = rows.findIndex((row) => lineOf(fact.label).test(row));
       if (at >= 0 && lineOf(fact.label).exec(rows[at])![1].trim() === fact.value) continue;
+      // A Price line the founder typed into the document is theirs: it is never written over from chat.
+      if (at >= 0 && fact.label === 'Price' && !/\(founder, [\d-]+\)\s*$/.test(rows[at])) continue;
       const line = `- ${fact.label}: ${fact.value}${stamp}`;
       if (at >= 0) rows[at] = line; else added.push(line);
       changed.push(fact);
@@ -103,7 +117,7 @@ const amount = (value: string) => {
   return Number(found[1].replace(/,/g, '')) * ({ k: 1e3, m: 1e6 }[(found[2] ?? '').toLowerCase() as 'k'] ?? 1);
 };
 const MONTHS = /(\d+(?:\.\d+)?)(\s?(?:-|–)?\s?months?)\b/gi;
-const RUNWAY_WORDS = /\b(?:runway|cash|bank|burn|run out|left|remaining)\b/i;
+const RUNWAY_WORDS = /\b(?:runway|left|remaining|of cash|in the bank)\b/i;
 // Said as a bound, not a figure: "under 4 months" is true of 3.8.
 const BOUND = /\b(?:under|less than|below|nearly|almost|short of|not even|at most|up to)\s*(?:~|\*\*)?\s*$/i;
 
@@ -118,11 +132,19 @@ export function runwayFix(reply: string, facts: string): string {
   if (!cash || !burn) return reply;
   const exact = cash / burn;
   const down = Math.floor(exact * 10) / 10;
+  // With MRR in the Numbers, a runway worked on the net burn is right up to cash over (burn - MRR).
+  const mrr = amount(numbers.find((one) => one.label === 'MRR')?.value ?? '') ?? 0;
+  const most = mrr > 0 && mrr < burn ? cash / (burn - mrr) : exact;
   return reply.replace(MONTHS, (whole, figure: string, unit: string, at: number) => {
     const value = Number(figure);
-    const sentence = reply.slice(Math.max(reply.lastIndexOf('.', at - 1), reply.lastIndexOf('\n', at - 1)) + 1).split(/[.!?](?:\s|$)|\n/)[0];
+    const start = Math.max(reply.lastIndexOf('. ', at - 1), reply.lastIndexOf('\n', at - 1)) + 1;
+    const sentence = `${reply.slice(start, at)}${reply.slice(at).split(/[.!?](?:\s|$)|\n/)[0]}`;
     const before = reply.slice(Math.max(0, at - 30), at);
-    if (value <= exact + 1e-9 || value - exact >= 1 || /\.\d{2,}/.test(figure) || BOUND.test(before) || !RUNWAY_WORDS.test(sentence) || /\bif\b/i.test(sentence)) return whole;
+    // The clause the figure is in, not the whole sentence: "a round takes 3 to 4 months, and you run out of cash
+    // first" names a duration, and runway only in the next clause.
+    const clause = `${reply.slice(start, at).split(/[,;]|\band\b|\bso\b|\bbut\b/).at(-1)}${whole}${reply.slice(at + whole.length).split(/[,;.!?\n]|\band\b|\bbut\b/)[0]}`;
+    if (value <= most + 1e-9 || value - exact >= 1 || /\.\d{2,}/.test(figure) || BOUND.test(before) || /\d\s*(?:to|–|-)\s*$/.test(before)) return whole;
+    if (!RUNWAY_WORDS.test(clause) || /\b(?:if|net|mrr|revenue)\b/i.test(sentence)) return whole;
     return `${figure}${unit} (${down} months)`;
   });
 }

@@ -32,6 +32,24 @@ describe('company facts in what the founder says', () => {
   });
 });
 
+// Review round 4: any monthly figure became the company's price and replaced the founder's own Price line.
+describe('a price is the company\'s own', () => {
+  it('takes no price from a competitor, a cost, a hire, a customer\'s words or a market range', () => {
+    for (const said of ['Our competitor charges $49/month.', 'we pay $40/month for hosting', 'Hiring a marketer costs €3,000/month.', "A customer wrote: I'd pay $15/month", 'Accountants cost €80–€200/month.'])
+      expect(companyFacts(said).numbers.filter((one) => one.label === 'Price'), said).toEqual([]);
+  });
+
+  it('takes it when the company is the one charging', () => {
+    for (const said of ['We charge $39/month.', 'Our price is $39/month.', 'We sell at $39 a month.', 'It is $39/month for our base plan.'])
+      expect(companyFacts(said).numbers, said).toEqual([{ label: 'Price', value: expect.stringMatching(/^\$39/) }]);
+  });
+
+  it('never writes over a Price line the founder wrote themselves', () => {
+    const mine = '# Company\n\n## Numbers\n\n- Price: $29/month, annual $290 (my note)\n';
+    expect(keepFacts(mine, companyFacts('We charge $39/month now.'), '2026-09-28')).toEqual({ text: mine, kept: [] });
+  });
+});
+
 describe('keeping the Company document current', () => {
   it('writes Numbers, Idea and Customer into an empty document, and says what it kept', () => {
     const { text, kept } = keepFacts(companyTemplate(), companyFacts(DAY_ONE), '2026-09-27');
@@ -66,8 +84,11 @@ describe('runway said in months', () => {
   });
 
   it('leaves a right figure, a figure said as under, a longer one and months that are not runway alone', () => {
-    for (const reply of ['You have ~3.8 months of runway.', 'You have under 4 months of runway.', 'Runway is less than 4 months.', 'Ship the invoice feature in 4 months.', 'With revenue, runway is 5 months.', 'Runway: 3 months if burn rises.'])
+    for (const reply of ['A seed round takes 3 to 4 months, and you run out of cash first.', 'Net of MRR, net burn is €1,013, so runway is 4 months.', 'You have ~3.8 months of runway.', 'You have under 4 months of runway.', 'Runway is less than 4 months.', 'Ship the invoice feature in 4 months.', 'With revenue, runway is 5 months.', 'Runway: 3 months if burn rises.'])
       expect(runwayFix(reply, NUMBERS), reply).toBe(reply);
     expect(runwayFix('You have 4 months of runway.', '- Cash: €4,200')).toBe('You have 4 months of runway.');
+    // With MRR in the Numbers, a runway worked on the net burn is right: 4,200 / (1,100 - 87) = 4.1.
+    expect(runwayFix('You have 4 months of runway.', `${NUMBERS}\n- MRR: €87 (founder, 2026-09-27)`)).toBe('You have 4 months of runway.');
+    expect(runwayFix('You have 5 months of runway.', `${NUMBERS}\n- MRR: €87 (founder, 2026-09-27)`)).toBe('You have 5 months of runway.');
   });
 });
