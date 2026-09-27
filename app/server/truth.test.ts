@@ -347,6 +347,11 @@ describe('a verdict stated without a written one', () => {
     expect(checkReply({ reply: 'WEAK. Score: 3/10.', receipts: [], sources: [] })).toEqual([]);
   });
 
+  it('leaves a figure a doc marked "(unsourced)" out of the sources', () => {
+    expect(unsourcedFigures('An accountant costs €80 a month.', ['## Doc: Evaluation\n\nAn accountant at €80 (unsourced)–€200 (unsourced)/month.'])).toEqual(['€80']);
+    expect(unsourcedFigures('An accountant costs €80 a month.', ['An accountant at €80 a month.'])).toEqual([]);
+  });
+
   it('is taken out of a past reply before it counts as a source', () => {
     expect(stripFlagged(`WEAK.\n\n${LINE}`)).toBe('WEAK.\n\n');
   });

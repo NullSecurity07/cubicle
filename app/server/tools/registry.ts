@@ -11,7 +11,8 @@ import type { Store } from '../store.ts';
 // itself: what a colleague wants to send still goes out under the founder's yes, asked on the asker's path.
 // `query` is what set this turn off in the founder's own words, for a tool that has to tell what the founder asked
 // for from what the model made up — a year in a search query is the founder's when they typed it and nobody else's.
-export type ToolContext = { stage: Stage; roomId: string; store: Store; granted: Map<string, string>; calls?: Map<string, number>; query?: string; report?: (effect: ToolEffect) => void; signal?: AbortSignal; approve?: (event: ToolEvent, signal?: AbortSignal) => Promise<Answer> };
+// `sources` is what the turn has read so far, as the truth net counts it, for a tool that writes figures down.
+export type ToolContext = { stage: Stage; roomId: string; store: Store; granted: Map<string, string>; calls?: Map<string, number>; query?: string; sources?: () => string[]; report?: (effect: ToolEffect) => void; signal?: AbortSignal; approve?: (event: ToolEvent, signal?: AbortSignal) => Promise<Answer> };
 // The person a tool is running for: the room whose turn this is.
 export const speaker = (context: Pick<ToolContext, 'stage' | 'roomId'>) => context.stage.rooms.find((room) => room.id === context.roomId);
 type ToolResult = { text: string; effect?: ToolEffect };

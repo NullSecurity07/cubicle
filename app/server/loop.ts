@@ -198,6 +198,8 @@ export async function runTurn(input: {
       events.tool({ id: call.id, name: call.name, args });
       context.signal = signal;
       context.query = query;
+      // What the turn has read up to this call, so a doc write can mark a figure nothing backs as the reply would.
+      context.sources = () => [...turnSources(inputs), ...results, query];
       context.report = (effect) => events.tool({ id: call.id, name: call.name, args, effect });
       // A tool that runs a turn of its own inside itself asks the founder on this turn's path, not on one of its own.
       context.approve = input.approve;

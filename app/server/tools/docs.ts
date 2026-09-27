@@ -6,7 +6,7 @@ import { readableDocIds, wiredDocIds } from '../prompt.ts';
 import { addedTwice, replaceSection, rewriteLoss } from './sections.ts';
 import { text, type Tool, type ToolContext } from './registry.ts';
 import { shortDay } from '../clock.ts';
-import { HELD_BACK } from '../truth.ts';
+import { figureCheck, HELD_BACK } from '../truth.ts';
 import { filled, guardWrite, sectionBody, unmarked, WHOLE } from './verdict.ts';
 
 // A new doc card's size, and the gap kept round it: the same the window uses when it places one.
@@ -86,8 +86,25 @@ async function rulesOf(stage: Stage, id: string): Promise<DocRules | undefined> 
 
 // Every write goes through here. A team's shared doc carries rules for whose each section is and when its verdict may
 // stand, so what is saved may be the writer's words with a stale mark or a "not assessed" verdict put in.
-async function save(context: ToolContext, id: string, before: string, after: string, done: string, touches?: string | typeof WHOLE) {
+// Figures a write adds that nothing this turn read gives, and are not already marked "(unsourced)" after them: what the
+// truth net would flag under the reply. A live person's accountant costs, flagged in chat, went into the doc plain.
+// The doc's own text counts as read. Outside a turn there is nothing to check against.
+const MARK = ' (unsourced)';
+const at = (label: string) => new RegExp(`(?<![\\d.,])${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\d])(?!\\s*\\(unsourced\\))`, 'g');
+function unsourcedIn(context: ToolContext, before: string, after: string): string[] {
+  if (!context.sources) return [];
+  return figureCheck(after, [...context.sources(), before]).unsourced.filter((label) => at(label).test(after));
+}
+
+async function save(context: ToolContext, id: string, before: string, written: string, done: string, touches?: string | typeof WHOLE) {
   const rules = await rulesOf(context.stage, id);
+  // A team doc with rules is held to its evidence, so an unsourced figure is refused there; anywhere else it is marked.
+  const unsourced = unsourcedIn(context, before, written);
+  if (unsourced.length && rules) {
+    throw new Error(`not written: ${unsourced.join(', ')} ${unsourced.length > 1 ? 'are' : 'is'} not in anything this turn read. Search or read for them first, take them out, or write "(unsourced)" right after each.`);
+  }
+  const after = unsourced.reduce((text, label) => text.replace(at(label), `${label}${MARK}`), written);
+  if (unsourced.length) done = `${done} Marked as unsourced, since nothing this turn read gives them: ${unsourced.join(', ')}.`;
   // Only a team doc's own sections are kept to one copy, where a second would slip past the checks; a plain doc such
   // as a running log repeats "## Monday" on purpose.
   const twice = rules ? addedTwice(before, after, [...rules.sections, rules.verdict].map((one) => one.heading)) : null;

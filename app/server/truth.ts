@@ -95,7 +95,9 @@ export function stripFlagged(source: string): string {
   const named = [...source.matchAll(/^Unsourced figures: (.+?) \(not found/gm)].flatMap((match) => match[1].split(', '));
   // Taken out whole only: a flagged "2%" must not eat the end of a real "32%".
   const whole = (label: string) => new RegExp(`(?<![\\d.,])${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\d])`, 'g');
-  return named.reduce((kept, label) => kept.replace(whole(label), ''), source.replace(FLAG_LINE, ''));
+  // A figure a doc carries marked "(unsourced)" is not a source either: the doc tools marked it so.
+  const marked = source.replace(FLAG_LINE, '').replace(/[$€£]?\s?\d[\d,.]*\s?(?:k|m|bn|%|x)?\s?\(unsourced\)/gi, '');
+  return named.reduce((kept, label) => kept.replace(whole(label), ''), marked);
 }
 
 // What kind of thing a figure in the inputs is. Money and a share never stand for each other: "$2k" is two thousand
