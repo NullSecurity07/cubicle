@@ -282,6 +282,35 @@ describe('what counts as a proposal', () => {
 });
 
 
+// Journey 5: the partner's own price options, "$49, $79", were flagged as unsourced.
+describe('options the partner lays out', () => {
+  const sources = ['We charge $29/month.'];
+  it('counts figures offered as options, either/or, a range between two, or lettered choices as proposals', () => {
+    expect(figureCheck('Options: keep $29, raise to $49, or go to $79.', sources)).toEqual({ unsourced: [], proposals: ['$49', '$79'] });
+    expect(figureCheck('Three options:\n- Keep $29/month\n- Raise to $49/month\n- Raise to $79/month\n\nMy call: keep $29.', sources)).toEqual({ unsourced: [], proposals: ['$49', '$79'] });
+    expect(figureCheck('Here are three options for the VAT tier:\n1. $49/month\n2. $79/month', sources)).toEqual({ unsourced: [], proposals: ['$49', '$79'] });
+    expect(figureCheck('Option B: $49/month for new users.', sources)).toEqual({ unsourced: [], proposals: ['$49'] });
+    expect(figureCheck('You could either charge $49 or $79 for the VAT tier.', sources)).toEqual({ unsourced: [], proposals: ['$49', '$79'] });
+    expect(figureCheck('Price the VAT tier between $49 and $79.', sources)).toEqual({ unsourced: [], proposals: ['$49', '$79'] });
+    expect(figureCheck('A: $49/month\nB: $79/month', sources)).toEqual({ unsourced: [], proposals: ['$49', '$79'] });
+    expect(figureCheck('Keep $29 or move to $49 once retention holds.', sources)).toEqual({ unsourced: [], proposals: ['$49'] });
+  });
+
+  it('still flags a claim that only sits near those words', () => {
+    expect(figureCheck('Accountants cost $150 a month, or more.', sources).unsourced).toEqual(['$150']);
+    expect(figureCheck('The best option is clear: churn in this market is 7%.', sources).unsourced).toEqual(['7%']);
+    expect(figureCheck('Competitors charge between them an average of $60.', sources).unsourced).toEqual(['$60']);
+    expect(figureCheck('Option A: you are at $6,300 MRR.', sources).unsourced).toEqual(['$6,300']);
+    // Review round 4: the market's own figures said as a pair or a range are claims, not the partner's options.
+    expect(figureCheck('The market pays $49 or $79.', sources).unsourced).toEqual(['$49', '$79']);
+    expect(figureCheck('Competitors charge either $49 or $79.', sources).unsourced).toEqual(['$49', '$79']);
+    expect(figureCheck('Accountants charge between €80 and €200 a month.', sources).unsourced).toEqual(['€80', '€200']);
+    expect(figureCheck('Your MRR is $87 or $90.', sources).unsourced).toEqual(['$87', '$90']);
+    expect(figureCheck('Competitors offer either $49 or $79.', sources).unsourced).toEqual(['$49', '$79']);
+    expect(figureCheck('Benchmarks:\n- Accountants charge $150 a month', sources).unsourced).toEqual(['$150']);
+  });
+});
+
 describe('preconditions the partner sets', () => {
   it('counts a threshold, a milestone and a preconditions list as proposals', () => {
     for (const reply of ['Raise when MRR reaches $10k.', 'Hold off until you hit 150 customers.', 'Get to 150 customers first.', 'Precondition: 18 months of runway.'])

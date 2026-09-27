@@ -9,13 +9,16 @@ import type { TurnResult } from '../loop.ts';
 // for something, pivoting. The word alone is not enough: "raise the price", "spend the afternoon", "an investor
 // update", "the monthly email to investors", "the $300 ad budget" and "hire a contractor" are the founder's ordinary
 // week, and asking for preconditions on them only buys a "Not yet" nobody needed.
+// What a price is called: raising one is the founder's week, however the ask is put ("should we raise the price?",
+// "raise our monthly pricing"). Checked right after the word "raise", with a possessive and one word between.
+const PRICED = '(?!\\s+(?:(?:the|our|my|its|their|your)\\s+)?(?:[a-z-]+\\s+)?(?:price|prices|pricing|rate|rates|fee|fees|bar)\\b)';
 const COMMIT = new RegExp([
-  '\\braise\\w*\\b(?!\\s+(?:the\\s+|our\\s+|my\\s+)?(?:price|prices|rate|rates|fee|fees|bar)\\b)[^.?!]{0,40}(?:\\$\\s?\\d|\\d+\\s?[kmb]\\b|round|pre-?seed|seed\\b|series [a-d]|money|capital|funding|from investors|investors|angels?|vcs?\\b|loan|offer)',
+  `\\braise\\w*\\b${PRICED}[^.?!]{0,40}(?:\\$\\s?\\d|\\d+\\s?[kmb]\\b|round|pre-?seed|seed\\b|series [a-d]|money|capital|funding|from investors|investors|angels?|vcs?\\b|loan|offer)`,
   '\\b(?:fund-?rais\\w*|pre-?seed round|seed round|series [a-d] round)',
   '\\b(?:hire|hiring|recruit\\w*)\\b[^.?!]{0,40}\\b(?:a|an|two|three|four|five|\\d+|first|our|my|someone|people|engineers?|developers?|designers?|marketers?|sales\\w*|staff|team|cto|vp)\\b',
   '\\bspend\\w*\\b[^.?!]{0,30}(?:savings|runway|on hiring)',
   '\\bpivot\\w*\\b',
-  '\\bshould (?:i|we) (?:raise|fund-?raise|hire)\\b',
+  `\\bshould (?:i|we) (?:raise\\b${PRICED}|fund-?raise|hire)\\b`,
   '\\b(?:take|accept)\\b[^.?!]{0,40}\\b(?:offer|loan|investment|term sheet)\\b',
   '\\b(?:our|a|the) (?:pre-?)?seed\\b',
 ].join('|'), 'i');

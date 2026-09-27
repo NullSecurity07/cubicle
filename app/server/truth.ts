@@ -172,8 +172,41 @@ function inPreconditions(reply: string, at: number): boolean {
   return !/[:(,;]/.test(clause) && !STATUS.test(clause);
 }
 
+// Figures the person lays out as choices are theirs too: a line that opens "Options:", "Three options:" or "Option B:"
+// and the items of a list such a line heads, a lettered choice ("A: $49/month"), "either $49 or $79", "between $49 and
+// $79", and the figure after "or" when another figure stands before it in the same sentence ("keep $29 or move to
+// $49"). Status words between the label and the figure ("Option A: you are at $6,300") keep it a claim, and "the best
+// option is clear: churn is 7%" is no option at all.
+const OPTION_LABEL = /^[\s*\-_]*(?:\*\*|__)?\s*(?:(?:two|three|four|five|\d)\s+)?(?:options?|choices?)(?:\s+(?:[a-e]|\d))?\s*(?:\*\*|__)?\s*[:\-–—]\s*(?:\*\*|__)?/i;
+const LETTERED = /^[\s*\-]*(?:\*\*|__)?\s*\(?[A-E][):.](?:\*\*|__)?\s/;
+const EITHER = /\beither\b/i;
+const BETWEEN = /\bbetween\s+(?:[$€£]?\s?\d[\d,.]*\s?[a-z%/]*\s+and\s+)?$/i;
+const OR_FIGURE = /(?:[$€£]\s?\d|\d\s?%)[^.!?\n]*\bor\s+(?:[a-z]+\s+){0,3}$/i;
+const PROPOSES = /\b(?:keep|move\s+to|go\s+(?:with|to)|pick|test|try|offer|could|options?)\b|^[\s*\-\d.)]*(?:price|charge|set)\b/i;
+function offered(reply: string, at: number): boolean {
+  const lines = reply.slice(0, at).split('\n');
+  const line = lines.at(-1)!;
+  const sentence = line.slice(Math.max(line.lastIndexOf('. '), line.lastIndexOf('! '), line.lastIndexOf('? ')) + 1);
+  const label = OPTION_LABEL.exec(line) ?? LETTERED.exec(line);
+  if (label) return !STATUS.test(line.slice(label[0].length));
+  if (ITEM.test(line)) {
+    for (let index = lines.length - 2; index >= 0; index -= 1) {
+      if (ITEM.test(lines[index])) continue;
+      if (/\b(?:options?|choices?)\b[^:\n]{0,40}?(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*$/i.test(lines[index])) return !STATUS.test(line.replace(ITEM, ''));
+      break;
+    }
+  }
+  // A pair, a choice or a range said of the market ("competitors charge either $49 or $79", "accountants charge
+  // between €80 and €200") is a claim: these shapes are the person's options only in a sentence that proposes.
+  // "Competitors offer either $49 or $79": somebody else's offer is still a claim.
+  const proposing = PROPOSES.exec(sentence);
+  if (!proposing || /\b(?:competitors?|rivals?|incumbents?|market|accountants?|agencies|they|others)\b/i.test(sentence.slice(0, proposing.index))) return false;
+  if (EITHER.test(sentence)) return !STATUS.test(sentence.slice(sentence.search(EITHER)));
+  return BETWEEN.test(sentence) || OR_FIGURE.test(sentence);
+}
+
 function proposed(reply: string, at: number): boolean {
-  if (inPreconditions(reply, at)) return true;
+  if (inPreconditions(reply, at) || offered(reply, at)) return true;
   const before = reply.slice(0, at);
   const start = Math.max(...['. ', '! ', '? ', '\n', ': ', ', ', '; '].map((end) => before.lastIndexOf(end))) + 1;
   return PROPOSING.test(before.slice(start));

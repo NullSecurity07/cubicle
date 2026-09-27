@@ -93,15 +93,34 @@ describe('a plan read as steps', () => {
 
   it('keeps a day range one label, never glues the week heading on, and dates each step', () => {
     const steps = parsePlan(JOURNEY_DOC);
-    expect(steps.map(planTaskTitle)).toEqual([
+    expect(steps.map((step) => planTaskTitle(step))).toEqual([
       'Find and vet 5 real abandoned/struggling SaaS side-projects. Write a short\u2026',
       'Set up a simple landing page (e.g., Carrd or Substack)',
       'Make the go/no-go call',
     ]);
     expect(steps.map((step) => dueOf(step.day!, '2026-09-26'))).toEqual(['2026-09-28', '2026-09-30', '2026-10-10']);
     const handed = JOURNEY_STEPS.flatMap((line) => parsePlan(line));
-    expect(handed.map(planTaskTitle)).toEqual(['Find & vet 5 abandoned SaaS side\u2011projects; write valuation notes', 'Build landing page (Carrd/Substack) with pricing or guarantee']);
+    expect(handed.map((step) => planTaskTitle(step))).toEqual(['Find & vet 5 abandoned SaaS side\u2011projects; write valuation notes', 'Build landing page (Carrd/Substack) with pricing or guarantee']);
     expect(handed.map((step) => dueOf(step.day!, '2026-09-26'))).toEqual(['2026-09-28', '2026-09-30']);
+  });
+
+  // Journey 5: the steps the partner handed to propose_tasks, with "Day 1–2:" ranges. Titles kept the label and no
+  // task had a due date, so the dashboard's "Due today" stayed 0.
+  const J5_STEPS = ['Day 1–2: Build a minimal form to create client profiles (Name, EU VAT number, address)', 'Day 3: Generate a PDF invoice from a client profile',
+    'Days 4-5: Add invoice numbering and VAT reverse-charge wording', 'Day 6 – Send the invoice feature to the 3 beta users', 'Day 7: Collect feedback and decide what is next'];
+
+  it('reads "Day N–M:" as one label, and dates it from the day the plan starts', () => {
+    const steps = J5_STEPS.flatMap((line) => parsePlan(line));
+    expect(steps.map((step) => step.day)).toEqual(['Day 1–2', 'Day 3', 'Days 4-5', 'Day 6', 'Day 7']);
+    expect(steps.map((step) => planTaskTitle(step, '2026-09-27'))).toEqual([
+      'Build a minimal form to create client profiles (Name, EU VAT number, address)', 'Generate a PDF invoice from a client profile',
+      'Add invoice numbering and VAT reverse-charge wording', 'Send the invoice feature to the 3 beta users', 'Collect feedback and decide what is next',
+    ]);
+    expect(steps.map((step) => dueOf(step.day!, '2026-09-27', '2026-09-27'))).toEqual(['2026-09-27', '2026-09-29', '2026-09-30', '2026-10-02', '2026-10-03']);
+    expect(dueOf('Week 2', '2026-09-27', '2026-09-27')).toBe('2026-10-04');
+    // A calendar day in the label still wins, and with no start a "Day 3" names no day and keeps its label.
+    expect(dueOf('Mon 28 Sep (Day 1)', '2026-09-26', '2026-09-20')).toBe('2026-09-28');
+    expect(planTaskTitle(steps[1])).toBe('Day 3: Generate a PDF invoice from a client profile');
   });
 
   it('dates a label only when it names a calendar day, in the year nearest today', () => {

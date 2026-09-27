@@ -146,6 +146,15 @@ export function createChat(deps: Deps) {
             });
         });
       }
+      // The last look before it is kept: whatever a slice adds under the reply is shown in every window too.
+      const said = reply.text;
+      reply = (await seams.run('turn:reply', { roomId, query: text, reply })).reply;
+      if (reply.text !== said && reply.text.startsWith(said)) {
+        const more = reply.text.slice(said.length);
+        kept.text += more;
+        send({ token: more });
+        roomFeed.tell({ roomId, turn, token: more });
+      }
       const message = {
         id: replyId, role: 'assistant' as const, text: reply.text, at: Date.now(), provider: reply.provider, model: reply.model,
         usage: reply.usage, ...(reply.tools.length ? { tools: reply.tools } : {}), ...(reply.stopped ? { stopped: true } : {}),

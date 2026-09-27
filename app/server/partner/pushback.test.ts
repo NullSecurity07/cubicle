@@ -34,6 +34,13 @@ describe('the partner\'s precondition check', () => {
       'Help me plan pay-as-you-go pricing at $2k/year', "20k users by Q1, what should we pay attention to? Let's plan", 'We spent $5k on ads last month, help me draft the recap']) expect(asksCommitment(said), said).toBe(false);
   });
 
+  // Journey 5: "should we raise the price?" read as a raise and posted with "Partner did not check preconditions."
+  it('never takes raising a price, prices, pricing, rates or fees as a raise ask, however it is asked', () => {
+    for (const said of ['should we raise the price? Give me a number.', 'Should we raise prices?', 'should I raise pricing next month?', 'Should we raise our rates?', 'should we raise the fees for new users?',
+      'Should we raise our monthly price to $49?', "Let's raise pricing for new customers, plan it", 'Help me plan how we raise prices by 20%']) expect(asksCommitment(said), said).toBe(false);
+    for (const said of ['Should we raise now?', 'Should we raise a pre-seed?', 'should we raise money before pricing is settled?']) expect(asksCommitment(said), said).toBe(true);
+  });
+
   it('knows a reply that checked the preconditions, however it says no', () => {
     for (const reply of ['Not yet. Before that, get 20 paying users.', 'I disagree: no users means no round.\n\nMy call: no.', 'No. Here is why: nobody has paid yet.', "I'd hold off until you have ten users.", 'Plan below.\n\nMy call: not now.', 'Too early. First get ten paying readers.', "Don't raise yet: nobody pays so far.", 'My call: **wait** a month.']) expect(checksPreconditions(reply), reply).toBe(true);
     expect(checksPreconditions('Here is your 7-phase raise plan. 1. Prepare a SAFE with a $2M cap.')).toBe(false);
