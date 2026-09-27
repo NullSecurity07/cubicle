@@ -113,6 +113,7 @@ describe('the verdict judge on a team doc', () => {
     const strong = await as('verdict')('replace_section', { heading: '5. Verdict', text: 'STRONG\n\nScore out of 10: 10/10' });
     expect(strong.ok).toBe(false);
     expect(strong.text).toMatch(/no customer conversations are recorded.*at most WEAK and the score at most 5 of 10\. This one says STRONG, 10 of 10/);
+    expect(strong.text).toContain('The count line reads "Real customer conversations done (of ten to twenty): 0".');
     expect((await as('verdict')('replace_section', { heading: '5. Verdict', text: 'PIVOT REQUIRED (3)\n\nScore: 6/10' })).ok).toBe(false);
     expect((await as('verdict')('replace_section', { heading: '5. Verdict', text: 'WEAK: no conversations yet (3).\n\nScore: 5/10' })).ok).toBe(true);
     expect(sectionBody(await doc(), '5. Verdict')).toContain('WEAK: no conversations yet (3).');
@@ -289,6 +290,10 @@ describe('the pain section without conversations', () => {
     const out = await pain(`${RATE} Painkiller bordering on hair-on-fire. Score: 2/2\n\nReal customer conversations done (of ten to twenty): 0`);
     expect(out.ok).toBe(false);
     expect(out.text).toMatch(/no customer conversations are recorded.*pain is at most painkiller and 1 of 2\. This one says painkiller, 2 of 2/);
+    // What it read, quoted, so the writer sees the count line the cap rests on.
+    expect(out.text).toContain('The count line reads "Real customer conversations done (of ten to twenty): 0".');
+    const dropped = await pain(`${RATE} hair on fire. Score: 2/2`);
+    expect(dropped.text).toContain('There is no "Real customer conversations done" line, and no count of conversations in the section.');
     expect((await pain(`${RATE} hair on fire\n\nReal customer conversations done: 0`)).ok).toBe(false);
     expect((await pain(`${RATE} painkiller, unproven. Score: 1/2\n\nReal customer conversations done: 0`)).ok).toBe(true);
     expect((await pain(`${RATE} vitamin\n\nReal customer conversations done: none`)).ok).toBe(true);

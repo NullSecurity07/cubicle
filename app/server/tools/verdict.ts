@@ -133,6 +133,12 @@ export function conversations(section: string, label: string): number | null {
 // A section's words, without its layout: each line bare of list marks and emphasis, spaces run together, blank lines gone.
 const words = (body: string | null) => (body ?? '').split('\n').map((line) => bare(line).replace(/\s+/g, ' ')).filter(Boolean).join('\n');
 
+// The count a cap rests on, quoted as it was read, so a writer refused by it sees why rather than guessing.
+function countRead(section: string, label: string): string {
+  const line = section.split('\n').map(bare).find((one) => one.toLowerCase().startsWith(label.toLowerCase()));
+  return line ? `The count line reads "${line}".` : `There is no "${label}" line, and no count of conversations in the section.`;
+}
+
 export type Guarded = { text: string; note?: string; held?: boolean };
 
 // `before` and `after` are the whole doc either side of one write by `writerId`. Returns the text to save (with a
@@ -167,7 +173,8 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
     const { word, score } = verdictOf(body, order, outOf);
     if ((word && order.indexOf(word) > order.indexOf(cap.verdict)) || (score !== undefined && score > cap.score)) {
       throw new Error(`not written: ${cap.why}, so ${cap.name ?? 'this section'} is at most ${cap.verdict} and ${cap.score} of ${outOf}. `
-        + `This one says ${[word, score !== undefined ? `${score} of ${outOf}` : ''].filter(Boolean).join(', ')}. Write it again within the cap, and mark what is unproven.`);
+        + `This one says ${[word, score !== undefined ? `${score} of ${outOf}` : ''].filter(Boolean).join(', ')}. ${countRead(sectionBody(after, cap.heading) ?? '', cap.line)} `
+        + 'Write it again within the cap, and mark what is unproven.');
     }
   }
 
@@ -204,7 +211,8 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
         const over = (word && order.indexOf(word) > order.indexOf(cap.verdict)) || (score !== undefined && score > cap.score);
         if (over) {
           throw new Error(`not written: ${cap.why}, so the verdict is at most ${cap.verdict} and the score at most ${cap.score} of 10. `
-            + `This one says ${[word, score !== undefined ? `${score} of 10` : ''].filter(Boolean).join(', ')}. Write it again within the cap, and say which section each fact comes from.`);
+            + `This one says ${[word, score !== undefined ? `${score} of 10` : ''].filter(Boolean).join(', ')}. ${countRead(sectionBody(after, cap.heading) ?? '', cap.line)} `
+        + 'Write it again within the cap, and say which section each fact comes from.');
         }
       }
     }
