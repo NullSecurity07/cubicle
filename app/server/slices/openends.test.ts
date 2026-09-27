@@ -56,6 +56,19 @@ describe('the openends slice', () => {
     expect((await readdir(join(workspace, 'backups'))).filter((name) => name.endsWith('.tar.gz'))).toHaveLength(1);
   });
 
+  it('raises one Needs you item when the daily backup fails, and a backup made by hand clears it', async () => {
+    vi.stubEnv('STAGE_AUTO_BACKUP', '1');
+    const blocked = join(await mkdtemp(join(tmpdir(), 'openends-blocked-')), 'a-file');
+    await writeFile(blocked, 'x');
+    vi.stubEnv('STAGE_BACKUP_DIR', join(blocked, 'backups'));
+    const { deps, call } = await setup();
+    await part!.tick!();
+    expect((await deps.attention.list()).map((one) => one.kind)).toEqual(['backup-failed']);
+    vi.stubEnv('STAGE_BACKUP_DIR', await mkdtemp(join(tmpdir(), 'openends-good-')));
+    expect((await call('/api/backups', 'POST'))!.status).toBe(200);
+    expect(await deps.attention.list()).toEqual([]);
+  });
+
   it('names a broken mcp.json as one row, shows it on the dashboard\'s health too, and lets go on close', async () => {
     const before = outsideHealth.now;
     await setup({ 'mcp.json': '{ not json' });

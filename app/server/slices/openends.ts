@@ -59,6 +59,8 @@ export default {
         if (path === '/api/backups' && req.method === 'POST') {
           const dir = dirOf();
           const made = await makeBackup({ workspace: deps.workspace, dir });
+          // One made by hand is one made: a failed daily backup's item goes with it.
+          await told({ made }).catch(() => {});
           deps.json(res, 200, { ...made, dir, kept: 5, backups: await listBackups(dir) });
           return true;
         }
