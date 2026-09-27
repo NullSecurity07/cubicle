@@ -889,3 +889,21 @@ describe('a Not assessed verdict as the sections it waits on are written', () =>
     expect(sectionBody(await doc(), '5. Verdict')).toBe('WEAK: pain unproven (3).\n\nScore: 4/10');
   });
 });
+
+describe('a verdict\'s score lines', () => {
+  it('lose the bare section markers the brief\'s "(3)" leaves on them, and keep them on the reasons', async () => {
+    // Priya's live score block: "(1)", "(2)" and "(3 - ...)" after each part.
+    const { as, doc, fill } = await setup();
+    await fill();
+    const block = '**WEAK**\n\n- **Because**: the pain rests on 12 calls, not on paying users (3).\n- **Scores (out of 10)**:\n  - Assumption: 1/2 (1)\n  - Flaws: 1/2 (2)\n'
+      + '  - Pain: 1/2 (3 - only 3 beta users, zero structured interviews)\n  - Fit: 2/2 (4: lived the problem)\n  - Why now: 0/2\n  - **Total: 5/10 (WEAK)**';
+    expect((await as('verdict')('replace_section', { heading: '5. Verdict', text: block })).text).toContain('The verdict is written.');
+    const verdict = sectionBody(await doc(), '5. Verdict')!;
+    expect(verdict).toContain('  - Assumption: 1/2\n  - Flaws: 1/2\n  - Pain: 1/2 (only 3 beta users, zero structured interviews)\n  - Fit: 2/2 (lived the problem)\n');
+    expect(verdict).toContain('not on paying users (3).');
+    expect(verdict).toContain('**Total: 5/10 (WEAK)**');
+    // A range is no marker.
+    await as('verdict')('replace_section', { heading: '5. Verdict', text: 'WEAK (3)\n\nScore: 4/10 (3-5 users)' });
+    expect(sectionBody(await doc(), '5. Verdict')).toBe('WEAK (3)\n\nScore: 4/10 (3-5 users)');
+  });
+});

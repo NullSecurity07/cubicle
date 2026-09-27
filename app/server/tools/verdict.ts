@@ -79,6 +79,13 @@ const titleOf = (text: string, heading: string) => headings(text).find((one) => 
 const ownerOf = (stage: Stage, rules: DocRules, by: string, docId: string): Room | undefined =>
   stage.rooms.find((room) => room.framework?.id === rules.framework && room.framework.key === by && wiredDocIds(stage, room.id).includes(docId));
 
+// A score line with the section markers the judge's brief ("every fact names its section, as (3)") leaves on it taken
+// off: "Assumption: 1/2 (1)" reads as "Assumption: 1/2", "Pain: 1/2 (3 - only 3 beta users)" as "Pain: 1/2 (only 3
+// beta users)". A line of reasons keeps its "(3)", which says where a fact came from.
+const unmarkScore = (line: string) => (/\d\s*\/\s*\d/.test(line) || /^score\b/i.test(bare(line))
+  ? line.replace(/\s*\([1-9]\)/g, '').replace(/\([1-9]\s*[-–—:]\s*(?=\p{L})/gu, '(')
+  : line);
+
 // Each section the verdict rests on that is empty, with the person placed to write it: the truth, said so the judge
 // repeats it ("Rohan has not written "4. Founder-market fit" yet").
 function waiting(stage: Stage, rules: DocRules, docId: string, text: string) {
@@ -356,6 +363,7 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
     // A verdict written over a "Not assessed" one, its lines copied along, keeps none of them: any section still
     // empty puts its own back below.
     if (stands(fresh)) fresh = fresh.split('\n').filter((line) => !NOT_ASSESSED.test(line.trim()) && !NO_VERDICT.test(line.trim())).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+    fresh = fresh.split('\n').map(unmarkScore).join('\n');
     after = withBody(after, verdictAt, fresh);
     if (!stands(fresh)) return { text: after };
     // A verdict that stands says so, for the truth net: a refusal earlier in the turn no longer holds.

@@ -246,6 +246,7 @@ function otherFrom(a: Known, b: Known): number[] {
 }
 
 // `drifted`: money the reply gives in another currency than the sources hold it in ("€87" from "$29 × 3").
+const ALL_OR_NONE = /^\s*of\s+(?:your|the|my|our|their|his|her)\s+(?:time|effort|focus|attention|energy)\b/i;
 export function figureCheck(reply: string, sources: string[]): { unsourced: string[]; proposals: string[]; drifted?: { label: string; source: string }[] } {
   const known: Known[] = [];
   for (const source of sources) {
@@ -305,8 +306,12 @@ export function figureCheck(reply: string, sources: string[]): { unsourced: stri
     let value: number;
     let kind: Kind = 'other';
     if (match[1] !== undefined) { value = valueOf(match[1], match[2], match[3]); kind = 'money'; }
-    else if (match[4] !== undefined) { value = valueOf(match[4], match[5]); kind = 'share'; }
-    else if (match[7] !== undefined) {
+    else if (match[4] !== undefined) {
+      value = valueOf(match[4], match[5]);
+      kind = 'share';
+      // "100% of your time", "0% of the effort": all or none of someone's time is advice, not a figure about the world.
+      if ((value === 100 || value === 0) && ALL_OR_NONE.test(reply.slice(match.index + match[0].length))) continue;
+    } else if (match[7] !== undefined) {
       const times = !!match[9] && /x|×/i.test(match[9]);
       value = valueOf(match[7], match[8], match[9] && !times ? match[9] : undefined);
       if (value <= 10) continue;

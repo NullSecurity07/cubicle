@@ -246,6 +246,17 @@ describe('the truth net on ordinary founder replies', () => {
 
 // The review's probes: with a few figures in the sources, one step of arithmetic on any two of them matched almost
 // any invented number. Arithmetic now counts only when a figure it starts from sits near it in the reply.
+describe('all or none of someone\'s time', () => {
+  it('is advice, not a figure', () => {
+    // The partner's "100% of your time" came back as "Unsourced figures: 100%".
+    for (const said of ['Spend 100% of your time on sales this week.', 'Put 0% of the effort into invoicing.', 'Give it 100% of your focus.']) {
+      expect(figureCheck(said, []).unsourced, said).toEqual([]);
+    }
+    expect(figureCheck('100% of customers churned.', []).unsourced).toEqual(['100%']);
+    expect(figureCheck('Spend 40% of your time on sales.', []).unsourced).toEqual(['40%']);
+  });
+});
+
 describe('arithmetic the reply does not show', () => {
   const founder = 'We sent 30 emails and got 1 reply. The budget is $2,000 and the team of 4 is part time.';
   const metrics = '## Doc: Metrics\nMRR $4,210. 87 customers. Churn 3.1%. CAC $180. LTV $1,350. Trials 212, 46 converted. NPS 42. '
