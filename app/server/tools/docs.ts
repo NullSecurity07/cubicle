@@ -107,12 +107,15 @@ function asksAbout(question: string, heading: string): boolean {
   return (!!words && flat(question).includes(words)) || (!!number && new RegExp(`\\bsection\\s+${number}\\b`, 'i').test(question));
 }
 
-const HEDGE = /\b(not sure|don'?t know|do not know|haven'?t|have not|no idea|unclear|need to ask|ask (?:the )?founder|tbd|can'?t say)\b/i;
+const HEDGE = /\b(not sure|unsure|don'?t know|do not know|haven'?t|have not|no idea|no clue|unclear|unknown|hard to say|need to ask|ask (?:the )?founder|tbd|n\/a|pending|not yet|can'?t say)\b/i;
 const hedges = (answer: string) => /\?\s*$/.test(answer.trim()) || HEDGE.test(answer.replace(/[’‘]/g, "'"));
 
-// An answer most of whose words are the question's own: the question said back, maybe as dictated to them.
-function echoes(answer: string, question: string): boolean {
-  const split = (text: string) => text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word.length > 2);
+// An answer most of whose words are the question's own: the question said back, maybe as dictated to them. The
+// section's own words are left out on both sides, so "Founder-market fit: lived it." is an answer.
+function echoes(answer: string, question: string, heading: string): boolean {
+  const split = (text: string) => text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word.length > 2 && !named.has(word));
+  const named = new Set<string>();
+  for (const word of split(heading)) named.add(word);
   const asked = new Set(split(question));
   const said = split(answer);
   return !!said.length && said.filter((word) => asked.has(word)).length / said.length >= 0.7;
@@ -142,7 +145,7 @@ export async function answerIntoSection(context: ToolContext, targetId: string, 
     const [{ heading }] = asked;
     // A colleague answering without tools does not know their reply becomes their section, so they hedge or ask back;
     // written in, a hedge counted as the section and let a verdict stand on it. Nor is the question said back an answer.
-    if (hedges(answer) || echoes(answer, question)) return `${target.name} answered but did not fill "${heading}"; it stays empty.`;
+    if (hedges(answer) || echoes(answer, question, heading)) return `${target.name} answered but did not fill "${heading}"; it stays empty.`;
     const asking = question.replace(/\s+/g, ' ').trim();
     const body = `${answer.trim()}\n\n(From chat: ${target.name} answered ${asker.name} on ${shortDay(Date.now())}, asked "${asking.length > 200 ? `${asking.slice(0, 199)}…` : asking}".)`;
     const next = replaceSection(before, heading, body);
@@ -150,7 +153,9 @@ export async function answerIntoSection(context: ToolContext, targetId: string, 
     // The section's own checks hold as for any write of theirs; one that fails is said, and the answer still stands.
     let guarded;
     try { guarded = guardWrite({ rules, stage, docId: id, writerId: targetId, before, after: next.text, now: Date.now() }); } catch (error) {
-      return `Not written into "${heading}": ${(error as Error).message.replace(/^not written:\s*/, '')}`;
+      // The guard speaks to the writer ("Write it again", "Ask Priya with ask_person"); the asker gets only the reason.
+      const why = (error as Error).message.replace(/^not written:\s*/, '').replace(/\s+(?:Write it again|Ask \S+ with ask_person)[\s\S]*$/, '');
+      return `Not written into "${heading}": ${why} The section stays empty until ${target.name} writes it within that.`;
     }
     await context.store.replaceDoc(id, guarded.text);
     context.report?.({ kind: 'doc-changed', id });

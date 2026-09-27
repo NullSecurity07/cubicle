@@ -455,13 +455,34 @@ describe('the judge asking a colleague about their empty section', () => {
     expect(filled(sectionBody(await doc(), '3. Is the pain real?'))).toEqual([]);
   });
 
+  it('reads no evidence from the question quoted in the from-chat marker', async () => {
+    const { stage, store, doc, fill } = await setup();
+    await fill(['3. Is the pain real?']);
+    const consult: Consult = async () => 'Hair on fire. Score: 2/2';
+    const out = await runTool(teamTools(consult), 'ask_person', JSON.stringify({ name: 'Meera', question: 'Section 3: after your 12 interviews, how painful is it?' }), { stage, roomId: 'verdict', store, granted: new Map() });
+    expect(out.text).toMatch(/Not written into "3\. Is the pain real\?": no customer conversations/);
+    // Said to the asker, not to the writer: nothing tells Priya to ask herself or to write it again.
+    expect(out.text).not.toMatch(/Write it again|Ask Priya/);
+    expect(out.text).toContain('The section stays empty until Meera writes it within that.');
+    expect(filled(sectionBody(await doc(), '3. Is the pain real?'))).toEqual([]);
+    const LABEL = 'Real customer conversations done';
+    expect(conversations('Painkiller.\n\n(From chat: Meera answered Priya on 27 Sept 2026, asked "after your 12 interviews, how bad?".)', LABEL)).toBeNull();
+    expect(verdictOf('WEAK\n\n(From chat: Priya answered Sam on 27 Sept 2026, asked "is it STRONG, 9/10?".)', OUTCOMES)).toEqual({ word: 'WEAK', score: undefined });
+  });
+
   it('leaves the section empty when the answer hedges or asks back, so the verdict still waits', async () => {
-    for (const hedge of ['Not sure yet — I haven\'t talked to the founder. Can you ask them?', 'No idea, TBD.', 'Which market do you mean?', 'I don\'t know; we need to ask the founder.']) {
+    for (const hedge of ['Not sure yet — I haven\'t talked to the founder. Can you ask them?', 'No idea, TBD.', 'Which market do you mean?', 'I don\'t know; we need to ask the founder.',
+      'Unsure.', 'Hard to say from here.', 'Unknown for now.', 'N/A', 'Pending the founder\'s reply.', 'Not yet.', 'No clue, honestly.']) {
       const { result, text } = await run('What goes in section 4, the founder-market fit?', hedge);
       expect(result.tools[0].result, hedge).toContain('Rohan answered but did not fill "4. Founder-market fit"; it stays empty.');
       expect(filled(sectionBody(text, '4. Founder-market fit')), hedge).toEqual([]);
       expect(sectionBody(text, '5. Verdict'), hedge).toMatch(/^Not assessed: 4\. Founder-market fit/);
     }
+  });
+
+  it('writes an answer that names its section, since the section\'s words are not an echo', async () => {
+    const { text } = await run('What is your founder-market fit, section 4?', 'Founder-market fit: lived it.');
+    expect(sectionBody(text, '4. Founder-market fit')).toMatch(/^Founder-market fit: lived it\./);
   });
 
   it('leaves the section empty when the answer only says the question back', async () => {

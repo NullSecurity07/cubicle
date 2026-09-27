@@ -69,10 +69,15 @@ const ownerOf = (stage: Stage, rules: DocRules, by: string, docId: string): Room
 // A line with its markdown taken off: list marks, quote marks, emphasis. "- **Score:** 4/10" reads as "Score: 4/10".
 const bare = (line: string) => line.replace(/^\s*(?:[-*+>]|\d+[.)])\s+/, '').replace(/[*_`]/g, '').trim();
 
+// A colleague's answer from chat is written with a marker line quoting the question it answered. The question is the
+// asker's words, not evidence: "after your 12 interviews?" in it once passed the pain cap on no interviews at all.
+const unmarked = (text: string) => text.split('\n').filter((line) => !/^\(From chat:/.test(bare(line))).join('\n');
+
 // The verdict word and the score a verdict gives. The template's own "(STRONG / WEAK / PIVOT REQUIRED)" is a label,
 // not a verdict, so anything in brackets with a slash in it is read past. The score is read from a line that starts
 // with "Score" before anything else, because the reasons carry figures too: "7 of 10 we called said it hurts".
-export function verdictOf(body: string, outcomes: string[], outOf = 10): { word?: string; score?: number } {
+export function verdictOf(written: string, outcomes: string[], outOf = 10): { word?: string; score?: number } {
+  const body = unmarked(written);
   // A template label that lists the words ("Vitamin — painkiller — hair on fire: painkiller") is read past as well.
   const listed = (label: string) => outcomes.filter((word) => wordAt(label, word) >= 0).length > 1;
   const lines = filled(body).map(bare).map((line) => line.replace(/\([^)]*\/[^)]*\)/g, ' '))
@@ -112,7 +117,7 @@ function countOf(said: string): number {
 // ("talked to 12 founders", "14 customer interviews"). No count anywhere is no evidence, and the cap holds.
 export function conversations(text: string, label: string): number | null {
   // A struck-out count is a count taken back: "~~12~~ 0" is none.
-  const section = text.replace(/~~[^~]*~~/g, ' ');
+  const section = unmarked(text).replace(/~~[^~]*~~/g, ' ');
   const line = section.split('\n').map(bare).find((one) => one.toLowerCase().startsWith(label.toLowerCase()));
   if (line) {
     // What follows the label, past the template's own "(of ten to twenty)" and whatever separates the two.
