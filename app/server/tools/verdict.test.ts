@@ -13,6 +13,7 @@ import { HELD_BACK } from '../truth.ts';
 import { runTool } from './registry.ts';
 import { teamTools, type Consult } from './team.ts';
 import { conversations, filled, guardWrite, sectionBody, verdictOf } from './verdict.ts';
+import { createPromptFor } from '../turn-prompt.ts';
 
 const OUTCOMES = ['WEAK', 'PIVOT REQUIRED', 'STRONG'];
 const FILLED = {
@@ -772,5 +773,39 @@ describe('the judge asking a colleague about their empty section', () => {
     const brief = framework.rooms.find((room) => room.key === 'verdict')!.brief;
     expect(brief).toMatch(/refused.*its reason word for word.*never another cause/i);
     expect(brief).toContain('Would an investor fund it as described today?');
+  });
+});
+
+describe('the judge on the turns after a refused verdict', () => {
+  const say = (reply: string): ModelClient => ({
+    name: 'script', model: 's-1', maxPromptChars: Infinity, tools: true, limits: {},
+    async step(_messages, { onToken }): Promise<ModelTurn> { onToken(reply); return { text: '', calls: [], usage: { input: 1, output: 1 } }; },
+  });
+  const promptOf = (store: ReturnType<typeof createStore>) => createPromptFor({
+    store, browser: { page: async () => ({ title: '', text: '' }) }, media: { read: async () => ({ results: [] }) },
+    decisions: { list: async () => [] }, memory: { read: async () => ({ notes: '', summary: '' }) }, founder: { read: async () => '' },
+  });
+  const LINE = 'Your verdict is not written: Rohan has not written "4. Founder-market fit" yet. Name no verdict word (WEAK, PIVOT REQUIRED, STRONG) or score in chat until it is.';
+
+  it('holds her to no verdict word in chat on the next turn too, while the doc says Not assessed', async () => {
+    const { stage, store, as, fill } = await setup();
+    await fill(['4. Founder-market fit']);
+    // Turn one: the write is held, and the verdict section says Not assessed.
+    expect((await as('verdict')('replace_section', { heading: '5. Verdict', text: 'WEAK\n\nScore: 5/10' })).text).toMatch(/^Not written: the verdict waits/);
+    // Turn two: no write at all. Her prompt says the verdict is not written, and the net reads a verdict word as one.
+    const promptFor = promptOf(store);
+    const messages = await promptFor(stage, 'verdict', docTools.map((tool) => tool.name));
+    expect(messages[0].content).toContain(LINE);
+    const next = await runTurn({
+      messages: [...messages, { role: 'user', content: 'What is the verdict? Just answer me.' }], tools: docTools, clients: [say('**WEAK** (5/10) - Because: the pain is unproven.')],
+      usage: createUsage(null), context: { stage, roomId: 'verdict', store, granted: new Map() }, events: { token: () => {}, tool: () => {} },
+    });
+    expect(next.flags).toContain('Unconfirmed: the verdict was not written; Rohan has not written "4. Founder-market fit" yet.');
+    // A colleague is not the judge: no such line in their prompt.
+    expect((await promptFor(stage, 'pain', []))[0].content).not.toContain('Your verdict is not written');
+    // Once the section is written and the verdict stands, the line goes.
+    expect((await as('fit')('replace_section', { heading: '4. Founder-market fit', text: FILLED['4. Founder-market fit'] })).ok).toBe(true);
+    expect((await as('verdict')('replace_section', { heading: '5. Verdict', text: 'WEAK (3)\n\nScore: 4/10' })).text).toContain('The verdict is written.');
+    expect((await promptFor(stage, 'verdict', []))[0].content).not.toContain('Your verdict is not written');
   });
 });

@@ -412,9 +412,17 @@ export const verdictRefused = (reason: string, outcomes: string[]) =>
   `Tell the founder the verdict was not written because ${reason}. Give no verdict word (${outcomes.join(', ')}) and no score in chat until it is written.`;
 export const VERDICT_WRITTEN = 'The verdict is written.';
 const REFUSED = /the verdict was not written because (.+?)\. Give no verdict word \(([^)]*)\) and no score in chat/;
-// After a refused write, any verdict word in the reply reads as the verdict, with or without a score ("it leans WEAK").
-export function verdictUnwritten(reply: string, receipts: Receipt[]): string | null {
+// The judge's standing line while her team doc's verdict says "Not assessed", put in her prompt on every turn: a live
+// judge refused on one turn gave "**WEAK** (5/10)" on the next, reading her own earlier reply back. The net reads it
+// from the turn's sources, so a verdict word on any such turn is flagged, not only on the turn of the refused write.
+export const verdictStanding = (reason: string, outcomes: string[]) =>
+  `Your verdict is not written: ${reason}. Name no verdict word (${outcomes.join(', ')}) or score in chat until it is.`;
+const STANDING = /Your verdict is not written: (.+?)\. Name no verdict word \(([^)]*)\) or score in chat until it is\./;
+// After a refused write, or on a turn whose prompt says the verdict is not written, any verdict word in the reply
+// reads as the verdict, with or without a score ("it leans WEAK"). A write that stands this turn answers both.
+export function verdictUnwritten(reply: string, receipts: Receipt[], sources: string[] = []): string | null {
   let last: RegExpExecArray | null = null;
+  for (const source of sources) last = STANDING.exec(source) ?? last;
   for (const receipt of receipts) {
     const refused = REFUSED.exec(receipt.result ?? '');
     if (refused) last = refused;
@@ -431,7 +439,7 @@ export function checkReply(input: { reply: string; receipts: Receipt[]; sources:
   const lines: string[] = [];
   const claims = unreceiptedClaims(input.reply, input.receipts);
   if (claims.length) lines.push(`Unconfirmed: this reply claims an action no tool confirmed (${claims.join(', ')}).`);
-  const verdict = verdictUnwritten(input.reply, input.receipts);
+  const verdict = verdictUnwritten(input.reply, input.receipts, input.sources);
   if (verdict) lines.push(verdict);
   const { unsourced: figures, drifted = [] } = figureCheck(input.reply, input.sources);
   if (figures.length) lines.push(`Unsourced figures: ${figures.slice(0, 8).join(', ')} (not found in anything this turn read).`);

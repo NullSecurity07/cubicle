@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PARTNER_STANCE, STANCE } from '../shared/model.ts';
-import { checkReply, figureCheck, proseToolCall, stripFlagged, turnSources, unreceiptedClaims, unsourcedFigures, verdictRefused, VERDICT_WRITTEN } from './truth.ts';
+import { checkReply, figureCheck, proseToolCall, stripFlagged, turnSources, unreceiptedClaims, unsourcedFigures, verdictRefused, verdictStanding, VERDICT_WRITTEN } from './truth.ts';
 
 const wrote = { name: 'write_doc', ok: true };
 const failedWrite = { name: 'write_doc', ok: false };
@@ -397,6 +397,18 @@ describe('a verdict stated without a written one', () => {
     const stood = { name: 'replace_section', ok: true, result: `Replaced the section "5. Verdict". ${VERDICT_WRITTEN}` };
     expect(checkReply({ reply: 'WEAK. Score: 3/10.', receipts: [refused, stood], sources: [] })).toEqual([]);
     expect(checkReply({ reply: 'WEAK. Score: 3/10.', receipts: [], sources: [] })).toEqual([]);
+  });
+
+  it('gets a line on any turn whose prompt says the verdict is not written, not only after a refused write', () => {
+    // A live judge refused on one turn gave "**WEAK** (5/10)" on the next, reading her own earlier reply.
+    const standing = verdictStanding('Rohan has not written "4. Founder-market fit" yet', OUTCOMES);
+    expect(standing).toBe('Your verdict is not written: Rohan has not written "4. Founder-market fit" yet. Name no verdict word (WEAK, PIVOT REQUIRED, STRONG) or score in chat until it is.');
+    const system = turnSources([{ role: 'system', content: `You are Priya, the judge. Judge it.\n\n${standing}` }]);
+    expect(checkReply({ reply: '**WEAK** (5/10) because the pain is unproven.', receipts: [], sources: system })).toContain(LINE);
+    expect(checkReply({ reply: 'No verdict yet: Rohan has not written "4. Founder-market fit".', receipts: [], sources: system })).not.toContain(LINE);
+    // A write that stands this turn answers it.
+    const stood = { name: 'replace_section', ok: true, result: `Replaced the section "5. Verdict". ${VERDICT_WRITTEN}` };
+    expect(checkReply({ reply: 'WEAK. Score: 4/10.', receipts: [stood], sources: system })).toEqual([]);
   });
 
   it('leaves a figure a doc marked "(unsourced)" out of the sources', () => {

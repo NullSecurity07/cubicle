@@ -74,7 +74,7 @@ const shippedTeam = (id: string) => {
   return shipped.get(id)!;
 };
 
-async function rulesOf(stage: Stage, id: string): Promise<DocRules | undefined> {
+export async function rulesOf(stage: Stage, id: string): Promise<DocRules | undefined> {
   const doc = stage.docs.find((one) => one.id === id);
   if (!doc || doc.rules) return doc?.rules;
   const teams = new Set(stage.rooms.filter((room) => room.framework && wiredDocIds(stage, room.id).includes(id)).map((room) => room.framework!.id));

@@ -1,6 +1,6 @@
 import type { DocRules, Room, Stage } from '../../shared/model.ts';
 import { shortDay } from '../clock.ts';
-import { VERDICT_WRITTEN, verdictRefused } from '../truth.ts';
+import { VERDICT_WRITTEN, verdictRefused, verdictStanding } from '../truth.ts';
 
 // What a refused verdict write tells the judge to say, and not say: after one, a live judge still led her chat reply
 // with "**PIVOT REQUIRED**" as the verdict it would be once the section was written.
@@ -20,6 +20,13 @@ import { headingKey, headings } from './sections.ts';
 
 const STALE = /^Stale: .* changed after this verdict on .*\.$/;
 const NOT_ASSESSED = /^not assessed\b/i;
+// The closing line of a "Not assessed" verdict, which is no verdict either.
+const NO_VERDICT = /^No verdict and no score until\b/;
+
+// Whether a verdict section holds a verdict: something written beyond a "Not assessed" line and its closing line.
+const stands = (body: string | null) => filled(body).some((line) => !NO_VERDICT.test(line));
+// Whether it says "Not assessed" and nothing more.
+const unassessed = (body: string | null) => !stands(body) && (body ?? '').split('\n').some((line) => NOT_ASSESSED.test(line.trim()));
 
 // Where each copy of a heading's section starts and ends, as line numbers: the heading line, and the line after the
 // section's last. A doc is meant to hold one of each, but one written before the doc tools refused a second copy may
@@ -71,6 +78,24 @@ const titleOf = (text: string, heading: string) => headings(text).find((one) => 
 // owns the sections of the doc their own team was placed with, never the other copy's.
 const ownerOf = (stage: Stage, rules: DocRules, by: string, docId: string): Room | undefined =>
   stage.rooms.find((room) => room.framework?.id === rules.framework && room.framework.key === by && wiredDocIds(stage, room.id).includes(docId));
+
+// Each section the verdict rests on that is empty, with the person placed to write it: the truth, said so the judge
+// repeats it ("Rohan has not written "4. Founder-market fit" yet").
+function waiting(stage: Stage, rules: DocRules, docId: string, text: string) {
+  const empty = rules.sections.filter(({ heading }) => sectionBody(text, heading) !== null && !filled(sectionBody(text, heading)).length);
+  const names = empty.map(({ heading }) => titleOf(text, heading));
+  const owners = empty.map(({ by }) => ownerOf(stage, rules, by, docId)?.name);
+  const missing = names.map((name, at) => (owners[at] ? `${owners[at]} has not written "${name}" yet` : `"${name}" is empty and nobody on the stage is placed to write it`));
+  return { names, owners, missing };
+}
+
+// The line the judge's prompt carries on every turn while her verdict says "Not assessed", or null: the refusal's
+// words bind only the turn of the refused write, and the next turn she read her own earlier reply and said it again.
+export function standingVerdict(stage: Stage, roomId: string, docId: string, rules: DocRules, text: string): string | null {
+  if (ownerOf(stage, rules, rules.verdict.by, docId)?.id !== roomId || !unassessed(sectionBody(text, rules.verdict.heading))) return null;
+  const { missing } = waiting(stage, rules, docId, text);
+  return verdictStanding(missing.length ? missing.join(', and ') : `every section is written, and "${titleOf(text, rules.verdict.heading)}" waits for you to write it`, rules.outcomes ?? []);
+}
 
 // A line with its markdown taken off: list marks, quote marks, emphasis. "- **Score:** 4/10" reads as "Score: 4/10".
 const bare = (line: string) => line.replace(/^\s*(?:[-*+>]|\d+[.)])\s+/, '').replace(/[*_`]/g, '').trim();
@@ -275,13 +300,9 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
   // The verdict's own checks, on the verdict as it would stand: "not assessed" while a section it rests on is empty,
   // and the caps. Returns what to save instead, or throws.
   const judged = (text: string, verdict: string, byJudge: boolean): Guarded | null => {
-    const empty = rules.sections.filter(({ heading }) => sectionBody(text, heading) !== null && !filled(sectionBody(text, heading)).length);
-    if (empty.length) {
-      const names = empty.map(({ heading }) => titleOf(text, heading));
-      const owners = empty.map(({ by }) => ownerOf(stage, rules, by, docId)?.name);
+    const { names, owners, missing } = waiting(stage, rules, docId, text);
+    if (names.length) {
       const who = [...new Set(owners.filter((name): name is string => !!name))];
-      // Each empty section with the person who has not written it: the truth, said so the judge repeats it.
-      const missing = names.map((name, at) => (owners[at] ? `${owners[at]} has not written "${name}" yet` : `"${name}" is empty and nobody on the stage is placed to write it`));
       const body = `${names.map((name, at) => `Not assessed: ${name}${owners[at] ? ` (${owners[at]} has not written it yet)` : ''}`).join('\n')}\n\nNo verdict and no score until ${names.length > 1 ? 'these sections are' : 'this section is'} written.`;
       return {
         text: withBody(text, verdictAt, body),
