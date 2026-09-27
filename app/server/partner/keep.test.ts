@@ -35,7 +35,7 @@ describe('company facts in what the founder says', () => {
 // Review round 4: any monthly figure became the company's price and replaced the founder's own Price line.
 describe('a price is the company\'s own', () => {
   it('takes no price from a competitor, a cost, a hire, a customer\'s words or a market range', () => {
-    for (const said of ['Our competitor charges $49/month.', 'we pay $40/month for hosting', 'Hiring a marketer costs €3,000/month.', "A customer wrote: I'd pay $15/month", 'Accountants cost €80–€200/month.'])
+    for (const said of ['Their price is $49/month.', "Our competitor's price is $49/month.", 'Competitors price at $49/month.', 'Our competitors price at $49/month.', 'Xero is priced at $49/month.', 'Our competitor charges $49/month.', 'we pay $40/month for hosting', 'Hiring a marketer costs €3,000/month.', "A customer wrote: I'd pay $15/month", 'Accountants cost €80–€200/month.'])
       expect(companyFacts(said).numbers.filter((one) => one.label === 'Price'), said).toEqual([]);
   });
 

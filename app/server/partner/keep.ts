@@ -23,7 +23,9 @@ const ASKING = /^(?:please\s+)?(?:draft|write|help|make|create|send|give|tell|sh
 // A price is the company's own only when the company is the one charging: "we charge", "our price is", "we sell at",
 // "$39/month for our base plan", or the line that says what the company is. A competitor's price, a cost the company
 // pays, a hire, a customer's words and a market range are not.
-const OURS_BEFORE = /\b(?:we|i)\s+(?:charge|sell|bill|price)\w*|\bour\s+(?:\w+\s+)?(?:price|pricing|plan|subscription|tier)\b|\b(?:price|priced|pricing)\s+(?:is|at|of)\b|\bsell\s+(?:it\s+)?at\b/i;
+const OURS_BEFORE = /\b(?:we|i)\s+(?:charge|sell|bill|price)\w*|\bour\s+(?!competitors?\b|rivals?\b)(?:\w+\s+)?(?:price|pricing|plan|subscription|tier)\b/i;
+// "The price is $39/month" with nobody else named: only a clause that opens with the price itself.
+const BARE_PRICE = /^\s*(?:(?:the|its|this|my)\s+(?:\w+\s+)?)?(?:price|priced|pricing)\s+(?:is|at|of)\b/i;
 const OURS_AFTER = /^\s*(?:for\s+(?:our|the\s+(?:base|pro|starter|team))\b|per\s+(?:user|seat)\s+for\s+our\b)/i;
 const THEIRS = /\b(?:competitors?|rivals?|they|their|customers?|clients?|users?|accountants?|agenc(?:y|ies)|freelancers?|hosting|hiring|pay\w*|wrote|said|market)\b/i;
 function ours(sentence: string, at: number, length: number, isIdea: boolean): boolean {
@@ -36,7 +38,7 @@ function ours(sentence: string, at: number, length: number, isIdea: boolean): bo
   // "We have 3 users and charge $29/month": the "we" of the sentence charges in the second clause too.
   if (OURS_BEFORE.test(clause) || (/^\s*(?:charge|sell|bill)\w*\b/i.test(clause) && /^\s*(?:we|i)\b/i.test(sentence))) return true;
   if (THEIRS.test(clause)) return false;
-  return isIdea || OURS_AFTER.test(sentence.slice(at + length));
+  return isIdea || BARE_PRICE.test(clause) || OURS_AFTER.test(sentence.slice(at + length));
 }
 const IDEA = /\b(?:(?:i'?m|i am|we'?re|we are)\s+building|we (?:make|build|sell|help)|(?:it|this) is an?)\b/i;
 
