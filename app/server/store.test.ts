@@ -87,6 +87,10 @@ describe('store, changes made here and in a window', () => {
     await store.loadStage();
     const before = await store.patchStage(() => {});
     expect(before).toEqual(seedStage);
+    // Nor for one that only set the same fields again in another order.
+    const again = await store.patchStage((stage) => ({ ...stage, rooms: stage.rooms.map((room) => Object.fromEntries(Object.entries(room).reverse()) as typeof room) }));
+    expect(again.rev).toBeUndefined();
+    expect((await store.loadStage()).rev).toBeUndefined();
   });
 
   it('keeps what a change put on the stage until a window sends it back, and then lets the window decide', async () => {

@@ -5,6 +5,7 @@ import { gunzipSync } from 'node:zlib';
 import { pipeline } from 'node:stream/promises';
 import type { Readable } from 'node:stream';
 import { newMessageId, seedDocs, seedStage, type ChatMessage, type Stage } from '../shared/model.ts';
+import { stableJson } from '../shared/stable.ts';
 import { trashStamp } from './clock.ts';
 import { safeId, writeAtomic } from './fsx.ts';
 import type { Memory } from './memory.ts';
@@ -231,8 +232,8 @@ export function createStore(dir: string, onChat: (roomId: string) => void = () =
       const before = await loadStage();
       const draft = structuredClone(before);
       const after = (await edit(draft)) ?? draft;
-      // Nothing changed is nothing written.
-      if (JSON.stringify(after) === JSON.stringify(before)) return after;
+      // Nothing changed is nothing written, whatever order an edit set the fields in.
+      if (stableJson(after) === stableJson(before)) return after;
       const had = new Set(idsOf(before));
       for (const id of idsOf(after)) if (!had.has(id)) unseen.add(id);
       return saveNow(after);
