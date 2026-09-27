@@ -1,5 +1,6 @@
 import { PARTNER_PRECONDITIONS, PARTNER_STANCE, STANCE } from '../../shared/model.ts';
 import type { TurnResult } from '../loop.ts';
+import { forCustomers } from './audience.ts';
 
 // The partner's stance says to check preconditions before any plan to raise, hire, spend or pivot. A small model
 // read past it and drafted a $2M raise for a company with no users, so it is held to it in code too: a reply to such
@@ -100,7 +101,10 @@ const NOT_BUILD = /\b(?:don'?t|do not|not|never|no|pause|stop|hold off(?: on)?|b
 export function buildsAgainst(reply: string, verdict: TeamVerdict): boolean {
   const first = (verdict.word ?? '').split(/\s+/)[0];
   if (/\bverdict\b/i.test(reply) || (first && new RegExp(`\\b${first.replace(/[^\w]/g, '')}\\b`, 'i').test(reply))) return false;
-  const call = reply.split('\n').find((line) => CALL.test(line)) ?? reply;
+  // Only the partner's call is held to it: a reply with no "My call:" line (a draft, an email) is not a call to build.
+  // The call runs from the last "My call" to the end of its line, at the start of a line or after a sentence.
+  const call = [...reply.matchAll(/\bmy call\b[^\n]*/gi)].at(-1)?.[0];
+  if (!call) return false;
   return [...call.matchAll(new RegExp(BUILDS.source, 'gi'))].some((found) => !NOT_BUILD.test(call.slice(Math.max(0, found.index - 40), found.index)));
 }
 export const verdictNudge = (verdict: TeamVerdict) => `The team's verdict is ${verdictName(verdict)}; answer in its light or say why you overrule it. `
@@ -147,7 +151,8 @@ export async function holdPartner(asked: string, first: TurnResult, again: (firs
       if (!second.stopped && !checksPreconditions(second.text)) reply = label(reply, UNCHECKED);
     }
   }
-  if (verdict && isWeak(verdict) && !reply.stopped && buildsAgainst(reply.text, verdict)) {
+  // Never on something written for customers: the verdict is the company's own, not theirs to read.
+  if (verdict && isWeak(verdict) && !reply.stopped && !forCustomers(asked) && buildsAgainst(reply.text, verdict)) {
     if (lookedAgain || didSomething(reply)) reply = label(reply, UNWEIGHED);
     else {
       const second = await again(reply, verdictNudge(verdict));

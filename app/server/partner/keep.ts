@@ -51,8 +51,10 @@ const BUILDING = /\b(?:i'?m|i am|we'?re|we are)\s+building\b/i;
 const WE_DO = /\bwe (?:make|build|sell|help)\b(?!\s+(?:about\s+|around\s+|roughly\s+)?(?:[$€£\d]|money\b))/i;
 const HAS_MONEY = /[$€£]\s?\d|\b\d[\d,.]*\s?(?:k|m)?\s?(?:mrr|arr|dollars|euros|pounds)\b/i;
 // "Ledgerly is a $29/month bookkeeping tool for EU solo consultants": the company by its name, a thing, and who for.
-const NAMED = /^(?!(?:This|That|It|There|Today|Tomorrow|Life|Everything|Nothing|He|She|They|We|I|Our|My|The|A|An)\b)[A-Z][\w-]+\s+is\s+an?\s+[^.]*\bfor\b/;
-const isIdea = (sentence: string) => BUILDING.test(sentence) || NAMED.test(sentence) || (WE_DO.test(sentence) && !HAS_MONEY.test(sentence));
+// Only with a product noun before "for": "Xero is a competitor for small firms" and "Monday is a good day for calls"
+// are not what the company does. The founder's own "I'm building" or "we make" wins over a sentence by a name.
+const NAMED = /^(?!(?:This|That|It|There|Today|Tomorrow|Life|Everything|Nothing|He|She|They|We|I|Our|My|The|A|An)\b)[A-Z][\w-]+\s+is\s+an?\s+[^.]*?\b(?:tool|app|platform|service|product|software|marketplace|newsletter|saas|api)s?\b[^.]*\bfor\b/;
+const isIdea = (sentence: string) => BUILDING.test(sentence) || (WE_DO.test(sentence) && !HAS_MONEY.test(sentence));
 // Who it is for is a group of people, never a length of time.
 const TIME = /\d|\b(?:years?|months?|weeks?|days?|time|now|while|future|long)\b/i;
 
@@ -63,9 +65,11 @@ export function companyFacts(said: string): CompanyFacts {
   const numbers: CompanyFact[] = [];
   const put = (label: string, value: string) => { if (!numbers.some((one) => one.label === label)) numbers.push({ label, value }); };
   let idea: string | undefined;
+  let named: string | undefined;
   for (const sentence of sentences(said)) {
     const plain = sentence.replace(/[.!]+$/, '');
     if (!idea && !sentence.endsWith('?') && !ASKING.test(plain) && isIdea(plain)) idea = plain.slice(0, 200);
+    if (!named && !sentence.endsWith('?') && NAMED.test(plain)) named = plain.slice(0, 200);
     if (NOT_NOW.test(plain) || sentence.endsWith('?')) continue;
     for (const match of plain.matchAll(MONEY)) {
       // What the figure is: the words before it back to a comma, a colon or an "and", and the few words after it.
@@ -85,6 +89,7 @@ export function companyFacts(said: string): CompanyFacts {
       put(capital(`${match[2].toLowerCase()}${match[3].toLowerCase()}`), count);
     }
   }
+  idea ??= named;
   const customer = idea ? /\bfor\s+(.+?)(?=\s+(?:that|who|which|to|so|by|with|from)\b|[,;:.]|$)/i.exec(idea.replace(/^[^:]*:\s*/, (head) => (/\bfor\b/i.test(head) ? head : '')))?.[1] : undefined;
   return { numbers, ...(idea ? { idea } : {}), ...(customer && !TIME.test(customer) ? { customer: customer.trim() } : {}) };
 }
@@ -94,7 +99,10 @@ const lineOf = (label: string) => new RegExp(`^\\s*[-*]\\s+${label.replace(/[.*+
 
 // A Numbers row that counts people: "- Paying users: 3", "- 3 paying beta users", "- Customers: 3".
 const COUNT_ROW = /^\s*[-*]\s+(?:[\w -]*?\b(?:users|customers|subscribers|clients)\s*:|(?:\d[\d,]*|\w+)\s+(?:[\w-]+\s+){0,2}(?:users|customers|subscribers|clients)\b)/i;
-const countFamily = (text: string) => (!/\b(?:users|customers|subscribers|clients)\b/i.test(text) ? null : /\b(?:free|trial)\b/i.test(text) ? 'free' : 'paying');
+// Paying, beta and bare users or customers are one count; a total, a waitlist, the churned, the active, a target or
+// the free ones are each their own.
+const OTHER_COUNT = /\b(total|waitlist|wait-list|waiting|churn\w*|lost|active|target|goal|free|trial|new|signups?)\b/i;
+const countFamily = (text: string) => (!/\b(?:users|customers|subscribers|clients)\b/i.test(text) ? null : OTHER_COUNT.exec(text)?.[1].toLowerCase().replace(/^churn\w*$/, 'churned') ?? 'paying');
 
 // The document with the facts in it, and what went in, for the receipt. A figure goes in place of the one it
 // updates and is left alone when it has not changed; Idea and Customer are written only while they are empty, since

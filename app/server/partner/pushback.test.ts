@@ -101,6 +101,8 @@ describe('the partner held to a weak team verdict', () => {
     expect(isWeak({ title: 'E', score: 5 })).toBe(true);
     expect(buildsAgainst('Runway is 3.8 months.\n\nMy call: build the invoicing form today.', PIVOT)).toBe(true);
     expect(buildsAgainst('My call: dive straight into building the client profile form.', PIVOT)).toBe(true);
+    // No call line, no call: a draft or an email that says what the company is building is not advice to build.
+    expect(buildsAgainst('Hi all,\n\nWe are building invoicing and will ship it next week.', PIVOT)).toBe(false);
     for (const reply of ['My call: do not build yet; call the three users.', 'The PIVOT verdict says pause. My call: build nothing this week.', 'Given the team\'s verdict, my call: pause coding and run 10 interviews.', 'My call: talk to the three users today.'])
       expect(buildsAgainst(reply, PIVOT), reply).toBe(false);
   });
@@ -118,6 +120,14 @@ describe('the partner held to a weak team verdict', () => {
     await holdPartner('what now?', turn('My call: build the form.'), async () => { asked += 1; return turn('x'); }, { title: 'E', word: 'STRONG', score: 8 });
     await holdPartner('what now?', turn('My call: build the form.'), async () => { asked += 1; return turn('x'); }, null);
     expect(asked).toBe(0);
+  });
+
+  it('never asks again about something written for customers', async () => {
+    let asked = 0;
+    const email = 'Hi all, we are building PDF invoicing.\n\nMy call: send this and ship invoicing on Friday.';
+    const held = await holdPartner('Draft a short update for our 3 beta users about what we are building', turn(email), async () => { asked += 1; return turn('x'); }, PIVOT);
+    expect(asked).toBe(0);
+    expect(held.text).toBe(email);
   });
 
   it('takes one second look per turn: a raise answer asked again that still builds against the verdict is only labelled', async () => {
