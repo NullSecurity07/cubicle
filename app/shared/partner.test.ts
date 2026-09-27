@@ -116,11 +116,22 @@ describe('a plan read as steps', () => {
       'Build a minimal form to create client profiles (Name, EU VAT number, address)', 'Generate a PDF invoice from a client profile',
       'Add invoice numbering and VAT reverse-charge wording', 'Send the invoice feature to the 3 beta users', 'Collect feedback and decide what is next',
     ]);
-    expect(steps.map((step) => dueOf(step.day!, '2026-09-27', '2026-09-27'))).toEqual(['2026-09-27', '2026-09-29', '2026-09-30', '2026-10-02', '2026-10-03']);
+    // A step over a range of days is due on its last day, not the day it starts.
+    expect(steps.map((step) => dueOf(step.day!, '2026-09-27', '2026-09-27'))).toEqual(['2026-09-28', '2026-09-29', '2026-10-01', '2026-10-02', '2026-10-03']);
     expect(dueOf('Week 2', '2026-09-27', '2026-09-27')).toBe('2026-10-04');
     // A calendar day in the label still wins, and with no start a "Day 3" names no day and keeps its label.
     expect(dueOf('Mon 28 Sep (Day 1)', '2026-09-26', '2026-09-20')).toBe('2026-09-28');
     expect(planTaskTitle(steps[1])).toBe('Day 3: Generate a PDF invoice from a client profile');
+  });
+
+  // Journey 6: "Week 2 Days 1-3:" kept its label and a three-day build was due the day it started.
+  it('reads "Week N Days A-B:" as one label, due on the last day of the range', () => {
+    const [step] = parsePlan('Week 2 Days 1-3: Build the invoice PDF generator');
+    expect(step.day).toBe('Week 2 Days 1-3');
+    expect(planTaskTitle(step, '2026-09-27')).toBe('Build the invoice PDF generator');
+    expect(dueOf(step.day!, '2026-09-27', '2026-09-27')).toBe('2026-10-06');
+    expect(dueOf('Week 2, Day 4', '2026-09-27', '2026-09-27')).toBe('2026-10-07');
+    expect(parsePlan('- Week 1 Days 4-5: Collect feedback')[0]).toEqual({ day: 'Week 1 Days 4-5', text: 'Collect feedback' });
   });
 
   it('dates a label only when it names a calendar day, in the year nearest today', () => {

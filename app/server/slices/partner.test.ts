@@ -505,6 +505,15 @@ describe('the partner slice: the founder\'s facts kept in the Company document',
     await part.close!();
   });
 
+  it('says nothing is waiting under a reply that sends the founder to an empty Needs you', async () => {
+    const { deps, part } = await installed({}, { now: () => new Date('2026-09-27T10:00').getTime(), ask: async () => SHAPED });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    const out = await deps.seams.run('turn:reply', { roomId: 'p1', query: 'so what do I do right now?', reply: reply('1. Approve the task board: check your Needs you list.\n\nMy call: call the users.') });
+    expect(out.reply.text).toBe('1. Approve the task board: check your Needs you list.\n\nMy call: call the users.\n\n(Nothing is waiting in Needs you.)');
+    await part.close!();
+  });
+
   it('writes nothing when the founder took the partner\'s wire to it away, and says so', async () => {
     const { deps, part } = await installed({}, { now: () => new Date('2026-09-27T10:00').getTime(), ask: async () => SHAPED });
     await withRooms(deps, [room('p1', 'Sam', { partner: true })]);

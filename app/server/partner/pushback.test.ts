@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TurnResult } from '../loop.ts';
-import { asksCommitment, checksPreconditions, holdPartner, oneCall, PRECONDITION_NUDGE, UNCHECKED } from './pushback.ts';
+import { asksCommitment, buildsAgainst, checksPreconditions, holdPartner, isWeak, oneCall, PRECONDITION_NUDGE, stripStance, UNCHECKED, UNWEIGHED } from './pushback.ts';
 
 const JOURNEY = 'I want to raise a $2M pre-seed next week. We have no users. Draft the plan.';
 const turn = (text: string, tools: TurnResult['tools'] = []): TurnResult => ({ text, tools, provider: 'p', model: 'm', usage: { input: 10, output: 5 }, stopped: false });
@@ -88,5 +88,53 @@ describe('the partner\'s precondition check', () => {
     expect(oneCall('Newsletter first.\n\nMy call: **Newsletter first**.\n\nWhy: less risk.\n\nMy call: Newsletter first.')).toBe('Newsletter first.\n\nWhy: less risk.\n\nMy call: Newsletter first.');
     expect(oneCall('- **My call:** a\ntext\n**My call:** b')).toBe('text\n**My call:** b');
     expect(oneCall('No call here.')).toBe('No call here.');
+  });
+});
+
+// Journey 6: the standing facts held "PIVOT REQUIRED 6/10" and the partner still said "build invoicing" three times.
+describe('the partner held to a weak team verdict', () => {
+  const PIVOT = { title: 'Evaluation', word: 'PIVOT REQUIRED', score: 6 };
+
+  it('knows a weak verdict, and a call to build that does not weigh it', () => {
+    expect(isWeak(PIVOT)).toBe(true);
+    expect(isWeak({ title: 'E', word: 'STRONG', score: 8 })).toBe(false);
+    expect(isWeak({ title: 'E', score: 5 })).toBe(true);
+    expect(buildsAgainst('Runway is 3.8 months.\n\nMy call: build the invoicing form today.', PIVOT)).toBe(true);
+    expect(buildsAgainst('My call: dive straight into building the client profile form.', PIVOT)).toBe(true);
+    for (const reply of ['My call: do not build yet; call the three users.', 'The PIVOT verdict says pause. My call: build nothing this week.', 'Given the team\'s verdict, my call: pause coding and run 10 interviews.', 'My call: talk to the three users today.'])
+      expect(buildsAgainst(reply, PIVOT), reply).toBe(false);
+  });
+
+  it('asks once more with the verdict quoted, and labels a second miss', async () => {
+    const nudges: string[] = [];
+    const again = async (_first: TurnResult, nudge?: string) => { nudges.push(nudge ?? ''); return turn('Still: ship it.\n\nMy call: build the form.'); };
+    const held = await holdPartner('what do I do now?', turn('My call: build the invoicing form today.'), again, PIVOT);
+    expect(nudges).toEqual(['The team\'s verdict is PIVOT REQUIRED 6/10 (Evaluation); answer in its light or say why you overrule it. Name the verdict in your reply.']);
+    expect(held.text).toBe(`Still: ship it.\n\nMy call: build the form.\n\n${UNWEIGHED}`);
+    const weighed = await holdPartner('what do I do now?', turn('My call: build the form.'), async () => turn('The PIVOT REQUIRED verdict comes first. My call: run the interviews.'), PIVOT);
+    expect(weighed.text).toBe('The PIVOT REQUIRED verdict comes first. My call: run the interviews.');
+    // No weak verdict, or one already weighed: nothing is asked again.
+    let asked = 0;
+    await holdPartner('what now?', turn('My call: build the form.'), async () => { asked += 1; return turn('x'); }, { title: 'E', word: 'STRONG', score: 8 });
+    await holdPartner('what now?', turn('My call: build the form.'), async () => { asked += 1; return turn('x'); }, null);
+    expect(asked).toBe(0);
+  });
+
+  it('takes one second look per turn: a raise answer asked again that still builds against the verdict is only labelled', async () => {
+    let asked = 0;
+    const held = await holdPartner(JOURNEY, turn('Phase 1: SAFE.\n\nMy call: go.'), async () => { asked += 1; return turn('Not yet: no users. My call: build the product first.'); }, PIVOT);
+    expect(asked).toBe(1);
+    expect(held.text).toBe(`Not yet: no users. My call: build the product first.\n\n${UNWEIGHED}`);
+  });
+});
+
+// Journey 6: "Before any plan to raise money, hire, spend or pivot, we must check its preconditions against the Company
+// document and chat." in the raise, hire and price replies.
+describe('the partner\'s rules are not said back', () => {
+  it('takes out a sentence that is a near copy of the stance or the preconditions rule, and keeps the rest', () => {
+    const reply = 'Not yet. Before any plan to raise money, hire, spend or pivot, we must check its preconditions against the Company document and chat. You have 3.8 months of runway.\n\n- Before any plan to raise money, hire, spend or pivot, list its preconditions and check each against the Company document and the chat.\n- MRR over $10k\n\nMy call: wait.';
+    expect(stripStance(reply)).toBe('Not yet. You have 3.8 months of runway.\n\n- MRR over $10k\n\nMy call: wait.');
+    const own = 'Raise when you can show investors a month of retention and ten paying users who stayed, not before.';
+    expect(stripStance(own)).toBe(own);
   });
 });

@@ -101,7 +101,7 @@ const DAYISH = new RegExp(`\\b(?:days?|weeks?|phase)\\s*\\d+\\b|\\b${WEEKDAY}\\b
 // One day as a plan writes it: "Day 3", "Week 2", "Mon", "Mon 28 Sep", "28 Sep", "Sep 28", 2026-09-28, each with an
 // optional "(28–29 Sep)" after it. A label is one day or a range of two ("Mon–Tue (28–29 Sep)", "Mon 28 Sep – Tue 29 Sep",
 // "Day 1–2", "Days 4-5").
-const ONE_DAY = `(?:(?:days?|weeks?|phase)\\s*\\d+(?:\\s*[–—-]\\s*\\d+(?!\\s*(?:[a-z]|\\d)))?|${WEEKDAY}(?:\\s+\\d{1,2}(?:\\s+${MONTH})?)?|\\d{1,2}\\s+${MONTH}|${MONTH}\\s+\\d{1,2}|\\d{4}-\\d{2}-\\d{2})(?:\\s*\\([^)]{1,40}\\))?`;
+const ONE_DAY = `(?:weeks?\\s*\\d+\\s*,?\\s*days?\\s*\\d+(?:\\s*[–—-]\\s*\\d+)?|(?:days?|weeks?|phase)\\s*\\d+(?:\\s*[–—-]\\s*\\d+(?!\\s*(?:[a-z]|\\d)))?|${WEEKDAY}(?:\\s+\\d{1,2}(?:\\s+${MONTH})?)?|\\d{1,2}\\s+${MONTH}|${MONTH}\\s+\\d{1,2}|\\d{4}-\\d{2}-\\d{2})(?:\\s*\\([^)]{1,40}\\))?`;
 const LABEL = `${ONE_DAY}(?:\\s*(?:[–—-]|to)\\s*${ONE_DAY})?`;
 // A day written at the front of a line, then a colon, or a dash with space after it: "Day 1: …", "Day 2 – …",
 // "**Mon–Tue (28–29 Sep):** …", "Mon 28 Sep – Tue 29 Sep: …".
@@ -176,10 +176,12 @@ const pad = (value: number) => String(value).padStart(2, '0');
 export function dueOf(label: string, today: string, start?: string): string | undefined {
   const iso = /\b(\d{4})-(\d{2})-(\d{2})\b/.exec(label);
   if (iso) return iso[0];
-  const counted = start ? /^\s*(days?|weeks?)\s*(\d+)/i.exec(label) : null;
-  if (counted && !/\b\d{1,2}\s+[a-z]{3}|\b[a-z]{3}\s+\d{1,2}\b/i.test(label.slice(counted[0].length).replace(/^\s*[–—-]\s*\d+/, ''))) {
+  // "Week 2", "Day 3", "Days 4-5", "Week 2 Days 1-3": counted from the start, and a range of days is due on its last.
+  const counted = start ? /^\s*(?:weeks?\s*(\d+)\s*,?\s*)?(?:days?\s*(\d+)(?:\s*[–—-]\s*(\d+))?)?/i.exec(label) : null;
+  if (counted && (counted[1] || counted[2]) && !/\b\d{1,2}\s+[a-z]{3}|\b[a-z]{3}\s+\d{1,2}\b/i.test(label.slice(counted[0].length))) {
     const first = new Date(`${start}T12:00:00`);
-    first.setDate(first.getDate() + (Number(counted[2]) - 1) * (/^w/i.test(counted[1]) ? 7 : 1));
+    const day = Number(counted[3] ?? counted[2] ?? 1);
+    first.setDate(first.getDate() + (counted[1] ? (Number(counted[1]) - 1) * 7 : 0) + day - 1);
     if (!Number.isNaN(first.getTime())) return `${first.getFullYear()}-${pad(first.getMonth() + 1)}-${pad(first.getDate())}`;
   }
   const dayMonth = /\b(\d{1,2})(?:\s*[–—-]\s*\d{1,2})?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/i.exec(label);

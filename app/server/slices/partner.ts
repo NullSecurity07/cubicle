@@ -11,7 +11,7 @@ import { saysSomething } from '../missions.ts';
 import { FAKE_MORNING, MOST_TRIES, morningDue, morningInputs, morningMessage, writeMorning, type MorningSources } from '../partner/morning.ts';
 import { addPlan, boardFor, boardForPlan, NO_BOARD, planAttention, stepsFrom } from '../partner/plans.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
-import { standingBlock, standingParts, type StandingParts } from '../partner/standing.ts';
+import { staleNeeds, standingBlock, standingParts, teamVerdict, type StandingParts } from '../partner/standing.ts';
 import { companyFacts, keepFacts, keptLine, runwayFix } from '../partner/keep.ts';
 import { CUSTOMER_LINE, customerReply, forCustomers } from '../partner/audience.ts';
 import { wired } from '../prompt.ts';
@@ -290,7 +290,9 @@ export function createPartner(options: PartnerOptions = {}) {
         const rest = note.things.slice(1).map((thing, index) => `${index + 2}. ${thing}`).join(' ');
         found.push({ id: `morning-note:${note.day}`, kind: 'morning-note', title: `Morning note: ${note.things[0]}`, detail: `${rest ? `${rest} ` : ''}Risk: ${note.risk} Question: ${note.question}`, at: note.at, who: note.who, roomId: note.roomId });
       }
-      return [...found, ...planAttention(held.plans), ...await betsAttention(await book.list(), await deps.store.loadStage(), deps.workspace, localDay(now()))];
+      const stage = await deps.store.loadStage();
+      const verdict = await teamVerdict(stage, (id) => deps.store.readDoc(id)).catch(() => null);
+      return [...found, ...planAttention(held.plans), ...await betsAttention(await book.list(), stage, deps.workspace, localDay(now()), verdict)];
     });
     // A person wrote a doc that is a plan (by its title or its first heading): its day-by-day steps are offered as tasks.
     const afterTool: Handler<'tool:after'> = async (payload, next) => {
@@ -363,6 +365,8 @@ export function createPartner(options: PartnerOptions = {}) {
         // What customers will read carries no source tags, placeholders or company money, and is not called ready while it does.
         if (forCustomers(payload.query)) text = customerReply(text, numbers);
         text = runwayFix(text, numbers);
+        // Sent to Needs you with nothing waiting there: said under the reply.
+        text = staleNeeds(text, await deps.attention.list().catch(() => []));
         if (receipt) text = `${text.replace(/\s+$/, '')}\n\n${receipt}`;
       } catch (error) { console.error(`partner keep: ${(error as Error).message}`); }
       return next(text === payload.reply.text ? payload : { ...payload, reply: { ...payload.reply, text } });

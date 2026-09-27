@@ -290,7 +290,8 @@ export const PARTNER_STANCE =
 // on every turn it made a small model open an investor update with "Not yet." and a preconditions heading.
 export const PARTNER_PRECONDITIONS =
   'This ask commits money or people. Before any plan to raise money, hire, spend or pivot, list its preconditions and check each against the Company document '
-  + 'and the chat. When one is not met, say no first ("Not yet"), give the shortest path to meeting it, and only then any plan.';
+  + 'and the chat. When one is not met, say no first ("Not yet"), give the shortest path to meeting it, and only then any plan. '
+  + 'For a raise, say how long a round takes to close against the months of runway left, and whether the cash lasts that long.';
 
 export const seedStage: Stage = {
   rooms: [

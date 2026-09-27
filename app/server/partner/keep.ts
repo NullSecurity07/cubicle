@@ -50,7 +50,9 @@ function ours(sentence: string, at: number, length: number): boolean {
 const BUILDING = /\b(?:i'?m|i am|we'?re|we are)\s+building\b/i;
 const WE_DO = /\bwe (?:make|build|sell|help)\b(?!\s+(?:about\s+|around\s+|roughly\s+)?(?:[$€£\d]|money\b))/i;
 const HAS_MONEY = /[$€£]\s?\d|\b\d[\d,.]*\s?(?:k|m)?\s?(?:mrr|arr|dollars|euros|pounds)\b/i;
-const isIdea = (sentence: string) => BUILDING.test(sentence) || (WE_DO.test(sentence) && !HAS_MONEY.test(sentence));
+// "Ledgerly is a $29/month bookkeeping tool for EU solo consultants": the company by its name, a thing, and who for.
+const NAMED = /^(?!(?:This|That|It|There|Today|Tomorrow|Life|Everything|Nothing|He|She|They|We|I|Our|My|The|A|An)\b)[A-Z][\w-]+\s+is\s+an?\s+[^.]*\bfor\b/;
+const isIdea = (sentence: string) => BUILDING.test(sentence) || NAMED.test(sentence) || (WE_DO.test(sentence) && !HAS_MONEY.test(sentence));
 // Who it is for is a group of people, never a length of time.
 const TIME = /\d|\b(?:years?|months?|weeks?|days?|time|now|while|future|long)\b/i;
 
@@ -90,6 +92,10 @@ export function companyFacts(said: string): CompanyFacts {
 // Where a Numbers line for one label is: "- Cash: €4,200 (founder, 2026-09-27)".
 const lineOf = (label: string) => new RegExp(`^\\s*[-*]\\s+${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:\\s*(.+?)(?:\\s+\\(founder, [\\d-]+\\))?\\s*$`, 'i');
 
+// A Numbers row that counts people: "- Paying users: 3", "- 3 paying beta users", "- Customers: 3".
+const COUNT_ROW = /^\s*[-*]\s+(?:[\w -]*?\b(?:users|customers|subscribers|clients)\s*:|(?:\d[\d,]*|\w+)\s+(?:[\w-]+\s+){0,2}(?:users|customers|subscribers|clients)\b)/i;
+const countFamily = (text: string) => (!/\b(?:users|customers|subscribers|clients)\b/i.test(text) ? null : /\b(?:free|trial)\b/i.test(text) ? 'free' : 'paying');
+
 // The document with the facts in it, and what went in, for the receipt. A figure goes in place of the one it
 // updates and is left alone when it has not changed; Idea and Customer are written only while they are empty, since
 // what the founder wrote there is theirs.
@@ -102,6 +108,16 @@ export function keepFacts(text: string, facts: CompanyFacts, day: string): { tex
     const rows = sectionText(next, 'Numbers').split('\n');
     const added: string[] = [];
     for (const fact of facts.numbers) {
+      // Users, customers, paying users: one row, however they were counted before. Free or trial users are their own.
+      const family = countFamily(fact.label);
+      if (family) {
+        const counts = rows.map((row, index) => ({ row, index })).filter(({ row }) => COUNT_ROW.test(row) && countFamily(row) === family);
+        if (counts.length === 1 && Number(/(\d[\d,]*)/.exec(counts[0].row.replace(/\(founder, [\d-]+\)/, ''))?.[1].replace(/,/g, '')) === Number(fact.value.replace(/,/g, ''))) continue;
+        const line = `- ${fact.label}: ${fact.value}${stamp}`;
+        if (counts.length) { rows[counts[0].index] = line; for (const extra of counts.slice(1).reverse()) rows.splice(extra.index, 1); } else added.push(line);
+        changed.push(fact);
+        continue;
+      }
       const at = rows.findIndex((row) => lineOf(fact.label).test(row));
       if (at >= 0 && lineOf(fact.label).exec(rows[at])![1].trim() === fact.value) continue;
       // A Price line the founder typed into the document is theirs: it is never written over from chat.
@@ -111,7 +127,7 @@ export function keepFacts(text: string, facts: CompanyFacts, day: string): { tex
       changed.push(fact);
     }
     if (changed.length) {
-      const body = [...rows.filter((row, index) => row.trim() || index > 0), ...added].join('\n').trim();
+      const body = [rows.join('\n').trim(), ...added].filter(Boolean).join('\n');
       const swapped = replaceSection(next, 'Numbers', body);
       next = 'text' in swapped ? swapped.text : addToSection(next, 'Numbers', body.split('\n'));
       kept.push(`Numbers (${changed.map((fact) => `${fact.label} ${fact.value}`).join(', ')})`);

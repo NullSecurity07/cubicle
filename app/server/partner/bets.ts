@@ -9,6 +9,7 @@ import { writeAtomic } from '../fsx.ts';
 import { leadsFor } from '../leads/store.ts';
 import { newId } from '../slice-kit.ts';
 import { createSurveys } from '../surveys/store.ts';
+import { BUILDS, isWeak, verdictName, type TeamVerdict } from './pushback.ts';
 
 // The bets ledger, in `workspace/bets.json`: what the company tried, what it expected to move, and on which day to
 // look. A person proposes a bet and the founder takes it or not; on the check day the number is read here, in code,
@@ -202,12 +203,15 @@ export const betDue = (bet: Bet, today: string) => bet.status === 'open' && !bet
 
 // What the ledger has waiting for the founder: bets to take or leave, and bets whose day has come, each with the
 // number as it stands now.
-export async function betsAttention(bets: Bet[], stage: Stage, workspace: string, today: string): Promise<Attention[]> {
+// A proposed bet that builds the thing a weak team verdict pauses says so in its row, with the verdict quoted, so the
+// founder takes it knowing.
+export async function betsAttention(bets: Bet[], stage: Stage, workspace: string, today: string, verdict?: TeamVerdict | null): Promise<Attention[]> {
   const found: Attention[] = [];
   for (const bet of bets) {
     if (bet.status === 'proposed') {
+      const against = verdict && isWeak(verdict) && BUILDS.test(`${bet.what} ${bet.hypothesis}`) ? ` The team's verdict is ${verdictName(verdict)}: this bet builds before it.` : '';
       found.push({ id: `proposed-bet:${bet.id}`, kind: 'proposed-bet', title: bet.what, at: bet.at, ...(bet.proposedBy ? { who: bet.proposedBy } : {}), ...(bet.roomId ? { roomId: bet.roomId } : {}),
-        detail: `${bare(bet.hypothesis) ? `${bare(bet.hypothesis)}. ` : ''}Measured by "${bet.metric}" on ${cardOf(bet.metric)}: ${bet.target} by ${bet.checkDate}.` });
+        detail: `${bare(bet.hypothesis) ? `${bare(bet.hypothesis)}. ` : ''}Measured by "${bet.metric}" on ${cardOf(bet.metric)}: ${bet.target} by ${bet.checkDate}.${against}` });
     } else if (betDue(bet, today)) {
       const reading = await readMetric(workspace, stage, bet.metric);
       found.push({ id: `bet-check:${bet.id}`, kind: 'bet-check', title: `Check the bet: ${bet.what}`, at: new Date(`${bet.checkDate}T00:00:00`).getTime(),

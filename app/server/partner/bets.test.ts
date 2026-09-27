@@ -135,3 +135,16 @@ describe('a bet that can lose', () => {
     expect(cannotLose('paying_users', 3, read(3, 'up'), 'hold paying users where they are')).toBeNull();
   });
 });
+
+// Journey 6: the bet was "ship invoicing" while the team's verdict said to pivot.
+describe('a proposed bet against the team\'s verdict', () => {
+  it('quotes a weak verdict in the row of a bet that builds, and leaves other bets alone', async () => {
+    const stage = { rooms: [], docs: [], wires: [], cards: [] } as unknown as Stage;
+    const bet = (what: string) => ({ id: `bet-${what.length}`, made: '2026-09-27', what, hypothesis: 'two more pay', metric: 'paying_users', target: 5, checkDate: '2026-10-11', status: 'proposed' as const, at: 1 });
+    const verdict = { title: 'Evaluation', word: 'PIVOT REQUIRED', score: 6 };
+    const [builds, talks] = await betsAttention([bet('Ship the PDF invoice generator'), bet('Run 10 discovery calls')], stage, '/nowhere', '2026-09-27', verdict);
+    expect(builds.detail).toBe('two more pay. Measured by "paying_users" on the Metrics card: 5 by 2026-10-11. The team\'s verdict is PIVOT REQUIRED 6/10 (Evaluation): this bet builds before it.');
+    expect(talks.detail).not.toContain('verdict');
+    expect((await betsAttention([bet('Ship the PDF invoice generator')], stage, '/nowhere', '2026-09-27', { title: 'E', word: 'STRONG', score: 8 }))[0].detail).not.toContain('verdict');
+  });
+});

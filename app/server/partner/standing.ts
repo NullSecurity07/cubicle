@@ -1,5 +1,8 @@
 import type { Attention, AttentionKind, Decision } from '../../shared/model.ts';
+import type { Stage } from '../../shared/model.ts';
+import { filled, sectionBody, verdictOf } from '../tools/verdict.ts';
 import { decisionLine } from './company.ts';
+import { isWeak, type TeamVerdict } from './pushback.ts';
 import { betLine, gatherCompany, type CompanyGather, type MorningSources } from './morning.ts';
 
 // The standing facts: what the morning note is written from, cut to what holds across every room, carried in every
@@ -80,4 +83,26 @@ export function standingBlock(parts: StandingParts, waiting: Attention[]): strin
     for (const line of body) if (!add(cut(line))) break;
   }
   return lines.join('\n');
+}
+
+// The weakest team verdict on the stage, as its own document has it: the first weak one, else none. What the partner's
+// reply and a proposed bet are held to (server/partner/pushback.ts).
+export async function teamVerdict(stage: Stage, readDoc: (id: string) => Promise<string>): Promise<TeamVerdict | null> {
+  for (const doc of stage.docs.filter((one) => one.rules)) {
+    const body = sectionBody(await readDoc(doc.id).catch(() => ''), doc.rules!.verdict.heading);
+    if (!filled(body).length) continue;
+    const { word, score } = verdictOf(body ?? '', doc.rules!.outcomes ?? []);
+    const verdict: TeamVerdict = { title: doc.title, ...(word ? { word } : {}), ...(score !== undefined ? { score } : {}) };
+    if ((word || score !== undefined) && isWeak(verdict)) return verdict;
+  }
+  return null;
+}
+
+// Journey 6: "Approve the task board: check your Needs you list" with nothing waiting there. A reply that sends the
+// founder to Needs you while nothing waits gets a line saying so.
+const SENDS_TO_NEEDS = /\b(?:approve|accept|check|review|answer|take|decide)\b[^.\n]{0,80}\bneeds you\b|\bwaiting\b[^.\n]{0,30}\bneeds you\b|\bneeds you\b[^.\n]{0,30}\b(?:waiting|list)\b/i;
+export const NOTHING_WAITING = '(Nothing is waiting in Needs you.)';
+export function staleNeeds(reply: string, waiting: Attention[]): string {
+  if (!SENDS_TO_NEEDS.test(reply) || waiting.some((item) => item.kind !== 'morning-note')) return reply;
+  return `${reply.replace(/\s+$/, '')}\n\n${NOTHING_WAITING}`;
 }

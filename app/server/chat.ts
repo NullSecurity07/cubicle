@@ -5,6 +5,7 @@ import type { AttentionBook } from './attention.ts';
 import { json } from './http.ts';
 import { holdPartner, PRECONDITION_NUDGE } from './partner/pushback.ts';
 import { partnerRoute } from './partner/route.ts';
+import { teamVerdict } from './partner/standing.ts';
 import { runTurn } from './loop.ts';
 import type { createMemory } from './memory.ts';
 import type { Offered } from './playbook.ts';
@@ -124,14 +125,16 @@ export function createChat(deps: Deps) {
       let reply = await turnOn(messages);
       // The partner is held to the precondition check on a raise, hire, spend or pivot plan, and says "My call" once.
       if (room.partner) {
-        reply = await holdPartner(text, reply, (first) => {
+        // The weakest team verdict on the stage, which a call to build has to weigh.
+        const verdict = await teamVerdict(stage, (id) => store.readDoc(id)).catch(() => null);
+        reply = await holdPartner(text, reply, (first, nudge = PRECONDITION_NUDGE) => {
           // Said first, then the bubble emptied, so no window shows the new answer running on from the old one.
-          send({ notice: `${room.name} is taking another look: checking the preconditions.` });
+          send({ notice: `${room.name} is taking another look: ${nudge === PRECONDITION_NUDGE ? 'checking the preconditions' : 'weighing the team\'s verdict'}.` });
           send({ restart: true });
           roomFeed.tell({ roomId, turn, restart: true });
           kept.text = '';
           // Words only this time, with the first answer and the nudge in front of it: nothing it did is done again.
-          return turnOn([...messages, { role: 'assistant', content: first.text }, { role: 'user', content: PRECONDITION_NUDGE }], [])
+          return turnOn([...messages, { role: 'assistant', content: first.text }, { role: 'user', content: nudge }], [])
             .catch((error: Error) => {
               // No model could take the second look: the first answer stands, back in every window, and is labelled
               // as unchecked below. Its tools and usage are already counted once.
@@ -144,7 +147,7 @@ export function createChat(deps: Deps) {
               roomFeed.tell({ roomId, turn, token: first.text });
               return { ...first, tools: [], usage: { input: 0, output: 0 } };
             });
-        });
+        }, verdict);
       }
       // The last look before it is kept: whatever a slice adds under the reply is shown in every window too.
       const said = reply.text;

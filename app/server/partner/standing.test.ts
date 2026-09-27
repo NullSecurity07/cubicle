@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Attention } from '../../shared/model.ts';
-import { STANDING_HEAD, STANDING_MOST, standingBlock, waitingLine, type StandingParts } from './standing.ts';
+import type { Stage } from '../../shared/model.ts';
+import { NOTHING_WAITING, staleNeeds, STANDING_HEAD, STANDING_MOST, standingBlock, teamVerdict, waitingLine, type StandingParts } from './standing.ts';
 
 const item = (kind: Attention['kind'], title: string): Attention => ({ id: `${kind}:${title}`, kind, title, at: 1 });
 const parts = (extra: Partial<StandingParts> = {}): StandingParts => ({ verdicts: [], numbers: '', open: [], planned: [], flagCounts: [], decided: [], ...extra });
@@ -27,5 +28,24 @@ describe('the standing facts', () => {
     const block = standingBlock(parts({ flagCounts: [{ room: 'Meera (Market)', count: 2 }] }), []);
     expect(block).toContain('Company Numbers:\n- none written yet');
     expect(block).toContain('Truth net since yesterday: Meera (Market) had 2 flagged lines. Never repeat a flagged figure as a fact.');
+  });
+});
+
+describe('what the reply is held to', () => {
+  it('reads the weakest team verdict off its own document, and none while it is strong or unwritten', async () => {
+    const rules = { framework: 'startup-evaluation', sections: [], verdict: { heading: '6. Verdict', by: 'judge' }, outcomes: ['PIVOT REQUIRED', 'WEAK', 'STRONG'] };
+    const stage = { rooms: [], wires: [], docs: [{ id: 'e', title: 'Evaluation', x: 0, y: 0, w: 1, h: 1, rules }] } as unknown as Stage;
+    const doc = (text: string) => async () => text;
+    expect(await teamVerdict(stage, doc('# E\n\n## 6. Verdict\n\nVerdict: PIVOT REQUIRED\nScore: 6/10\nPause coding.\n'))).toEqual({ title: 'Evaluation', word: 'PIVOT REQUIRED', score: 6 });
+    expect(await teamVerdict(stage, doc('# E\n\n## 6. Verdict\n\nVerdict: STRONG\nScore: 8/10\n'))).toBeNull();
+    expect(await teamVerdict(stage, doc('# E\n\n## 6. Verdict\n\n'))).toBeNull();
+  });
+
+  // Journey 6: "Approve the task board: check your Needs you list" with nothing there.
+  it('says nothing waits when a reply sends the founder to Needs you and nothing does', () => {
+    expect(staleNeeds('1. Approve the task board: check your Needs you list.', [])).toBe(`1. Approve the task board: check your Needs you list.\n\n${NOTHING_WAITING}`);
+    expect(staleNeeds('Accept the bet waiting in your Needs you.', [item('morning-note', 'Morning note')])).toMatch(/Nothing is waiting in Needs you\.\)$/);
+    expect(staleNeeds('Accept the bet waiting in your Needs you.', [item('proposed-bet', 'Five paying users')])).toBe('Accept the bet waiting in your Needs you.');
+    expect(staleNeeds('Talk to the three users today.', [])).toBe('Talk to the three users today.');
   });
 });

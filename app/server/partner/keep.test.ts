@@ -72,6 +72,30 @@ describe('only what the company is, charges and burns', () => {
   });
 });
 
+// Journey 6: the name never reached the brief, and Numbers ended with the user count three times in three forms.
+describe('the brief keeps the name and one row of users', () => {
+  it('takes "<Name> is a … for …" as what the company does, under the Idea heading even when the brief only had a label', () => {
+    const facts = companyFacts('Ledgerly is a $29/month bookkeeping tool for EU solo consultants. It drafts VAT returns from bank feeds.');
+    expect(facts.idea).toBe('Ledgerly is a $29/month bookkeeping tool for EU solo consultants');
+    expect(facts.customer).toBe('EU solo consultants');
+    const seeded = '# Company brief\n\nEveryone on the stage reads this.\n\nWhat the company does:\n\nStage and goals this quarter:\n';
+    expect(keepFacts(seeded, facts, '2026-09-27').text).toContain('## Idea\n\n- Ledgerly is a $29/month bookkeeping tool for EU solo consultants (founder, 2026-09-27)');
+    for (const said of ['This is a hard week for us.', 'It is a tool for nobody yet.', 'Today is a good day for calls.']) expect(companyFacts(said).idea, said).toBeUndefined();
+  });
+
+  it('keeps one row for the paying users, whatever words they were counted in', () => {
+    const doc = '# Company\n\n## Numbers\n\n- Paying beta users: 3 (founder, 2026-09-27)\n- 3 paying users\n- Customers: 3\n- Cash: €4,200 (founder, 2026-09-27)\n';
+    const again = keepFacts(doc, companyFacts('We now have 5 paying users.'), '2026-09-30');
+    expect(again.text.match(/users|customers/gi)).toHaveLength(1);
+    expect(again.text).toContain('- Paying users: 5 (founder, 2026-09-30)\n- Cash: €4,200');
+    // The same count said another way changes nothing.
+    const once = keepFacts(companyTemplate(), companyFacts('We have 3 paying beta users.'), '2026-09-27').text;
+    expect(keepFacts(once, companyFacts('We have 3 customers.'), '2026-09-28')).toEqual({ text: once, kept: [] });
+    // Free users are their own row.
+    expect(keepFacts(once, companyFacts('We have 40 free users.'), '2026-09-28').text).toContain('- Paying beta users: 3 (founder, 2026-09-27)\n- Free users: 40 (founder, 2026-09-28)');
+  });
+});
+
 describe('keeping the Company document current', () => {
   it('writes Numbers, Idea and Customer into an empty document, and says what it kept', () => {
     const { text, kept } = keepFacts(companyTemplate(), companyFacts(DAY_ONE), '2026-09-27');

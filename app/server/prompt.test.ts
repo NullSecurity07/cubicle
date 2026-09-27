@@ -294,6 +294,8 @@ describe('source websites', () => {
     expect(raise).toContain(PARTNER_PRECONDITIONS);
     expect(raise).toContain('Before any plan to raise money, hire, spend or pivot, list its preconditions');
     expect(raise).toContain('say no first');
+    // Journey 6 lost the time-to-close point that journey 5 made: a round takes months to close against the runway.
+    expect(raise).toContain('For a raise, say how long a round takes to close against the months of runway left');
     // A colleague's question is not the founder's ask, and an older raise ask does not hold the rule on for good.
     const later = buildMessages(withPartner, 'partner', {}, [...said('Should we raise now?'), { id: 'a', role: 'assistant', text: 'Not yet.', at: Date.now() }, ...said('Draft the landing page copy')])[0].content as string;
     expect(later).not.toContain(PARTNER_PRECONDITIONS);

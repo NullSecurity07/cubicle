@@ -1,3 +1,4 @@
+import { PARTNER_PRECONDITIONS, PARTNER_STANCE, STANCE } from '../../shared/model.ts';
 import type { TurnResult } from '../loop.ts';
 
 // The partner's stance says to check preconditions before any plan to raise, hire, spend or pivot. A small model
@@ -84,18 +85,75 @@ export function oneCall(text: string): string {
 const READS = /^(read_|list_|web_search|web_fetch|recall|search_|gather_|crawl_site|ask_person)/;
 export const didSomething = (turn: TurnResult) => turn.tools.some((tool) => tool.ok && !READS.test(tool.name));
 
+// ---------------------------------------------------------------- the team's verdict
+
+// Journey 6: the standing facts held "PIVOT REQUIRED 6/10" and the partner still told the founder three times to build
+// invoicing. A prompt line was not enough, so it is held to it in code: a weak verdict (WEAK, PIVOT, KILL, or a score
+// of five or less) and a reply whose call is to build, ship, launch or code, without a word about the verdict, is
+// asked for once more with the verdict in front of it, and a second miss is labelled.
+export type TeamVerdict = { title: string; word?: string; score?: number };
+export const isWeak = (verdict: TeamVerdict) => /\b(?:weak|pivot|kill|no[- ]go|dead|stop)\b/i.test(verdict.word ?? '') || (verdict.score !== undefined && verdict.score <= 5);
+export const verdictName = (verdict: TeamVerdict) => `${[verdict.word, verdict.score !== undefined ? `${verdict.score}/10` : ''].filter(Boolean).join(' ')} (${verdict.title})`;
+export const BUILDS = /\b(?:build|building|ship|shipping|launch|launching|code|coding|develop|developing|implement|implementing|dive\s+(?:straight\s+)?into)\b/i;
+// "Do not build yet", "pause coding", "before you build", "instead of shipping": a call against building.
+const NOT_BUILD = /\b(?:don'?t|do not|not|never|no|pause|stop|hold off(?: on)?|before|until|instead of|rather than|without)\s+(?:\w+\s+){0,2}$/i;
+export function buildsAgainst(reply: string, verdict: TeamVerdict): boolean {
+  const first = (verdict.word ?? '').split(/\s+/)[0];
+  if (/\bverdict\b/i.test(reply) || (first && new RegExp(`\\b${first.replace(/[^\w]/g, '')}\\b`, 'i').test(reply))) return false;
+  const call = reply.split('\n').find((line) => CALL.test(line)) ?? reply;
+  return [...call.matchAll(new RegExp(BUILDS.source, 'gi'))].some((found) => !NOT_BUILD.test(call.slice(Math.max(0, found.index - 40), found.index)));
+}
+export const verdictNudge = (verdict: TeamVerdict) => `The team's verdict is ${verdictName(verdict)}; answer in its light or say why you overrule it. `
+  + 'Name the verdict in your reply.';
+export const UNWEIGHED = '*Partner did not weigh the team\'s verdict.*';
+
+// ---------------------------------------------------------------- the stance, said back
+
+// Journey 6: raise, hire and price replies carried the preconditions rule almost word for word ("Before any plan to
+// raise money, hire, spend or pivot, we must check its preconditions…"). A sentence that is a near copy of one of the
+// partner's own instructions is taken out: the founder reads the answer, not the rules.
+const words = (text: string) => text.toLowerCase().replace(/[^a-z0-9' ]+/g, ' ').split(/\s+/).filter(Boolean);
+const RULES = [PARTNER_STANCE, PARTNER_PRECONDITIONS, STANCE].flatMap((rule) => rule.split(/(?<=[.!?])\s+/)).map((one) => new Set(words(one))).filter((one) => one.size >= 8);
+const copiesRule = (sentence: string) => {
+  const said = words(sentence);
+  if (said.length < 8) return false;
+  return RULES.some((rule) => said.filter((word) => rule.has(word)).length / said.length >= 0.75);
+};
+export function stripStance(text: string): string {
+  const lines = text.split('\n').flatMap((line) => {
+    if (!line.trim()) return [line];
+    const kept = line.split(/(?<=[.!?])\s+/).filter((sentence) => !copiesRule(sentence.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, '')));
+    return kept.length ? [kept.join(' ')] : [];
+  });
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '');
+}
+
 // The partner's finished reply, held to the check. `again` answers once more in words only, with the first answer and
 // the nudge in front of it. A first answer that already did something (wrote a doc, proposed a decision) is not asked
 // again, so nothing is done twice; it is only labelled when it skipped the check.
-export async function holdPartner(asked: string, first: TurnResult, again: (first: TurnResult) => Promise<TurnResult>): Promise<TurnResult> {
+// With a weak team verdict on the stage, the reply is held to it too; at most one second look per turn, so a reply
+// asked again for its preconditions that still builds against the verdict is only labelled.
+export async function holdPartner(asked: string, first: TurnResult, again: (first: TurnResult, nudge?: string) => Promise<TurnResult>, verdict?: TeamVerdict | null): Promise<TurnResult> {
   let reply = first;
+  let lookedAgain = false;
+  const label = (turn: TurnResult, line: string) => ({ ...turn, text: `${turn.text.replace(/\s+$/, '')}\n\n${line}` });
+  const joined = (one: TurnResult, two: TurnResult) => ({ ...two, tools: [...one.tools, ...two.tools], usage: { input: one.usage.input + two.usage.input, output: one.usage.output + two.usage.output } });
   if (!first.stopped && asksCommitment(asked) && !checksPreconditions(first.text)) {
-    if (didSomething(first)) reply = { ...first, text: `${first.text.replace(/\s+$/, '')}\n\n${UNCHECKED}` };
+    if (didSomething(first)) reply = label(first, UNCHECKED);
     else {
-      const second = await again(first);
-      reply = { ...second, tools: [...first.tools, ...second.tools], usage: { input: first.usage.input + second.usage.input, output: first.usage.output + second.usage.output } };
-      if (!second.stopped && !checksPreconditions(second.text)) reply = { ...reply, text: `${second.text.replace(/\s+$/, '')}\n\n${UNCHECKED}` };
+      const second = await again(first, PRECONDITION_NUDGE);
+      lookedAgain = true;
+      reply = joined(first, second);
+      if (!second.stopped && !checksPreconditions(second.text)) reply = label(reply, UNCHECKED);
     }
   }
-  return { ...reply, text: oneCall(reply.text) };
+  if (verdict && isWeak(verdict) && !reply.stopped && buildsAgainst(reply.text, verdict)) {
+    if (lookedAgain || didSomething(reply)) reply = label(reply, UNWEIGHED);
+    else {
+      const second = await again(reply, verdictNudge(verdict));
+      reply = joined(reply, second);
+      if (!second.stopped && buildsAgainst(second.text, verdict)) reply = label(reply, UNWEIGHED);
+    }
+  }
+  return { ...reply, text: oneCall(stripStance(reply.text)) };
 }
