@@ -187,10 +187,19 @@ function countOf(said: string): number {
 export function conversations(text: string, label: string): number | null {
   // A struck-out count is a count taken back: "~~12~~ 0" is none.
   const section = unmarked(text).replace(/~~[^~]*~~/g, ' ');
-  const line = section.split('\n').map(bare).find((one) => one.toLowerCase().startsWith(label.toLowerCase()));
-  if (line) {
-    // What follows the label, past the template's own "(of ten to twenty)" and whatever separates the two.
-    const value = line.slice(label.length).replace(/^\s*\([^)]*\)/, '').replace(/^[\s:=\-–—]+/, '');
+  const lines = section.split('\n').map(bare);
+  // What follows the label, past the template's own "(of ten to twenty)" and whatever separates the two.
+  const after = (line: string) => line.slice(line.toLowerCase().indexOf(label.toLowerCase()) + label.length).replace(/^\s*\([^)]*\)/, '').replace(/^[\s:=\-–—]+/, '');
+  const at = lines.findIndex((one) => one.toLowerCase().startsWith(label.toLowerCase()));
+  // The template's label line, then the line under it when the label's own is empty (the count written below it),
+  // then the label quoted inside a line ("3 paying beta users (Real customer conversations done: 3)").
+  const next = at >= 0 && !after(lines[at]).trim() ? lines.slice(at + 1).find((one) => one.trim()) : undefined;
+  const values = [
+    ...(at >= 0 ? [after(lines[at])] : []),
+    ...(next !== undefined && !/:$/.test(next.trim()) ? [next] : []),
+    ...lines.filter((one, index) => index !== at && one.toLowerCase().includes(label.toLowerCase())).map(after),
+  ].filter((value) => value.trim());
+  for (const value of values) {
     if (/^\W*(none|no\b|nil)/i.test(value)) return 0;
     // "12 (planned)", "12 booked for next week": talks still to come are none held yet.
     if (/\b(planned|plan|booked|scheduled|will|next)\b/i.test(value)) return null;
@@ -321,11 +330,16 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
     for (const cap of (rules.caps ?? []).filter((one) => !one.on)) {
       if (conversations(sectionBody(text, cap.heading) ?? '', cap.line)) continue;
       const order = rules.outcomes ?? [];
-      const over = (word && order.indexOf(word) > order.indexOf(cap.verdict)) || (score !== undefined && score > cap.score);
-      if (over) {
-        const why = `${cap.why}, so the verdict is at most ${cap.verdict} and the score at most ${cap.score} of 10`;
+      // The cap bounds the score. A PIVOT or a KILL always stands under it: told "at most WEAK" over "PIVOT REQUIRED,
+      // 6 of 10", a live judge softened a flaw that could not be survived to WEAK. Only a better word is out.
+      const stand = order.filter((one) => /\b(?:PIVOT|KILL)\b/i.test(one));
+      const out = order.filter((one) => !stand.includes(one) && order.indexOf(one) > order.indexOf(cap.verdict));
+      const wordOver = !!word && out.includes(word);
+      const scoreOver = score !== undefined && score > cap.score;
+      if (wordOver || scoreOver) {
+        const why = `${cap.why}, so the score is at most ${cap.score}/10${out.length ? ` and the verdict is not ${out.join(' or ')}` : ''}${stand.length ? `; ${stand.join(' or ')} ${stand.length > 1 ? 'stand' : 'stands'}` : ''}`;
         throw new Error(`not written: ${why}. `
-          + `This one says ${[word, score !== undefined ? `${score} of 10` : ''].filter(Boolean).join(', ')}. ${countRead(sectionBody(text, cap.heading) ?? '', cap.line)}`
+          + `This one says ${[wordOver ? word : '', scoreOver ? `${score} of 10` : ''].filter(Boolean).join(', ')}. ${countRead(sectionBody(text, cap.heading) ?? '', cap.line)}`
           + `${payers(sectionBody(text, cap.heading) ?? '', cap.line)} Write it again within the cap, and say which section each fact comes from. ${refusedVerdict(why, rules.outcomes ?? [])}`);
       }
     }

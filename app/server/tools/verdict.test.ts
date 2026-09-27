@@ -113,11 +113,38 @@ describe('the verdict judge on a team doc', () => {
     expect((await as('pain')('replace_section', { heading: '3. Is the pain real?', text: 'Vitamin — painkiller — hair on fire: painkiller\n\nReal customer conversations done (of ten to twenty): 0' })).ok).toBe(true);
     const strong = await as('verdict')('replace_section', { heading: '5. Verdict', text: 'STRONG\n\nScore out of 10: 10/10' });
     expect(strong.ok).toBe(false);
-    expect(strong.text).toMatch(/no customer conversations are recorded.*at most WEAK and the score at most 5 of 10\. This one says STRONG, 10 of 10/);
+    expect(strong.text).toMatch(/no customer conversations are recorded.*so the score is at most 5\/10 and the verdict is not STRONG; PIVOT REQUIRED stands\. This one says STRONG, 10 of 10/);
     expect(strong.text).toContain('The count line reads "Real customer conversations done (of ten to twenty): 0".');
     expect((await as('verdict')('replace_section', { heading: '5. Verdict', text: 'PIVOT REQUIRED (3)\n\nScore: 6/10' })).ok).toBe(false);
     expect((await as('verdict')('replace_section', { heading: '5. Verdict', text: 'WEAK: no conversations yet (3).\n\nScore: 5/10' })).ok).toBe(true);
     expect(sectionBody(await doc(), '5. Verdict')).toContain('WEAK: no conversations yet (3).');
+  });
+
+  it('caps the score only, never pushing a PIVOT REQUIRED up to WEAK', async () => {
+    // A live judge refused "PIVOT REQUIRED, 6 of 10" with "at most WEAK" softened a flaw that is not survivable to WEAK 5/10.
+    const { as, doc, fill } = await setup();
+    await fill();
+    expect((await as('pain')('replace_section', { heading: '3. Is the pain real?', text: 'Vitamin — painkiller — hair on fire: painkiller\n\nReal customer conversations done (of ten to twenty): 0' })).ok).toBe(true);
+    const six = await as('verdict')('replace_section', { heading: '5. Verdict', text: 'PIVOT REQUIRED: a flaw is not survivable (2).\n\nScore: 6/10' });
+    expect(six.ok).toBe(false);
+    expect(six.text).toMatch(/so the score is at most 5\/10 and the verdict is not STRONG; PIVOT REQUIRED stands\. This one says 6 of 10\./);
+    expect(six.text).not.toMatch(/at most WEAK/);
+    expect((await as('verdict')('replace_section', { heading: '5. Verdict', text: 'STRONG (1)\n\nScore: 5/10' })).ok).toBe(false);
+    expect((await as('verdict')('replace_section', { heading: '5. Verdict', text: 'PIVOT REQUIRED: a flaw is not survivable (2).\n\nScore: 5/10' })).text).toContain('The verdict is written.');
+    expect(sectionBody(await doc(), '5. Verdict')).toMatch(/^PIVOT REQUIRED/);
+  });
+
+  it('reads the conversations count the pain section gives on the line under its label', async () => {
+    // Meera's live section 3: the label's own line empty, the count on the line under it. The cap said none were recorded.
+    const pain = 'Vitamin — painkiller — hair on fire:\nPainkiller / Hair on fire (3 paying beta users indicate willingness to pay).\n\n'
+      + 'Real customer conversations done (of ten to twenty):\n3 paying beta users (Real customer conversations done: 3).\n\nPayer = user? If not, who pays:\nYes, payer = user.';
+    expect(conversations(pain, 'Real customer conversations done')).toBe(3);
+    expect(conversations('Real customer conversations done (of ten to twenty):\nNone yet.\n\nPayer = user? If not, who pays:\nYes.', 'Real customer conversations done')).toBe(0);
+    expect(conversations('Real customer conversations done (of ten to twenty):\n\nPayer = user? If not, who pays:\n12 of them pay.', 'Real customer conversations done')).toBeNull();
+    const { as, fill } = await setup();
+    await fill();
+    expect((await as('pain')('replace_section', { heading: '3. Is the pain real?', text: pain })).ok).toBe(true);
+    expect((await as('verdict')('replace_section', { heading: '5. Verdict', text: 'PIVOT REQUIRED (2)\n\nScore: 6/10' })).text).toContain('The verdict is written.');
   });
 
   it('lets a strong verdict stand on real conversations', async () => {
@@ -437,7 +464,7 @@ describe('a verdict written again over a section emptied since', () => {
     await all.store.replaceDoc('evaluation', (await all.doc()).replace('Real customer conversations done (of ten to twenty): 12', 'Real customer conversations done (of ten to twenty): 0'));
     const out = await all.as('verdict')('replace_section', { heading: '5. Verdict', text: strong });
     expect(out.ok).toBe(false);
-    expect(out.text).toMatch(/at most WEAK and the score at most 5 of 10\. This one says STRONG, 8 of 10/);
+    expect(out.text).toMatch(/so the score is at most 5\/10 and the verdict is not STRONG; PIVOT REQUIRED stands\. This one says STRONG, 8 of 10/);
   });
 
   it('leaves a whole-doc write alone when every section is written', async () => {
@@ -574,7 +601,7 @@ describe('the judge told her verdict was refused', () => {
     await capped.as('pain')('replace_section', { heading: '3. Is the pain real?', text: 'Vitamin — painkiller — hair on fire: painkiller\n\nReal customer conversations done (of ten to twenty): 0' });
     const thrown = await capped.as('verdict')('replace_section', { heading: '5. Verdict', text: 'STRONG\n\nScore: 9/10' });
     expect(thrown.ok).toBe(false);
-    expect(thrown.text).toMatch(/Tell the founder the verdict was not written because no customer conversations are recorded in "3\. Is the pain real\?", so the verdict is at most WEAK and the score at most 5 of 10\. Give no verdict word/);
+    expect(thrown.text).toMatch(/Tell the founder the verdict was not written because no customer conversations are recorded in "3\. Is the pain real\?", so the score is at most 5\/10 and the verdict is not STRONG; PIVOT REQUIRED stands\. Give no verdict word/);
   });
 
   it('gets the truth net\'s line under a chat reply that states the refused verdict anyway', async () => {
