@@ -851,3 +851,41 @@ describe('the judge on the turns after a refused verdict', () => {
     expect((await promptFor(stage, 'verdict', []))[0].content).not.toContain('Your verdict is not written');
   });
 });
+
+describe('a Not assessed verdict as the sections it waits on are written', () => {
+  it('drops the line for a section once it is written, and never marks a Not assessed verdict stale', async () => {
+    const { as, doc, fill } = await setup();
+    await fill(['3. Is the pain real?', '4. Founder-market fit']);
+    await as('verdict')('replace_section', { heading: '5. Verdict', text: 'WEAK\n\nScore: 4/10' });
+    expect(sectionBody(await doc(), '5. Verdict')).toMatch(/^Not assessed: 3\. Is the pain real\? \(Meera has not written it yet\)\nNot assessed: 4\. Founder-market fit/);
+    const fit = await as('fit')('replace_section', { heading: '4. Founder-market fit', text: FILLED['4. Founder-market fit'] });
+    expect(fit.text).toContain('The verdict now says "Not assessed": Meera has not written "3. Is the pain real?" yet.');
+    const one = sectionBody(await doc(), '5. Verdict')!;
+    expect(one).toMatch(/^Not assessed: 3\. Is the pain real\? \(Meera has not written it yet\)\n\nNo verdict and no score until this section is written\.$/);
+    expect(one).not.toMatch(/Stale:|4\. Founder-market fit/);
+    // The last one written: the verdict waits on the judge alone, and says so.
+    const pain = await as('pain')('replace_section', { heading: '3. Is the pain real?', text: FILLED['3. Is the pain real?'] });
+    expect(pain.text).toContain('Every section is written now, so the verdict waits on Priya.');
+    expect(sectionBody(await doc(), '5. Verdict')).toBe('Not assessed yet: every section is written; Priya writes the verdict next.');
+    expect((await as('verdict')('replace_section', { heading: '5. Verdict', text: 'STRONG (1)(3)(4)\n\nScore: 8/10' })).text).toContain('The verdict is written.');
+  });
+
+  it('clears a stale mark left beside a Not assessed line when the section is written', async () => {
+    // Journey 7: section 5 held both lines, and kept "has not written it yet" after section 4 was filled.
+    const { as, doc, fill, store } = await setup();
+    await fill(['4. Founder-market fit']);
+    await as('verdict')('replace_section', { heading: '5. Verdict', text: 'WEAK\n\nScore: 4/10' });
+    await store.replaceDoc('evaluation', (await doc()).replace('Not assessed: 4.', 'Stale: 4. Founder-market fit changed after this verdict on 27 Sept 2026.\nNot assessed: 4.'));
+    await as('fit')('replace_section', { heading: '4. Founder-market fit', text: FILLED['4. Founder-market fit'] });
+    expect(sectionBody(await doc(), '5. Verdict')).toBe('Not assessed yet: every section is written; Priya writes the verdict next.');
+  });
+
+  it('drops Not assessed and stale lines a rewritten verdict copies over sections now written', async () => {
+    const { as, doc, fill } = await setup();
+    await fill();
+    const copied = 'Stale: 4. Founder-market fit changed after this verdict on 27 Sept 2026.\nNot assessed: 4. Founder-market fit (Rohan has not written it yet)\n\n'
+      + 'No verdict and no score until this section is written.\n\nWEAK: pain unproven (3).\n\nScore: 4/10';
+    expect((await as('verdict')('replace_section', { heading: '5. Verdict', text: copied })).text).toContain('The verdict is written.');
+    expect(sectionBody(await doc(), '5. Verdict')).toBe('WEAK: pain unproven (3).\n\nScore: 4/10');
+  });
+});

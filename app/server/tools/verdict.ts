@@ -352,9 +352,12 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
     // standing beside it would say STRONG 10/10 under a new WEAK.
     const was = new Set(bodies(before, verdictAt));
     const written = bodies(after, verdictAt).filter((one) => !was.has(one));
-    const fresh = (written.length ? written.join('\n\n') : sectionBody(after, verdictAt) ?? '').split('\n').filter((line) => !STALE.test(line.trim())).join('\n').trim();
+    let fresh = (written.length ? written.join('\n\n') : sectionBody(after, verdictAt) ?? '').split('\n').filter((line) => !STALE.test(line.trim())).join('\n').trim();
+    // A verdict written over a "Not assessed" one, its lines copied along, keeps none of them: any section still
+    // empty puts its own back below.
+    if (stands(fresh)) fresh = fresh.split('\n').filter((line) => !NOT_ASSESSED.test(line.trim()) && !NO_VERDICT.test(line.trim())).join('\n').replace(/\n{3,}/g, '\n\n').trim();
     after = withBody(after, verdictAt, fresh);
-    if (!filled(fresh).length) return { text: after };
+    if (!stands(fresh)) return { text: after };
     // A verdict that stands says so, for the truth net: a refusal earlier in the turn no longer holds.
     return judged(after, fresh, true) ?? { text: after, note: VERDICT_WRITTEN };
   }
@@ -362,17 +365,27 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
   // A verdict written again word for word, or kept by a write of the whole doc, is checked as if new: a live judge
   // asked to rewrite hers over a section the founder had emptied wrote the same text, and "Fit: 8" stood over nothing.
   const touched = input.touches === WHOLE || (!!input.touches && headingKey(input.touches) === headingKey(verdictAt));
-  if (touched && verdictBefore && filled(verdictBefore).length) {
+  if (touched && stands(verdictBefore)) {
     const byJudge = !judge || writerId === judge.id;
     const standing = judged(after, sectionBody(after, verdictAt) ?? '', byJudge);
     if (standing) return standing;
     if (byJudge && !rules.sections.some(({ heading }) => changed(heading))) return { text: after, note: VERDICT_WRITTEN };
   }
 
-  // A section the verdict rests on changed under a verdict that stands: the verdict says so, once per section.
-  if (!verdictBefore || !filled(verdictBefore).length) return { text: after };
   const moved = rules.sections.filter(({ heading }) => changed(heading)).map(({ heading }) => titleOf(after, heading));
-  if (!moved.length) return { text: after };
+  // A section written under a "Not assessed" verdict: the verdict says again what it still waits on, never that it is
+  // stale. A live one kept "Rohan has not written it yet" beside a stale mark after Rohan's section was in.
+  if (moved.length && unassessed(verdictBefore)) {
+    const still = judged(after, '', false);
+    if (still) return still;
+    const who = judge?.name;
+    return {
+      text: withBody(after, verdictAt, `Not assessed yet: every section is written${who ? `; ${who} writes the verdict next` : ''}.`),
+      note: `Every section is written now, so the verdict waits on ${who ?? 'its judge'}.`,
+    };
+  }
+  // A section the verdict rests on changed under a verdict that stands: the verdict says so, once per section.
+  if (!stands(verdictBefore) || !moved.length) return { text: after };
   const kept = (sectionBody(after, verdictAt) ?? '').split('\n').filter((line) => !moved.some((name) => line.trim().startsWith(`Stale: ${name} changed`)));
   const marks = moved.map((name) => `Stale: ${name} changed after this verdict on ${shortDay(now)}.`);
   return {
