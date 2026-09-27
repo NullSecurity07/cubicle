@@ -1,5 +1,5 @@
 import { connect } from 'node:net';
-import { SERVICE, systemctl, type Ask } from './service.ts';
+import { SERVICE, servicePort, systemctl, type Ask } from './service.ts';
 
 // Two things that keep the app up through a bad moment.
 
@@ -43,7 +43,10 @@ export function answers(port: number, host = '127.0.0.1', wait = 400): Promise<b
 // Whether the api port is held by the Cubicle service (`pnpm service:install`), running: then `pnpm dev` uses it
 // rather than starting a second api into a port that is taken. Anything else on the port (an api left over from a
 // killed run, another program) is not trusted: the api is started as always and falls over loudly if it cannot.
-export async function serviceHolds(port: number, ask: Ask = systemctl): Promise<boolean> {
+// Only the service's own port counts: with the service running on 7421, an api left over on a check's port is still
+// somebody else's.
+export async function serviceHolds(port: number, ask: Ask = systemctl, own: () => Promise<number> = () => servicePort()): Promise<boolean> {
   if (await ask(['is-active', SERVICE]) !== 'active') return false;
+  if (await own() !== port) return false;
   return answers(port);
 }

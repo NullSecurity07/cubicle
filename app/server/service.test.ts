@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { SERVICE, cleanPath, enableLine, installService, removeService, serviceRow, serviceState, unitPath, unitText, type ServiceState } from './service.ts';
+import { SERVICE, cleanPath, servicePort, enableLine, installService, removeService, serviceRow, serviceState, unitPath, unitText, type ServiceState } from './service.ts';
 
 const base = { node: '/usr/bin/node', app: '/home/me/cublicle/app', workspace: '/home/me/cublicle/workspace', path: '/usr/bin:/home/me/.local/bin' };
 
@@ -125,5 +125,16 @@ describe('the PATH the service is given', () => {
   it('leaves out what pnpm put in front for its own scripts, and anything said twice', () => {
     const shell = '/app/node_modules/.bin:/home/me/.local/share/pnpm/node_modules/pnpm/dist/node-gyp-bin:/home/me/.local/bin:/usr/bin:/usr/bin';
     expect(cleanPath(shell)).toBe('/home/me/.local/bin:/usr/bin');
+  });
+});
+
+describe('the port the service holds', () => {
+  it('is the one its unit names, and 7421 when it names none or there is no unit', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'service-'));
+    expect(await servicePort({ HOME: home })).toBe(7421);
+    await installService(base, { env: { HOME: home }, ask: async () => '' });
+    expect(await servicePort({ HOME: home })).toBe(7421);
+    await installService({ ...base, port: 7521 }, { env: { HOME: home }, ask: async () => '' });
+    expect(await servicePort({ HOME: home })).toBe(7521);
   });
 });

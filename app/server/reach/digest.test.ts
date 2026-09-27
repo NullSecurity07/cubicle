@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { Attention, Stage, Task } from '../../shared/model.ts';
 import type { Boards } from '../boards.ts';
 import type { Skills } from '../skills.ts';
-import { createDigest, dailyDue, digestText, dueAt } from './digest.ts';
+import { createDigest, dailyDue, digestSettlesNote, digestText, dueAt } from './digest.ts';
 
 const NOON = new Date(2026, 8, 20, 12, 0, 0).getTime();
 const stage: Stage = {
@@ -99,6 +99,23 @@ describe('what goes out each day', () => {
     expect(dailyDue({ ...base, at: due + 5 * 60_000, noteDay: '2026-09-20' })).toEqual({ digest: true, note: true });
     // With no partner there is nothing to wait for.
     expect(dailyDue({ ...base, at: due + 60_000 })).toEqual({ digest: true, note: false });
+  });
+
+  it('never holds a late digest past the end of its own day, so a 23:55 digest still goes that day', () => {
+    const late = dueAt('23:55', NOON);
+    const last = new Date(late).setHours(23, 59, 30, 0);
+    expect(dailyDue({ ...base, due: late, at: late + 2 * 60_000, noteExpected: true })).toEqual({ digest: false, note: false });
+    // The last tick of the day sends it, rather than the next day's clock moving its time on and losing it.
+    expect(dailyDue({ ...base, due: late, at: last, noteExpected: true })).toEqual({ digest: true, note: false });
+  });
+
+  it('does not wait for the note when the digest comes before the partner writes it, and leaves the note to go later', () => {
+    const early = dueAt('05:30', NOON);
+    expect(dailyDue({ ...base, due: early, at: early + 60_000, noteExpected: true, noteFrom: 6 })).toEqual({ digest: true, note: false });
+    expect(digestSettlesNote(early, 6)).toBe(false);
+    expect(digestSettlesNote(due, 6)).toBe(true);
+    // The note, written at six, then goes on its own.
+    expect(dailyDue({ ...base, due: early, lastDigest: early + 60_000, noteDay: '2026-09-20', noteFrom: 6 })).toEqual({ digest: false, note: true });
   });
 
   it('sends a note the digest did not mark as sent on its own, once', () => {

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { access, mkdir, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { Check } from '../shared/openends.ts';
 
@@ -108,4 +108,10 @@ export function serviceRow(state: ServiceState): Check {
   if (!state.enabled) return { name, ok: true, detail: `no: the service is installed but not switched on. Switch it on with: systemctl --user enable --now ${SERVICE}`, fix: `Run systemctl --user enable --now ${SERVICE}.` };
   if (state.active !== 'active') return { name, ok: false, detail: `no: the service is switched on but ${state.active === 'failed' ? 'fell over' : 'is not running'}`, fix: `See why with journalctl --user -u ${SERVICE} -n 50. If node moved (an upgrade), run pnpm service:install in app/ again; then systemctl --user restart ${SERVICE}.` };
   return { name, ok: true, detail: 'yes: it runs as a service, starts at login and comes back if it falls over', fix: `pnpm service:remove in app/ takes it away.` };
+}
+
+// The api port the installed service holds: the one its unit names, or the app's own default.
+export async function servicePort(env: NodeJS.ProcessEnv = process.env): Promise<number> {
+  const text = await readFile(unitPath(env), 'utf8').catch(() => '');
+  return Number(/^Environment="STAGE_API_PORT=(\d+)"$/m.exec(text)?.[1]) || 7421;
 }

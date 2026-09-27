@@ -220,15 +220,14 @@ describe('saying a reply out loud', () => {
 
 describe('the partner\'s morning note on the phone', () => {
   // A phone that is paired and switched on, with the daily note due since midnight, and today's note from the partner.
-  async function paired(quiet = false, noNoteYet = false) {
+  async function paired(quiet = false, noNoteYet = false, digestAt = '00:00') {
     const dir = mkdtempSync(join(tmpdir(), 'reach-morning-'));
     const rooms = [room('marketing', 'Maya'), { ...room('pat', 'Pat'), role: 'Partner', partner: true }];
     const held: Stage = { rooms, docs: [], wires: [], cards: [] };
-    writeFileSync(join(dir, 'reach.json'), JSON.stringify({ on: true, token: 'fake-token', paired: [{ chatId: 1, name: 'Founder', at: 1 }], updates: { on: !quiet, finished: true, stuck: true, digest: true, at: '00:00' } }));
+    writeFileSync(join(dir, 'reach.json'), JSON.stringify({ on: true, token: 'fake-token', paired: [{ chatId: 1, name: 'Founder', at: 1 }], updates: { on: !quiet, finished: true, stuck: true, digest: true, at: digestAt } }));
     const at = Date.now();
     const note = { day: localDay(at), at, roomId: 'pat', who: 'Pat', things: ['Call the three dentists who opened the email', 'Price the pilot at £49'], risk: 'the pilot has no end date', question: 'Which clinic goes first?' };
     const late = () => writeFileSync(join(dir, 'partner.json'), JSON.stringify({ decided: [], plans: [], morning: note }));
-    // The digest has been due since midnight, so a note not written by now has had its ten minutes.
     if (noNoteYet) writeFileSync(join(dir, 'partner.json'), JSON.stringify({ decided: [], plans: [] }));
     else late();
     const attention = createAttention(dir);
@@ -276,16 +275,32 @@ describe('the partner\'s morning note on the phone', () => {
     await part.close?.();
   });
 
-  // In the first ten minutes after midnight the digest is still rightly held for the note, so this has nothing to see.
-  const justAfterMidnight = new Date().getHours() === 0 && new Date().getMinutes() < 11;
-  it.skipIf(justAfterMidnight)('does not send a late note on its own once the digest has gone without it: one message a day', async () => {
-    const { part, telegram, late } = await paired(false, true);
+  // A digest at six, after the partner's hour: until ten past six it is still rightly held for the note, and before
+  // six it is not due at all, so this has nothing to see then.
+  const beforeTenPastSix = new Date().getHours() < 6 || (new Date().getHours() === 6 && new Date().getMinutes() < 11);
+  it.skipIf(beforeTenPastSix)('does not send a late note on its own once the digest has gone without it: one message a day', async () => {
+    const { part, telegram, late } = await paired(false, true, '06:00');
     await part.tick!();
     expect((await telegram()).posted).toHaveLength(1);
     expect((await telegram()).posted[0].text).not.toContain('Call the three dentists');
     late();
     await part.tick!();
     expect((await telegram()).posted).toHaveLength(1);
+    await part.close?.();
+  });
+
+  it('sends the note on its own later when the digest came before the partner writes', async () => {
+    // Midnight is before the partner's hour: the digest goes at once, and the note, when it comes, follows it.
+    const { part, telegram, late } = await paired(false, true, '00:00');
+    await part.tick!();
+    expect((await telegram()).posted).toHaveLength(1);
+    late();
+    await part.tick!();
+    const posted = (await telegram()).posted;
+    expect(posted).toHaveLength(2);
+    expect(posted[1].text).toContain('Call the three dentists');
+    await part.tick!();
+    expect((await telegram()).posted).toHaveLength(2);
     await part.close?.();
   });
 
