@@ -98,9 +98,12 @@ function waiting(stage: Stage, rules: DocRules, docId: string, text: string) {
 
 // The line the judge's prompt carries on every turn while her verdict says "Not assessed", or null: the refusal's
 // words bind only the turn of the refused write, and the next turn she read her own earlier reply and said it again.
+// Not only once it says so: a live judge gave "PIVOT REQUIRED ... 6/10" in chat with a section empty and the verdict
+// never written, so the line holds while any section it rests on is empty or no verdict is written yet.
 export function standingVerdict(stage: Stage, roomId: string, docId: string, rules: DocRules, text: string): string | null {
-  if (ownerOf(stage, rules, rules.verdict.by, docId)?.id !== roomId || !unassessed(sectionBody(text, rules.verdict.heading))) return null;
+  if (ownerOf(stage, rules, rules.verdict.by, docId)?.id !== roomId) return null;
   const { missing } = waiting(stage, rules, docId, text);
+  if (!missing.length && stands(sectionBody(text, rules.verdict.heading))) return null;
   return verdictStanding(missing.length ? missing.join(', and ') : `every section is written, and "${titleOf(text, rules.verdict.heading)}" waits for you to write it`, rules.outcomes ?? []);
 }
 

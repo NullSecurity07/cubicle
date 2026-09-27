@@ -632,6 +632,8 @@ describe('the judge told her verdict was refused', () => {
   });
 });
 
+// Rohan's journey-8 answer to Priya: a pick-one menu for the founder, stored as section 4.
+const ROHAN_MENU = "**Founder\u2011market fit (Section\u202f4)**  \n\n*Why you?* \u2013\u202fPlease tell me which of the following applies to you (pick **one** or more):\n\n- **Lived the problem** \u2013 you have done bookkeeping/VAT filing yourself and felt the pain daily.  \n- **Unusual access** \u2013 you know dozens/hundreds of solo EU consultants personally or are embedded in that community.  \n- **Earned secret** \u2013 you have years in accounting/fin\u2011tech that revealed hidden cost/complexity.  \n\n(Responses such as \u201cI\u2019m passionate\u201d do **not** count.)\n\n*Please provide the applicable reason(s) so I can complete Section\u202f4.*";
 describe('the judge asking a colleague about their empty section', () => {
   // Priya on a script: ask Rohan about his empty section, then write the verdict. Rohan answers on his own script.
   async function run(question: string, ...rest: (string | { chat: string })[]) {
@@ -732,7 +734,8 @@ describe('the judge asking a colleague about their empty section', () => {
       + '> - **Earned secret** – you’ve spent years in EU tax/accounting and know the hidden complexities that others miss.  \n\n'
       + 'Your concise answer (one sentence per applicable bullet) will let me fill in Section 4 and move to the verdict.';
     for (const asking of [rohan, 'Could you tell me how long you have worked with consultants? Then I can write it.', 'What is your background in EU tax, and did you file VAT yourself? I will write it then.',
-      'I will ask the founder which of lived it or access fits, then write section 4.', 'ask_founder: "Which of these fits you: lived it, unusual access, technical edge?"']) {
+      'I will ask the founder which of lived it or access fits, then write section 4.', 'ask_founder: "Which of these fits you: lived it, unusual access, technical edge?"', ROHAN_MENU,
+      'Lived it or access, pick one, and I will write it.', 'Let me know which of these fits you: lived it or access.', 'Please provide your years in the field so I can complete it.']) {
       const { result, text } = await run('Could you please fill in Section 4 (Founder-market fit) of the Evaluation document so the verdict can be completed?', asking);
       expect(result.tools[0].result, asking).toContain('Rohan answered but did not fill "4. Founder-market fit"; it stays empty.');
       expect(filled(sectionBody(text, '4. Founder-market fit')), asking).toEqual([]);
@@ -839,6 +842,25 @@ describe('the judge on the turns after a refused verdict', () => {
     decisions: { list: async () => [] }, memory: { read: async () => ({ notes: '', summary: '' }) }, founder: { read: async () => '' },
   });
   const LINE = 'Your verdict is not written: Rohan has not written "4. Founder-market fit" yet. Name no verdict word (WEAK, PIVOT REQUIRED, STRONG) or score in chat until it is.';
+
+  it('holds her to no verdict word in chat while a section is empty, before any write was tried', async () => {
+    // Journey 8: "PIVOT REQUIRED ... 6/10 (Fit: 1/2)" in chat with section 4 empty and section 5 never written, and no flag.
+    const { stage, store, as, fill } = await setup();
+    await fill(['4. Founder-market fit']);
+    const promptFor = promptOf(store);
+    const messages = await promptFor(stage, 'verdict', docTools.map((tool) => tool.name));
+    expect(messages[0].content).toContain(LINE);
+    const said = await runTurn({
+      messages: [...messages, { role: 'user', content: 'What is your verdict? Just tell me in chat.' }], tools: docTools, clients: [say('PIVOT REQUIRED\n\nScore: 6/10 (Fit: 1/2)')],
+      usage: createUsage(null), context: { stage, roomId: 'verdict', store, granted: new Map() }, events: { token: () => {}, tool: () => {} },
+    });
+    expect(said.flags).toContain('Unconfirmed: the verdict was not written; Rohan has not written "4. Founder-market fit" yet.');
+    // Every section written and the verdict still the template's: the verdict waits on her writing it.
+    expect((await as('fit')('replace_section', { heading: '4. Founder-market fit', text: FILLED['4. Founder-market fit'] })).ok).toBe(true);
+    expect((await promptFor(stage, 'verdict', []))[0].content).toMatch(/Your verdict is not written: every section is written, and "5\. Verdict" waits for you to write it\./);
+    expect((await as('verdict')('replace_section', { heading: '5. Verdict', text: 'WEAK (3)\n\nScore: 4/10' })).text).toContain('The verdict is written.');
+    expect((await promptFor(stage, 'verdict', []))[0].content).not.toContain('Your verdict is not written');
+  });
 
   it('holds her to no verdict word in chat on the next turn too, while the doc says Not assessed', async () => {
     const { stage, store, as, fill } = await setup();

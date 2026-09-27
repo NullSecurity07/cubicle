@@ -136,9 +136,10 @@ const HEDGE = /\b(not sure|unsure|don'?t know|do not know|haven'?t|have not|no i
 // the question below so I can complete Section 4" and a list of choices, and it went in as the section.
 // "Could you tell me" and "what is your" count only as a sentence of their own that ends in a question mark: an answer
 // that quotes "what is your edge?" inside itself is still an answer.
-const ASKS = /\b(?:ask (?:the )?founder|please answer|answer the question|ask_founder)\b/i;
+// A pick-one menu that ends "Please provide the applicable reason(s) so I can complete Section 4." is one too.
+const ASKS = /\b(?:ask (?:the )?founder|please answer|answer the question|ask_founder|please provide|please tell me|pick one|which of these|which of the following|let me know (?:which|what|how|whether)|so I can complete)\b/i;
 const QUESTION = /^(?:could you tell me|what is your)\b.*\?$/i;
-const asksBack = (answer: string) => ASKS.test(answer)
+const asksBack = (answer: string) => ASKS.test(answer.replace(/[*_`]/g, '').replace(/[\u00a0\u202f]/g, ' '))
   || answer.split(/\n|(?<=[.!?])\s+/).some((sentence) => QUESTION.test(sentence.replace(/^[\s>*_#-]+/, '').trim()));
 const hedges = (answer: string) => /\?\s*$/.test(answer.trim()) || HEDGE.test(answer.replace(/[’‘]/g, "'")) || asksBack(answer);
 
