@@ -675,6 +675,23 @@ describe('the judge asking a colleague about their empty section', () => {
     expect(filled(sectionBody(text, '4. Founder-market fit'))).toEqual([]);
   });
 
+  it('keeps only the substance of a chatty answer, not its status heading or its "you can now" close', async () => {
+    // Rohan's live answer, which went into the doc whole.
+    const chatty = '✅ **Section 4 – Founder‑market fit** in the Evaluation doc is now completed:\n\n'
+      + '- **Lived it / technical edge:** The founder filed EU VAT returns by hand for their own studio for three years and builds the product.\n'
+      + '- **In one sentence:** They have lived the pain and can build the fix.\n\nYou can now proceed to write the verdict.';
+    const { text } = await run('What goes in section 4, the founder-market fit?', chatty);
+    const fit = sectionBody(text, '4. Founder-market fit')!;
+    expect(fit).toMatch(/^- \*\*Lived it \/ technical edge:\*\* The founder filed EU VAT returns.*\n- \*\*In one sentence:\*\* They have lived the pain and can build the fix\.\n\n\(From chat:/);
+    expect(fit).not.toMatch(/completed|You can now|✅/);
+    // The same on one line: the close is taken off the end of the last sentence.
+    const inline = await run('What goes in section 4?', 'Section 4 is done: Lived it: filed VAT by hand for years. You can now write the verdict.');
+    expect(sectionBody(inline.text, '4. Founder-market fit')).toMatch(/^Lived it: filed VAT by hand for years\.\n\n\(From chat:/);
+    // An answer that is all substance is kept whole.
+    const plain = await run('What goes in section 4?', 'Lived it: ran a micro-SaaS for two years. Next, the founder should talk to ten accountants.');
+    expect(sectionBody(plain.text, '4. Founder-market fit')).toMatch(/^Lived it: ran a micro-SaaS for two years\. Next, the founder should talk to ten accountants\./);
+  });
+
   it('writes nothing when the answer was held back', async () => {
     const { text } = await run('What is your section 4, the founder-market fit?', HELD_BACK);
     expect(filled(sectionBody(text, '4. Founder-market fit'))).toEqual([]);
