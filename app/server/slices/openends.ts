@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Slice } from '../install.ts';
+import { backupAttention } from '../attention.ts';
 import { autoBackup, backupDirOf, listBackups, makeBackup } from '../openends/backup.ts';
 import { checkAll, outsideHealth } from '../openends/health.ts';
 import { coderHealth } from '../opencode/server.ts';
@@ -24,6 +25,8 @@ export default {
     // The daily backup, off the half-minute tick. A check run's workspace is thrown away, so it only backs up when
     // the run asks for it.
     const daily = !deps.fake || process.env.STAGE_AUTO_BACKUP === '1' ? autoBackup({ workspace: deps.workspace, dir: dirOf }) : null;
+    // A failed one is said in Needs you at once, and goes when the next one is made.
+    const told = backupAttention(deps.attention);
     const safe = createSafeBook(deps.workspace);
     const { entries, problem } = await loadEntries(deps.workspace);
     // A file the founder wrote wrong is one row on the screen, never a start that fails.
@@ -93,7 +96,7 @@ export default {
         }
         return false;
       },
-      async tick() { await daily?.tick(); },
+      async tick() { await told((await daily?.tick()) ?? null).catch(() => {}); },
       async close() {
         outsideHealth.now = outsideBefore;
         for (const one of connections) await one.rpc?.close().catch(() => {});

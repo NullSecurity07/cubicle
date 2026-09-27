@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
-import { autoBackup, backupDir, backupDirOf, canWrite, chooseBackupDir, chosenBackupDir, leaveOut, landingPlace, listBackups, makeBackup, restore } from './backup.ts';
+import { autoBackup, backupDir, backupDirOf, canWrite, sameDisk, chooseBackupDir, chosenBackupDir, leaveOut, landingPlace, listBackups, makeBackup, restore } from './backup.ts';
 import { END, packTar, splitPath, tarBlock, tarEntries } from './tar.ts';
 
 const dir = (what: string) => mkdtemp(join(tmpdir(), `${what}-`));
@@ -248,5 +248,24 @@ describe('canWrite', () => {
     expect(await canWrite(join(base, 'later', 'backups'))).toBe(true);
     await writeFile(join(base, 'file'), 'x');
     expect(await canWrite(join(base, 'file', 'backups'))).toBe(false);
+  });
+});
+
+describe('sameDisk', () => {
+  // A stat that knows a few folders and which disk each is on, and nothing else.
+  const disks = (known: Record<string, number>) => async (path: string) => {
+    if (path in known) return { dev: known[path] };
+    throw Object.assign(new Error(`ENOENT: ${path}`), { code: 'ENOENT' });
+  };
+  it('says yes when the backup folder is on the disk the workspace is on', async () => {
+    expect(await sameDisk('/home/f/work', '/home/f/Cubicle backups', disks({ '/home/f/work': 1, '/home/f/Cubicle backups': 1 }))).toBe(true);
+    expect(await sameDisk('/home/f/work', '/media/usb/backups', disks({ '/home/f/work': 1, '/media/usb/backups': 2 }))).toBe(false);
+  });
+  it('asks the nearest folder there is for a backup folder not made yet', async () => {
+    expect(await sameDisk('/home/f/work', '/media/usb/later/backups', disks({ '/home/f/work': 1, '/media/usb': 2 }))).toBe(false);
+    expect(await sameDisk('/home/f/work', '/home/f/work/backups', disks({ '/home/f/work': 1 }))).toBe(true);
+  });
+  it('does not claim the same disk when it cannot tell', async () => {
+    expect(await sameDisk('/home/f/work', '/media/usb', async () => { throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); })).toBe(false);
   });
 });

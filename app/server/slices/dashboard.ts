@@ -9,7 +9,7 @@ import { hub } from '../events.ts';
 import { FRAMEWORK_ID, type Framework } from '../../shared/frameworks.ts';
 import type { Deps, Slice } from '../install.ts';
 import { leadsCardIds } from '../leads/store.ts';
-import { backupDirOf, canWrite, listBackups } from '../openends/backup.ts';
+import { backupDirOf, canWrite, listBackups, sameDisk } from '../openends/backup.ts';
 import { backupRow, checkAll, outsideHealth } from '../openends/health.ts';
 import { coderHealth } from '../opencode/server.ts';
 import { providerOf } from '../providers.ts';
@@ -301,7 +301,7 @@ export default {
       // One reading of the backups folder for the line and for the Backup row, which the last health check may have
       // read a while ago: both say what is there now.
       const dir = dirOf();
-      const state = { dir, backups: await listBackups(dir), writable: await canWrite(dir) };
+      const state = { dir, backups: await listBackups(dir), writable: await canWrite(dir), sameDisk: await sameDisk(deps.workspace, dir) };
       const backup = { at: state.backups[0]?.at ?? null, dir, writable: state.writable };
       const { fix: _fix, ...row } = backupRow(state, now);
       const rows = health.checks.some((one) => one.name === 'Backup') ? health.checks.map((one) => (one.name === 'Backup' ? row : one)) : health.checks;

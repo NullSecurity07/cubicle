@@ -156,6 +156,8 @@ export type AttentionKind = 'approval' | 'run-approval' | 'proposed-task' | 'pro
   | 'key-rejected'
   // A file the app could not read and put back or started again.
   | 'file-damaged'
+  // The daily backup that could not be made, until one is.
+  | 'backup-failed'
   // The partner's: the morning note, a bet to check or to take on, and a plan's steps to put on the board.
   | 'morning-note' | 'bet-check' | 'proposed-bet' | 'proposed-plan';
 export type Attention = {

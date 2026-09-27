@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Lapsed } from '../shared/lapsed.ts';
 import type { Attention } from '../shared/model.ts';
-import { boardAttention, createAttention, damageAttention, keyAttention } from './attention.ts';
+import { backupAttention, boardAttention, createAttention, damageAttention, keyAttention } from './attention.ts';
 import { createUsage } from './usage.ts';
 import { createBoards } from './boards.ts';
 import { createStore } from './store.ts';
@@ -242,5 +242,34 @@ describe('a file the app could not read', () => {
     expect(held.lapsed).toBeUndefined();
     await later.dismiss(held.id);
     expect(await later.list()).toHaveLength(0);
+  });
+});
+
+describe('a daily backup that failed', () => {
+  it('raises one item with the error, keeps it through more failures, and clears it on the next success', async () => {
+    const attention = createAttention(await mkdtemp(join(tmpdir(), 'attention-')), () => NOON);
+    const told = backupAttention(attention, () => NOON);
+    await told({ problem: 'ENOSPC: no space left on device', where: '/media/usb/backups' });
+    const [item] = await attention.list();
+    expect(item).toMatchObject({ id: 'backup-failed', kind: 'backup-failed', title: 'The daily backup failed' });
+    expect(item.detail).toContain('ENOSPC: no space left on device');
+    expect(item.detail).toContain('/media/usb/backups');
+    await told({ problem: 'ENOSPC again', where: '/media/usb/backups' });
+    expect(await attention.list()).toHaveLength(1);
+    // A tick with nothing to do says nothing either way.
+    await told(null);
+    expect(await attention.list()).toHaveLength(1);
+    await told({ made: true });
+    expect(await attention.list()).toHaveLength(0);
+  });
+
+  it('can be dismissed, and is not brought back from the last run: the next start tries again and says so', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'attention-'));
+    const first = createAttention(dir, () => NOON);
+    await backupAttention(first, () => NOON)({ problem: 'EACCES', where: '/x' });
+    await first.settled();
+    expect(await createAttention(dir, () => NOON).list()).toHaveLength(0);
+    await first.dismiss('backup-failed');
+    expect(await first.list()).toHaveLength(0);
   });
 });

@@ -146,7 +146,8 @@ describe('the dashboard', () => {
     // No waiting for the health check to come round: the very next answer agrees with itself.
     const body = (await get()).body;
     expect(body.backup?.at).toBeTruthy();
-    expect(body.health.find((one) => one.name === 'Backup')).toMatchObject({ ok: true, detail: expect.stringMatching(/1 kept in .*the newest made today/) });
+    // Fresh, but in the workspace's own folder, so on its disk: still red, and the row says why.
+    expect(body.health.find((one) => one.name === 'Backup')).toMatchObject({ ok: false, detail: expect.stringMatching(/1 kept in .*the newest made today, on the same disk as the workspace/) });
   });
 
   it('reads the founder\'s day, each row carrying where it lives', async () => {

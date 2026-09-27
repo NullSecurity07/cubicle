@@ -28,6 +28,7 @@ export const WEIGHTS: Record<string, { weight: number; label: string }> = {
   'review-due': { weight: 55, label: 'A decision is due for a second look' },
   'key-rejected': { weight: 65, label: 'A model key was refused' },
   'file-damaged': { weight: 80, label: 'A file could not be read' },
+  'backup-failed': { weight: 60, label: 'The daily backup failed' },
   'run-failed': { weight: 50, label: 'Work stopped halfway' },
   missed: { weight: 45, label: 'A repeat was missed' },
   'task-due': { weight: 40, label: 'Due today' },

@@ -103,6 +103,21 @@ export async function canWrite(dir: string): Promise<boolean> {
   }
 }
 
+// Is the backup folder on the disk the workspace is on? Then the day that disk dies takes both. Asked of the folder
+// itself if it is there, or the nearest folder above it that is, since a backup makes the rest. When it cannot tell
+// (a folder it may not look at), it does not claim they share a disk. `look` is `stat`, or a stand-in in a test.
+export type StatDev = (path: string) => Promise<{ dev: number }>;
+export async function sameDisk(workspace: string, dir: string, look: StatDev = stat): Promise<boolean> {
+  try {
+    const home = (await look(resolve(workspace))).dev;
+    for (let at = resolve(dir); ; at = dirname(at)) {
+      const found = await look(at).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return null; throw error; });
+      if (found) return found.dev === home;
+      if (dirname(at) === at) return false;
+    }
+  } catch { return false; }
+}
+
 // A backup is due when the newest is a day old, or when there is none.
 export const DUE_AFTER = 86_400_000;
 // One that failed (the drive unplugged, the disk full) is tried again an hour later, not on every tick.
@@ -114,7 +129,7 @@ export function autoBackup(options: { workspace: string; dir: () => string; now?
   const { workspace, dir, now = Date.now, log = (line) => console.log(line) } = options;
   let failedAt = -Infinity;
   return {
-    async tick(): Promise<{ made?: Awaited<ReturnType<typeof makeBackup>>; problem?: string } | null> {
+    async tick(): Promise<{ made?: Awaited<ReturnType<typeof makeBackup>>; problem?: string; where?: string } | null> {
       if (now() - failedAt < RETRY_AFTER) return null;
       const where = dir();
       const newest = (await listBackups(where))[0];
@@ -127,7 +142,7 @@ export function autoBackup(options: { workspace: string; dir: () => string; now?
         failedAt = now();
         const problem = (error as Error).message;
         log(`the daily backup to ${where} failed: ${problem}`);
-        return { problem };
+        return { problem, where };
       }
     },
   };

@@ -84,7 +84,7 @@ export function NeedsPanel() {
                 <PartnerNeed entry={entry} attempt={attempt} />
                 {entry.decisionId && <button type="button" className="primary" onClick={() => { showDecision(entry.decisionId!); overlay.open({ kind: 'panel', name: 'decisions' }); }}>{entry.kind === 'review-due' ? 'Look at it' : 'Decide'}</button>}
                 {entry.kind === 'key-rejected' && <button type="button" className="primary" onClick={() => { overlay.close({ kind: 'panel', name: 'needs' }); overlay.open({ kind: 'panel', name: 'apikeys' }); }}>Open Keys</button>}
-                {(entry.lapsed || entry.kind === 'key-rejected' || entry.kind === 'file-damaged' || entry.kind === 'run-failed' || entry.kind === 'missed' || entry.kind === 'review-due' || entry.kind === 'page-changed') && <button type="button" onClick={() => attempt(dismissAttention(entry.id))}>Dismiss</button>}
+                {(entry.lapsed || entry.kind === 'key-rejected' || entry.kind === 'file-damaged' || entry.kind === 'backup-failed' || entry.kind === 'run-failed' || entry.kind === 'missed' || entry.kind === 'review-due' || entry.kind === 'page-changed') && <button type="button" onClick={() => attempt(dismissAttention(entry.id))}>Dismiss</button>}
                 {entry.lapsed && entry.roomId && <button type="button" className="primary" onClick={() => ask(entry, said)}>Ask {entry.who ?? 'them'} again</button>}
               </div>
             </li>

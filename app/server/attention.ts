@@ -12,7 +12,7 @@ type Source = () => Promise<Attention[]>;
 // What the founder may wave away. A proposal or an approval is answered where it lives, never dismissed here.
 const DISMISSABLE = new Set<AttentionKind>(['run-failed', 'missed', 'review-due', 'page-changed']);
 // What is raised here only to tell the founder something, with no answer to wait for: they may wave it away once read.
-const SAID = new Set<AttentionKind>(['key-rejected', 'file-damaged']);
+const SAID = new Set<AttentionKind>(['key-rejected', 'file-damaged', 'backup-failed']);
 const A_DAY = 86_400_000;
 // Argument names whose value is nobody's to keep, not even for a line the founder reads.
 const PRIVATE = /key|token|secret|password/i;
@@ -46,7 +46,8 @@ export function createAttention(dir: string, now: () => number = Date.now) {
     // (A task run that was waiting is reported by its board as cut off; keeping it here too would show it twice. A
     // refused key goes too: keys are read on a start, so this start has not yet been refused by anyone.)
     // A damaged file is no turn's: it stays as it was until the founder dismisses it.
-    state = { open: (saved.open ?? []).filter((entry) => entry.kind !== 'run-approval' && entry.kind !== 'key-rejected').map(({ event, ...entry }) => (entry.kind === 'file-damaged' ? entry : { ...entry, ...(event ? { tool: event.name, about: about(event) } : {}), lapsed: true })), dismissed: saved.dismissed ?? [] };
+    // A failed backup goes too: the next start tries again within the minute and says so again if it fails.
+    state = { open: (saved.open ?? []).filter((entry) => entry.kind !== 'run-approval' && entry.kind !== 'key-rejected' && entry.kind !== 'backup-failed').map(({ event, ...entry }) => (entry.kind === 'file-damaged' ? entry : { ...entry, ...(event ? { tool: event.name, about: about(event) } : {}), lapsed: true })), dismissed: saved.dismissed ?? [] };
     return state;
   }
   async function list(): Promise<Attention[]> {
@@ -149,5 +150,21 @@ export function damageAttention(damage: Damage, now: number = Date.now()): Atten
     detail: from
       ? `${damage.file} could not be read, so it was put back as it was in the backup ${from.file}. Anything changed since then is only in the damaged copy, moved aside to ${damage.aside}, which a text editor can open.`
       : `${damage.file} could not be read and no backup held it, so ${what.first}. The damaged copy was moved aside to ${damage.aside}, which a text editor can open.`,
+  };
+}
+
+// The daily backup that failed (the drive unplugged, the disk full) is one item for the founder, with the error, raised
+// once however many hourly tries fail after it, and cleared by the next backup that is made. Before this, a failure was
+// one line in a log nobody reads until the Health row turned red a day later.
+export function backupAttention(attention: Pick<AttentionBook, 'raise' | 'clear'>, now: () => number = Date.now) {
+  let open = false;
+  return async (result: { made?: unknown; problem?: string; where?: string } | null) => {
+    if (result?.problem && !open) {
+      open = true;
+      await attention.raise({ id: 'backup-failed', kind: 'backup-failed', at: now(), title: 'The daily backup failed', detail: `A backup to ${result.where ?? 'the backup folder'} could not be made: ${result.problem}. It is tried again every hour; this goes away when one is made. Check that the drive is plugged in and has room, or choose another folder with "Back up to…" in Health.` });
+    } else if (result?.made && open) {
+      open = false;
+      await attention.clear('backup-failed');
+    }
   };
 }
