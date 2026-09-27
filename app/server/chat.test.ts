@@ -397,7 +397,7 @@ describe('a verdict the doc does not hold, in a turn', () => {
   it('keeps the judge\'s reply with the verdict word and score replaced, and the Unconfirmed line once', async () => {
     const system = `You are Priya, the judge.\n\n${verdictStanding('Rohan has not written "4. Founder-market fit" yet', OUTCOMES)}`;
     const { kept, shown } = await turn('priya', '**PIVOT REQUIRED**\n\n**Score:** 5/10 (Fit: 1/2)', system);
-    expect(kept).toBe(`**${NOT_WRITTEN}**\n\n**Score:** ${NOT_WRITTEN} (Fit: 1/2)\n\n${LINE}`);
+    expect(kept).toBe(`**${NOT_WRITTEN}**\n\n**Score:** ${NOT_WRITTEN}\n\n${LINE}`);
     expect(shown).toBe(kept);
     expect(kept.match(/Unconfirmed/g)).toHaveLength(1);
   });

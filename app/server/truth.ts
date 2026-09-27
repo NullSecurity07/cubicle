@@ -452,6 +452,18 @@ export const NOT_WRITTEN = '[not written]';
 const SCORE = /\b\d{1,2}(?:\.\d)?\s*\/\s*10\b|\b\d{1,2}(?:\.\d)?\s+(?:out\s+)?of\s+10\b(?!\s+(?!(?:is|was|has|as|this|thus|us|yes|plus)\b)[a-z-]{2,}s\b)/g;
 // "[not written] ([not written])", "[not written], [not written]": said once.
 const TWICE = /\[not written\]((?:\*\*|__)?)(?:[\s,;:\u2013\u2014-]*|\s*\()\[not written\]\)?/g;
+// A part's score beside its label, "Fit: 2/2" or "**Pain:** 1/2": while the verdict is unwritten the parts add up to it,
+// so journey 9's "Flaws: 1/2 ... Fit: 2/2 ... Why Now: 1/2" beside "Verdict: [not written]" gave the total away.
+const PART = /(\b[A-Za-z][A-Za-z -]{0,24}(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*)\d{1,2}(?:\.\d)?\s*\/\s*\d{1,2}\b/g;
+// What stays of a sentence masked whole: its bullet and a bold label ("- **Score:** [not written]").
+const MASK_LEAD = /^\s*(?:(?:[-*+]|\d+[.)])\s+)?(?:(?:\*\*|__)[^*_\n]{1,30}?(?::(?:\*\*|__)|(?:\*\*|__):)\s*)?/;
+const masks = (text: string) => text.split(NOT_WRITTEN).length - 1;
+// "caps the overall verdict at [not written] and [not written]" reads broken: a sentence that would hold two masks is
+// one mask, keeping its bullet, bold label and end stop.
+const maskSentences = (line: string) => line.split(/(?<=[.!?])\s+/).map((sentence) => {
+  if (masks(sentence) < 2) return sentence;
+  return `${MASK_LEAD.exec(sentence)?.[0] ?? ''}${NOT_WRITTEN}${/[.!?]$/.exec(sentence)?.[0] ?? ''}`;
+}).join(' ');
 // A line consult answers carry up to a colleague when the judge's verdict was not written: the relay is held too.
 const RELAYED = /^Unconfirmed: the verdict was not written; (.+)\.$/m;
 // Journeys 6-8: the refused judge said "PIVOT REQUIRED ... 5/10" and only a line under it said the doc refused it; the
@@ -470,11 +482,11 @@ export function holdVerdict(reply: string, receipts: Receipt[], sources: string[
   let changed = false;
   const lines = reply.split('\n').map((line) => {
     if (/^(?:Unconfirmed: |Unsourced figures: |Currency changed: )/.test(line)) return line;
-    let out = [...words, SCORE].reduce((kept, word) => kept.replace(word, NOT_WRITTEN), line);
+    let out = [...words, SCORE].reduce((kept, word) => kept.replace(word, NOT_WRITTEN), line).replace(PART, `$1${NOT_WRITTEN}`);
     if (out === line) return line;
     changed = true;
     while (TWICE.test(out)) out = out.replace(TWICE, `${NOT_WRITTEN}$1`);
-    return out;
+    return maskSentences(out);
   });
   if (!changed) return reply;
   const text = lines.join('\n');

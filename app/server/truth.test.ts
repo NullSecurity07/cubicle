@@ -453,7 +453,7 @@ describe('a verdict word held out of a reply', () => {
 
   it('replaces the verdict word and the score after a refused write, and keeps one Unconfirmed line', () => {
     const reply = `**PIVOT REQUIRED**\n\n**Score:** 5/10 (Assumption: 1/2, Fit: 1/2)\nTotal: 6 out of 10 (WEAK).\n\n${LINE}`;
-    expect(holdVerdict(reply, [refused])).toBe(`**${NOT_WRITTEN}**\n\n**Score:** ${NOT_WRITTEN} (Assumption: 1/2, Fit: 1/2)\nTotal: ${NOT_WRITTEN}.\n\n${LINE}`);
+    expect(holdVerdict(reply, [refused])).toBe(`**${NOT_WRITTEN}**\n\n**Score:** ${NOT_WRITTEN}\nTotal: ${NOT_WRITTEN}.\n\n${LINE}`);
     expect(NOT_WRITTEN).toBe('[not written]');
   });
 
@@ -474,6 +474,18 @@ describe('a verdict word held out of a reply', () => {
     expect(holdVerdict('I scored it 5/10 and stand by it.', [refused])).toBe(`I scored it ${W} and stand by it.\n\n${LINE}`);
     expect(holdVerdict('It is 7 out of 10 for me.', [refused])).toBe(`It is ${W} for me.\n\n${LINE}`);
     expect(holdVerdict('Run 3 of 10 interviews first.', [refused])).toBe('Run 3 of 10 interviews first.');
+  });
+
+  // Journey 9: "Verdict: [not written]" beside "Flaws: 1/2 ... Fit: 2/2 ... Why Now: 1/2", and "caps the overall verdict
+  // at [not written] and [not written]".
+  it('masks part scores too, and a whole sentence that would hold two masks', () => {
+    const W = NOT_WRITTEN;
+    const reply = '**Verdict:** PIVOT REQUIRED (capped by the flaw in Section 2).\n\n- Flaws: 1/2\n- **Fit:** 2/2\n\nPain: 1/2, Why Now: 1/2. The flaw caps the overall verdict at PIVOT REQUIRED and 5/10. Run 5 interviews first.';
+    expect(holdVerdict(reply, [refused])).toBe(`**Verdict:** ${W} (capped by the flaw in Section 2).\n\n- Flaws: ${W}\n- **Fit:** ${W}\n\n${W}. ${W}. Run 5 interviews first.\n\n${LINE}`);
+    // A count that is not a part score stays: "2/12 paying" has no label before it.
+    expect(holdVerdict('It leans WEAK; 2/12 beta users pay.', [refused])).toBe(`It leans ${W}; 2/12 beta users pay.\n\n${LINE}`);
+    // Written: the parts are the judge's to say.
+    expect(holdVerdict('Fit: 2/2.', [])).toBe('Fit: 2/2.');
   });
 
   it('holds on any turn whose prompt says the verdict is not written', () => {
