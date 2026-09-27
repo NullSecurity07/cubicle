@@ -77,12 +77,13 @@ export function dueAt(at: string, now: number): number {
 }
 
 // What goes out on this tick. The partner's morning note rides in the digest's own message at the founder's time: one
-// message a morning, never two. A note written after the digest went, or on a day the digest is off, goes on its own
-// once it is that time. Yesterday's note never goes.
-export function dailyDue(input: { at: number; due: number; digestOn: boolean; lastDigest: number; today: string; noteDay?: string; noteSent?: string }): { digest: boolean; note: boolean } {
+// message a morning, never two. A note the partner has not written yet is waited for up to ten minutes past that
+// time; then the digest goes alone, and the caller marks the note as sent for the day. On a day the digest is off, the
+// note goes on its own once it is that time. Yesterday's note never goes.
+export const NOTE_WAIT = 10 * 60_000;
+export function dailyDue(input: { at: number; due: number; digestOn: boolean; lastDigest: number; today: string; noteDay?: string; noteSent?: string; noteExpected?: boolean }): { digest: boolean; note: boolean } {
   const time = input.at >= input.due;
-  return {
-    digest: input.digestOn && time && input.lastDigest < input.due,
-    note: time && !!input.noteDay && input.noteDay === input.today && input.noteSent !== input.today,
-  };
+  const note = time && !!input.noteDay && input.noteDay === input.today && input.noteSent !== input.today;
+  const waiting = !note && !!input.noteExpected && input.noteSent !== input.today && input.at < input.due + NOTE_WAIT;
+  return { digest: input.digestOn && time && input.lastDigest < input.due && !waiting, note };
 }

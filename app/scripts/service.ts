@@ -6,7 +6,7 @@
 // It always runs the main checkout, even when this is run from a worktree: a service is the founder's app, not a branch.
 import { execFileSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
-import { SERVICE, installService, removeService, serviceState, unitText } from '../server/service.ts';
+import { SERVICE, cleanPath, installService, removeService, serviceState, unitText } from '../server/service.ts';
 
 const here = resolve(import.meta.dirname, '../..');
 const main = (() => {
@@ -14,7 +14,12 @@ const main = (() => {
   catch { return here; }
 })();
 const port = Number(process.env.STAGE_API_PORT) || undefined;
-const input = { node: process.execPath, app: resolve(main, 'app'), workspace: resolve(process.env.STAGE_WORKSPACE ?? resolve(main, 'workspace')), path: process.env.PATH ?? '/usr/bin:/bin', ...(port ? { port } : {}) };
+// The PATH of the founder's login shell, not of this pnpm run. printenv reads the same in bash, zsh and fish.
+const loginPath = (() => {
+  try { return execFileSync(process.env.SHELL || '/bin/sh', ['-lc', 'printenv PATH'], { encoding: 'utf8', timeout: 10_000 }).trim(); }
+  catch { return process.env.PATH ?? ''; }
+})();
+const input = { node: process.execPath, app: resolve(main, 'app'), workspace: resolve(process.env.STAGE_WORKSPACE ?? resolve(main, 'workspace')), path: cleanPath(loginPath) || '/usr/bin:/bin', ...(port ? { port } : {}) };
 
 const [what = 'status', ...rest] = process.argv.slice(2);
 if (process.platform !== 'linux') { console.log('A service needs systemd, which this machine does not have. The app runs while its window is open.'); process.exit(1); }

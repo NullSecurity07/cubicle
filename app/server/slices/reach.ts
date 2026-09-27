@@ -395,10 +395,13 @@ export default {
         // The partner's note for today, read where the partner slice keeps it: written fresh each tick, so read fresh.
         const written = (await partnerState(deps.workspace).read().catch(() => null))?.morning;
         const partner = written && stage.rooms.find((room) => room.id === written.roomId);
-        const going = dailyDue({ at, due, digestOn: now.updates.digest, lastDigest: last, today, noteDay: partner ? written!.day : undefined, noteSent: kept.morning });
+        // A partner on the stage with no note for today yet: the digest waits a little for it.
+        const expected = !!stage.rooms.find((room) => room.partner) && written?.day !== today;
+        const going = dailyDue({ at, due, digestOn: now.updates.digest, lastDigest: last, today, noteDay: partner ? written!.day : undefined, noteSent: kept.morning, noteExpected: expected });
         if (!going.digest && !going.note) return;
-        // Marked before it is sent: a note that fails to go is not sent twice, the way the digest never was.
-        await book.set((one) => { if (going.digest) one.digestAt = at; if (going.note) one.morning = today; });
+        // Marked before it is sent: a note that fails to go is not sent twice, the way the digest never was. A digest
+        // that went without the note is the day's one message, so a note written later stays in the app.
+        await book.set((one) => { if (going.digest) { one.digestAt = at; one.morning = today; } if (going.note) one.morning = today; });
         const parts = [
           ...(going.note && partner ? [headed(partner, morningMessage(written!))] : []),
           ...(going.digest ? [await digest(last || at - DAY)] : []),

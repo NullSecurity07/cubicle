@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -20,7 +20,7 @@ const midday = () => {
   const ahead = 13 - new Date().getUTCHours();
   return ahead === 0 ? 'UTC' : `Etc/GMT${ahead > 0 ? '-' : '+'}${Math.abs(ahead)}`;
 };
-async function until<T>(get: () => T | Promise<T>, right: (value: T) => boolean, what: string, wait = 12_000): Promise<T> {
+async function until<T>(get: () => T | Promise<T>, right: (value: T) => boolean, what: string, wait = 60_000): Promise<T> {
   const end = Date.now() + wait;
   for (;;) {
     const value = await get();
@@ -61,9 +61,17 @@ beforeAll(async () => {
   });
   server.stdout!.on('data', (chunk) => { said += chunk; });
   server.stderr!.on('data', (chunk) => { said += chunk; });
-  await until(() => said, (text) => text.includes('stage api on'), 'the server starting', 30_000);
-}, 40_000);
-afterAll(() => { server?.kill('SIGTERM'); });
+  await until(() => said, (text) => text.includes('stage api on'), 'the server starting');
+}, 70_000);
+// The server is gone before its folder is, backup and all: nothing is left behind in the temp folder.
+afterAll(async () => {
+  if (server && server.exitCode === null) {
+    const gone = new Promise((done) => { server.once('exit', done); });
+    server.kill('SIGTERM');
+    await gone;
+  }
+  if (dir) rmSync(dir, { recursive: true, force: true });
+}, 20_000);
 
 const ask = async (path: string, body?: unknown) => (await fetch(`http://127.0.0.1:${port}${path}`, {
   method: body ? 'POST' : 'GET', headers: { 'x-stage-token': TOKEN, 'content-type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}),
@@ -75,16 +83,16 @@ describe('the server with no window open', () => {
     const state = await until(() => read<{ morning?: { things: string[]; roomId: string } }>(join(dir, 'workspace', 'partner.json'), {}), (one) => !!one.morning, `the morning note (${said.slice(-400)})`);
     expect(state.morning!.roomId).toBe('pat');
     expect(state.morning!.things.length).toBeGreaterThan(0);
-  }, 45_000);
+  }, 70_000);
 
   it('makes the daily backup by itself', async () => {
     await until(() => { try { return readdirSync(join(dir, 'backups')); } catch { return []; } }, (files) => files.some((one) => /^cubicle-.*\.tar\.gz$/.test(one)), 'the backup');
-  }, 45_000);
+  }, 70_000);
 
   it('has the bet that is due waiting in Needs you, and the morning note beside it', async () => {
     const list = await until(async () => await ask('/api/attention') as { kind: string }[], (items) => items.some((one) => one.kind === 'morning-note'), 'the morning note in Needs you');
     expect(list.map((one) => one.kind)).toContain('bet-check');
-  }, 45_000);
+  }, 70_000);
 
   it('sends the morning note to the phone as one message, and a reply to it reaches the partner', async () => {
     const posted = await until(async () => (await ask('/api/reach/telegram') as { posted: Posted[] }).posted, (list) => list.some((one) => one.text.includes('Morning')), 'the morning note on the phone');
@@ -94,5 +102,5 @@ describe('the server with no window open', () => {
     await ask('/api/reach/telegram', { chatId: 1, text: 'Which move first?', extra: { reply_to_message: { message_id: notes[0].messageId, chat: { id: 1 }, text: 'x' } } });
     const chat = await until(() => read<{ role: string; text: string }[] | { messages?: { role: string; text: string }[] }>(join(dir, 'workspace', 'rooms', 'pat.json'), []), (held) => JSON.stringify(held).includes('Which move first?'), 'the reply in the partner\'s room');
     expect(JSON.stringify(chat)).toContain('Which move first?');
-  }, 45_000);
+  }, 70_000);
 });

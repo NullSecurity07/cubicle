@@ -92,7 +92,16 @@ describe('what goes out each day', () => {
     expect(dailyDue({ ...base, at: due - 60_000, noteDay: '2026-09-20' })).toEqual({ digest: false, note: false });
   });
 
-  it('sends a note written after the digest went on its own, once', () => {
+  it('holds the digest up to ten minutes for a note the partner has not written yet, then sends it alone', () => {
+    expect(dailyDue({ ...base, at: due + 5 * 60_000, noteExpected: true })).toEqual({ digest: false, note: false });
+    expect(dailyDue({ ...base, at: due + 10 * 60_000, noteExpected: true })).toEqual({ digest: true, note: false });
+    // Written within the ten minutes, it goes in the digest's message.
+    expect(dailyDue({ ...base, at: due + 5 * 60_000, noteDay: '2026-09-20' })).toEqual({ digest: true, note: true });
+    // With no partner there is nothing to wait for.
+    expect(dailyDue({ ...base, at: due + 60_000 })).toEqual({ digest: true, note: false });
+  });
+
+  it('sends a note the digest did not mark as sent on its own, once', () => {
     expect(dailyDue({ ...base, lastDigest: due + 1, noteDay: '2026-09-20' })).toEqual({ digest: false, note: true });
     expect(dailyDue({ ...base, lastDigest: due + 1, noteDay: '2026-09-20', noteSent: '2026-09-20' })).toEqual({ digest: false, note: false });
   });

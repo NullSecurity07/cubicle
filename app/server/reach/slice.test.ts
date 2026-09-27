@@ -220,13 +220,17 @@ describe('saying a reply out loud', () => {
 
 describe('the partner\'s morning note on the phone', () => {
   // A phone that is paired and switched on, with the daily note due since midnight, and today's note from the partner.
-  async function paired(quiet = false) {
+  async function paired(quiet = false, noNoteYet = false) {
     const dir = mkdtempSync(join(tmpdir(), 'reach-morning-'));
     const rooms = [room('marketing', 'Maya'), { ...room('pat', 'Pat'), role: 'Partner', partner: true }];
     const held: Stage = { rooms, docs: [], wires: [], cards: [] };
     writeFileSync(join(dir, 'reach.json'), JSON.stringify({ on: true, token: 'fake-token', paired: [{ chatId: 1, name: 'Founder', at: 1 }], updates: { on: !quiet, finished: true, stuck: true, digest: true, at: '00:00' } }));
     const at = Date.now();
-    writeFileSync(join(dir, 'partner.json'), JSON.stringify({ decided: [], plans: [], morning: { day: localDay(at), at, roomId: 'pat', who: 'Pat', things: ['Call the three dentists who opened the email', 'Price the pilot at £49'], risk: 'the pilot has no end date', question: 'Which clinic goes first?' } }));
+    const note = { day: localDay(at), at, roomId: 'pat', who: 'Pat', things: ['Call the three dentists who opened the email', 'Price the pilot at £49'], risk: 'the pilot has no end date', question: 'Which clinic goes first?' };
+    const late = () => writeFileSync(join(dir, 'partner.json'), JSON.stringify({ decided: [], plans: [], morning: note }));
+    // The digest has been due since midnight, so a note not written by now has had its ten minutes.
+    if (noNoteYet) writeFileSync(join(dir, 'partner.json'), JSON.stringify({ decided: [], plans: [] }));
+    else late();
     const attention = createAttention(dir);
     let answer: unknown = null;
     let incoming: Record<string, unknown> = {};
@@ -242,7 +246,7 @@ describe('the partner\'s morning note on the phone', () => {
     const telegram = async () => { await part.route!(call('GET'), {} as never, '/api/reach/telegram'); return answer as { posted: { chatId: number; text: string; messageId: number }[] }; };
     // The founder writing on their phone, the way the fake Telegram is handed a message.
     const says = async (body: Record<string, unknown>) => { incoming = body; await part.route!(call('POST'), {} as never, '/api/reach/telegram'); };
-    return { part, telegram, says };
+    return { part, telegram, says, late };
   }
 
   it('goes out as one message with the digest, under the partner\'s name, and only once', async () => {
@@ -269,6 +273,19 @@ describe('the partner\'s morning note on the phone', () => {
     await until(async () => asked.length, (many) => many === 1);
     expect(asked[0].path).toBe('/api/rooms/pat/chat');
     expect(JSON.parse(asked[0].body).text).toContain('Why the pilot first?');
+    await part.close?.();
+  });
+
+  // In the first ten minutes after midnight the digest is still rightly held for the note, so this has nothing to see.
+  const justAfterMidnight = new Date().getHours() === 0 && new Date().getMinutes() < 11;
+  it.skipIf(justAfterMidnight)('does not send a late note on its own once the digest has gone without it: one message a day', async () => {
+    const { part, telegram, late } = await paired(false, true);
+    await part.tick!();
+    expect((await telegram()).posted).toHaveLength(1);
+    expect((await telegram()).posted[0].text).not.toContain('Call the three dentists');
+    late();
+    await part.tick!();
+    expect((await telegram()).posted).toHaveLength(1);
     await part.close?.();
   });
 

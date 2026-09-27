@@ -1,4 +1,5 @@
 import { connect } from 'node:net';
+import { SERVICE, systemctl, type Ask } from './service.ts';
 
 // Two things that keep the app up through a bad moment.
 
@@ -28,8 +29,7 @@ export function guardProcess(proc: Emitter = process, log: (line: string) => voi
   proc.on('uncaughtException', (error: unknown) => { log(`the app stopped on an error nothing caught: ${said(error)}`); exit(1); });
 }
 
-// Whether something already listens on this port here. The api run as a service holds its port while the window is
-// closed; `pnpm dev` then uses that one rather than starting a second api into a port that is taken.
+// Whether something already listens on this port here.
 export function answers(port: number, host = '127.0.0.1', wait = 400): Promise<boolean> {
   return new Promise((settle) => {
     const socket = connect({ port, host });
@@ -38,4 +38,12 @@ export function answers(port: number, host = '127.0.0.1', wait = 400): Promise<b
     socket.once('connect', () => done(true));
     socket.once('error', () => done(false));
   });
+}
+
+// Whether the api port is held by the Cubicle service (`pnpm service:install`), running: then `pnpm dev` uses it
+// rather than starting a second api into a port that is taken. Anything else on the port (an api left over from a
+// killed run, another program) is not trusted: the api is started as always and falls over loudly if it cannot.
+export async function serviceHolds(port: number, ask: Ask = systemctl): Promise<boolean> {
+  if (await ask(['is-active', SERVICE]) !== 'active') return false;
+  return answers(port);
 }

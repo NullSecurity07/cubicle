@@ -18,16 +18,24 @@ export type Ask = (args: string[]) => Promise<string | null>;
 type Where = { env?: NodeJS.ProcessEnv; ask?: Ask };
 
 // `%` and `$` mean something to systemd in these lines; a quoted value keeps a space from ending it.
-const escaped = (value: string) => value.replace(/%/g, '%%').replace(/\$/g, '$$$$');
+// `%` is a specifier on every line; `$` is expanded only on the Exec lines, so it is doubled only there.
+const escaped = (value: string) => value.replace(/%/g, '%%');
 const quoted = (value: string) => `"${escaped(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 const setting = (name: string, value: string) => `Environment=${quoted(`${name}=${value}`)}`;
-const command = (path: string) => (/[\s"'\\$%]/.test(path) ? quoted(path) : path);
+const command = (path: string) => (/[\s"'\\$%]/.test(path) ? quoted(path).replace(/\$/g, '$$$$') : path);
+
+// The PATH as the founder's own login shell has it, less what pnpm puts in front while it runs a script (the
+// checkout's node_modules/.bin, its own node-gyp) and anything said twice.
+export const cleanPath = (path: string) => [...new Set(path.split(':').filter((one) => one && !one.includes('node_modules/.bin') && !/\/pnpm\/.*(dist|node-gyp-bin)/.test(one)))].join(':');
 
 export function unitText(input: UnitInput): string {
   return [
     '[Unit]',
     'Description=Cubicle, running while its window is closed',
-    'After=network-online.target',
+    // Five falls in two minutes (a port somebody else holds) and it stays down, which Health says, rather than
+    // trying every five seconds for ever.
+    'StartLimitIntervalSec=120',
+    'StartLimitBurst=5',
     '',
     '[Service]',
     'Type=simple',
@@ -98,6 +106,6 @@ export function serviceRow(state: ServiceState): Check {
   if (!state.systemd) return { name, ok: true, detail: `no: this machine has no systemd user services, so ${waits}`, fix: 'Nothing to do: the app works while its window is open.' };
   if (!state.installed) return { name, ok: true, detail: `no: ${waits}. pnpm service:install in app/ keeps it running`, fix: install };
   if (!state.enabled) return { name, ok: true, detail: `no: the service is installed but not switched on. Switch it on with: systemctl --user enable --now ${SERVICE}`, fix: `Run systemctl --user enable --now ${SERVICE}.` };
-  if (state.active !== 'active') return { name, ok: false, detail: `no: the service is switched on but ${state.active === 'failed' ? 'fell over' : 'is not running'}`, fix: `See why with journalctl --user -u ${SERVICE} -n 50, then systemctl --user restart ${SERVICE}.` };
+  if (state.active !== 'active') return { name, ok: false, detail: `no: the service is switched on but ${state.active === 'failed' ? 'fell over' : 'is not running'}`, fix: `See why with journalctl --user -u ${SERVICE} -n 50. If node moved (an upgrade), run pnpm service:install in app/ again; then systemctl --user restart ${SERVICE}.` };
   return { name, ok: true, detail: 'yes: it runs as a service, starts at login and comes back if it falls over', fix: `pnpm service:remove in app/ takes it away.` };
 }

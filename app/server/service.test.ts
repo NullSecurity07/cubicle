@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { SERVICE, enableLine, installService, removeService, serviceRow, serviceState, unitPath, unitText, type ServiceState } from './service.ts';
+import { SERVICE, cleanPath, enableLine, installService, removeService, serviceRow, serviceState, unitPath, unitText, type ServiceState } from './service.ts';
 
 const base = { node: '/usr/bin/node', app: '/home/me/cublicle/app', workspace: '/home/me/cublicle/workspace', path: '/usr/bin:/home/me/.local/bin' };
 
@@ -16,15 +16,20 @@ describe('the unit file', () => {
     expect(text).toContain('Environment="PATH=/usr/bin:/home/me/.local/bin"');
     expect(text).toContain('Restart=on-failure');
     expect(text).toContain('WantedBy=default.target');
+    // A port somebody else holds is five tries in two minutes, then the unit stays down and Health says it fell over.
+    expect(text).toContain('StartLimitIntervalSec=120');
+    expect(text).toContain('StartLimitBurst=5');
+    expect(text.indexOf('StartLimitBurst')).toBeLessThan(text.indexOf('[Service]'));
     // Never the fake model, and never tied to a window that is not there.
     expect(text).not.toContain('STAGE_FAKE_MODEL');
     expect(text).not.toContain('STAGE_EXIT_WITH_PARENT');
   });
 
   it('keeps a space, a quote, a percent and a dollar in a path from meaning anything to systemd', () => {
-    const text = unitText({ ...base, app: '/home/me/my app', workspace: '/home/me/100% "work"', node: '/opt/n$de/bin/node' });
+    const text = unitText({ ...base, app: '/home/me/my app', workspace: '/home/me/100% "work" $x', node: '/opt/n$de/bin/node' });
     expect(text).toContain('WorkingDirectory=/home/me/my app');
-    expect(text).toContain('Environment="STAGE_WORKSPACE=/home/me/100%% \\"work\\""');
+    // systemd expands $ only on the Exec lines: anywhere else it is written as it is.
+    expect(text).toContain('Environment="STAGE_WORKSPACE=/home/me/100%% \\"work\\" $x"');
     expect(text).toContain('ExecStart="/opt/n$$de/bin/node" server/index.ts');
   });
 
@@ -107,9 +112,18 @@ describe('the row that says whether it runs while closed', () => {
     expect(fallen.ok).toBe(false);
     expect(fallen.detail).toMatch(/^no/);
     expect(fallen.fix).toContain('journalctl --user');
+    // A node that moved (a version manager's upgrade) is fixed by writing the unit again.
+    expect(fallen.fix).toContain('pnpm service:install');
   });
 
   it('says plainly when the machine has no systemd', () => {
     expect(serviceRow(state({ systemd: false, installed: false, enabled: false })).detail).toMatch(/^no.*systemd/);
+  });
+});
+
+describe('the PATH the service is given', () => {
+  it('leaves out what pnpm put in front for its own scripts, and anything said twice', () => {
+    const shell = '/app/node_modules/.bin:/home/me/.local/share/pnpm/node_modules/pnpm/dist/node-gyp-bin:/home/me/.local/bin:/usr/bin:/usr/bin';
+    expect(cleanPath(shell)).toBe('/home/me/.local/bin:/usr/bin');
   });
 });
