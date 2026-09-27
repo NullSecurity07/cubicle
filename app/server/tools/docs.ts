@@ -132,7 +132,10 @@ function asksAbout(question: string, heading: string): boolean {
 }
 
 const HEDGE = /\b(not sure|unsure|don'?t know|do not know|haven'?t|have not|no idea|no clue|unclear|unknown|hard to say|need to ask|ask (?:the )?founder|tbd|n\/a|pending|not yet|can'?t say)\b/i;
-const hedges = (answer: string) => /\?\s*$/.test(answer.trim()) || HEDGE.test(answer.replace(/[’‘]/g, "'"));
+// An answer that is itself a question for the founder: a live colleague asked for his section wrote back "please answer
+// the question below so I can complete Section 4" and a list of choices, and it went in as the section.
+const ASKS = /\b(?:ask (?:the )?founder|could you tell me|what is your|please answer|answer the question|ask_founder)\b/i;
+const hedges = (answer: string) => /\?\s*$/.test(answer.trim()) || HEDGE.test(answer.replace(/[’‘]/g, "'")) || ASKS.test(answer);
 
 // The words an answer says beyond its section's name: three letters or more, and not a bare yes or no. None left
 // ("No." to "have you written section 4 yet?", or "Founder-market fit.") says nothing that could be the section.

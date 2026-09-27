@@ -719,6 +719,21 @@ describe('the judge asking a colleague about their empty section', () => {
     }
   });
 
+  it('leaves the section empty when the answer is a question for the founder, not the section', async () => {
+    // Rohan's live answer to Priya: his question to the founder, which went into section 4 as its body.
+    const rohan = '**Founder‑market fit – please answer the question below so I can complete Section 4**\n\n> **Why you?**  \n'
+      + '> Choose **one** (or more) of the following that truly applies to you:  \n> - **Lived the problem** – you’ve done the solo‑consultant bookkeeping/VAT work yourself and felt the pain daily.  \n'
+      + '> - **Earned secret** – you’ve spent years in EU tax/accounting and know the hidden complexities that others miss.  \n\n'
+      + 'Your concise answer (one sentence per applicable bullet) will let me fill in Section 4 and move to the verdict.';
+    for (const asking of [rohan, 'Could you tell me how long you have worked with consultants? Then I can write it.', 'What is your background in EU tax, and did you file VAT yourself? I will write it then.',
+      'I will ask the founder which of lived it or access fits, then write section 4.', 'ask_founder: "Which of these fits you: lived it, unusual access, technical edge?"']) {
+      const { result, text } = await run('Could you please fill in Section 4 (Founder-market fit) of the Evaluation document so the verdict can be completed?', asking);
+      expect(result.tools[0].result, asking).toContain('Rohan answered but did not fill "4. Founder-market fit"; it stays empty.');
+      expect(filled(sectionBody(text, '4. Founder-market fit')), asking).toEqual([]);
+      expect(sectionBody(text, '5. Verdict'), asking).toMatch(/^Not assessed: 4\. Founder-market fit/);
+    }
+  });
+
   it('writes an answer that names its section, since the section\'s words are not an echo', async () => {
     const { text } = await run('What is your founder-market fit, section 4?', 'Founder-market fit: lived it.');
     expect(sectionBody(text, '4. Founder-market fit')).toMatch(/^Founder-market fit: lived it\./);
