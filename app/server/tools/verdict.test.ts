@@ -995,3 +995,34 @@ describe('the parked minors of round five', () => {
     expect(verdictState('WEAK\n\nScore: 4/10')).toBeNull();
   });
 });
+
+describe('a colleague\'s answer written in from chat', () => {
+  // The same answer, as Rohan's own replace_section and as his answer to Priya's ask_person, each turn having read the
+  // same things: both are held to the same figure check, and on a team doc a figure nothing gives is refused.
+  async function both(answer: string, read: string[]) {
+    const own = await setup();
+    await own.fill(['4. Founder-market fit']);
+    const tool = await runTool(docTools, 'replace_section', JSON.stringify({ doc: 'Evaluation', heading: '4. Founder-market fit', text: answer }),
+      { stage: own.stage, roomId: 'fit', store: own.store, granted: new Map(), sources: () => read });
+    const asked = await setup();
+    await asked.fill(['4. Founder-market fit']);
+    const consult: Consult = async () => answer;
+    const chat = await runTool(teamTools(consult), 'ask_person', JSON.stringify({ name: 'Rohan', question: 'What goes in section 4?' }),
+      { stage: asked.stage, roomId: 'verdict', store: asked.store, granted: new Map(), sources: () => read });
+    return { tool: filled(sectionBody(await own.doc(), '4. Founder-market fit')).length > 0, chat: filled(sectionBody(await asked.doc(), '4. Founder-market fit')).length > 0, said: chat.text };
+  }
+
+  it('is refused on a figure nothing read gives, as the colleague\'s own write is, and written on one they read', async () => {
+    for (const answer of ['Lived it: consultants pay €150/month for bookkeeping today.', 'Lived it: 40% of consultants file VAT late.', 'Lived it: filed VAT for a $2M agency.']) {
+      const cold = await both(answer, []);
+      expect(cold, answer).toMatchObject({ tool: false, chat: false });
+      expect(cold.said, answer).toMatch(/Not written into "4\. Founder-market fit": Rohan's answer gives .* that nothing Rohan read gives/);
+      const read = await both(answer, [`Research notes: ${answer.replace(/^Lived it: /, '')}`]);
+      expect(read, answer).toMatchObject({ tool: true, chat: true });
+    }
+  });
+
+  it('writes an answer with no figures in it either way', async () => {
+    expect(await both('Lived it: filed VAT by hand for their own studio.', [])).toMatchObject({ tool: true, chat: true });
+  });
+});
