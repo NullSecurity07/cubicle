@@ -328,6 +328,8 @@ test('a reply can be stopped, and what was said is kept', async ({ page }) => {
 
 test('the dock shows today\'s model usage and a person can be pinned to a model', async ({ page }) => {
   await ask(page, 'marketing', 'hello');
+  // A model that has answered today gives its share left; one nobody has asked would say "untested".
+  await expect(page.getByRole('img', { name: /^fake: / })).toHaveAccessibleName(/^fake: \d+% left$/);
   await page.getByRole('button', { name: 'Model usage today' }).click();
   const detail = page.getByRole('dialog', { name: 'Model usage today' });
   await expect(detail).toContainText('fake');

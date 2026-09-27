@@ -9,6 +9,7 @@ import { openFrameworks } from './frameworks';
 import { openLibrary } from './library';
 import { BlocksIcon } from './nodes/FrameworksPanel';
 import { keyHint, pressed } from './keys';
+import { dotOf, refusedKeys } from './modelDots';
 import { useModels } from './models';
 import { setMissionsOpen, useMissions } from './Missions';
 import { SLICES, sliceCommands } from './slices';
@@ -44,31 +45,37 @@ function useInView<T extends HTMLElement>(open: boolean, key: unknown) {
   return ref;
 }
 
-// One ring per model provider: how much of today's free quota is left. Amber under a fifth, red when gone.
+// One ring per model provider: how much of today's free quota is left, amber under a fifth, red when gone. A model
+// nobody has asked today is an empty ring, "untested"; one whose key was refused or whose plan is off is a warning.
 function Quota({ place }: { place: string }) {
   const models = useModels() ?? [];
+  const refused = refusedKeys(useAttention());
   const [open, setOpen] = useState(false);
   const detail = useInView<HTMLDivElement>(open, `${place}${models.length}`);
   if (!models.length) return null;
-  const tone = (left: number) => (left <= 0.05 ? 'out' : left < 0.2 ? 'low' : 'fine');
+  const dots = models.map((model) => ({ model, dot: dotOf(model, refused) }));
   return (
     <div className="quota">
       <button type="button" className="quota__rings" aria-label="Model usage today" aria-expanded={open} onClick={() => setOpen(!open)}>
-        {models.map((model) => (
-          <svg key={model.name} viewBox="0 0 20 20" className={`ring ring--${tone(model.left)}`} role="img" aria-label={`${model.name}: ${Math.round(model.left * 100)}% left`}>
+        {dots.map(({ model, dot }) => (
+          <svg key={model.name} viewBox="0 0 20 20" className={`ring ring--${dot.tone}`} role="img" aria-label={`${model.name}: ${dot.words}`}>
             <circle cx="10" cy="10" r="7" className="ring__track" />
-            <circle cx="10" cy="10" r="7" pathLength={100} strokeDasharray={`${Math.round(model.left * 100)} 100`} transform="rotate(-90 10 10)" />
+            <circle cx="10" cy="10" r="7" pathLength={100} strokeDasharray={`${dot.tone === 'untested' ? 0 : dot.tone === 'refused' ? 100 : Math.round(model.left * 100)} 100`} transform="rotate(-90 10 10)" />
+            {dot.tone === 'refused' && <circle cx="10" cy="10" r="2.400" className="ring__mark" />}
           </svg>
         ))}
         <Label name="Model usage today" />
       </button>
       {open && (
         <div ref={detail} className="quota__detail" role="dialog" aria-label="Model usage today">
-          {models.map((model) => (
+          {dots.map(({ model, dot }) => (
             <div key={model.name} className="quota__row">
-              <span className={`quota__dot ring--${tone(model.left)}`} />
+              <span className={`quota__dot ring--${dot.tone}`} />
               <span className="quota__name">{model.name}<small>{model.model}</small></span>
-              <span className="quota__numbers">{Math.round(model.left * 100)}% left<small>{model.requests} replies · {model.tokens.toLocaleString()} tokens · $0</small></span>
+              <span className="quota__numbers">
+                {dot.tone === 'refused' ? 'Key refused' : dot.tone === 'untested' ? 'Untested' : dot.words}
+                <small>{dot.tone === 'refused' ? dot.words : dot.tone === 'untested' ? 'No reply yet today · $0' : `${model.requests} replies · ${model.tokens.toLocaleString()} tokens · $0`}</small>
+              </span>
             </div>
           ))}
         </div>
