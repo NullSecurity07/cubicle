@@ -511,3 +511,205 @@ describe('Cloudflare\'s neurons, read from the answer (review 5)', () => {
     expect(clients.map((one) => [one.name, one.limits.rpd, !!one.sharedPool])).toEqual([['cloudflare-gpt-oss', 25, true], ['cloudflare-qwen', 5, true], ['cloudflare', 10, true]]);
   });
 });
+
+describe('NVIDIA and Mistral on their free tiers (round 6)', () => {
+  const env = { NVIDIA_API_KEY: 'nvapi-x', MISTRAL_API_KEY: 'm' } as NodeJS.ProcessEnv;
+  const room = [{ role: 'system' as const, content: `You are Sam.\n## Doc: Numbers\n${'Cash 9,000. Burn 1,800 a month. '.repeat(800).slice(0, 25_000)}` }, { role: 'user' as const, content: 'Raise now?' }];
+  const tools = [{ name: 'read_doc', description: 'Read a doc', parameters: { type: 'object', properties: { title: { type: 'string' } } } }];
+  type Body = { model: string; max_tokens: number; tools?: unknown[]; messages: { role: string; tool_calls?: { id: string }[]; tool_call_id?: string }[] };
+  const script = (one: ModelClient, answer: (body: Body) => unknown[]) => {
+    const sent: Body[] = [];
+    (one.openai!.chat.completions as unknown as { create: unknown }).create = (body: Body) => {
+      sent.push(body);
+      async function* chunks() { yield* answer(body); }
+      return { withResponse: async () => ({ data: chunks(), response: { headers: new Headers() } }) };
+    };
+    return sent;
+  };
+  // What kimi-k3 sent in the live probe: the whole call at once, named by the tool and its place in the turn.
+  const kimiCall = [{ choices: [{ delta: { tool_calls: [{ index: 0, id: 'read_doc:0', function: { name: 'read_doc', arguments: '{"title":"Numbers"}' } }] } }] }];
+
+  it('asks NVIDIA for kimi-k3 (kimi-k2.6 is listed but not served to a free account) at 40 a minute, and Mistral small at one a second', () => {
+    const clients = realClients(env);
+    expect(clients.find((one) => one.name === 'nvidia')).toMatchObject({ model: 'moonshotai/kimi-k3', maxPromptChars: 100_000, tools: true, limits: { rpm: 40 } });
+    expect(clients.find((one) => one.name === 'mistral')).toMatchObject({ model: 'mistral-small-latest', maxPromptChars: 100_000, tools: true, limits: { rpm: 60, tpm: 500_000 }, concurrency: 1 });
+  });
+
+  it('takes a 25k-character room prompt with a tool on NVIDIA, and gives its per-turn call name one no other call shares', async () => {
+    const nvidia = realClients(env).find((one) => one.name === 'nvidia')!;
+    const sent = script(nvidia, () => kimiCall);
+    const first = await complete(room, { onToken: () => {}, tools }, [nvidia]);
+    const second = await complete(room, { onToken: () => {}, tools }, [nvidia]);
+    expect(sent[0]).toMatchObject({ model: 'moonshotai/kimi-k3', max_tokens: 4096, tools: [expect.objectContaining({ type: 'function' })] });
+    expect(first.calls).toEqual([expect.objectContaining({ name: 'read_doc', args: '{"title":"Numbers"}', id: expect.stringMatching(/^call_[0-9a-f]{16}$/) })]);
+    expect(second.calls[0].id).not.toBe(first.calls[0].id);
+  });
+
+  it('sends Mistral every tool call named in the nine letters and digits it insists on, the call and its result alike', async () => {
+    const mistral = realClients(env).find((one) => one.name === 'mistral')!;
+    const sent = script(mistral, () => [{ choices: [{ delta: { content: 'Do not raise yet.' } }] }]);
+    const history = [
+      ...room,
+      { role: 'assistant' as const, content: '', tool_calls: [{ id: 'call_0123456789abcdef', type: 'function' as const, function: { name: 'read_doc', arguments: '{}' } }, { id: 'Ab3dE6gH9', type: 'function' as const, function: { name: 'read_doc', arguments: '{}' } }] },
+      { role: 'tool' as const, tool_call_id: 'call_0123456789abcdef', content: 'cash 9k' },
+      { role: 'tool' as const, tool_call_id: 'Ab3dE6gH9', content: 'burn 1.8k' },
+    ];
+    const result = await complete(history, { onToken: () => {}, tools }, [mistral]);
+    expect(result.text).toBe('Do not raise yet.');
+    const wire = sent[0].messages;
+    const ids = wire.find((one) => one.tool_calls)!.tool_calls!.map((call) => call.id);
+    expect(ids[0]).toMatch(/^[A-Za-z0-9]{9}$/);
+    expect(ids[1]).toBe('Ab3dE6gH9');
+    expect(wire.filter((one) => one.role === 'tool').map((one) => one.tool_call_id)).toEqual(ids);
+    // The conversation kept here is not touched: only what goes over the wire is renamed.
+    expect((history[2] as { tool_calls: { id: string }[] }).tool_calls[0].id).toBe('call_0123456789abcdef');
+  });
+
+  it('never sends a second request to Mistral while one is out', async () => {
+    const mistral = realClients(env).find((one) => one.name === 'mistral')!;
+    let release!: () => void;
+    const gate = new Promise<void>((done) => { release = done; });
+    (mistral.openai!.chat.completions as unknown as { create: unknown }).create = () => ({
+      withResponse: async () => { await gate; async function* chunks() { yield { choices: [{ delta: { content: 'ok' } }] }; } return { data: chunks(), response: { headers: new Headers() } }; },
+    });
+    const one = mistral.step(messages, { onToken: () => {} });
+    expect(mistral.busy?.()).toBe(true);
+    await expect(mistral.step(messages, { onToken: () => {} })).rejects.toThrow(/already answering/);
+    release();
+    await one;
+  });
+});
+
+describe('the first-word clock for a slow model (round 6 review)', () => {
+  const env = { NVIDIA_API_KEY: 'nvapi-x', GROQ_API_KEY: 'g' } as NodeJS.ProcessEnv;
+  // A provider that says nothing for 25 s, then answers; the abort of either clock ends it at once.
+  const silentFor = (one: ModelClient, milliseconds: number) => {
+    (one.openai!.chat.completions as unknown as { create: unknown }).create = (_body: unknown, options: { signal?: AbortSignal }) => ({
+      withResponse: () => new Promise((done, fail) => {
+        const timer = setTimeout(() => { async function* chunks() { yield { choices: [{ delta: { content: 'late but sound' } }] }; } done({ data: chunks(), response: { headers: new Headers() } }); }, milliseconds);
+        options.signal?.addEventListener('abort', () => { clearTimeout(timer); fail(new Error('Request was aborted.')); }, { once: true });
+      }),
+    });
+  };
+
+  it('gives Kimi on NVIDIA a minute before its first word, and everyone else the usual 20 s, unless the machine says', () => {
+    const clients = realClients(env);
+    expect(clients.find((one) => one.name === 'nvidia')!.firstWordMs).toBe(60_000);
+    expect(clients.find((one) => one.name === 'groq')!.firstWordMs).toBe(20_000);
+    expect(realClients({ ...env, STAGE_FIRST_TOKEN_MS: '500' }).find((one) => one.name === 'nvidia')!.firstWordMs).toBe(500);
+  });
+
+  it('waits out 25 s of silence from Kimi, where it cuts another model at 20', async () => {
+    vi.useFakeTimers();
+    try {
+      const clients = realClients(env);
+      const nvidia = clients.find((one) => one.name === 'nvidia')!;
+      const groq = clients.find((one) => one.name === 'groq')!;
+      silentFor(nvidia, 25_000);
+      silentFor(groq, 25_000);
+      let said = '';
+      const kimi = nvidia.step(messages, { onToken: (token) => { said += token; } });
+      const other = groq.step(messages, { onToken: () => {} }).catch((error: Error) => error);
+      await vi.advanceTimersByTimeAsync(26_000);
+      await kimi;
+      expect(said).toBe('late but sound');
+      expect(((await other) as Error).message).toMatch(/no first word within 20 s/);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+describe('the request clock for a slow model (round 6 integrate)', () => {
+  it('gives a request whose first word may take over 30 s that long plus 15 s, so the 45 s request clock never cuts it first', async () => {
+    const clients = realClients({ NVIDIA_API_KEY: 'nvapi-x', GROQ_API_KEY: 'g' } as NodeJS.ProcessEnv);
+    const asked: { name: string; timeout?: number }[] = [];
+    for (const one of clients.filter((client) => client.name === 'nvidia' || client.name === 'groq')) {
+      (one.openai!.chat.completions as unknown as { create: unknown }).create = (_body: unknown, options: { timeout?: number }) => {
+        asked.push({ name: one.name, timeout: options.timeout });
+        async function* chunks() { yield { choices: [{ delta: { content: 'ok' } }] }; }
+        return { withResponse: async () => ({ data: chunks(), response: { headers: new Headers() } }) };
+      };
+      await one.step(messages, { onToken: () => {} });
+    }
+    expect(asked).toEqual([{ name: 'groq', timeout: undefined }, { name: 'nvidia', timeout: 75_000 }]);
+  });
+});
+
+describe('the first-word and idle clocks on a stream (reliability audit 3)', () => {
+  type Piece = { after: number; chunk: unknown };
+  // A provider whose stream sends each piece after its wait, and ends when the request is aborted.
+  const streaming = (one: ModelClient, pieces: Piece[]) => {
+    (one.openai!.chat.completions as unknown as { create: unknown }).create = (_body: unknown, options: { signal?: AbortSignal }) => ({
+      withResponse: async () => {
+        async function* chunks() {
+          for (const piece of pieces) {
+            await new Promise<void>((done, fail) => {
+              const timer = setTimeout(done, piece.after);
+              options.signal?.addEventListener('abort', () => { clearTimeout(timer); fail(new Error('Request was aborted.')); }, { once: true });
+            });
+            yield piece.chunk;
+          }
+        }
+        return { data: chunks(), response: { headers: new Headers() } };
+      },
+    });
+  };
+  const role = { choices: [{ delta: { role: 'assistant' } }] };
+  const words = (content: string) => ({ choices: [{ delta: { content } }] });
+  const groqOf = () => realClients({ GROQ_API_KEY: 'g' } as NodeJS.ProcessEnv).find((one) => one.name === 'groq')!;
+  const run = async (one: ModelClient, advance: number, patient = false) => {
+    let said = '';
+    const turn = one.step(messages, { onToken: (token) => { said += token; }, patient }).then(() => null, (error: Error) => error);
+    await vi.advanceTimersByTimeAsync(advance);
+    return { error: await turn, said };
+  };
+
+  it('is not stopped by a chunk that only says who speaks: the silence after it still trips the first-word clock', async () => {
+    vi.useFakeTimers();
+    try {
+      const groq = groqOf();
+      streaming(groq, [{ after: 100, chunk: role }, { after: 60_000, chunk: words('too late') }]);
+      const { error } = await run(groq, 21_000);
+      expect(error?.message).toMatch(/no first word within 20 s/);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('takes 35 s of silence after the first words as a stall, and the next model answers from the start', async () => {
+    vi.useFakeTimers();
+    try {
+      const groq = groqOf();
+      streaming(groq, [{ after: 100, chunk: words('Half') }, { after: 35_000, chunk: words(' an answer') }]);
+      const { error, said } = await run(groq, 31_000);
+      expect(said).toBe('Half');
+      expect(error?.message).toMatch(/stalled: nothing more within 30 s/);
+      const again = groqOf();
+      streaming(again, [{ after: 100, chunk: words('Half') }, { after: 35_000, chunk: words(' an answer') }]);
+      let restarted = 0;
+      const done = complete(messages, { onToken: () => {}, onRestart: () => { restarted += 1; } }, [again, client('b', ['A whole answer.'])]);
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect((await done)).toMatchObject({ text: 'A whole answer.' });
+      expect(restarted).toBe(1);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('counts reasoning streamed before the words as speech, so 25 s of thinking survives the 20 s first-word clock', async () => {
+    vi.useFakeTimers();
+    try {
+      const groq = groqOf();
+      const think = (field: 'reasoning' | 'reasoning_content') => ({ choices: [{ delta: { [field]: 'weighing it' } }] });
+      streaming(groq, [role, ...Array.from({ length: 5 }, (_, i) => think(i % 2 ? 'reasoning_content' : 'reasoning')), words('Do not raise.')].map((chunk, i) => ({ after: i ? 5_000 : 100, chunk })));
+      expect(await run(groq, 31_000)).toEqual({ error: null, said: 'Do not raise.' });
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('lets a steady stream run as long as it needs, and waits longer between chunks for the last model able', async () => {
+    vi.useFakeTimers();
+    try {
+      const steady = groqOf();
+      streaming(steady, [role, ...Array.from({ length: 6 }, (_, i) => words(`${i} `))].map((chunk, i) => ({ after: i ? 10_000 : 100, chunk })));
+      expect(await run(steady, 61_000)).toEqual({ error: null, said: '0 1 2 3 4 5 ' });
+      const last = groqOf();
+      streaming(last, [{ after: 100, chunk: words('Slow') }, { after: 35_000, chunk: words(' but whole') }]);
+      expect(await run(last, 36_000, true)).toEqual({ error: null, said: 'Slow but whole' });
+    } finally { vi.useRealTimers(); }
+  });
+});

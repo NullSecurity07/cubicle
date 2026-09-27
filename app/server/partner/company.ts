@@ -145,11 +145,29 @@ export function betsSection(bets: Bet[]): string {
   return [...open, ...closed].join('\n');
 }
 
-// The Bets section is the ledger's own: it is written whole from `bets.json` whenever a bet changes.
+// What a closed bet taught, as one line: its day, what was tried, how it went and the number read in code.
+export const LEARNED = 'What we learned';
+export function learnedLine(bet: Bet): string {
+  const value = bet.result?.value === null || bet.result?.value === undefined ? 'could not be read' : `was ${bet.result.value}`;
+  const note = bet.result?.note ? ` ${bare(bet.result.note)}.` : '';
+  return `- ${bet.checkDate}: ${bare(bet.what)} ${VERDICT_WORDS[bet.result?.verdict ?? 'did-not']}; "${bet.metric}" ${value} against ${bet.target}.${note}`;
+}
+// One line per closed bet, newest first: what the company knows now that it did not before.
+export const learnedSection = (bets: Bet[]): string[] => bets.filter((bet) => bet.status === 'closed' && bet.result)
+  .sort((a, b) => b.checkDate.localeCompare(a.checkDate) || (b.result!.at - a.result!.at)).map(learnedLine);
+
+// A section written whole from the ledger: replaced where it is, else added at the end when there is something to say.
+function wholeSection(text: string, heading: string, body: string): string {
+  const swapped = replaceSection(text, heading, body);
+  return 'text' in swapped ? swapped.text : addToSection(text, heading, body ? body.split('\n') : []);
+}
+
+// The Bets section is the ledger's own: it is written whole from `bets.json` whenever a bet changes, and so is What
+// we learned, made the first time a bet is closed.
 export async function writeBets(store: CompanyStore, docId: string, bets: Bet[], changed: Changed = () => {}) {
   const text = await store.readDoc(docId);
-  const body = betsSection(bets);
-  const swapped = replaceSection(text, 'Bets', body);
-  const next = 'text' in swapped ? swapped.text : addToSection(text, 'Bets', body ? body.split('\n') : []);
+  let next = wholeSection(text, 'Bets', betsSection(bets));
+  const learned = learnedSection(bets);
+  if (learned.length || sectionText(next, LEARNED).trim()) next = wholeSection(next, LEARNED, learned.join('\n'));
   if (next !== text) { await store.writeDoc(docId, next); changed(docId); }
 }

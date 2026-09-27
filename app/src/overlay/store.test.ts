@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { popLayer, pushLayer, type Layer } from './store';
+import { onSide, popLayer, pushLayer, type Layer } from './store';
 
 const focus = (id: string): Layer => ({ kind: 'focus', id });
 const panel = (name: string): Layer => ({ kind: 'panel', name });
@@ -20,5 +20,14 @@ describe('overlay layers', () => {
   it('opening a panel that is already open brings it to the top instead of doubling it', () => {
     const stack = pushLayer(pushLayer(pushLayer([], panel('needs')), panel('messages')), panel('needs'));
     expect(stack).toEqual([panel('messages'), panel('needs')]);
+  });
+
+  it('slides the overview in from the side, over a canvas it leaves undimmed, only while it is the view on top', () => {
+    expect(onSide([panel('dashboard')])).toBe(true);
+    expect(onSide([focus('maya'), panel('dashboard')])).toBe(true);
+    expect(onSide([panel('dashboard'), panel('needs')])).toBe(false);
+    expect(onSide([panel('needs')])).toBe(false);
+    expect(onSide([focus('maya')])).toBe(false);
+    expect(onSide([])).toBe(false);
   });
 });

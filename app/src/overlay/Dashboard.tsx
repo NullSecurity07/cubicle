@@ -8,6 +8,7 @@ import { openFrameworks, useFrameworks, usePlaceFramework } from '../frameworks'
 import { BlocksIcon } from '../nodes/FrameworksPanel';
 import { since, WHAT } from './attention';
 import { compact } from '../numbers';
+import { providerLine } from './providerLine';
 import { overlay, showDecision, showPlaybook } from './store';
 import './dashboard.css';
 import { PanelShell } from './PanelShell';
@@ -189,7 +190,7 @@ export function Dashboard() {
   };
 
   return (
-    <PanelShell name="dashboard" title="Dashboard" note={today} className="dash" onClose={close}>
+    <PanelShell name="dashboard" title="Dashboard" note={today} side className="dash" onClose={close}>
       <div className="dash__frame">
         <nav className="dash__rail" aria-label="Sections">
           {SECTIONS.map((section) => (
@@ -269,7 +270,7 @@ export function Dashboard() {
                     {(one.limits.rpd || one.limits.tpd) ? (
                       <div className={`dash__meter${one.leftPct <= 5 ? ' is-out' : one.leftPct < 20 ? ' is-low' : ''}`} role="meter" aria-label={`${one.name}: ${one.leftPct}% left`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={one.leftPct}><i style={{ width: `${one.leftPct}%` }} /></div>
                     ) : null}
-                    <small>{plural(one.usedToday.requests, 'reply', 'replies')} · {compact(one.usedToday.tokens)} tokens{one.limits.tpd ? ` of ${compact(one.limits.tpd)}` : ''} · {one.window}</small>
+                    <small>{providerLine(one)}</small>
                   </li>
                 ))}
               </Group>

@@ -106,7 +106,7 @@ body { font-family: 'Inter Variable', system-ui, sans-serif; color: var(--text);
 .card:hover .card__actions, .card__actions:focus-within { opacity: 1; }
 .card__actions button { width: 24px; height: 24px; padding: 5px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; }
 .card__actions button:hover { background: rgba(255, 255, 255, 0.1); color: var(--text); }
-.card__actions svg, .dock svg { display: block; width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.card__actions svg, .bar svg { display: block; width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
 .card__title-input { flex: 0 1 auto; min-width: 40px; max-width: 70%; field-sizing: content; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: 13px; font-weight: 600; border-radius: 5px; padding: 2px 4px; margin-left: -4px; }
 .card__title-input:focus { background: rgba(255, 255, 255, 0.08); }
 
@@ -127,16 +127,18 @@ body { font-family: 'Inter Variable', system-ui, sans-serif; color: var(--text);
 .setup .primary { background: var(--accent); color: #fff; }
 .setup .primary:disabled { opacity: 0.35; cursor: default; }
 
-.react-flow__panel.dock {
-  display: flex; align-items: center; gap: 4px; padding: 6px; margin-bottom: 18px; border-radius: 16px;
+/* The dock and the rail share one glass: a capsule that floats a little off the canvas, lit along its top edge, with a
+   near shadow for contact and a far one for lift. Buttons are round plates inside it. */
+.react-flow__panel.bar {
+  display: flex; align-items: center; gap: 4px; padding: 6px; margin: 0 0 20px; border-radius: 999px;
   border: 1px solid var(--card-border); background: var(--card-fill);
   -webkit-backdrop-filter: blur(18px) saturate(1.2); backdrop-filter: blur(18px) saturate(1.2);
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 2px 6px rgba(0, 0, 0, 0.28), 0 20px 48px -10px rgba(0, 0, 0, 0.6);
 }
-.dock button { position: relative; width: 40px; height: 40px; padding: 10px; border: 0; border-radius: 11px; background: transparent; color: var(--text); cursor: pointer; transition: background 0.15s, transform 0.1s; }
-.dock button:hover { background: rgba(255, 255, 255, 0.1); }
-.dock button:active { transform: scale(0.92); }
-.dock button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.bar button { position: relative; width: 40px; height: 40px; padding: 10px; border: 0; border-radius: 999px; background: transparent; color: var(--text); cursor: pointer; transition: background 0.15s, transform 0.1s; }
+.bar button:hover { background: rgba(255, 255, 255, 0.1); }
+.bar button:active { transform: scale(0.92); }
+.bar button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 
 /* Handles: dots, seen on hover, on selection, and while a wire is being drawn. */
 .react-flow__handle.dot {
@@ -203,8 +205,8 @@ div.msg--assistant { white-space: normal; display: flex; flex-direction: column;
 
 /* Dock: one ring per provider, today's free quota. */
 .quota { display: flex; align-items: center; }
-.dock .quota__rings { width: auto; height: auto; min-height: 40px; display: flex; align-items: center; gap: 3px; padding: 10px 8px; }
-.dock .ring { width: 18px; height: 18px; stroke-width: 2.6; stroke: var(--ok); transition: stroke 0.3s; }
+.bar .quota__rings { width: auto; height: auto; min-height: 40px; display: flex; align-items: center; gap: 3px; padding: 10px 8px; }
+.bar .ring { width: 18px; height: 18px; stroke-width: 2.6; stroke: var(--ok); transition: stroke 0.3s; }
 .ring circle { transition: stroke-dasharray 0.5s ease; }
 .ring .ring__track { stroke: rgba(255, 255, 255, 0.14); }
 .ring--low { stroke: #f0b35a !important; }
@@ -368,32 +370,32 @@ div.msg--user { position: relative; white-space: pre-wrap; }
 
 /* Dock menu for the less common cards. */
 .dock__more { position: relative; display: flex; }
-.dock .dock__menu { position: absolute; bottom: calc(100% + 14px); left: 50%; transform: translateX(-50%); width: 540px; padding: 6px; display: flex; flex-direction: row; align-items: flex-start; gap: 6px; border-radius: 14px; border: 1px solid var(--card-border); background: rgba(16, 17, 20, 0.94); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45); max-height: calc(100vh - 110px); overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
-.dock .dock__menu button { width: 100%; height: auto; padding: 7px 10px; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; border-radius: 9px; text-align: left; font: inherit; }
+.bar .dock__menu { position: absolute; bottom: calc(100% + 14px); left: 50%; transform: translateX(-50%); width: 540px; padding: 6px; display: flex; flex-direction: row; align-items: flex-start; gap: 6px; border-radius: 14px; border: 1px solid var(--card-border); background: rgba(16, 17, 20, 0.94); -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45); max-height: calc(100vh - 110px); overflow-y: auto; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; }
+.bar .dock__menu button { width: 100%; height: auto; padding: 7px 10px; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; border-radius: 9px; text-align: left; font: inherit; }
 .dock__menu b { font-size: 12.5px; font-weight: 600; }
 .dock__menu small { font-size: 11px; color: var(--muted); }
 /* A column of the menu: a quiet label in the same small capitals as a message's sender, then its rows. */
 .dock__group { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 /* Each hint on one line, and the menu as wide as its longest: a row that wraps doubles in height, and nineteen of
    them would no longer fit a window beside the dock. */
-.dock .dock__menu[role="menu"] { width: max-content; max-width: calc(100vw - 110px); }
+.bar .dock__menu[role="menu"] { width: max-content; max-width: calc(100vw - 110px); }
 .dock__menu[role="menu"] .dock__group { flex: none; }
 .dock__menu[role="menu"] small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Cards fill down a column of ten, then the next: a menu to glance across, not a list to read down. */
 .dock__cards { display: grid; grid-auto-flow: column; grid-template-rows: repeat(10, auto); gap: 2px 4px; }
 .dock__cards button { min-width: 0; }
-.dock .dock__menu[role="menu"] button { padding: 5px 10px; }
+.bar .dock__menu[role="menu"] button { padding: 5px 10px; }
 .dock__menu[role="menu"] b, .dock__menu[role="menu"] small { line-height: 1.3; }
 .dock__group--apps { border-left: 1px solid var(--card-border); padding-left: 6px; }
 .dock__menu h6 { margin: 2px 4px 4px; padding: 6px 6px 2px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--muted); }
 .dock__app h6 { margin-top: 0; padding-top: 4px; }
-.dock .dock__app { width: 260px; flex-direction: column; align-items: stretch; gap: 8px; padding: 10px; }
+.bar .dock__app { width: 260px; flex-direction: column; align-items: stretch; gap: 8px; padding: 10px; }
 .dock__app label { display: flex; flex-direction: column; gap: 4px; padding: 0 2px; font-size: 11px; color: var(--muted); }
 .dock__app input { border: 1px solid var(--card-border); border-radius: 8px; padding: 6px 8px; outline: 0; background: rgba(0, 0, 0, 0.25); color: var(--text); font: inherit; font-size: 12.5px; }
 .dock__app input:focus { border-color: var(--focus); }
 .dock__error { margin: 0; padding: 0 2px; font-size: 11px; color: #f0b35a; }
-.dock .dock__app .dock__submit { align-items: center; padding: 7px 10px; background: var(--accent); color: #fff; font-weight: 600; font-size: 12.5px; }
-.dock .dock__app .dock__submit:hover { background: var(--accent-soft); color: #0a0a0a; }
+.bar .dock__app .dock__submit { align-items: center; padding: 7px 10px; background: var(--accent); color: #fff; font-weight: 600; font-size: 12.5px; }
+.bar .dock__app .dock__submit:hover { background: var(--accent-soft); color: #0a0a0a; }
 
 /* Sticky note, picture, link. */
 .note { flex: 1; min-height: 0; display: flex; flex-direction: column; border-radius: inherit; background: color-mix(in srgb, var(--note) 16%, transparent); }
@@ -659,6 +661,16 @@ div.msg--user { position: relative; white-space: pre-wrap; }
 /* The founder's views: one glass sheet over the shade. */
 .panel { position: absolute; top: 7vh; max-height: 86vh; left: 50%; width: min(620px, calc(100% - 40px)); transform: translateX(-50%); display: flex; flex-direction: column; overflow: hidden; border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.14); background: rgba(16, 17, 20, 0.86); -webkit-backdrop-filter: blur(22px) saturate(1.2); backdrop-filter: blur(22px) saturate(1.2); box-shadow: 0 30px 90px rgba(0, 0, 0, 0.6); animation: panel-in 0.18s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .panel--wide { bottom: 7vh; width: min(1120px, calc(100% - 56px)); }
+/* A side view (the dashboard) slides in from the left edge, eased out over a fifth of a second, and leaves the canvas
+   beside it undimmed: the shade stays to catch a click outside, but is clear. */
+.panel.panel--side { top: 16px; bottom: 16px; left: 16px; max-height: none; transform: none; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 2px 8px rgba(0, 0, 0, 0.3), 30px 0 90px -24px rgba(0, 0, 0, 0.65); animation: side-in 0.22s cubic-bezier(0.22, 1, 0.36, 1); }
+.panel.panel--side:focus { outline: none; }
+@keyframes side-in { from { transform: translateX(calc(-100% - 24px)); } }
+.overlay.is-side .overlay__shade { background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; animation: none; }
+@media (prefers-reduced-motion: reduce) { .panel.panel--side { animation: none; } }
+/* A dock along the bottom or on the left would peek out from behind the side view: it steps aside until the view closes. */
+.react-flow__panel.dock { transition: opacity 0.15s; }
+body:has(.overlay.is-side) .react-flow__panel.dock:is(.bar--bottom, .bar--left) { opacity: 0; pointer-events: none; }
 /* A view that could not be drawn says so here, instead of taking the stage with it. */
 .guard { padding: 22px 22px 18px; gap: 14px; }
 .guard p { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text); }
@@ -759,22 +771,24 @@ button.msg--learned:hover { color: var(--text); background: rgba(255, 255, 255, 
 
 /* A dock on the side of the window: a column in the middle of that edge, clear of the cards' resize grips. xyflow
    shifts its centred panels by its own 15px margin; this dock keeps its own margin and centres exactly. */
-.react-flow__panel.dock--vertical { margin: 18px; transform: translateY(-50%); }
-.dock--vertical, .dock--vertical .dock__set { flex-direction: column; }
-.dock--vertical .dock__gap { width: 22px; height: 1px; margin: 4px 0; }
-.dock--vertical .quota { position: relative; }
-.dock--vertical .quota__rings { flex-direction: column; width: 40px; padding: 9px 0; }
-.dock--vertical .ring { width: 17px; height: 17px; }
+.react-flow__panel.bar.bar--vertical { margin: 0 18px; transform: translateY(-50%); }
+/* Along the bottom the same: xyflow's own centring allows for a 15px margin this pill does not have. */
+.react-flow__panel.bar.bar--bottom { transform: translateX(-50%); }
+.bar--vertical, .bar--vertical .dock__set { flex-direction: column; }
+.bar--vertical .dock__gap { width: 22px; height: 1px; margin: 4px 0; }
+.bar--vertical .quota { position: relative; }
+.bar--vertical .quota__rings { flex-direction: column; width: 40px; padding: 9px 0; }
+.bar--vertical .ring { width: 17px; height: 17px; }
 /* The first-run list keeps its bottom-left corner; beside a left-hand dock it steps right, clear of the column. */
-.react-flow:has(.dock--left) .react-flow__panel.missions { margin-left: 86px; }
+.react-flow:has(.bar--left) .react-flow__panel.missions { margin-left: 86px; }
 
 /* Menus open away from the edge the dock sits on: beside a column, level with the button that opened them, and
    upward from a row. useInView (Dock.tsx) nudges a side menu up or down by --shift so it stays whole in the window. */
-.dock--vertical .dock__menu, .dock--vertical .quota__detail { top: -6px; bottom: auto; transform: translateY(var(--shift, 0px)); max-height: calc(100vh - 24px); }
-.dock--right .dock__menu, .dock--right .quota__detail { left: auto; right: calc(100% + 20px); transform-origin: right top; }
-.dock--left .dock__menu, .dock--left .quota__detail { left: calc(100% + 20px); right: auto; transform-origin: left top; }
-.dock--bottom .dock__menu, .dock--bottom .quota__detail { transform-origin: center bottom; }
-.dock .dock__menu, .dock .quota__detail { animation: dock-menu-in 0.16s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.bar--vertical .dock__menu, .bar--vertical .quota__detail { top: -6px; bottom: auto; transform: translateY(var(--shift, 0px)); max-height: calc(100vh - 24px); }
+.bar--right .dock__menu, .bar--right .quota__detail { left: auto; right: calc(100% + 20px); transform-origin: right top; }
+.bar--left .dock__menu, .bar--left .quota__detail { left: calc(100% + 20px); right: auto; transform-origin: left top; }
+.bar--bottom .dock__menu, .bar--bottom .quota__detail { transform-origin: center bottom; }
+.bar .dock__menu, .bar .quota__detail { animation: dock-menu-in 0.16s cubic-bezier(0.2, 0.8, 0.2, 1); }
 @keyframes dock-menu-in { from { opacity: 0; scale: 0.97; } }
 
 /* The name beside a button, after a short hover or at once on keyboard focus: a small pill, on the side away from the
@@ -786,27 +800,71 @@ button.msg--learned:hover { color: var(--text); background: rgba(255, 255, 255, 
   opacity: 0; transition: opacity 0.12s, translate 0.12s;
 }
 .dock__label kbd { font: inherit; font-size: 11px; font-weight: 500; color: var(--muted); }
-.dock--right .dock__label { right: calc(100% + 16px); top: 50%; transform: translateY(-50%); translate: 4px 0; }
-.dock--left .dock__label { left: calc(100% + 16px); top: 50%; transform: translateY(-50%); translate: -4px 0; }
-.dock--bottom .dock__label { bottom: calc(100% + 16px); left: 50%; transform: translateX(-50%); translate: 0 4px; }
-.dock button:hover > .dock__label { opacity: 1; translate: 0 0; transition-delay: 0.25s; }
-.dock button:focus-visible > .dock__label { opacity: 1; translate: 0 0; }
-.dock button[aria-expanded="true"] > .dock__label { display: none; }
+.bar--right .dock__label { right: calc(100% + 16px); top: 50%; transform: translateY(-50%); translate: 4px 0; }
+.bar--left .dock__label { left: calc(100% + 16px); top: 50%; transform: translateY(-50%); translate: -4px 0; }
+.bar--bottom .dock__label { bottom: calc(100% + 16px); left: 50%; transform: translateX(-50%); translate: 0 4px; }
+.bar button:hover > .dock__label { opacity: 1; translate: 0 0; transition-delay: 0.25s; }
+.bar button:focus-visible > .dock__label { opacity: 1; translate: 0 0; }
+.bar button[aria-expanded="true"] > .dock__label { display: none; }
 
 /* A small lift under the pointer, toward the cards; a press still sinks the whole button. */
-.dock button > svg { transition: transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1); }
-.dock--right button:hover > svg { transform: translateX(-2px) scale(1.06); }
-.dock--left button:hover > svg { transform: translateX(2px) scale(1.06); }
-.dock--bottom button:hover > svg { transform: translateY(-2px) scale(1.06); }
+.bar button > svg { transition: transform 0.18s cubic-bezier(0.2, 0.8, 0.2, 1); }
+.bar--right button:hover > svg { transform: translateX(-2px) scale(1.06); }
+.bar--left button:hover > svg { transform: translateX(2px) scale(1.06); }
+.bar--bottom button:hover > svg { transform: translateY(-2px) scale(1.06); }
 
 /* The button of the view that is open is lit, with a dot on the edge that faces the cards. */
-.dock button.is-open { background: rgba(255, 255, 255, 0.08); }
-.dock button.is-open::before { content: ''; position: absolute; width: 4px; height: 4px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px var(--accent); }
-.dock--right button.is-open::before { left: -5px; top: calc(50% - 2px); }
-.dock--left button.is-open::before { right: -5px; top: calc(50% - 2px); }
-.dock--bottom button.is-open::before { bottom: -5px; left: calc(50% - 2px); }
-.dock .dock__needs { position: relative; }
-.dock .dock__needs.is-waiting { color: var(--needs); }
+.bar button.is-open { background: rgba(255, 255, 255, 0.08); }
+.bar button.is-open::before { content: ''; position: absolute; width: 4px; height: 4px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+.bar--right button.is-open::before { left: -5px; top: calc(50% - 2px); }
+.bar--left button.is-open::before { right: -5px; top: calc(50% - 2px); }
+.bar--bottom button.is-open::before { bottom: -5px; left: calc(50% - 2px); }
+/* The rail: what comes to the founder, a slim capsule at the middle of the right edge with smaller plates. */
+.react-flow__panel.bar.rail { padding: 5px; margin: 0 16px; gap: 2px; }
+.rail button { width: 36px; height: 36px; padding: 9px; }
+.rail .dock__set { gap: 2px; }
+.rail .dock__gap { width: 18px; }
+.rail .quota__rings { width: 36px; padding: 8px 0; }
+.rail .ring { width: 15px; height: 15px; }
+.rail .dock__needs b { top: 1px; right: 0; }
+
+/* A narrow window has room for one bar only: the dock runs the full width along the bottom, 16px in from each edge,
+   the rail's buttons folded into it, every button in one flow that wraps onto a second row rather than off the edge.
+   Its menu opens above the whole bar, as wide as the bar, in a single column of cards. */
+@media (max-width: 880px) {
+  .react-flow__panel.bar.bar--bottom { left: 16px; right: 16px; margin: 0 0 16px; transform: none; flex-wrap: wrap; justify-content: center; gap: 2px; border-radius: 28px; }
+  .bar--bottom .dock__set { display: contents; }
+  .bar--bottom .dock__gap { display: none; }
+  .bar--bottom .dock__more { position: static; }
+  .bar.bar--bottom .dock__menu[role="menu"], .bar.bar--bottom .dock__app { left: 0; right: 0; bottom: calc(100% + 10px); width: auto; max-width: none; transform: none; flex-direction: column; align-items: stretch; max-height: min(70vh, calc(100vh - 150px)); }
+  .bar--bottom .dock__menu[role="menu"] .dock__group { flex: none; }
+  .bar--bottom .dock__cards { grid-auto-flow: row; grid-template-rows: none; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .bar.bar--bottom .dock__menu[role="menu"] button { align-items: stretch; }
+  .bar--bottom .dock__menu[role="menu"] small { max-width: 100%; }
+  .bar--bottom .dock__group--apps { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 2px 4px; border-left: 0; padding-left: 0; border-top: 1px solid var(--card-border); padding-top: 4px; }
+  .bar--bottom .dock__group--apps h6 { grid-column: 1 / -1; }
+  .bar.bar--bottom .quota__detail { left: auto; right: 0; transform: none; }
+  /* A phone has room for two columns of names, not their hints; each button still says in full what it adds. */
+  @media (max-width: 480px) { .bar--bottom .dock__menu[role="menu"] small { display: none; } .bar.bar--bottom .dock__menu[role="menu"] button { padding: 8px 10px; } }
+  /* The first-run card stands above the dock, not under it, and never wider than the window. */
+  .react-flow__panel.missions { margin: 16px 16px calc(var(--dock-block, 54px) + 28px); width: min(288px, calc(100vw - 32px)); }
+}
+
+/* A dock on the right edge carries the rail's buttons too, so in a short window its plates shrink to stay whole. */
+@media (max-height: 820px) {
+  .dock.bar--vertical button { width: 34px; height: 34px; padding: 8px; }
+  .dock.bar--vertical .quota__rings { width: 34px; padding: 7px 0; }
+  .dock.bar--vertical .dock__gap { margin: 2px 0; }
+}
+
+/* The way to ask for anything leads the dock on a faint plate of the accent, the one lit thing in it. */
+.dock button.dock__ask { background: rgba(78, 140, 255, 0.16); color: var(--accent-soft); }
+.dock button.dock__ask:hover { background: rgba(78, 140, 255, 0.26); color: #fff; }
+.dock__started svg { stroke-width: 2.2; }
+.dock__started svg circle:not(.ring__track) { stroke: var(--accent); }
+.dock__started .ring__track { stroke: rgba(255, 255, 255, 0.16); }
+.bar .dock__needs { position: relative; }
+.bar .dock__needs.is-waiting { color: var(--needs); }
 .dock__needs b { position: absolute; top: 3px; right: 2px; min-width: 15px; height: 15px; box-sizing: border-box; padding: 0 4px; border-radius: 8px; background: var(--needs); color: #17120a; font-size: 10px; font-weight: 700; line-height: 15px; text-align: center; font-variant-numeric: tabular-nums; }
 /* A note out of the library, on the stage: what it is called, what it is about, how big it is, and a way in. */
 .library-card { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; cursor: auto; }

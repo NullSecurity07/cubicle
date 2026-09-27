@@ -7,9 +7,13 @@
 //
 // `STAGE_FAKE_MODEL=1 pnpm check:evals` walks the same road with the stand-in judge and no key at all, which proves
 // the script runs but proves nothing about a provider.
+//
+// Before any of that, with or without a key, it puts every defect the co-founder journeys found that a check in code
+// now holds back through that check (server/evals/regressions.ts), and fails when one came back.
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 try { process.loadEnvFile(resolve(import.meta.dirname, '../../.env')); } catch { /* no keys: the check says what it needs */ }
+const { REGRESSIONS, runRegressions } = await import('../server/evals/regressions.ts');
 const { caseScore, fakeJudge, scoreCase } = await import('../server/evals/score.ts');
 const { autoevalsJudge, judgeClientOf, verdictWords } = await import('../server/evals/scorers.ts');
 const { chunksOf } = await import('../server/recall.ts');
@@ -33,6 +37,12 @@ function passagesFor(note: string, question: string): string[] {
     .map((one) => one.chunk);
 }
 
+const regressions = await runRegressions();
+console.log(`Journey regressions: ${regressions.passed} of ${REGRESSIONS.length} held`);
+for (const { defect, fault } of regressions.failed) console.log(`  CAME BACK  ${defect}\n             ${fault}`);
+console.log('');
+if (regressions.failed.length) process.exitCode = 1;
+
 const framework = JSON.parse(await readFile(resolve(here, 'frameworks/startup-evaluation/framework.json'), 'utf8')) as Framework;
 // The case the notes state an answer and criteria for, so all three scorers really run rather than one.
 const kase = framework.dataset.find((one) => one.expected && one.rubric) ?? framework.dataset[0];
@@ -49,7 +59,8 @@ const clients = realClients();
 const client = judgeClientOf(clients);
 if (!fake && !client) {
   console.log('NOT SET UP: no OpenAI-compatible provider is configured. Put GROQ_API_KEY or GEMINI_API_KEY in the repository\'s .env and run this again.');
-  process.exit(0);
+  // Not set up is no failure; a regression that came back still is.
+  process.exit(process.exitCode ?? 0);
 }
 
 let calls = 0;

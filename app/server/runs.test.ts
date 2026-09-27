@@ -102,3 +102,25 @@ describe('who set the work going', () => {
     for (const by of ['schedule', 'chain', 'call']) expect(told[by]).not.toContain('The founder started this task');
   });
 });
+
+describe('a run when the only model able cannot hold the room prompt (round 6)', () => {
+  it('works the task from the short prompt, and the model answers', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'runs-'));
+    const store = createStore(dir); const boards = createBoards(dir);
+    const built: boolean[] = [];
+    const sizes: number[] = [];
+    const groq: ModelClient = { name: 'groq', model: 'gpt-oss', maxPromptChars: 18_000, tools: true, limits: {}, async step(messages, { onToken }) {
+      sizes.push(messages.reduce((sum, one) => sum + (one.content ?? '').length, 0));
+      onToken('Done from the short prompt.'); return { text: '', calls: [] };
+    } };
+    const runs = createRuns({ boards, store, approvals: createApprovals(), busy: new Set(), clients: [groq], usage: createUsage(null), tools: docTools, notify: () => {},
+      promptFor: async (current, roomId, names, fresh, slim) => { built.push(!!slim); return [{ role: 'system', content: slim ? 'You are Maya.' : `You are Maya. ${'Brand doc in full. '.repeat(2000)}` }]; } });
+    const task = await boards.add('b1', { title: 'Tighten the brand doc', detail: '' });
+    await boards.change('b1', task.id, { assignee: 'marketing' });
+    await runs.start('b1', task.id);
+    await until(async () => (await boards.list('b1'))[0].run?.state === 'done');
+    expect(built).toEqual([false, true]);
+    expect(sizes[0]).toBeLessThan(18_000);
+    expect((await boards.list('b1'))[0].run?.result).toBe('Done from the short prompt.');
+  });
+});

@@ -5,8 +5,10 @@ import type { AttentionBook } from './attention.ts';
 import { json } from './http.ts';
 import { holdPartner, PRECONDITION_NUDGE } from './partner/pushback.ts';
 import { partnerRoute } from './partner/route.ts';
+import { SYNTHESIS_HEAD } from './partner/synthesis.ts';
 import { teamVerdict } from './partner/standing.ts';
-import { runTurn } from './loop.ts';
+import { runTurn, type TurnResult } from './loop.ts';
+import { needsSlim, slimNotice } from './slim.ts';
 import type { createMemory } from './memory.ts';
 import type { Offered } from './playbook.ts';
 import { complete, plainFailure, promptSize, type ModelClient } from './providers.ts';
@@ -17,7 +19,7 @@ import type { Payloads, Seams } from './seams.ts';
 import type { Store } from './store.ts';
 import type { Consult } from './tools/team.ts';
 import type { Tool } from './tools/registry.ts';
-import { ANSWER_IN_WORDS, HELD_BACK, proseToolCall, turnSources, verdictUnwritten } from './truth.ts';
+import { ANSWER_IN_WORDS, HELD_BACK, holdVerdict, proseToolCall, turnSources } from './truth.ts';
 import type { PromptFor } from './turn-prompt.ts';
 import type { UsageBook } from './usage.ts';
 
@@ -40,13 +42,21 @@ export function createChat(deps: Deps) {
     const target = stage.rooms.find((room) => room.id === toRoomId)!;
     await store.appendChat(toRoomId, { id: newMessageId(), role: 'user', text: question, at: Date.now(), from: asker.name });
     let messages = await promptFor(stage, toRoomId, []);
+    // Nobody able holds the whole prompt: the colleague answers from the short one.
+    let slim = needsSlim(clients, usage, messages, []);
+    if (slim) messages = await promptFor(stage, toRoomId, [], false, true);
     // The colleague is shown what they would be shown in a turn of their own: their playbook, their notes, their
     // cards. Offered nothing, so every procedure that needs a tool is left out, and they still answer in words only.
     // Not while they are in a turn of their own, whose guards and questions to the founder this must not disturb; and
     // as a run, because being asked by a colleague is not the founder answering whatever this person asked them.
     if (!busy.has(toRoomId)) {
-      const before: Payloads['turn:before'] & Offered = { roomId: toRoomId, source: 'run', query: question, messages, offered: [] };
+      const before: Payloads['turn:before'] & Offered = { roomId: toRoomId, source: 'run', query: question, messages, offered: [], ...(slim ? { slim } : {}) };
       messages = (await seams.run('turn:before', before)).messages;
+      // The extras made it too big after all: built short and asked again, as a turn is (loop.ts).
+      if (!slim && needsSlim(clients, usage, messages, [], 0)) {
+        slim = true;
+        messages = (await seams.run('turn:before', { ...before, messages: await promptFor(stage, toRoomId, [], false, true), slim })).messages;
+      }
     }
     const { order } = target.partner && !target.model ? partnerRoute(clients, usage, { promptChars: promptSize(messages), tools: false })
       : route(clients, usage, { pinned: target.model, promptChars: promptSize(messages), tools: false });
@@ -62,10 +72,10 @@ export function createChat(deps: Deps) {
       if (!reply.reported) usage.record(reply.client.name, reply.usage, reply.quota);
       if (proseToolCall(reply.text)) reply = { ...reply, text: HELD_BACK };
     }
-    // A judge whose doc says "Not assessed" is held to it here too: an answer to a colleague naming a verdict gets the
-    // truth net's line, or the asker relays "PIVOT REQUIRED" as if it were written.
-    const unwritten = reply.text === HELD_BACK ? null : verdictUnwritten(reply.text, [], turnSources(messages));
-    if (unwritten) reply = { ...reply, text: `${reply.text.trimEnd()}\n\n${unwritten}` };
+    // A judge whose doc says "Not assessed" is held to it here too: an answer to a colleague naming a verdict has the
+    // word and the score taken out and the truth net's line put under it, or the asker relays "PIVOT REQUIRED" as if
+    // it were written.
+    if (reply.text !== HELD_BACK) reply = { ...reply, text: holdVerdict(reply.text, [], turnSources(messages)) };
     await store.appendChat(toRoomId, { id: newMessageId(), role: 'assistant', text: reply.text, at: Date.now(), provider: reply.client.name, model: reply.client.model, usage: reply.usage });
     return reply.text;
   };
@@ -95,7 +105,10 @@ export function createChat(deps: Deps) {
       roomFeed.tell({ roomId, turn, started: { ...(extra.via ? { via: extra.via } : {}) } });
       // The names in the prompt are the narrowed list too: a person is never told about a tool they are not offered.
       const mine = deps.toolsFor(stage, roomId);
-      const messages = await promptFor(stage, roomId, mine.map((tool) => tool.name));
+      let messages = await promptFor(stage, roomId, mine.map((tool) => tool.name));
+      // Nobody able holds the whole prompt, even with the oldest talk cut (only Groq is set up, say): built again short.
+      const slim = needsSlim(clients, usage, messages, mine);
+      if (slim) messages = await promptFor(stage, roomId, mine.map((tool) => tool.name), false, true);
       const room = stage.rooms.find((candidate) => candidate.id === roomId)!;
       const vision = messages.some((message) => message.role === 'user' && !!message.images?.length);
       // The partner answers on the strongest free models unless the founder pinned one for them.
@@ -103,6 +116,7 @@ export function createChat(deps: Deps) {
         : route(clients, usage, { pinned: room.model, promptChars: promptSize(messages), tools: true, vision });
       if (vision && !order[0]?.vision) send({ notice: 'No model that can see images is set up (Gemini can), so the picture is described to the model only by its file name.' });
       if (notice) send({ notice });
+      if (slim && order[0]) send({ notice: slimNotice(order[0]) });
       // The reply is kept as it stands after every step a tool finishes, marked stopped, and the finished reply is
       // written over it under the same id: a restart mid-turn keeps what was said and done, not nothing.
       const replyId = kept.id;
@@ -113,7 +127,9 @@ export function createChat(deps: Deps) {
         kept.writes = kept.writes.then(() => store.putMessage(roomId, draft)).catch(() => {});
       };
       const turnOn = (these: typeof messages, offered = mine) => runTurn({
-        messages: these, tools: offered, clients: order, usage, signal: stop.signal, seams, source: 'chat', query: text,
+        messages: these, tools: offered, clients: order, usage, signal: stop.signal, seams, source: 'chat', query: text, slim,
+        // The short prompt with whatever this call added after the whole one (a second look's answer and nudge).
+        slimmer: async () => [...await promptFor(stage, roomId, mine.map((tool) => tool.name), false, true), ...these.slice(messages.length)],
         // Listened for before it is shown, so an answer given while Needs you is still being written is heard.
         approve: (event, signal) => askFounder(attention, approvals, { id: `approval:${event.id}`, kind: 'approval', title: event.question ?? event.name.replace(/_/g, ' '), at: Date.now(), roomId, who: room.name, event }, signal),
         context: { stage, roomId, store, granted: new Map() },
@@ -127,41 +143,56 @@ export function createChat(deps: Deps) {
         },
       });
       let reply = await turnOn(messages);
+      // A second look: the person answers once more in words only, with their first answer and the nudge in front of
+      // them, so nothing they did is done again. Said first, then the bubble emptied, so no window shows the new answer
+      // running on from the old one. The partner's checks below take it, and so may a slice on the reply seam.
+      let lookedAgain = false;
+      const lookAgain = (first: TurnResult, nudge: string) => {
+        lookedAgain = true;
+        const why = nudge === PRECONDITION_NUDGE ? 'checking the preconditions' : nudge.startsWith(SYNTHESIS_HEAD) ? 'tying it to the standing facts' : 'weighing the team\'s verdict';
+        send({ notice: `${room.name} is taking another look: ${why}.` });
+        send({ restart: true });
+        roomFeed.tell({ roomId, turn, restart: true });
+        kept.text = '';
+        return turnOn([...messages, { role: 'assistant', content: first.text }, { role: 'user', content: nudge }], [])
+          .catch((error: Error) => {
+            // No model could take the second look: the first answer stands, back in every window, and is labelled
+            // as unchecked below. Its tools and usage are already counted once.
+            if (stop.signal.aborted) throw error;
+            send({ notice: `${room.name} could not take another look (${plainFailure(error.message)}), so the first answer stands.` });
+            send({ restart: true });
+            roomFeed.tell({ roomId, turn, restart: true });
+            kept.text = first.text;
+            send({ token: first.text });
+            roomFeed.tell({ roomId, turn, token: first.text });
+            return { ...first, tools: [], usage: { input: 0, output: 0 } };
+          });
+      };
       // The partner is held to the precondition check on a raise, hire, spend or pivot plan, and says "My call" once.
       if (room.partner) {
         // The weakest team verdict on the stage, which a call to build has to weigh.
         const verdict = await teamVerdict(stage, (id) => store.readDoc(id)).catch(() => null);
-        reply = await holdPartner(text, reply, (first, nudge = PRECONDITION_NUDGE) => {
-          // Said first, then the bubble emptied, so no window shows the new answer running on from the old one.
-          send({ notice: `${room.name} is taking another look: ${nudge === PRECONDITION_NUDGE ? 'checking the preconditions' : 'weighing the team\'s verdict'}.` });
-          send({ restart: true });
-          roomFeed.tell({ roomId, turn, restart: true });
-          kept.text = '';
-          // Words only this time, with the first answer and the nudge in front of it: nothing it did is done again.
-          return turnOn([...messages, { role: 'assistant', content: first.text }, { role: 'user', content: nudge }], [])
-            .catch((error: Error) => {
-              // No model could take the second look: the first answer stands, back in every window, and is labelled
-              // as unchecked below. Its tools and usage are already counted once.
-              if (stop.signal.aborted) throw error;
-              send({ notice: `${room.name} could not take another look (${plainFailure(error.message)}), so the first answer stands.` });
-              send({ restart: true });
-              roomFeed.tell({ roomId, turn, restart: true });
-              kept.text = first.text;
-              send({ token: first.text });
-              roomFeed.tell({ roomId, turn, token: first.text });
-              return { ...first, tools: [], usage: { input: 0, output: 0 } };
-            });
-        }, verdict);
+        reply = await holdPartner(text, reply, (first, nudge = PRECONDITION_NUDGE) => lookAgain(first, nudge), verdict);
       }
       // The last look before it is kept: whatever a slice adds under the reply is shown in every window too.
       const said = reply.text;
-      reply = (await seams.run('turn:reply', { roomId, query: text, reply })).reply;
-      if (reply.text !== said && reply.text.startsWith(said)) {
+      const before = lookedAgain;
+      reply = (await seams.run('turn:reply', { roomId, query: text, reply, again: lookAgain, lookedAgain: before })).reply;
+      // A second look the seam took streamed its own answer; only words added after it are still to be shown.
+      if (lookedAgain && !before) {
+        const more = reply.text.startsWith(kept.text) ? reply.text.slice(kept.text.length) : '';
+        if (more) { kept.text += more; send({ token: more }); roomFeed.tell({ roomId, turn, token: more }); }
+      } else if (reply.text !== said && reply.text.startsWith(said)) {
         const more = reply.text.slice(said.length);
         kept.text += more;
         send({ token: more });
         roomFeed.tell({ roomId, turn, token: more });
       }
+      // A verdict the doc refused or does not hold yet is never kept in the words: the judge's own, or a colleague's
+      // who relays what a consult brought back. The founder reads "[not written]" where "PIVOT REQUIRED 6/10" was.
+      const outcomes = [...new Set(stage.docs.flatMap((doc) => doc.rules?.outcomes ?? []))];
+      const held = holdVerdict(reply.text, reply.tools, turnSources(messages), outcomes);
+      if (held !== reply.text) reply = { ...reply, text: held };
       const message = {
         id: replyId, role: 'assistant' as const, text: reply.text, at: Date.now(), provider: reply.provider, model: reply.model,
         usage: reply.usage, ...(reply.tools.length ? { tools: reply.tools } : {}), ...(reply.stopped ? { stopped: true } : {}),

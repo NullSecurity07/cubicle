@@ -12,7 +12,7 @@ import { docTools } from './docs.ts';
 import { HELD_BACK } from '../truth.ts';
 import { runTool } from './registry.ts';
 import { teamTools, type Consult } from './team.ts';
-import { conversations, filled, guardWrite, sectionBody, verdictOf } from './verdict.ts';
+import { breakdownMismatch, conversations, filled, guardWrite, payingUsers, sectionBody, verdictOf, verdictState } from './verdict.ts';
 import { createPromptFor } from '../turn-prompt.ts';
 
 const OUTCOMES = ['WEAK', 'PIVOT REQUIRED', 'STRONG'];
@@ -544,6 +544,12 @@ describe('a cap on no conversations while the company has paying users', () => {
     expect(verdict.text).toContain('0 conversations recorded; the Numbers section says 3 paying users; count them if you talked to them.');
   });
 
+  it('reads the row the Company brief keeps itself, "Paying beta users: 3"', () => {
+    expect(payingUsers('- Paying beta users: 3 (founder, 2026-09-27)\n- Burn: €1,100/month')).toBe('3 paying users');
+    expect(payingUsers('- Paying users: 5')).toBe('5 paying users');
+    expect(payingUsers('- Free users: 40')).toBeNull();
+  });
+
   it('says nothing of users when the Numbers section has none', async () => {
     const { as, fill, store } = await setup();
     await store.replaceDoc('company-brief', '# Company brief\n\n## Numbers\n\nRunway: €4,200.\n');
@@ -634,35 +640,37 @@ describe('the judge told her verdict was refused', () => {
 
 // Rohan's journey-8 answer to Priya: a pick-one menu for the founder, stored as section 4.
 const ROHAN_MENU = "**Founder\u2011market fit (Section\u202f4)**  \n\n*Why you?* \u2013\u202fPlease tell me which of the following applies to you (pick **one** or more):\n\n- **Lived the problem** \u2013 you have done bookkeeping/VAT filing yourself and felt the pain daily.  \n- **Unusual access** \u2013 you know dozens/hundreds of solo EU consultants personally or are embedded in that community.  \n- **Earned secret** \u2013 you have years in accounting/fin\u2011tech that revealed hidden cost/complexity.  \n\n(Responses such as \u201cI\u2019m passionate\u201d do **not** count.)\n\n*Please provide the applicable reason(s) so I can complete Section\u202f4.*";
+// Priya on a script: ask Rohan about his empty section, then write the verdict. Rohan answers on his own script.
+async function setupAsk(question: string, ...rest: (string | { chat: string })[]) {
+  const answers = rest.filter((one): one is string => typeof one === 'string');
+  const { stage, store, doc, fill } = await setup();
+  for (const one of rest) if (typeof one !== 'string') await store.appendChat('fit', { id: 'f1', role: 'user', text: one.chat, at: Date.now() });
+  await fill(['4. Founder-market fit']);
+  const consult: Consult = async () => answers.shift() ?? '';
+  const steps: ({ name: string; args: unknown }[] | string)[] = [
+    [{ name: 'ask_person', args: { name: 'Rohan', question } }],
+    [{ name: 'replace_section', args: { doc: 'Evaluation', heading: '5. Verdict', text: 'WEAK: no founder fit (4).\n\nScore: 3/10' } }],
+    'Done.',
+  ];
+  const client: ModelClient = {
+    name: 'script', model: 's-1', maxPromptChars: Infinity, tools: true, limits: {},
+    async step(_messages, { onToken }): Promise<ModelTurn> {
+      const next = steps.shift() ?? 'done';
+      if (typeof next === 'string') { onToken(next); return { text: '', calls: [], usage: { input: 1, output: 1 } }; }
+      return { text: '', calls: next.map((call, index) => ({ id: `c${steps.length}-${index}`, name: call.name, args: JSON.stringify(call.args) })), usage: { input: 1, output: 1 } };
+    },
+  };
+  const effects: string[] = [];
+  const result = await runTurn({
+    messages: [{ role: 'user', content: 'Give the verdict.' }], tools: [...docTools, ...teamTools(consult)], clients: [client], usage: createUsage(null),
+    context: { stage, roomId: 'verdict', store, granted: new Map() },
+    events: { token: () => {}, tool: ({ effect }) => { if (effect) effects.push(`${effect.kind}:${'id' in effect ? effect.id : ''}`); } },
+  });
+  return { result, text: await doc(), effects };
+}
+
 describe('the judge asking a colleague about their empty section', () => {
-  // Priya on a script: ask Rohan about his empty section, then write the verdict. Rohan answers on his own script.
-  async function run(question: string, ...rest: (string | { chat: string })[]) {
-    const answers = rest.filter((one): one is string => typeof one === 'string');
-    const { stage, store, doc, fill } = await setup();
-    for (const one of rest) if (typeof one !== 'string') await store.appendChat('fit', { id: 'f1', role: 'user', text: one.chat, at: Date.now() });
-    await fill(['4. Founder-market fit']);
-    const consult: Consult = async () => answers.shift() ?? '';
-    const steps: ({ name: string; args: unknown }[] | string)[] = [
-      [{ name: 'ask_person', args: { name: 'Rohan', question } }],
-      [{ name: 'replace_section', args: { doc: 'Evaluation', heading: '5. Verdict', text: 'WEAK: no founder fit (4).\n\nScore: 3/10' } }],
-      'Done.',
-    ];
-    const client: ModelClient = {
-      name: 'script', model: 's-1', maxPromptChars: Infinity, tools: true, limits: {},
-      async step(_messages, { onToken }): Promise<ModelTurn> {
-        const next = steps.shift() ?? 'done';
-        if (typeof next === 'string') { onToken(next); return { text: '', calls: [], usage: { input: 1, output: 1 } }; }
-        return { text: '', calls: next.map((call, index) => ({ id: `c${steps.length}-${index}`, name: call.name, args: JSON.stringify(call.args) })), usage: { input: 1, output: 1 } };
-      },
-    };
-    const effects: string[] = [];
-    const result = await runTurn({
-      messages: [{ role: 'user', content: 'Give the verdict.' }], tools: [...docTools, ...teamTools(consult)], clients: [client], usage: createUsage(null),
-      context: { stage, roomId: 'verdict', store, granted: new Map() },
-      events: { token: () => {}, tool: ({ effect }) => { if (effect) effects.push(`${effect.kind}:${'id' in effect ? effect.id : ''}`); } },
-    });
-    return { result, text: await doc(), effects };
-  }
+  const run = setupAsk;
 
   it('writes the colleague\'s answer into their own section, under their name and marked as from chat', async () => {
     const { result, text, effects } = await run('Your section "4. Founder-market fit" is empty. What is the founder\'s fit?', 'None: the founder has never worked in this market.');
@@ -938,5 +946,94 @@ describe('a verdict\'s score lines', () => {
     // A range is no marker.
     await as('verdict')('replace_section', { heading: '5. Verdict', text: 'WEAK (3)\n\nScore: 4/10 (3-5 users)' });
     expect(sectionBody(await doc(), '5. Verdict')).toBe('WEAK (3)\n\nScore: 4/10 (3-5 users)');
+  });
+});
+
+describe('the parked minors of round five', () => {
+  const LABEL = 'Real customer conversations done';
+
+  it('skips "which of these" only as a whole sentence, lead-in or not, and writes an answer that uses the words', async () => {
+    const { text } = await setupAsk('What goes in section 4?', 'Lived it: she tested which of these channels reach solo consultants, and cold email won.');
+    expect(sectionBody(text, '4. Founder-market fit')).toMatch(/^Lived it: she tested which of these channels/);
+    for (const asking of ['Which of these fits you: lived it, unusual access, technical edge?', '**Which of the following applies to you?** Lived it, or access.',
+      // A menu with a lead-in sentence before it is a menu still.
+      'Section 4 needs your input. Which of these applies to you:\n- Lived it\n- Unusual access', 'I need one thing first.\n\nWhich of the following describes you:\n- Lived it\n- Unusual access']) {
+      const { text: held } = await setupAsk('What goes in section 4?', asking);
+      expect(filled(sectionBody(held, '4. Founder-market fit')), asking).toEqual([]);
+    }
+  });
+
+  it('skips a bold question that stands as its own sentence', async () => {
+    for (const asking of ['> **What is your background in EU tax?** Then I can write it.', '**Could you tell me how long you have worked with consultants?**']) {
+      const { text } = await setupAsk('What goes in section 4?', asking);
+      expect(filled(sectionBody(text, '4. Founder-market fit')), asking).toEqual([]);
+    }
+  });
+
+  it('keeps a section marker on a reason line that carries a fraction, and takes it off score lines only', async () => {
+    const { as, doc, fill } = await setup();
+    await fill();
+    const block = 'WEAK\n\n- Because: 3/12 said it hurts (3).\n- Pain: 1/2 (3)\n- Fit 2/2 (4)\n\nScore: 5/10 (1)';
+    expect((await as('verdict')('replace_section', { heading: '5. Verdict', text: block })).ok).toBe(true);
+    expect(sectionBody(await doc(), '5. Verdict')).toBe('WEAK\n\n- Because: 3/12 said it hurts (3).\n- Pain: 1/2\n- Fit 2/2\n\nScore: 5/10');
+  });
+
+  it('reads score parts written "a of b" and "a out of b", as it reads "a/b"', () => {
+    expect(breakdownMismatch('Score: 9/10 (pain 1 of 2, fit 1 of 2, flaws 0 of 2)')).toMatch(/add up to 2 of 6, which is 3\.3 of 10\. Write the score as 3\/10/);
+    expect(breakdownMismatch('Score: 9/10 (Pain 1 out of 2, Fit 1 out of 2)')).toMatch(/add up to 2 of 4, which is 5 of 10/);
+    expect(breakdownMismatch('Score: 9/10 (Pain 3/5, Fit 1/5)')).toMatch(/add up to 4 of 10\. Write the score as 4\/10/);
+    expect(breakdownMismatch('Score: 5/10 (pain 1 of 2, fit 1 of 2)')).toBeNull();
+  });
+
+  it('reads a goal or target beside the count as no plan, and a goal in place of the count as none', () => {
+    expect(conversations('Real customer conversations done: 12 (goal was 20)', LABEL)).toBe(12);
+    expect(conversations('Real customer conversations done: 12, target 20', LABEL)).toBe(12);
+    expect(conversations('Real customer conversations done: target 10', LABEL)).toBeNull();
+    expect(conversations('Real customer conversations done: goal of 20', LABEL)).toBeNull();
+    // A goal word after the number, with no other number after it, says the number is the goal.
+    expect(conversations('Real customer conversations done: 20 (target)', LABEL)).toBeNull();
+    expect(conversations('Real customer conversations done: 20 is the goal', LABEL)).toBeNull();
+    // A line under an empty label that names a target is still no count.
+    expect(conversations('Real customer conversations done:\nOur target is 10', LABEL)).toBeNull();
+    expect(conversations('Real customer conversations done: 12 (planned)', LABEL)).toBeNull();
+  });
+
+  it('says what the doc says when no verdict stands, in the doc\'s own words', () => {
+    expect(verdictState('')).toBe('not written yet');
+    expect(verdictState('Not assessed: 4. Founder-market fit (Rohan has not written it yet)\n\nNo verdict and no score until this section is written.'))
+      .toBe('not assessed: 4. Founder-market fit (Rohan has not written it yet)');
+    expect(verdictState('Not assessed yet: every section is written; Priya writes the verdict next.')).toBe('not assessed yet: every section is written; Priya writes the verdict next');
+    expect(verdictState('WEAK\n\nScore: 4/10')).toBeNull();
+  });
+});
+
+describe('a colleague\'s answer written in from chat', () => {
+  // The same answer, as Rohan's own replace_section and as his answer to Priya's ask_person, each turn having read the
+  // same things: both are held to the same figure check, and on a team doc a figure nothing gives is refused.
+  async function both(answer: string, read: string[]) {
+    const own = await setup();
+    await own.fill(['4. Founder-market fit']);
+    const tool = await runTool(docTools, 'replace_section', JSON.stringify({ doc: 'Evaluation', heading: '4. Founder-market fit', text: answer }),
+      { stage: own.stage, roomId: 'fit', store: own.store, granted: new Map(), sources: () => read });
+    const asked = await setup();
+    await asked.fill(['4. Founder-market fit']);
+    const consult: Consult = async () => answer;
+    const chat = await runTool(teamTools(consult), 'ask_person', JSON.stringify({ name: 'Rohan', question: 'What goes in section 4?' }),
+      { stage: asked.stage, roomId: 'verdict', store: asked.store, granted: new Map(), sources: () => read });
+    return { tool: filled(sectionBody(await own.doc(), '4. Founder-market fit')).length > 0, chat: filled(sectionBody(await asked.doc(), '4. Founder-market fit')).length > 0, said: chat.text };
+  }
+
+  it('is refused on a figure nothing read gives, as the colleague\'s own write is, and written on one they read', async () => {
+    for (const answer of ['Lived it: consultants pay €150/month for bookkeeping today.', 'Lived it: 40% of consultants file VAT late.', 'Lived it: filed VAT for a $2M agency.']) {
+      const cold = await both(answer, []);
+      expect(cold, answer).toMatchObject({ tool: false, chat: false });
+      expect(cold.said, answer).toMatch(/Not written into "4\. Founder-market fit": Rohan's answer gives .* that nothing Rohan read gives/);
+      const read = await both(answer, [`Research notes: ${answer.replace(/^Lived it: /, '')}`]);
+      expect(read, answer).toMatchObject({ tool: true, chat: true });
+    }
+  });
+
+  it('writes an answer with no figures in it either way', async () => {
+    expect(await both('Lived it: filed VAT by hand for their own studio.', [])).toMatchObject({ tool: true, chat: true });
   });
 });

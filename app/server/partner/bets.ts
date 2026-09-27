@@ -6,6 +6,7 @@ import type { Attention, Stage } from '../../shared/model.ts';
 import { bare, VERDICT_WORDS, type Bet, type BetVerdict } from '../../shared/partner.ts';
 import { localDay } from '../clock.ts';
 import { writeAtomic } from '../fsx.ts';
+import { readBook } from '../rescue.ts';
 import { leadsFor } from '../leads/store.ts';
 import { newId } from '../slice-kit.ts';
 import { createSurveys } from '../surveys/store.ts';
@@ -21,7 +22,8 @@ export function betsBook(workspace: string, now: () => number = Date.now) {
   const path = join(workspace, 'bets.json');
   let queue: Promise<unknown> = Promise.resolve();
   async function list(): Promise<Bet[]> {
-    try { const saved = JSON.parse(await readFile(path, 'utf8')) as { bets?: Bet[] }; return Array.isArray(saved.bets) ? saved.bets : []; } catch { return []; }
+    const saved = await readBook<{ bets?: Bet[] }>(path, workspace, { empty: { bets: [] }, what: { thing: 'The bets file', again: 'your bets started again', first: 'your bets start empty' } });
+    return Array.isArray(saved?.bets) ? saved.bets : [];
   }
   function change<T>(edit: (bets: Bet[]) => T): Promise<T> {
     const job = queue.then(async () => {
@@ -220,5 +222,8 @@ export async function betsAttention(bets: Bet[], stage: Stage, workspace: string
   }
   return found;
 }
+
+// What the partner posts in their own room on a bet's check day, with the number as it was read in code.
+export const checkLine = (bet: Bet, reading: Reading) => `**Check the bet:** ${bare(bet.what)}. The target was ${bet.target} by ${bet.checkDate}; now ${reading.said}. Did it work? Say so here, or in Needs you.`;
 
 export const closedLine = (bet: Bet) => `Closed "${bet.what}": it ${VERDICT_WORDS[bet.result!.verdict]}; ${bet.metric} was ${bet.result!.value ?? 'unread'} against ${bet.target}.`;

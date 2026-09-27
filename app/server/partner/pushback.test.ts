@@ -153,3 +153,9 @@ describe('the partner\'s rules are not said back', () => {
     expect(stripStance(own)).toBe(own);
   });
 });
+
+describe('the label on a reply that builds against the verdict', () => {
+  it('is short and says only what was missed', () => {
+    expect(UNWEIGHED).toBe('*Team verdict not weighed.*');
+  });
+});

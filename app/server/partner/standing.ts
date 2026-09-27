@@ -1,7 +1,7 @@
 import type { Attention, AttentionKind, Decision } from '../../shared/model.ts';
 import type { Stage } from '../../shared/model.ts';
 import { filled, sectionBody, verdictOf } from '../tools/verdict.ts';
-import { decisionLine } from './company.ts';
+import { decisionLine, learnedSection } from './company.ts';
 import { isWeak, type TeamVerdict } from './pushback.ts';
 import { betLine, gatherCompany, type CompanyGather, type MorningSources } from './morning.ts';
 
@@ -16,13 +16,15 @@ const LINE_MOST = 220;
 const DECIDED_MOST = 4;
 
 // What the gather gives, plus the decisions on record, as the slice caches them between ticks.
-export type StandingParts = Pick<CompanyGather, 'verdicts' | 'numbers' | 'open' | 'planned' | 'flagCounts'> & { decided: string[] };
+// `learned`: one line per closed bet, as What we learned in the Company document has it.
+// `promised`: the founder's open promises, one line each, read fresh every turn.
+export type StandingParts = Pick<CompanyGather, 'verdicts' | 'numbers' | 'open' | 'planned' | 'flagCounts'> & { decided: string[]; learned: string[]; promised?: string[] };
 
 export async function standingParts(from: MorningSources): Promise<StandingParts> {
   const got = await gatherCompany(from, { verdictChars: LINE_MOST });
   const decided = (await from.decisions().catch(() => [] as Decision[])).filter((one) => one.status === 'decided')
     .sort((a, b) => (b.decidedAt ?? b.at) - (a.decidedAt ?? a.at)).slice(0, DECIDED_MOST).map(decisionLine);
-  return { verdicts: got.verdicts, numbers: got.numbers, open: got.open, planned: got.planned, flagCounts: got.flagCounts, decided };
+  return { verdicts: got.verdicts, numbers: got.numbers, open: got.open, planned: got.planned, flagCounts: got.flagCounts, decided, learned: learnedSection(got.closed) };
 }
 
 // What waits in Needs you, by kind, in the founder's words. The partner's own morning note is left out.
@@ -69,7 +71,9 @@ export function standingBlock(parts: StandingParts, waiting: Attention[]): strin
     ['Company Numbers:', parts.numbers ? parts.numbers.split('\n').filter((line) => line.trim()) : ['- none written yet']],
     ['Decided:', parts.decided],
     ['Bets on record:', parts.open.map(betLine)],
+    ['What we learned (closed bets; cite the line when advice rests on it):', parts.learned ?? []],
     ['Due on the board:', parts.planned],
+    ['The founder\'s promises:', parts.promised ?? []],
     ['', parts.flagCounts.length ? [`Truth net since yesterday: ${parts.flagCounts.map((one) => `${one.room} had ${one.count} flagged ${one.count === 1 ? 'line' : 'lines'}`).join('; ')}. Never repeat a flagged figure as a fact.`] : []],
   ];
   const lines = [STANDING_HEAD];

@@ -8,7 +8,7 @@ export type KeyInfo = { name: string; group: string; label: string; where?: stri
 
 // The providers as the README's table names them, and where each key is made. A provider not named here still gets
 // its row, under its name in models.json.
-const PROVIDERS: Record<string, { label: string; where: string }> = {
+export const PROVIDERS: Record<string, { label: string; where: string }> = {
   GROQ_API_KEY: { label: 'Groq', where: 'console.groq.com/keys' },
   CEREBRAS_API_KEY: { label: 'Cerebras', where: 'cloud.cerebras.ai' },
   GEMINI_API_KEY: { label: 'Gemini', where: 'aistudio.google.com/apikey' },
@@ -63,7 +63,7 @@ export const SETTINGS = ['STAGE_BACKUP_DIR'];
 // research): NVIDIA and Mistral are strong on their own, Cerebras and OpenRouter hold a whole room prompt.
 export const FALLBACK_KEYS = ['NVIDIA_API_KEY', 'MISTRAL_API_KEY', 'CEREBRAS_API_KEY', 'OPENROUTER_API_KEY'];
 
-// The ones not set here, as "NVIDIA at build.nvidia.com (kimi-k2.6)", or null when every one is set.
+// The ones not set here, as "NVIDIA at build.nvidia.com (kimi-k3)", or null when every one is set.
 export function fallbackList(isSet: (name: string) => boolean, entries: { keyEnv: string; model: string }[] = ENTRIES): string | null {
   const unset = FALLBACK_KEYS.filter((name) => !isSet(name));
   if (!unset.length) return null;

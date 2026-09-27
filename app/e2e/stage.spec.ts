@@ -84,9 +84,13 @@ test.beforeEach(async ({ page }) => {
 
 test('shows two rooms, a doc and the company brief, one wire, a dock with usage rings and nothing else', async ({ page }) => {
   await expect(page.locator('.react-flow__node')).toHaveCount(4);
-  // The dock, by name: three ways to add, the frameworks that land a whole team, the dashboard and the founder's views, and the usage rings (which arrive once the models are known).
+  // The dock, by name: the command bar, three ways to add, the frameworks that land a whole team and the partner; the
+  // first-run ring is left out, since another journey may have sent the list away. The rail beside it: the founder's
+  // views, the dashboard, health, keys, the usage rings (which arrive once the models are known) and the shortcuts.
   await expect(page.getByRole('button', { name: 'Model usage today' })).toBeVisible();
-  expect(await page.locator('.dock button').evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label')))).toEqual(['Add person', 'Add doc', 'More cards', 'Frameworks', 'Dashboard', 'Command bar', 'Messages', 'Decisions', 'Needs you: nothing waiting', 'Model usage today']);
+  const names = (bar: string) => page.locator(`${bar} button`).evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label')).filter((name) => !/^(Getting started|You know your way around)$/.test(name ?? '')));
+  expect(await names('.dock')).toEqual(['Command bar', 'Add person', 'Add doc', 'More cards', 'Frameworks', 'Add partner']);
+  expect(await names('.rail')).toEqual(['Needs you: nothing waiting', 'Messages', 'Decisions', 'Bets', 'Dashboard', 'Health', 'Keys', 'Model usage today', 'Keyboard shortcuts']);
   await expect(page.locator('.react-flow__edge')).toHaveCount(1);
   await expect(node(page, 'marketing')).toContainText('Maya');
   await expect(node(page, 'brand-doc').locator('textarea.doc')).toHaveValue(/# Brand/);
@@ -1256,16 +1260,21 @@ test('missions: the first-run list ticks itself from what the workspace holds, a
   await item('Connect something').getByRole('button').click();
   await expect(item('Connect something')).toContainText('Drag from a dot on a person');
 
-  // Collapsed it stays out of the way; hidden for good survives a reload.
+  // Closed it leaves the corner empty and the dock's ring brings it back; hidden for good survives a reload, ring and all.
+  const ring = page.locator('.dock').getByRole('button', { name: /Getting started|You know your way around/ });
+  await expect(ring).toHaveAttribute('aria-pressed', 'true');
   await card.getByRole('button', { name: /of 6/ }).click();
-  await expect(card.getByRole('list')).toBeHidden();
-  await card.getByRole('button', { name: /of 6/ }).click();
+  await expect(card).toBeHidden();
+  await expect(ring).toHaveAttribute('aria-pressed', 'false');
+  await ring.click();
+  await expect(card.getByRole('list')).toBeVisible();
   await card.getByRole('button', { name: /hide this/i }).click();
   await expect(card).toBeHidden();
   await page.reload();
   await expect(node(page, 'marketing')).toBeVisible();
   await page.waitForTimeout(1200);
   await expect(card).toBeHidden();
+  await expect(ring).toHaveCount(0);
 });
 
 test('a voice studio switched to OmniVoice says plainly that what it makes is not for sale, and asks for permission to clone', async ({ page }) => {

@@ -14,9 +14,22 @@ export const DEAD_MS = 6 * 3_600_000;
 type Key = { fails: number; openUntil?: number; probeUntil?: number; half?: boolean; rest?: number; restUntil?: number; deadUntil?: number };
 
 const statusOf = (error: unknown) => (error as { status?: number })?.status;
+// A key whose plan allows no requests at all is refused, not busy: Mistral answers a key with no plan chosen yet with
+// a 429 whose headers say the minute allows nothing (x-ratelimit-limit-req-minute: 0), and waiting never fixes that.
+export const planless = (error: unknown) => {
+  if (statusOf(error) !== 429) return false;
+  const headers = (error as { headers?: Headers })?.headers;
+  if (typeof headers?.forEach !== 'function') return false;
+  let none = false;
+  headers.forEach((value, name) => { if (/^x-ratelimit-limit-/i.test(name) && value.trim() === '0') none = true; });
+  return none;
+};
+// What a key whose plan allows no requests is said to be, before where to turn the plan on is added (attention.ts).
+export const PLANLESS = 'its plan allows no requests yet';
 // A 403 for a prompt the provider's moderation flagged (OpenRouter does this) says nothing about the key.
 export const refused = (error: unknown) => statusOf(error) === 401
-  || (statusOf(error) === 403 && !/moderat|flagged/i.test(String((error as Error)?.message ?? '')));
+  || (statusOf(error) === 403 && !/moderat|flagged/i.test(String((error as Error)?.message ?? '')))
+  || planless(error);
 // Which free limit a 429 hit, in the words the founder reads, from what the provider wrote: the day's quota is not
 // the same news as a busy minute, and the dashboard's "left today" is only about the first.
 export const limitWords = (error: unknown) => {

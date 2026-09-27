@@ -41,6 +41,9 @@ export const wiredDocIds = (stage: Stage, roomId: string) => wired(stage, roomId
 export const readableDocIds = (stage: Stage, roomId: string) => [...new Set([...stage.docs.filter((doc) => doc.pinned).map((doc) => doc.id), ...wiredDocIds(stage, roomId)])];
 export const colleagueIds = (stage: Stage, roomId: string) => wired(stage, roomId, stage.rooms.filter((room) => room.id !== roomId && room.name).map((room) => room.id));
 const EXCERPT = 280;
+// The short prompt (see slim.ts): how much of each document and page, and of the recent talk, it keeps.
+export const SLIM_DOC_CHARS = 300;
+export const SLIM_HISTORY_CHARS = 2000;
 
 // What a person cannot do until the founder connects something, and the one thing to connect for each. A tool that
 // is not offered says nothing at all, where the refusal it replaced ("no browser card is connected") told the
@@ -95,11 +98,14 @@ function past(message: ChatMessage, attached: Attached, stamp = ''): ModelMessag
   ];
 }
 
-export function buildMessages(stage: Stage, roomId: string, docs: Record<string, string>, history: ChatMessage[], toolNames: string[] = [], colleagues: Record<string, ChatMessage[]> = {}, memory?: Memory, attached: Attached = { texts: {}, images: {} }, pages: Record<string, { title: string; text: string }> = {}, decided: string[] = [], founder = '', now = Date.now()): ModelMessage[] {
+export function buildMessages(stage: Stage, roomId: string, docs: Record<string, string>, history: ChatMessage[], toolNames: string[] = [], colleagues: Record<string, ChatMessage[]> = {}, memory?: Memory, attached: Attached = { texts: {}, images: {} }, pages: Record<string, { title: string; text: string }> = {}, decided: string[] = [], founder = '', now = Date.now(), slim = false): ModelMessage[] {
   const room = stage.rooms.find((candidate) => candidate.id === roomId);
   if (!room) throw new Error(`unknown room: ${roomId}`);
 
-  const block = (id: string) => `## Doc: ${stage.docs.find((doc) => doc.id === id)!.title}\n${docs[id] ?? ''}`;
+  // In the short prompt a document is its title and how it opens, and the person reads the rest when it matters.
+  const opening = (text: string) => (text.length <= SLIM_DOC_CHARS ? text
+    : `${text.slice(0, SLIM_DOC_CHARS).trimEnd()} … (${text.length - SLIM_DOC_CHARS} more characters${toolNames.includes('read_doc') ? ': read the rest with read_doc' : ''})`);
+  const block = (id: string) => `## Doc: ${stage.docs.find((doc) => doc.id === id)!.title}\n${slim ? opening(docs[id] ?? '') : docs[id] ?? ''}`;
   const mine = wiredDocIds(stage, roomId);
   const docsWired = mine.map(block);
   const pinned = stage.docs.filter((doc) => doc.pinned && !mine.includes(doc.id)).map((doc) => block(doc.id));
@@ -119,14 +125,14 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
   const said = (at: number) => (at ? `${dayKey(at) === dayKey(now) ? 'Today' : shortDay(at)} · ` : '');
   const team = colleagueIds(stage, roomId).map((id) => {
     const other = stage.rooms.find((candidate) => candidate.id === id)!;
-    const recent = (colleagues[id] ?? []).filter((message) => message.text.trim() && !message.failed).slice(-4)
+    const recent = (slim ? [] : colleagues[id] ?? []).filter((message) => message.text.trim() && !message.failed).slice(-4)
       .map((message) => `  ${said(message.at)}${message.role === 'assistant' ? other.name : message.from ?? 'Founder'}: ${stripFlagged(message.text).replace(/\s+/g, ' ').trim().slice(0, EXCERPT)}`);
     return `- ${other.name}, ${other.role}. ${other.brief}${recent.length ? `\n  Lately in ${other.name}'s room:\n${recent.join('\n')}` : ''}`;
   });
   // A person only uses what it knows it has: say which cards are wired to the room, and what each is for.
   const mineCards = wiredCards(stage, roomId);
   const notes = mineCards.flatMap((card) => (card.kind === 'note' && card.text.trim() ? [`- ${card.text.trim().replace(/\n+/g, '\n  ')}`] : []));
-  const links = mineCards.flatMap((card) => (card.kind === 'link' && card.url ? [`## Page: ${pages[card.id]?.title || card.url}\n${card.url}\n${pages[card.id]?.text ?? '(the page could not be read yet)'}`] : []));
+  const links = mineCards.flatMap((card) => (card.kind === 'link' && card.url ? [`## Page: ${pages[card.id]?.title || card.url}\n${card.url}\n${((text) => (slim ? opening(text) : text))(pages[card.id]?.text ?? '(the page could not be read yet)')}`] : []));
   const reach = mineCards.filter((card) => card.kind === 'project' || card.kind === 'board' || card.kind === 'browser' || card.kind === 'imagegen' || card.kind === 'voicegen' || card.kind === 'videogen').map((card) => (card.kind === 'project'
     ? `- A coder working in a project folder${card.path ? ` (${card.path})` : ''}. Any change to that code goes through it: code_task for a new piece of work (a complete brief), code_reply to follow up in the same session, code_status to see where it is, code_stop to halt it. The coder is the only way into that folder: never reach for run_code, write_file or a document to do project work, and never say the project changed unless the coder reported it.`
     : card.kind === 'board' ? '- The task board. Read it with list_tasks. When you notice follow-up work, suggest it with propose_task; the founder decides what gets done.'
@@ -203,7 +209,7 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
 
   // Old talk reaches the model with no sense of when it was said, so a message from three weeks ago reads as just now.
   // The first message of each day carries its day, and only when the talk in front of the model spans more than one.
-  const kept = recent(history.filter((message) => !message.failed));
+  const kept = recent(history.filter((message) => !message.failed), slim ? SLIM_HISTORY_CHARS : undefined);
   const days = kept.map((message) => dayKey(message.at));
   const spans = new Set(days).size > 1;
   const stamp = (index: number) => (!spans || days[index] === days[index - 1] ? ''

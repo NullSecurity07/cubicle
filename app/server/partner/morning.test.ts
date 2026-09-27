@@ -62,6 +62,7 @@ describe('what the partner reads in the morning', () => {
     expect(text).not.toContain('old talk');
     expect(text).toContain('- Open: Post in r/SaaS. Bet: founders sign up. Measured by "signups" on the Metrics card: 20 by 2026-10-03.');
     expect(text).toContain('- Closed 2026-09-20: Cold email 30. Did not work; "leads:replied" was 1 against 5.');
+    expect(text).toContain('What we learned (closed bets):\n- 2026-09-20: Cold email 30 did not work; "leads:replied" was 1 against 5.');
     expect(text).not.toContain('Proposed only');
   });
 });
@@ -78,10 +79,12 @@ async function acrossRooms(): Promise<MorningSources> {
     docs: [
       { id: 'eval', title: 'Evaluation', x: 0, y: 0, w: 1, h: 1, rules: { framework: 'startup-evaluation', sections: [{ heading: '2. Death hunt', by: 'hunter' }], verdict: { heading: '5. Verdict', by: 'judge' }, outcomes: ['PIVOT REQUIRED', 'WEAK', 'STRONG'] } },
       { id: 'empty-eval', title: 'Second evaluation', x: 0, y: 0, w: 1, h: 1, rules: { framework: 'startup-evaluation', sections: [], verdict: { heading: '5. Verdict', by: 'judge' }, outcomes: ['WEAK', 'STRONG'] } },
+      { id: 'held-eval', title: 'Third evaluation', x: 0, y: 0, w: 1, h: 1, rules: { framework: 'startup-evaluation', sections: [], verdict: { heading: '5. Verdict', by: 'judge' }, outcomes: ['WEAK', 'STRONG'] } },
     ],
     cards: [...(base.stage.cards ?? []), { id: 'board-1', kind: 'board', x: 0, y: 0, w: 1, h: 1 }],
   };
-  const docs: Record<string, string> = { eval: EVALUATION, 'empty-eval': '# Second evaluation\n\n## 5. Verdict\n\n' };
+  const docs: Record<string, string> = { eval: EVALUATION, 'empty-eval': '# Second evaluation\n\n## 5. Verdict\n\n',
+    'held-eval': '# Third evaluation\n\n## 5. Verdict\n\nNot assessed: 4. Founder-market fit (Rohan has not written it yet)\n\nNo verdict and no score until this section is written.\n' };
   const dev: ChatMessage[] = [
     { id: 'd1', role: 'user', text: 'What is our runway?', at: at('2026-09-26T16:00') },
     { id: 'd2', role: 'assistant', text: 'Runway is $48,000. WEAK, Score: 5/10.\n\nUnsourced figures: $48,000 (not found in anything this turn read).\n\nUnconfirmed: the verdict was not written; Rohan has not written "4. Founder-market fit" yet.', at: at('2026-09-26T16:01') },
@@ -104,6 +107,8 @@ describe('the morning thinks across the rooms', () => {
     expect(text).toContain('Team verdicts:');
     expect(text).toMatch(/- Evaluation, 5\. Verdict: WEAK, score 4\/10\. .*Supply decides it/);
     expect(text).toContain('- Second evaluation, 5. Verdict: not written yet.');
+    // A verdict held back says why, in the doc's own words, not "not written yet".
+    expect(text).toContain('- Third evaluation, 5. Verdict: not assessed: 4. Founder-market fit (Rohan has not written it yet).');
     expect(text).toContain('Company Numbers:\nPrice: $9/month.\nRunway: $8,000.');
     expect(text).toContain('Flagged by the truth net since 2026-09-26 (figures nothing backed):\nDev (Build):\nUnsourced figures: $48,000');
     expect(text).not.toContain('Unsourced figures: $1 ');
@@ -118,6 +123,8 @@ describe('the morning thinks across the rooms', () => {
     expect(MORNING_ASK).toContain('the biggest contradiction or risk across the rooms today');
     expect(MORNING_ASK).toMatch(/word for word/);
     expect(MORNING_ASK).toMatch(/why it is today's/);
+    // A closed bet's lesson is cited, not guessed again.
+    expect(MORNING_ASK).toContain('cite its What we learned line');
   });
 
   it('refuses a note whose risk names no room, document or number, and takes one that does', async () => {

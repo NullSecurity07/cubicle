@@ -109,7 +109,8 @@ export function buildsAgainst(reply: string, verdict: TeamVerdict): boolean {
 }
 export const verdictNudge = (verdict: TeamVerdict) => `The team's verdict is ${verdictName(verdict)}; answer in its light or say why you overrule it. `
   + 'Name the verdict in your reply.';
-export const UNWEIGHED = '*Partner did not weigh the team\'s verdict.*';
+// Said under the reply, so short: the founder reads the answer, not the check.
+export const UNWEIGHED = '*Team verdict not weighed.*';
 
 // ---------------------------------------------------------------- the stance, said back
 

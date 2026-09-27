@@ -42,7 +42,8 @@ export type PromptFor = ReturnType<typeof createPromptFor>;
 // What one person's turn is built from: their readable docs, their own history, and the recent talk of wired colleagues.
 export function createPromptFor(deps: Deps) {
   const { store, browser, media, decisions, memory, founder } = deps;
-  return async function promptFor(stage: Stage, roomId: string, toolNames: string[], fresh = false) {
+  // `slim`: the short prompt, for when the one model able to answer cannot hold the whole one (see slim.ts).
+  return async function promptFor(stage: Stage, roomId: string, toolNames: string[], fresh = false, slim = false) {
     const docs: Record<string, string> = {};
     for (const id of readableDocIds(stage, roomId)) docs[id] = await store.readDoc(id);
     const colleagues: Record<string, ChatMessage[]> = {};
@@ -66,7 +67,7 @@ export function createPromptFor(deps: Deps) {
     }
     // What the founder has decided lately, each line with the day it was decided: everyone works from it, wired or not.
     const decided = decidedLines(await decisions.list());
-    const messages = buildMessages(stage, roomId, docs, talk, toolNames, colleagues, await memory.read(roomId), fresh ? undefined : await attachedTo(store, talk), pages, decided, await founder.read());
+    const messages = buildMessages(stage, roomId, docs, talk, toolNames, colleagues, await memory.read(roomId), fresh ? undefined : await attachedTo(store, talk), pages, decided, await founder.read(), Date.now(), slim);
     // A judge whose team doc says "Not assessed" is told so on every turn, at the end where it lands hardest.
     const standing: string[] = [];
     for (const id of readableDocIds(stage, roomId)) {

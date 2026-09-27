@@ -1,4 +1,4 @@
-/* The dashboard: one tall sheet over the shade, a rail on the left to jump between four sections. It borrows the
+/* The dashboard: one tall sheet slid in from the left edge (theme.css, .panel--side), a rail on its left to jump between four sections. It borrows the
    panel's glass, header and colours; everything below is arrangement, and a handful of local shades so the same
    rules read right on a light sheet as on a dark one. */
 
@@ -11,8 +11,7 @@
   --dash-good: var(--ok);
   --dash-low: #f0b35a;
   --dash-bad: var(--danger);
-  top: 24px; bottom: 24px; max-height: none;
-  width: min(1080px, calc(100% - 48px));
+  width: min(880px, calc(100% - 32px));
 }
 /* The light sheet, for a window that asks for one. The app itself is dark today; nothing else here changes. */
 :root[data-theme="light"] .panel.dash {
@@ -197,7 +196,7 @@ button.dash__stat:hover { background: var(--dash-raise-hover); }
 
 /* A narrow window: the rail becomes a row of four above the sections. */
 @media (max-width: 760px) {
-  .panel.dash { top: 12px; bottom: 12px; width: calc(100% - 24px); }
+  .panel.dash { width: calc(100% - 32px); }
   .dash__frame { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   .dash__rail { flex-direction: row; gap: 4px; overflow-x: auto; padding: 8px 12px; border-right: 0; border-bottom: 1px solid var(--dash-line); scrollbar-width: none; }
   .dash__rail button { flex: none; padding: 6px 10px; }

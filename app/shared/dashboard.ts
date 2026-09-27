@@ -25,9 +25,12 @@ export type DashDay = {
 
 // `limits` is the free allowance for a day, summed over the provider's keys; absent when the provider sets none.
 // `window` says when the day starts again, in words.
+// `neurons`: for a model on Cloudflare's free pool, what the account has spent today of the 9,000 the turns may,
+// pictures included (`pictures` of them on `drawn` pictures).
 export type DashProvider = {
   name: string; model: string; usedToday: { requests: number; tokens: number };
   limits: { rpd?: number; tpd?: number }; leftPct: number; window: string;
+  neurons?: { used: number; of: number; pictures: number; drawn: number };
 };
 export type DashTokens = {
   byProvider: DashProvider[];

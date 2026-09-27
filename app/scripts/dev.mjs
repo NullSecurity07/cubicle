@@ -1,7 +1,7 @@
 // Starts the api server and Vite together. The api is started again when it falls over, up to three times in a
 // minute; Vite leaving, a fourth fall in a minute, or being told to stop, stops both.
 import { spawn } from 'node:child_process';
-import { restartBudget } from '../server/restart.ts';
+import { restartBudget, serviceHolds } from '../server/restart.ts';
 
 const run = (command, args) => spawn(command, args, { stdio: 'inherit', env: process.env });
 // One more folder to watch, named from outside: the browser checks restart the api the way a deploy does, and this is
@@ -32,7 +32,11 @@ function startApi() {
     process.exit(1);
   });
 }
-startApi();
+// The api may be running already as the Cubicle service (`pnpm service:install`), with the window closed. Then the
+// page uses that one. Anything else on the port is not trusted, so the api is started and says so if it cannot be.
+const apiPort = Number(process.env.STAGE_API_PORT ?? 7421);
+if (await serviceHolds(apiPort)) console.log(`the Cubicle service already runs the api on port ${apiPort}; the page uses it, and code changes need: systemctl --user restart cubicle.service`);
+else startApi();
 vite.on('exit', () => { stop(); process.exit(); });
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);

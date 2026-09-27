@@ -4,12 +4,14 @@ import { bare, companyLine, isPlanDoc, SHARED_RECORD, parsePlan, PARTNER_CHANNEL
 import { localDay } from '../clock.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
 import { leadsFor } from '../leads/store.ts';
-import { askedInstead, betDue, betsAttention, betsBook, cannotLose, closedLine, metricChoices, missingMetric, readMetric, type BetsBook } from '../partner/bets.ts';
+import { askedInstead, betDue, betsAttention, betsBook, cannotLose, checkLine, closedLine, metricChoices, missingMetric, readMetric, type BetsBook } from '../partner/bets.ts';
 import { companyDocOf, ensureCompany, sectionText, syncDecisions, writeBets } from '../partner/company.ts';
 import { hub } from '../events.ts';
 import { saysSomething } from '../missions.ts';
 import { FAKE_MORNING, MOST_TRIES, morningDue, morningInputs, morningMessage, writeMorning, type MorningSources } from '../partner/morning.ts';
 import { addPlan, boardFor, boardForPlan, NO_BOARD, planAttention, stepsFrom } from '../partner/plans.ts';
+import { asksWhatNext, holdSynthesis, standingFacts } from '../partner/synthesis.ts';
+import { chaseLine, keptPromiseLine, promiseLine, promisesAttention, promisesBook, promisesIn } from '../partner/promises.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import { staleNeeds, standingBlock, standingParts, teamVerdict, type StandingParts } from '../partner/standing.ts';
 import { companyFacts, keepFacts, keptLine, runwayFix } from '../partner/keep.ts';
@@ -170,6 +172,7 @@ export function createPartner(options: PartnerOptions = {}) {
     const morningOnTick = !deps.fake || process.env.STAGE_PARTNER_MORNING === '1';
     const book = betsBook(deps.workspace, now);
     const bets = (): Promise<Bet[]> => book.list();
+    const promises = promisesBook(deps.workspace, now);
     // A bet changed: the Company document's Bets section is written again from the ledger, and Needs you is told.
     const betsChanged = async () => {
       standing = null;
@@ -228,14 +231,19 @@ export function createPartner(options: PartnerOptions = {}) {
     // The standing facts, gathered once and kept until the next tick or until something they read changes (a bet, a
     // decision, a write by a tool). What waits in Needs you is read fresh every turn.
     let standing: Promise<StandingParts> | null = null;
-    async function standingFor(stage: Stage, partnerId: string) {
+    async function partsFor(stage: Stage, partnerId: string): Promise<StandingParts> {
       if (!standing) {
         const doc = await companyNow(stage);
         const gathering = standingParts(sourcesFor(stage, partnerId, doc ? await deps.store.readDoc(doc.id).catch(() => '') : ''));
         standing = gathering;
         gathering.catch(() => { if (standing === gathering) standing = null; });
       }
-      const [parts, waiting] = await Promise.all([standing, deps.attention.list().catch(() => [])]);
+      // The founder's open promises are read fresh too: one closed a moment ago is gone from the next turn.
+      const [parts, promised] = await Promise.all([standing, promises.list().catch(() => [])]);
+      return { ...parts, promised: promised.filter((one) => one.status === 'open').map(promiseLine) };
+    }
+    async function standingFor(stage: Stage, partnerId: string) {
+      const [parts, waiting] = await Promise.all([partsFor(stage, partnerId), deps.attention.list().catch(() => [])]);
       return standingBlock(parts, waiting);
     }
 
@@ -292,7 +300,7 @@ export function createPartner(options: PartnerOptions = {}) {
       }
       const stage = await deps.store.loadStage();
       const verdict = await teamVerdict(stage, (id) => deps.store.readDoc(id)).catch(() => null);
-      return [...found, ...planAttention(held.plans), ...await betsAttention(await book.list(), stage, deps.workspace, localDay(now()), verdict)];
+      return [...found, ...planAttention(held.plans), ...await betsAttention(await book.list(), stage, deps.workspace, localDay(now()), verdict), ...promisesAttention(await promises.list(), localDay(now()))];
     });
     // A person wrote a doc that is a plan (by its title or its first heading): its day-by-day steps are offered as tasks.
     const afterTool: Handler<'tool:after'> = async (payload, next) => {
@@ -343,6 +351,13 @@ export function createPartner(options: PartnerOptions = {}) {
       const stage = await deps.store.loadStage();
       const me = stage.rooms.find((one) => one.id === payload.roomId && one.partner);
       if (!me || payload.reply.stopped || !payload.reply.text.trim()) return next(payload);
+      // "What now" is answered across the rooms: held to the standing facts in code, asked once more if it names too
+      // few of them (server/partner/synthesis.ts).
+      if (asksWhatNext(payload.query)) {
+        const facts = standingFacts(await partsFor(stage, me.id).catch(() => null) ?? { verdicts: [], numbers: '', open: [], planned: [], flagCounts: [], decided: [], learned: [] });
+        const held = await holdSynthesis(payload.query, payload.reply, payload.again, facts, payload.lookedAgain);
+        if (held !== payload.reply) payload = { ...payload, reply: held, lookedAgain: payload.lookedAgain || held.text !== payload.reply.text };
+      }
       const facts = companyFacts(payload.query);
       let text = payload.reply.text;
       let receipt = '';
@@ -373,14 +388,59 @@ export function createPartner(options: PartnerOptions = {}) {
     };
     const offReply = deps.seams.on('turn:reply', onReply);
 
-    // Which bets were due at the last look, so a bet whose day has just come is said once, not every half minute.
-    let due: Set<string> | null = null;
+    // The founder said they would do something, in any room: it is kept as a dated promise, with a line under the
+    // reply saying so. A reply the founder stopped keeps nothing.
+    const onPromise: Handler<'turn:reply'> = async (payload, next) => {
+      if (payload.reply.stopped) return next(payload);
+      const kept = [];
+      // A promises book that cannot be read (not a damaged file, which is rescued: a folder in its place, no access)
+      // costs the receipt line, never the reply.
+      try {
+        for (const said of promisesIn(payload.query, now())) if (await promises.add({ ...said, roomId: payload.roomId })) kept.push(said);
+      } catch (error) {
+        console.log(`the partner could not keep a promise: ${(error as Error).message}`);
+        return next(payload);
+      }
+      if (!kept.length) return next(payload);
+      await deps.attention.refresh().catch(() => {});
+      return next({ ...payload, reply: { ...payload.reply, text: `${payload.reply.text.replace(/\s+$/, '')}\n\n${keptPromiseLine(kept)}` } });
+    };
+    const offPromise = deps.seams.on('turn:reply', onPromise);
+
+    // A promise a day late is asked about once in the partner's room, and said to the founder once. Never beside a
+    // turn of the partner's own.
+    async function chasePromises() {
+      const today = localDay(now());
+      const late = (await promises.list()).filter((one) => one.status === 'open' && one.due < today && !one.chased);
+      if (!late.length) return;
+      const partner = partnerOf(await deps.store.loadStage());
+      if (partner && deps.busy.has(partner.id)) return;
+      for (const one of late) {
+        if (!await promises.chased(one.id)) continue;
+        if (partner) await deps.store.appendChat(partner.id, { id: newMessageId(), role: 'assistant', text: chaseLine(one), at: now() });
+      }
+      await deps.attention.refresh().catch(() => {});
+      deps.notify?.('A promise is late', late[0].what);
+    }
+
+    // A bet whose day has come is posted once in the partner's room with its number read from the card, and said to
+    // the founder once; which ones were posted is kept, so a restart does not post them again. Never beside a turn of
+    // the partner's own: it waits for the next tick.
     async function checkBets() {
       const today = localDay(now());
-      const list = (await book.list()).filter((bet) => betDue(bet, today));
-      const fresh = due ? list.filter((bet) => !due!.has(bet.id)) : [];
-      due = new Set(list.map((bet) => bet.id));
+      const posted = new Set((await state.read()).betChecks ?? []);
+      const fresh = (await book.list()).filter((bet) => betDue(bet, today) && !posted.has(bet.id));
       if (!fresh.length) return;
+      const stage = await deps.store.loadStage();
+      const partner = partnerOf(stage);
+      if (partner && deps.busy.has(partner.id)) return;
+      if (partner) {
+        for (const bet of fresh) {
+          const reading = await readMetric(deps.workspace, stage, bet.metric);
+          await deps.store.appendChat(partner.id, { id: newMessageId(), role: 'assistant', text: checkLine(bet, reading), at: now() });
+        }
+      }
+      await state.change((draft) => { draft.betChecks = [...(draft.betChecks ?? []), ...fresh.map((bet) => bet.id)].slice(-200); });
       await deps.attention.refresh().catch(() => {});
       deps.notify?.('A bet is due for a check', fresh[0].what);
     }
@@ -402,6 +462,7 @@ export function createPartner(options: PartnerOptions = {}) {
         await keepCompany();
         await sync();
         await checkBets();
+        await chasePromises();
         await morning(false);
       },
       async route(req, res, path) {
@@ -445,6 +506,16 @@ export function createPartner(options: PartnerOptions = {}) {
             deps.json(res, 200, closed);
             return true;
           }
+          // The founder closes a promise from Needs you: done, or dropped.
+          const promised = /^\/api\/partner\/promises\/(promise-[a-z0-9-]{1,40})$/.exec(path);
+          if (promised && method === 'POST') {
+            const sent = await deps.body(req);
+            const closed = await promises.close(promised[1], sent?.done !== false);
+            standing = null;
+            await deps.attention.refresh();
+            deps.json(res, 200, closed);
+            return true;
+          }
           const plan = /^\/api\/partner\/plans\/(plan-[a-z0-9-]{1,40})$/.exec(path);
           if (plan && method === 'POST') {
             const sent = await deps.body(req);
@@ -477,10 +548,12 @@ export function createPartner(options: PartnerOptions = {}) {
         offSeam();
         offTurn();
         offReply();
+        offPromise();
         await syncing?.catch(() => {});
         await writing?.catch(() => {});
         await state.settled();
         await book.settled();
+        await promises.settled();
       },
     };
   };

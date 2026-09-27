@@ -111,6 +111,18 @@ describe('runTurn', () => {
     expect(result.text).toBe('done');
   });
 
+  it('says a key whose plan allows no requests yet as that, not as busy (round 6)', async () => {
+    const notices: string[] = [];
+    const planless: ModelClient = { ...scripted([]), name: 'mistral', async step() { throw Object.assign(new Error('429 Rate limit exceeded'), { status: 429, headers: new Headers({ 'x-ratelimit-limit-req-minute': '0' }) }); } };
+    const store = createStore(await mkdtemp(join(tmpdir(), 'loop-')));
+    await runTurn({
+      messages: [{ role: 'user', content: 'go' }], tools: [], clients: [planless, scripted(['hello'])], usage: createUsage(null),
+      context: { stage: await store.loadStage(), roomId: 'build', store, granted: new Map() },
+      events: { token: () => {}, tool: () => {}, notice: (text) => notices.push(text) },
+    });
+    expect(notices).toEqual(['mistral could not answer (its plan allows no requests yet), so script answers.']);
+  });
+
   it('tells the founder when another model had to step in', async () => {
     const { run } = await setup();
     const notices: string[] = [];

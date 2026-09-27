@@ -2,14 +2,16 @@ import { execFile } from 'node:child_process';
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Check } from '../../shared/openends.ts';
-import { fallbackList } from '../keys-file/catalogue.ts';
-import { ENTRIES, unset, type ModelClient } from '../providers.ts';
+import { fallbackList, PROVIDERS } from '../keys-file/catalogue.ts';
+import { planless, PLANLESS } from '../breaker.ts';
+import { ENTRIES, providerOf, unset, type ModelClient } from '../providers.ts';
 import type { EngineHealth } from '../opencode/server.ts';
 import { graphifyVersion, INSTALL, mcpCommand, PIN } from '../slices/graph.ts';
 import { isoDay, parseFeed, REDDIT_AGENT } from '../readers.ts';
 import { which, whichAsync } from '../which.ts';
 import { FIND_VARS, outreachEnv } from '../leads/openoutreach.ts';
 import { canWrite, sameDisk, type StatDev } from './backup.ts';
+import { serviceRow, serviceState, type ServiceState } from '../service.ts';
 
 // Is everything this app leans on really here? One question a line, answered yes or no, and when the answer is no,
 // what the founder would do about it — in the words they would use, not ours.
@@ -95,6 +97,8 @@ export type HealthDeps = {
   graphServer?: () => string[] | null;
   // The keys that have made today's published number of requests, by name.
   spent?: () => string[];
+  // Whether the app runs as a systemd user service; asked of systemctl unless a test says otherwise.
+  service?: () => Promise<ServiceState>;
   // The rows slices add about themselves. The app's own registry when left out.
   rows?: Map<string, () => Promise<Check | null> | Check | null>;
 };
@@ -240,6 +244,9 @@ export async function checkAll(deps: HealthDeps): Promise<Check[]> {
     fix: 'Ask a voice studio for one line. The voice fetches itself the first time, about 80 MB, and then speaks without the internet.',
   });
 
+  // Whether the morning note, the bet checks, the watches and the backup happen with the window closed.
+  checks.push(serviceRow(await (deps.service ?? (() => serviceState({ env })))().catch(() => ({ systemd: false, installed: false, enabled: false, active: 'inactive', path: '' }))));
+
   checks.push(backupRow({ dir: deps.backupDir, backups: await deps.backups(), writable: await canWrite(deps.backupDir), sameDisk: await sameDisk(workspace, deps.backupDir, deps.stat) }, now()));
 
   checks.push(...keyChecks(env, root));
@@ -263,15 +270,25 @@ export async function checkAll(deps: HealthDeps): Promise<Check[]> {
 
 // The one thing this cannot answer on its own: does a key still work? One token asked of each provider, which costs
 // as close to nothing as a request can. Only run when the founder asks for it.
+// What to do about a key whose plan allows no requests: nothing in .env, only the plan in the provider's console.
+const planFix = (name: string) => {
+  const where = PROVIDERS[ENTRIES.find((entry) => entry.name === providerOf(name))?.keyEnv ?? '']?.where;
+  return `Turn on the free plan${where ? ` at ${where}` : " in the provider's console"}; the key itself is fine.`;
+};
+
 export async function liveChecks(clients: ModelClient[]): Promise<Check[]> {
   if (!clients.length) return [{ name: 'A word with each model', ok: false, detail: 'there is no provider to ask', fix: 'Put a free key in the .env file beside the app.' }];
   return Promise.all(clients.map(async (client) => {
     const started = Date.now();
     try {
-      await client.step([{ role: 'user', content: 'Say ok.' }], { onToken: () => {}, signal: AbortSignal.timeout(30_000) });
+      // As long as a turn would wait for this model's first word, and 15 s more: Kimi on NVIDIA takes 13-44 s, and cut
+      // at 30 s a good key read as not working.
+      const stop = new AbortController();
+      const timer = setTimeout(() => stop.abort(), Math.max(30_000, (client.firstWordMs ?? 0) + 15_000));
+      try { await client.step([{ role: 'user', content: 'Say ok.' }], { onToken: () => {}, signal: stop.signal }); } finally { clearTimeout(timer); }
       return { name: `A word with ${client.name}`, ok: true, detail: `answered in ${Date.now() - started} ms as ${client.model}`, fix: '' };
     } catch (error) {
-      return { name: `A word with ${client.name}`, ok: false, detail: (error as Error).message.slice(0, 200), fix: `Check this provider's key in .env, and whether today's free allowance is used up.` };
+      return { name: `A word with ${client.name}`, ok: false, detail: planless(error) ? PLANLESS : (error as Error).message.slice(0, 200), fix: planless(error) ? planFix(client.name) : `Check this provider's key in .env, and whether today's free allowance is used up.` };
     }
   }));
 }

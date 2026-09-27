@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { ModelClient } from './providers.ts';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { neuronPoolOf, type ModelClient } from './providers.ts';
 import { route } from './router.ts';
-import { createUsage } from './usage.ts';
+import { createUsage, pictureDrawn } from './usage.ts';
 
 const client = (name: string, extra: Partial<ModelClient> = {}): ModelClient => ({
   name, model: `${name}-1`, maxPromptChars: 1000, tools: true, limits: { rpd: 10, rpm: 3, tpm: 1000 }, step: async () => ({ text: '', calls: [] }), ...extra,
@@ -181,8 +184,36 @@ describe('Cloudflare\'s neuron pool (review 5)', () => {
     usage.record('cloudflare-qwen', { input: 1, output: 1, neurons: 4000 });
     expect(usage.spent(oss)).toBe(true);
     expect(usage.spent(scout)).toBe(true);
-    // A second token is a second account, with its own pool.
-    expect(usage.spent(second)).toBe(false);
+    // A second token is on the same account (the one CLOUDFLARE_ACCOUNT_ID), so it draws on the same pool (round 6).
+    expect(usage.spent(second)).toBe(true);
     expect(names(route([oss, scout, client('gemini')], usage, { promptChars: 10, tools: true }))).toEqual(['gemini']);
+  });
+});
+
+describe('Cloudflare\'s neuron pool, one an account, pictures included (round 6)', () => {
+  it('keys the pool by the account id, not the token, so every token and model on the account shares it', () => {
+    expect(neuronPoolOf('cloudflare')).toBe('CLOUDFLARE_ACCOUNT_ID');
+    expect(neuronPoolOf('cloudflare-gpt-oss#2')).toBe('CLOUDFLARE_ACCOUNT_ID');
+    expect(neuronPoolOf('gemini')).toBeUndefined();
+  });
+
+  it('counts the pictures drawn today into the pool, so the turns stop at 9,000 with them in, and says how much is used', async () => {
+    const usage = createUsage(join(await mkdtemp(join(tmpdir(), 'neurons-')), 'usage.json'));
+    const oss = client('cloudflare-gpt-oss', { limits: { rpd: 25 }, sharedPool: true });
+    usage.record('cloudflare-gpt-oss', { input: 1, output: 1, neurons: 8950 });
+    expect(usage.spent(oss)).toBe(false);
+    expect(usage.neurons(oss)).toEqual({ used: 8950, of: 9000, pictures: 0, drawn: 0 });
+    pictureDrawn(58);
+    expect(usage.spent(oss)).toBe(true);
+    expect(usage.neurons(oss)).toEqual({ used: 9008, of: 9000, pictures: 58, drawn: 1 });
+    expect(usage.left(oss)).toBe(0);
+    expect(usage.neurons(client('gemini'))).toBeUndefined();
+  });
+
+  it('shows what is left of the day\'s neurons as what is left of the model, when that is the nearer wall', async () => {
+    const usage = createUsage(join(await mkdtemp(join(tmpdir(), 'neurons-')), 'usage.json'));
+    const oss = client('cloudflare-gpt-oss', { limits: { rpd: 25 }, sharedPool: true });
+    usage.record('cloudflare-qwen', { input: 1, output: 1, neurons: 4500 });
+    expect(usage.left(oss)).toBe(0.5);
   });
 });

@@ -6,8 +6,11 @@ import { planTaskTitle, stepText, type Bet, type PlanProposal } from '../shared/
 import type { Boards } from './boards.ts';
 import type { Damage, Store } from './store.ts';
 import { localDay } from './clock.ts';
+import { PROVIDERS } from './keys-file/catalogue.ts';
 import { ENTRIES } from './providers.ts';
 import type { UsageBook } from './usage.ts';
+import { PLANLESS } from './breaker.ts';
+import { readBook } from './rescue.ts';
 
 export type AttentionBook = ReturnType<typeof createAttention>;
 type Source = () => Promise<Attention[]>;
@@ -45,7 +48,8 @@ export function createAttention(dir: string, now: () => number = Date.now) {
   const load = () => (reading ??= read());
   async function read() {
     let saved: { open?: Lapsed[]; dismissed?: string[] } = {};
-    try { saved = JSON.parse(await readFile(path, 'utf8')); } catch { /* nothing waited */ }
+    // No file is nothing waiting; a damaged one is rescued, never read as nothing and saved over.
+    try { saved = (await readBook<typeof saved>(path, dir, { empty: { open: [], dismissed: [] }, what: { thing: 'The Needs you file', again: 'Needs you started again', first: 'what you had dismissed may show again' } })) ?? {}; } catch { /* unreadable: nothing waited */ }
     // Whatever was waiting when the app last closed belonged to a turn that no longer exists. The event goes, but what
     // it was for stays, so the app can say what the founder was asked and know it when the same thing is done again.
     // (A task run that was waiting is reported by its board as cut off; keeping it here too would show it twice. A
@@ -123,24 +127,27 @@ export const boardAttention = (store: Store, boards: Boards) => async (): Promis
   return found;
 };
 
+// A key refused for having no plan, in words the founder can act on: where to turn the free plan on.
+export const planlessWords = (keyEnv: string) => `${PLANLESS}: turn on the free plan${PROVIDERS[keyEnv]?.where ? ` at ${PROVIDERS[keyEnv].where}` : ''}`;
+
 // A key the provider refused (401, 403) is one item for the founder, raised once and kept until the key answers again:
 // no turn can fix it, only a new key in Keys can. One item a key: one Groq key serves groq, groq-small and groq-qwen,
 // so the item is named by the key's variable and number, and any model on that key answering clears it.
 export function keyAttention(usage: Pick<UsageBook, 'onKey'>, attention: AttentionBook, now: () => number = Date.now) {
   const open = new Set<string>();
-  return usage.onKey(({ name, dead, status }) => {
+  return usage.onKey(({ name, dead, status, planless }) => {
     const [model, number = '1'] = name.split('#');
     const entry = ENTRIES.find((one) => one.name === model);
     const keyEnv = entry?.keyEnv ?? model;
     const id = `key-rejected:${keyEnv}:${number}`;
     if (dead === open.has(id)) return;
-    // Named after the first model on the key, the way the founder knows it: GROQ_API_KEY is Groq.
+    // Named the way the Keys panel names it (NVIDIA_API_KEY is NVIDIA), or after the first model on the key.
     const first = ENTRIES.find((one) => one.keyEnv === keyEnv)?.name ?? model;
-    const said = first[0].toUpperCase() + first.slice(1);
+    const said = PROVIDERS[keyEnv]?.label ?? first[0].toUpperCase() + first.slice(1);
     const which = number === '1' ? keyEnv : `${keyEnv}_${number}`;
     if (dead) open.add(id); else open.delete(id);
     void (dead
-      ? attention.raise({ id, kind: 'key-rejected', at: now(), title: `${said} key rejected; fix it in Keys`, detail: `${which} was refused (${status ?? 'no status'}): the key is wrong, revoked or out of credit. Other models answer meanwhile; this goes away the next time it answers.` })
+      ? attention.raise({ id, kind: 'key-rejected', at: now(), title: planless ? `${said}'s free plan is not on; turn it on${PROVIDERS[keyEnv]?.where ? ` at ${PROVIDERS[keyEnv].where}` : ' in its console'}` : `${said} key rejected; fix it in Keys`, detail: `${which} was refused (${status ?? 'no status'}): ${planless ? planlessWords(keyEnv) : 'the key is wrong, revoked or out of credit'}. Other models answer meanwhile; this goes away the next time it answers.` })
       : attention.clear(id)).catch(() => {});
   });
 }
@@ -149,9 +156,10 @@ export function keyAttention(usage: Pick<UsageBook, 'onKey'>, attention: Attenti
 // canvas, a conversation, a person's memory. Where the damaged copy is, so nothing in it is out of reach.
 export function damageAttention(damage: Damage, now: number = Date.now()): Attention {
   const room = /^rooms\/(.+?)(\.memory)?\.json$/.exec(damage.file);
-  const what = !room ? { thing: 'The canvas file', again: 'the canvas started again', first: 'the canvas starts from the first stage; your docs and conversations are untouched' }
+  // A side book says how the founder knows it; the stage and a conversation are named here.
+  const what = damage.what ?? (!room ? { thing: 'The canvas file', again: 'the canvas started again', first: 'the canvas starts from the first stage; your docs and conversations are untouched' }
     : room[2] ? { thing: 'A person\'s memory file', again: 'their memory started again', first: 'their memory starts empty; the conversation itself is untouched' }
-    : { thing: 'A conversation file', again: 'that conversation started again', first: 'that conversation starts empty' };
+    : { thing: 'A conversation file', again: 'that conversation started again', first: 'that conversation starts empty' });
   const from = damage.from;
   return {
     id: `file-damaged:${damage.file}:${now}`, kind: 'file-damaged', at: now, ...(room ? { roomId: room[1] } : {}),

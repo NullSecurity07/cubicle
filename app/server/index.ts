@@ -40,6 +40,7 @@ import { createSources, sourceAttention } from './sources.ts';
 import { guardProcess } from './restart.ts';
 import { readStatic } from './static.ts';
 import { backupDirOf } from './openends/backup.ts';
+import { bookRescue } from './rescue.ts';
 import { createStore, type Damage } from './store.ts';
 import { decisionTools } from './tools/decisions.ts';
 import { docTools } from './tools/docs.ts';
@@ -87,6 +88,9 @@ const store = createStore(workspace, (roomId) => roomFeed.tell({ roomId, chat: '
   backups: () => backupDirOf({ fake, workspace, root }),
   onDamaged: (damage) => tellDamage(damage),
 });
+// The side books (promises, bets, boards, Needs you, the partner's notes) are rescued the same way and said the same way.
+bookRescue.backups = () => backupDirOf({ fake, workspace, root });
+bookRescue.tell = (damage) => tellDamage(damage);
 const usage = createUsage(resolve(workspace, 'usage.json'));
 await usage.load();
 const browser = fake ? createBrowser(fakeRunner, undefined, undefined, fakeHand) : createBrowser(realRunner(), { direct: [redditFeed(), stackExchange()], fallback: process.env.STAGE_NO_READER === '1' ? [] : [jinaReader, archiveCopy()] }, dnsResolve);
@@ -182,7 +186,10 @@ const learner = createLearner({
 });
 seams.on('turn:after', learner.after);
 const curator = createCurator(skills);
-setInterval(() => { void runs.tick().catch(() => {}); void curator.tick().catch(() => {}); void extras.tick(); }, 30_000).unref();
+// The half-minute tick: repeats, the playbook's upkeep and every slice's own (the morning note, bet checks, page
+// watches, the backup, the phone). None of it waits for a window, so a server left running as a service does all of
+// it with the window closed. STAGE_TICK_MS is for a check that cannot wait half a minute to see it.
+setInterval(() => { void runs.tick().catch(() => {}); void curator.tick().catch(() => {}); void extras.tick(); }, Number(process.env.STAGE_TICK_MS) || 30_000).unref();
 
 // Started by the desktop shell: leave when the shell does, even if it was killed.
 if (process.env.STAGE_EXIT_WITH_PARENT === '1') {

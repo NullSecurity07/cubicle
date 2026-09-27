@@ -96,6 +96,8 @@ test('health says in plain words what is fine and what needs you, and a backup c
   await expect(backup).toContainText('nothing has been backed up yet');
   await expect(backup).toContainText('Needs you');
   await expect(backup).toContainText('a second disk or a synced folder');
+  // Whether the app keeps working with its window closed, from the systemd user service: yes or no, never a guess.
+  await expect(rows.filter({ hasText: 'Runs while closed' })).toContainText(/(yes|no): /);
   await expect(rows.filter({ has: page.locator('.ring--out') })).not.toHaveCount(0);
   await expect(rows.filter({ hasNot: page.locator('.ring--out') })).not.toHaveCount(0);
   // Not a word of any key is ever on this page — only how many there are.

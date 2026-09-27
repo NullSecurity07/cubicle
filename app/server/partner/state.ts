@@ -1,7 +1,8 @@
-import { access, readFile } from 'node:fs/promises';
+import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { MorningNote, PlanProposal } from '../../shared/partner.ts';
 import { writeAtomic } from '../fsx.ts';
+import { readBook } from '../rescue.ts';
 
 // What the partner slice keeps between starts, in `workspace/partner.json`: which decisions are already in the Company
 // document, the last morning note and how today's tries went, and the plans waiting to become tasks.
@@ -23,6 +24,8 @@ export type PartnerState = {
   companyId?: string;
   // The partners already wired to it once: a wire the founder takes away is not drawn again.
   wired?: string[];
+  // The bets whose check was already posted in the partner's room: said once, across restarts too.
+  betChecks?: string[];
 };
 
 export function partnerState(workspace: string) {
@@ -35,11 +38,9 @@ export function partnerState(workspace: string) {
     // held with it. A workspace that never had one keeps what is held: it is being written for the first time.
     if (held && onDisk && await access(path).then(() => false, () => true)) { held = null; onDisk = false; }
     if (held) return held;
-    try {
-      const saved = JSON.parse(await readFile(path, 'utf8')) as Partial<PartnerState>;
-      held = { ...saved, decided: Array.isArray(saved.decided) ? saved.decided : [], plans: Array.isArray(saved.plans) ? saved.plans : [] };
-      onDisk = true;
-    } catch { held = { decided: [], plans: [] }; }
+    const saved = await readBook<Partial<PartnerState>>(path, workspace, { empty: { decided: [], plans: [] }, what: { thing: 'The partner\'s notes file', again: 'the partner\'s notes started again', first: 'the partner\'s notes on decisions and plans start empty' } });
+    held = { ...saved, decided: Array.isArray(saved?.decided) ? saved.decided : [], plans: Array.isArray(saved?.plans) ? saved.plans : [] };
+    onDisk = saved !== null;
     return held;
   }
   // One change at a time, each on the state as the one before it left it.

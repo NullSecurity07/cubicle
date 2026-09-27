@@ -1,7 +1,8 @@
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { PLANLESS } from '../breaker.ts';
 import { backupRow, checkAll, freeProviders, healthRows, keyChecks, keyPools, keysOf, liveChecks, liveReaders, LIVE_FEED, LIVE_REDDIT, LIVE_REDDIT_FEED, onPath, ytdlpVersion } from './health.ts';
 import type { Check } from '../../shared/openends.ts';
 
@@ -11,7 +12,7 @@ const setup = async (extra: Partial<Parameters<typeof checkAll>[0]> = {}) => {
   const workspace = await mkdtemp(join(tmpdir(), 'health-'));
   // The workspace and the backups on two disks, unless a test says otherwise: tmp is one disk on most machines.
   const stat = async (path: string) => ({ dev: path === workspace ? 1 : 2 });
-  return checkAll({ workspace, root: '/nowhere', env: {}, now: () => at, backupDir: '/tmp/backups', backups: async () => [], outside: () => [], stat, ...extra });
+  return checkAll({ workspace, root: '/nowhere', env: {}, now: () => at, backupDir: '/tmp/backups', backups: async () => [], outside: () => [], stat, service: async () => ({ systemd: true, installed: false, enabled: false, active: 'inactive', path: '/x' }), ...extra });
 };
 const row = (checks: Awaited<ReturnType<typeof checkAll>>, name: string) => checks.find((one) => one.name === name)!;
 
@@ -147,6 +148,25 @@ describe('a word with each model', () => {
     expect(checks[1]).toMatchObject({ name: 'A word with gemini', ok: false, detail: '401 the key is not valid' });
     expect((await liveChecks([]))[0].ok).toBe(false);
   });
+
+  it('waits for a slow model as long as a turn would, and says a key whose plan is off in words (round 6 final)', async () => {
+    vi.useFakeTimers();
+    try {
+      // Answers after 40 s unless stopped first, as Kimi on NVIDIA does on a bad minute.
+      const slow = (name: string, firstWordMs?: number) => ({ name, model: 'm', ...(firstWordMs ? { firstWordMs } : {}), step: (_messages: unknown, { signal }: { signal: AbortSignal }) => new Promise((done, fail) => {
+        const timer = setTimeout(() => done({ text: 'ok', calls: [] }), 40_000);
+        signal.addEventListener('abort', () => { clearTimeout(timer); fail(new Error('Request was aborted.')); }, { once: true });
+      }) });
+      const planless = { name: 'mistral', model: 'm', step: async () => { throw Object.assign(new Error('429 Rate limit exceeded'), { status: 429, headers: new Headers({ 'x-ratelimit-limit-req-minute': '0' }) }); } };
+      const asked = liveChecks([slow('nvidia', 60_000), slow('groq'), planless] as never);
+      await vi.advanceTimersByTimeAsync(41_000);
+      const [nvidia, groq, mistral] = await asked;
+      expect(nvidia.ok).toBe(true);
+      expect(groq).toMatchObject({ ok: false });
+      expect(mistral).toMatchObject({ ok: false, detail: PLANLESS, fix: 'Turn on the free plan at console.mistral.ai; the key itself is fine.' });
+      expect(groq.fix).toMatch(/key in \.env/);
+    } finally { vi.useRealTimers(); }
+  });
 });
 
 describe('reading videos, feeds and Reddit', () => {
@@ -238,8 +258,22 @@ describe('a model whose free turns for the day are used (round 5)', () => {
 
 describe('the keys that would add a fallback, in Health (round 5)', () => {
   it('is a row while any is unset, and gone once all are', async () => {
-    expect(row(await setup(), 'Keys that would add a fallback')).toMatchObject({ ok: true, detail: expect.stringMatching(/^NVIDIA at build\.nvidia\.com \(kimi-k2\.6\); Mistral/) });
+    expect(row(await setup(), 'Keys that would add a fallback')).toMatchObject({ ok: true, detail: expect.stringMatching(/^NVIDIA at build\.nvidia\.com \(kimi-k3\); Mistral/) });
     const all = { NVIDIA_API_KEY: 'n', MISTRAL_API_KEY: 'm', CEREBRAS_API_KEY: 'c', OPENROUTER_API_KEY: 'o' };
     expect(row(await setup({ env: all }), 'Keys that would add a fallback')).toBeUndefined();
+  });
+});
+
+describe('running while closed', () => {
+  it('says yes when the app runs as a service that starts at login, and no otherwise', async () => {
+    const yes = row(await setup({ service: async () => ({ systemd: true, installed: true, enabled: true, active: 'active', path: '/x' }) }), 'Runs while closed');
+    expect(yes.ok).toBe(true);
+    expect(yes.detail).toMatch(/^yes/);
+    const no = row(await setup(), 'Runs while closed');
+    expect(no.ok).toBe(true);
+    expect(no.detail).toMatch(/^no/);
+    expect(no.fix).toContain('pnpm service:install');
+    const fallen = row(await setup({ service: async () => ({ systemd: true, installed: true, enabled: true, active: 'failed', path: '/x' }) }), 'Runs while closed');
+    expect(fallen.ok).toBe(false);
   });
 });

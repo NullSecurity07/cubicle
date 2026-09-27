@@ -75,3 +75,21 @@ export function dueAt(at: string, now: number): number {
   when.setHours(Math.min(hour, 23), Math.min(minute, 59), 0, 0);
   return when.getTime();
 }
+
+// What goes out on this tick. The partner's morning note rides in the digest's own message at the founder's time: one
+// message a morning, never two. A note the partner has not written yet is waited for up to ten minutes past that
+// time, never past the end of the day (a 23:55 digest still goes that day); then the digest goes alone, and the caller
+// marks the note as sent for the day. A digest due before the partner writes at all (`noteFrom`, an hour) waits for
+// nothing and settles nothing: the note goes on its own when it comes. So does it on a day the digest is off.
+// Yesterday's note never goes.
+export const NOTE_WAIT = 10 * 60_000;
+// The last tick that is surely still today: a tick comes every half minute.
+const LAST_TICK = 60_000;
+export const digestSettlesNote = (due: number, noteFrom = 0) => new Date(due).getHours() >= noteFrom;
+export function dailyDue(input: { at: number; due: number; digestOn: boolean; lastDigest: number; today: string; noteDay?: string; noteSent?: string; noteExpected?: boolean; noteFrom?: number }): { digest: boolean; note: boolean } {
+  const time = input.at >= input.due;
+  const note = time && !!input.noteDay && input.noteDay === input.today && input.noteSent !== input.today;
+  const until = Math.min(input.due + NOTE_WAIT, new Date(input.due).setHours(24, 0, 0, 0) - LAST_TICK);
+  const waiting = !note && !!input.noteExpected && input.noteSent !== input.today && digestSettlesNote(input.due, input.noteFrom) && input.at < until;
+  return { digest: input.digestOn && time && input.lastDigest < input.due && !waiting, note };
+}

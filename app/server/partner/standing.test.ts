@@ -4,7 +4,7 @@ import type { Stage } from '../../shared/model.ts';
 import { NOTHING_WAITING, staleNeeds, STANDING_HEAD, STANDING_MOST, standingBlock, teamVerdict, waitingLine, type StandingParts } from './standing.ts';
 
 const item = (kind: Attention['kind'], title: string): Attention => ({ id: `${kind}:${title}`, kind, title, at: 1 });
-const parts = (extra: Partial<StandingParts> = {}): StandingParts => ({ verdicts: [], numbers: '', open: [], planned: [], flagCounts: [], decided: [], ...extra });
+const parts = (extra: Partial<StandingParts> = {}): StandingParts => ({ verdicts: [], numbers: '', open: [], planned: [], flagCounts: [], decided: [], learned: [], ...extra });
 
 describe('the standing facts', () => {
   it('says what waits in Needs you by kind and count, never the morning note, and says so when nothing does', () => {
@@ -28,6 +28,11 @@ describe('the standing facts', () => {
     const block = standingBlock(parts({ flagCounts: [{ room: 'Meera (Market)', count: 2 }] }), []);
     expect(block).toContain('Company Numbers:\n- none written yet');
     expect(block).toContain('Truth net since yesterday: Meera (Market) had 2 flagged lines. Never repeat a flagged figure as a fact.');
+  });
+
+  it('carries what the closed bets taught, one line each', () => {
+    const block = standingBlock(parts({ learned: ['- 2026-10-03: Post in r/SaaS did not work; "signups" was 4 against 20.'] }), []);
+    expect(block).toContain('What we learned (closed bets; cite the line when advice rests on it):\n- 2026-10-03: Post in r/SaaS did not work; "signups" was 4 against 20.');
   });
 });
 
