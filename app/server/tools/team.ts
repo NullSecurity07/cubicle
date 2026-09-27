@@ -1,4 +1,5 @@
 import { colleagueIds } from '../prompt.ts';
+import { answerIntoSection } from './docs.ts';
 import { text, type Tool, type ToolContext } from './registry.ts';
 
 // Puts a question to a colleague and returns their answer. The server supplies it, because it needs the model and both chats.
@@ -41,7 +42,9 @@ export function teamTools(consult: Consult): Tool[] {
       let answer = await consult(question);
       if (proseCall(answer)) answer = await consult(question);
       if (proseCall(answer)) throw new Error(`${target.name} did not answer: their reply came back as a tool call instead of words. Do not write their part yourself; work from what you have, or tell the founder you are waiting on ${target.name}.`);
-      return { text: `${target.name} answered:\n${answer}`, effect: { kind: 'chat-changed', id: target.id } };
+      // Their answer about their own empty section of a shared team doc goes into it, under their name.
+      const wrote = await answerIntoSection(context, target.id, question.question, answer);
+      return { text: [`${target.name} answered:\n${answer}`, wrote].filter(Boolean).join('\n\n'), effect: { kind: 'chat-changed', id: target.id } };
     },
   }];
 }

@@ -9,7 +9,9 @@ import type { ModelClient, ModelTurn } from '../providers.ts';
 import { createStore } from '../store.ts';
 import { createUsage } from '../usage.ts';
 import { docTools } from './docs.ts';
+import { HELD_BACK } from '../truth.ts';
 import { runTool } from './registry.ts';
+import { teamTools, type Consult } from './team.ts';
 import { conversations, filled, guardWrite, sectionBody, verdictOf } from './verdict.ts';
 
 const OUTCOMES = ['WEAK', 'PIVOT REQUIRED', 'STRONG'];
@@ -81,6 +83,8 @@ describe('the verdict judge on a team doc', () => {
     const out = await as('verdict')('replace_section', { heading: '4. Founder-market fit', text: 'The founder has lived the pain of buying micro-SaaS.' });
     expect(out.ok).toBe(false);
     expect(out.text).toMatch(/"4\. Founder-market fit" is Rohan's section \(Founder-fit\).*ask_person/);
+    // The refusal names the truth, so the judge has no gap to fill with a cause of her own ("the parser").
+    expect(out.text).toContain('Rohan has not written "4. Founder-market fit" yet');
     expect(await doc()).toBe(before);
     // A whole rewrite that slips a change into the section is refused the same way.
     const rewrite = await as('verdict')('write_doc', { text: before.replace('In one sentence:', 'In one sentence: lived it.') });
@@ -95,9 +99,10 @@ describe('the verdict judge on a team doc', () => {
     await fill(['4. Founder-market fit']);
     const out = await as('verdict')('replace_section', { heading: '5. Verdict', text: 'STRONG\n\nBecause: the founder lived it.\n\nScore: 10/10' });
     expect(out.ok).toBe(true);
-    expect(out.text).toMatch(/^Not written: the verdict waits for "4\. Founder-market fit", which is empty\..*Ask Rohan with ask_person/);
+    expect(out.text).toMatch(/^Not written: the verdict waits because Rohan has not written "4\. Founder-market fit" yet\..*Ask Rohan with ask_person/);
+    expect(out.text).toMatch(/tell the founder exactly that.*nothing else in the document is wrong/i);
     const verdict = sectionBody(await doc(), '5. Verdict')!;
-    expect(verdict).toMatch(/^Not assessed: 4\. Founder-market fit\n\nNo verdict and no score/);
+    expect(verdict).toMatch(/^Not assessed: 4\. Founder-market fit \(Rohan has not written it yet\)\n\nNo verdict and no score/);
     expect(verdict).not.toMatch(/STRONG|10\/10/);
   });
 
@@ -212,7 +217,7 @@ describe('two copies of the team on one stage', () => {
     expect(sectionBody(await store.readDoc(otherDoc), '5. Verdict')).toContain('STRONG (3)');
     // The first team's judge still writes the first doc, and its sections still wait on the first team.
     const first = await call('verdict', 'replace_section', { heading: '5. Verdict', text: 'WEAK\n\nScore: 3/10' });
-    expect(first.text).toMatch(/^Not written: the verdict waits for/);
+    expect(first.text).toMatch(/^Not written: the verdict waits because/);
   });
 });
 
@@ -333,5 +338,82 @@ describe('a team run with one section blank', () => {
     expect(filled(sectionBody(text, '4. Founder-market fit'))).toEqual([]);
     expect(sectionBody(text, '5. Verdict')).toMatch(/^Not assessed: 4\. Founder-market fit/);
     expect(text).not.toMatch(/10\/10|directly experienced/);
+  });
+});
+
+describe('the judge asking a colleague about their empty section', () => {
+  // Priya on a script: ask Rohan about his empty section, then write the verdict. Rohan answers on his own script.
+  async function run(question: string, ...answers: string[]) {
+    const { stage, store, doc, fill } = await setup();
+    await fill(['4. Founder-market fit']);
+    const consult: Consult = async () => answers.shift() ?? '';
+    const steps: ({ name: string; args: unknown }[] | string)[] = [
+      [{ name: 'ask_person', args: { name: 'Rohan', question } }],
+      [{ name: 'replace_section', args: { doc: 'Evaluation', heading: '5. Verdict', text: 'WEAK: no founder fit (4).\n\nScore: 3/10' } }],
+      'Done.',
+    ];
+    const client: ModelClient = {
+      name: 'script', model: 's-1', maxPromptChars: Infinity, tools: true, limits: {},
+      async step(_messages, { onToken }): Promise<ModelTurn> {
+        const next = steps.shift() ?? 'done';
+        if (typeof next === 'string') { onToken(next); return { text: '', calls: [], usage: { input: 1, output: 1 } }; }
+        return { text: '', calls: next.map((call, index) => ({ id: `c${steps.length}-${index}`, name: call.name, args: JSON.stringify(call.args) })), usage: { input: 1, output: 1 } };
+      },
+    };
+    const effects: string[] = [];
+    const result = await runTurn({
+      messages: [{ role: 'user', content: 'Give the verdict.' }], tools: [...docTools, ...teamTools(consult)], clients: [client], usage: createUsage(null),
+      context: { stage, roomId: 'verdict', store, granted: new Map() },
+      events: { token: () => {}, tool: ({ effect }) => { if (effect) effects.push(`${effect.kind}:${'id' in effect ? effect.id : ''}`); } },
+    });
+    return { result, text: await doc(), effects };
+  }
+
+  it('writes the colleague\'s answer into their own section, under their name and marked as from chat', async () => {
+    const { result, text, effects } = await run('Your section "4. Founder-market fit" is empty. What is the founder\'s fit?', 'None: the founder has never worked in this market.');
+    expect(result.tools[0]).toMatchObject({ ok: true });
+    expect(result.tools[0].result).toMatch(/^Rohan answered:\nNone: the founder has never worked in this market\./);
+    expect(result.tools[0].result).toContain('Written into "4. Founder-market fit" as Rohan\'s answer, from chat.');
+    const fit = sectionBody(text, '4. Founder-market fit')!;
+    expect(fit).toMatch(/^None: the founder has never worked in this market\.\n\n\(From chat: Rohan answered Priya on .+\.\)$/);
+    expect(effects).toContain('doc-changed:evaluation');
+    // With the section written, the verdict stands, rather than "not assessed".
+    expect(result.tools[1].ok).toBe(true);
+    expect(sectionBody(text, '5. Verdict')).toContain('WEAK: no founder fit (4).');
+  });
+
+  it('finds the section by its number or its words, not only its whole heading', async () => {
+    for (const question of ['What goes in section 4?', 'Rohan, what is the founder-market fit here?']) {
+      const { text } = await run(question, 'Lived it: ran a micro-SaaS for two years.');
+      expect(sectionBody(text, '4. Founder-market fit'), question).toMatch(/^Lived it: ran a micro-SaaS/);
+    }
+  });
+
+  it('writes nothing when the question is about something else, and says the section still waits', async () => {
+    const { result, text } = await run('How painful is the problem, in your view?', 'Quite painful, I think.');
+    expect(result.tools[0].ok).toBe(true);
+    expect(result.tools[0].result).toMatch(/Rohan has not written "4\. Founder-market fit" yet; ask them about it by name and their answer is written there/);
+    expect(filled(sectionBody(text, '4. Founder-market fit'))).toEqual([]);
+    expect(sectionBody(text, '5. Verdict')).toMatch(/^Not assessed: 4\. Founder-market fit/);
+  });
+
+  it('tells the asker why when the answer breaks the section\'s own cap, and still passes the answer on', async () => {
+    const { stage, store, doc, fill } = await setup();
+    await fill(['3. Is the pain real?']);
+    const consult: Consult = async () => 'Hair on fire. Score: 2/2';
+    const out = await runTool(teamTools(consult), 'ask_person', JSON.stringify({ name: 'Meera', question: 'What goes in section 3?' }), { stage, roomId: 'verdict', store, granted: new Map() });
+    expect(out.ok).toBe(true);
+    expect(out.text).toMatch(/^Meera answered:\nHair on fire\. Score: 2\/2\n\nNot written into "3\. Is the pain real\?": no customer conversations/);
+    expect(filled(sectionBody(await doc(), '3. Is the pain real?'))).toEqual([]);
+  });
+
+  it('writes nothing when the answer was held back', async () => {
+    const { text } = await run('What is your section 4, the founder-market fit?', HELD_BACK);
+    expect(filled(sectionBody(text, '4. Founder-market fit'))).toEqual([]);
+  });
+
+  it('asks the judge to repeat a refusal\'s reason rather than name a cause of her own', async () => {
+    const { framework } = await setup();
+    expect(framework.rooms.find((room) => room.key === 'verdict')!.brief).toMatch(/refused.*its reason word for word.*never another cause/i);
   });
 });

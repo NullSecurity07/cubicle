@@ -5,7 +5,9 @@ import type { Box, DocRules, Stage } from '../../shared/model.ts';
 import { readableDocIds, wiredDocIds } from '../prompt.ts';
 import { addedTwice, replaceSection, rewriteLoss } from './sections.ts';
 import { text, type Tool, type ToolContext } from './registry.ts';
-import { guardWrite } from './verdict.ts';
+import { shortDay } from '../clock.ts';
+import { HELD_BACK } from '../truth.ts';
+import { filled, guardWrite, sectionBody } from './verdict.ts';
 
 // A new doc card's size, and the gap kept round it: the same the window uses when it places one.
 const [WIDTH, HEIGHT, GAP] = [340, 300, 40];
@@ -94,6 +96,52 @@ async function save(context: ToolContext, id: string, before: string, after: str
   await context.store.replaceDoc(id, guarded.text);
   const said = guarded.held ? guarded.note! : [done, guarded.note].filter(Boolean).join(' ');
   return { text: said, effect: { kind: 'doc-changed' as const, id } };
+}
+
+// Whether a question is about a section: it names the section's words ("founder-market fit") or its number
+// ("section 4"), read past case, hyphens and the heading's own "4." in front.
+function asksAbout(question: string, heading: string): boolean {
+  const flat = (words: string) => words.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const number = /^(\d+)[.)]\s/.exec(heading)?.[1];
+  const words = flat(heading.replace(/^\d+[.)]\s*/, '').replace(/\([^)]*\)/g, ''));
+  return (!!words && flat(question).includes(words)) || (!!number && new RegExp(`\\bsection\\s+${number}\\b`, 'i').test(question));
+}
+
+// A colleague asked with ask_person answers in words, without tools, so their answer never reached their own section of
+// a team doc, and a verdict waiting on it waited until the founder answered in the Needs you box. When the asker and
+// the colleague share such a doc, the colleague's section there is empty and the question is about it, the answer is
+// written into it as the colleague's own write, marked as from chat. Returns what to tell the asker, or null.
+export async function answerIntoSection(context: ToolContext, targetId: string, question: string, answer: string): Promise<string | null> {
+  const { stage } = context;
+  const asker = stage.rooms.find((room) => room.id === context.roomId);
+  const target = stage.rooms.find((room) => room.id === targetId);
+  if (!asker || !target) return null;
+  const shared = wiredDocIds(stage, targetId).filter((id) => wiredDocIds(stage, context.roomId).includes(id));
+  const waiting: string[] = [];
+  for (const id of shared) {
+    const rules = await rulesOf(stage, id);
+    const key = target.framework?.id === rules?.framework ? target.framework?.key : undefined;
+    if (!rules || !key) continue;
+    const before = await context.store.readDoc(id);
+    const empty = rules.sections.filter(({ heading, by }) => by === key && sectionBody(before, heading) !== null && !filled(sectionBody(before, heading)).length);
+    const asked = empty.filter(({ heading }) => asksAbout(question, heading));
+    waiting.push(...empty.filter((one) => !asked.includes(one)).map(({ heading }) => heading));
+    // One section at a time: an answer to a question naming two is not split between them.
+    if (asked.length !== 1 || !filled(answer).length || answer.trim() === HELD_BACK) continue;
+    const [{ heading }] = asked;
+    const body = `${answer.trim()}\n\n(From chat: ${target.name} answered ${asker.name} on ${shortDay(Date.now())}.)`;
+    const next = replaceSection(before, heading, body);
+    if ('error' in next) continue;
+    // The section's own checks hold as for any write of theirs; one that fails is said, and the answer still stands.
+    let guarded;
+    try { guarded = guardWrite({ rules, stage, docId: id, writerId: targetId, before, after: next.text, now: Date.now() }); } catch (error) {
+      return `Not written into "${heading}": ${(error as Error).message.replace(/^not written:\s*/, '')}`;
+    }
+    await context.store.replaceDoc(id, guarded.text);
+    context.report?.({ kind: 'doc-changed', id });
+    return `Written into "${heading}" as ${target.name}'s answer, from chat.`;
+  }
+  return waiting.length ? `${target.name} has not written ${waiting.map((heading) => `"${heading}"`).join(', ')} yet; ask them about it by name and their answer is written there.` : null;
 }
 
 const doc = { type: 'string', description: 'Title of a document connected to your room' };

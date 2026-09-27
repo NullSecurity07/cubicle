@@ -136,8 +136,13 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
   for (const { heading, by } of [...rules.sections, rules.verdict]) {
     const owner = ownerOf(stage, rules, by, docId);
     if (!owner || owner.id === writerId || !changed(heading)) continue;
-    throw new Error(`not written: "${titleOf(before, heading)}" is ${owner.name}'s section (${owner.role}), and only they write it. `
-      + `Ask ${owner.name} with ask_person, or name what is missing in your own section; never fill in their part yourself.`);
+    const title = titleOf(before, heading);
+    // An empty section is said to be empty, by whom: a judge told only "only they write it" has told the founder the
+    // heading was missing "as required by the parser", a cause of her own.
+    const unwritten = filled(sectionBody(before, heading)).length ? '' : `${owner.name} has not written "${title}" yet. `;
+    throw new Error(`not written: "${title}" is ${owner.name}'s section (${owner.role}), and only they write it. ${unwritten}`
+      + `Ask ${owner.name} with ask_person, or name what is missing in your own section; never fill in their part yourself.`
+      + (unwritten ? ` If you tell the founder why, say exactly that ${owner.name} has not written "${title}"; nothing else in the document is wrong.` : ''));
   }
 
   // A section's own claim held to the evidence beside it: with no conversations, the pain can be no more than a guess.
@@ -167,13 +172,16 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
       const empty = rules.sections.filter(({ heading }) => sectionBody(after, heading) !== null && !filled(sectionBody(after, heading)).length);
       if (empty.length) {
         const names = empty.map(({ heading }) => titleOf(after, heading));
-        const who = [...new Set(empty.map(({ by }) => ownerOf(stage, rules, by, docId)?.name).filter((name): name is string => !!name))];
-        const body = `${names.map((name) => `Not assessed: ${name}`).join('\n')}\n\nNo verdict and no score until ${names.length > 1 ? 'these sections are' : 'this section is'} written.`;
+        const owners = empty.map(({ by }) => ownerOf(stage, rules, by, docId)?.name);
+        const who = [...new Set(owners.filter((name): name is string => !!name))];
+        // Each empty section with the person who has not written it: the truth, said so the judge repeats it.
+        const missing = names.map((name, at) => (owners[at] ? `${owners[at]} has not written "${name}" yet` : `"${name}" is empty and nobody on the stage is placed to write it`));
+        const body = `${names.map((name, at) => `Not assessed: ${name}${owners[at] ? ` (${owners[at]} has not written it yet)` : ''}`).join('\n')}\n\nNo verdict and no score until ${names.length > 1 ? 'these sections are' : 'this section is'} written.`;
         return {
           text: withBody(after, verdictAt, body),
           held: true,
-          note: `Not written: the verdict waits for ${names.map((name) => `"${name}"`).join(', ')}, which ${names.length > 1 ? 'are' : 'is'} empty. `
-            + `The verdict section now says "Not assessed". ${who.length ? `Ask ${who.join(' or ')} with ask_person, or tell the founder what is missing` : 'Tell the founder what is missing'}; never write that section yourself.`,
+          note: `Not written: the verdict waits because ${missing.join(', and ')}. The verdict section now says "Not assessed". `
+            + `${who.length ? `Ask ${who.join(' or ')} with ask_person, or tell the founder exactly that` : 'Tell the founder exactly that'}: nothing else in the document is wrong. Never write that section yourself.`,
         };
       }
       const { word, score } = verdictOf(fresh, rules.outcomes ?? []);
