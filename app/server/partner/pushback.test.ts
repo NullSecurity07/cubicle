@@ -107,11 +107,23 @@ describe('the partner held to a weak team verdict', () => {
       expect(buildsAgainst(reply, PIVOT), reply).toBe(false);
   });
 
+  // Journey 9: after PIVOT REQUIRED 5/10 the partner named the verdict and argued past it.
+  it('knows a reply that argues against the verdict, named or not, unless it says why it overrules it', () => {
+    const FIVE = { title: 'Evaluation', word: 'PIVOT REQUIRED', score: 5 };
+    const journey = 'Priya\'s PIVOT REQUIRED 5/10 is a warning. Do not pivot away from Kindling. Keep building.\n\nMy call: schedule 3 customer interviews this week to satisfy Priya\'s evaluation criteria.';
+    expect(buildsAgainst(journey, FIVE)).toBe(true);
+    for (const reply of ['The verdict is harsh. Don\'t pivot yet.', 'Ignore the verdict for now.\n\nMy call: talk to users.', 'Keep building the host tools.', 'The verdict stands. My call: book 3 calls to satisfy the evaluation criteria.'])
+      expect(buildsAgainst(reply, FIVE), reply).toBe(true);
+    // An explicit overrule with its reason stands, and so do replies that only stop building.
+    for (const reply of [`${journey}\n\nI overrule it because the 2 paying hosts renewed twice.`, 'The PIVOT REQUIRED verdict comes first: stop building and do not keep building features. My call: run 5 interviews.', 'Given the verdict, my call: pause and run 5 interviews.'])
+      expect(buildsAgainst(reply, FIVE), reply).toBe(false);
+  });
+
   it('asks once more with the verdict quoted, and labels a second miss', async () => {
     const nudges: string[] = [];
     const again = async (_first: TurnResult, nudge?: string) => { nudges.push(nudge ?? ''); return turn('Still: ship it.\n\nMy call: build the form.'); };
     const held = await holdPartner('what do I do now?', turn('My call: build the invoicing form today.'), again, PIVOT);
-    expect(nudges).toEqual(['The team\'s verdict is PIVOT REQUIRED 6/10 (Evaluation); answer in its light or say why you overrule it. Name the verdict in your reply.']);
+    expect(nudges).toEqual(['The team\'s verdict is PIVOT REQUIRED 6/10 (Evaluation). It is the team\'s finding about the company, not a target to satisfy: answer in its light, or say "I overrule it because" and your reason. Name the verdict in your reply.']);
     expect(held.text).toBe(`Still: ship it.\n\nMy call: build the form.\n\n${UNWEIGHED}`);
     const weighed = await holdPartner('what do I do now?', turn('My call: build the form.'), async () => turn('The PIVOT REQUIRED verdict comes first. My call: run the interviews.'), PIVOT);
     expect(weighed.text).toBe('The PIVOT REQUIRED verdict comes first. My call: run the interviews.');

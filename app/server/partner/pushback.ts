@@ -98,7 +98,17 @@ export const verdictName = (verdict: TeamVerdict) => `${[verdict.word, verdict.s
 export const BUILDS = /\b(?:build|building|ship|shipping|launch|launching|code|coding|develop|developing|implement|implementing|dive\s+(?:straight\s+)?into)\b/i;
 // "Do not build yet", "pause coding", "before you build", "instead of shipping": a call against building.
 const NOT_BUILD = /\b(?:don'?t|do not|not|never|no|pause|stop|hold off(?: on)?|before|until|instead of|rather than|without)\s+(?:\w+\s+){0,2}$/i;
+// Journey 9: after PIVOT REQUIRED 5/10 the partner named the verdict and still said "Do not pivot away from Kindling ...
+// Keep building" and "schedule 3 interviews to satisfy Priya's evaluation criteria". Naming the verdict is not weighing
+// it: a reply that argues against it anywhere is held to it, unless it overrules it in so many words with a reason.
+const DEFIES = /\b(?:keep(?: on)? building|(?:do not|don'?t|not|never|no need to) pivot\w*|ignore\s+(?:\S+\s+){0,2}(?:verdict|score|evaluation)|to satisfy\b[^.\n]{0,50}\b(?:criteria|verdict|score|evaluation|judge)\b)/gi;
+// "Stop building and do not keep building": a word against it just before is not defiance.
+const UNDONE = /\b(?:don'?t|do not|not|never|stop|no longer)\s+$/i;
+const OVERRULES = /\bI overrule\b[^\n]*\bbecause\b/i;
+const defies = (reply: string) => [...reply.matchAll(DEFIES)].some((found) => !UNDONE.test(reply.slice(Math.max(0, found.index - 20), found.index)));
 export function buildsAgainst(reply: string, verdict: TeamVerdict): boolean {
+  if (OVERRULES.test(reply)) return false;
+  if (defies(reply)) return true;
   const first = (verdict.word ?? '').split(/\s+/)[0];
   if (/\bverdict\b/i.test(reply) || (first && new RegExp(`\\b${first.replace(/[^\w]/g, '')}\\b`, 'i').test(reply))) return false;
   // Only the partner's call is held to it: a reply with no "My call:" line (a draft, an email) is not a call to build.
@@ -107,8 +117,8 @@ export function buildsAgainst(reply: string, verdict: TeamVerdict): boolean {
   if (!call) return false;
   return [...call.matchAll(new RegExp(BUILDS.source, 'gi'))].some((found) => !NOT_BUILD.test(call.slice(Math.max(0, found.index - 40), found.index)));
 }
-export const verdictNudge = (verdict: TeamVerdict) => `The team's verdict is ${verdictName(verdict)}; answer in its light or say why you overrule it. `
-  + 'Name the verdict in your reply.';
+export const verdictNudge = (verdict: TeamVerdict) => `The team's verdict is ${verdictName(verdict)}. It is the team's finding about the company, `
+  + 'not a target to satisfy: answer in its light, or say "I overrule it because" and your reason. Name the verdict in your reply.';
 // Said under the reply, so short: the founder reads the answer, not the check.
 export const UNWEIGHED = '*Team verdict not weighed.*';
 
