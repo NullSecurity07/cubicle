@@ -115,7 +115,7 @@ describe('the partner held to a weak team verdict', () => {
     for (const reply of ['The verdict is harsh. Don\'t pivot yet.', 'Ignore the verdict for now.\n\nMy call: talk to users.', 'Keep building the host tools.', 'The verdict stands. My call: book 3 calls to satisfy the evaluation criteria.'])
       expect(buildsAgainst(reply, FIVE), reply).toBe(true);
     // An explicit overrule with its reason stands, and so do replies that only stop building.
-    for (const reply of [`${journey}\n\nI overrule it because the 2 paying hosts renewed twice.`, 'The PIVOT REQUIRED verdict comes first: stop building and do not keep building features. My call: run 5 interviews.', 'Given the verdict, my call: pause and run 5 interviews.'])
+    for (const reply of [`${journey}\n\nI overrule it because the 2 paying hosts renewed twice.`, 'The PIVOT REQUIRED verdict comes first: stop building and do not keep building features. My call: run 5 interviews.', 'Given the verdict, my call: pause and run 5 interviews.', 'PIVOT REQUIRED is right: you can\'t keep building without users, and we won\'t keep building blind. My call: 5 interviews.'])
       expect(buildsAgainst(reply, FIVE), reply).toBe(false);
   });
 

@@ -103,7 +103,7 @@ const NOT_BUILD = /\b(?:don'?t|do not|not|never|no|pause|stop|hold off(?: on)?|b
 // it: a reply that argues against it anywhere is held to it, unless it overrules it in so many words with a reason.
 const DEFIES = /\b(?:keep(?: on)? building|(?:do not|don'?t|not|never|no need to) pivot\w*|ignore\s+(?:\S+\s+){0,2}(?:verdict|score|evaluation)|to satisfy\b[^.\n]{0,50}\b(?:criteria|verdict|score|evaluation|judge)\b)/gi;
 // "Stop building and do not keep building": a word against it just before is not defiance.
-const UNDONE = /\b(?:don'?t|do not|not|never|stop|no longer)\s+$/i;
+const UNDONE = /\b(?:don'?t|do not|not|never|stop|no longer|can'?t|cannot|won'?t)\s+$/i;
 const OVERRULES = /\bI overrule\b[^\n]*\bbecause\b/i;
 const defies = (reply: string) => [...reply.matchAll(DEFIES)].some((found) => !UNDONE.test(reply.slice(Math.max(0, found.index - 20), found.index)));
 export function buildsAgainst(reply: string, verdict: TeamVerdict): boolean {

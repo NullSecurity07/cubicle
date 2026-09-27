@@ -488,6 +488,13 @@ describe('a verdict word held out of a reply', () => {
     expect(holdVerdict('Fit: 2/2.', [])).toBe('Fit: 2/2.');
   });
 
+  // Review 7: every "Label: N/M" was masked, real counts and a colleague's own section score with them.
+  it('masks only a rubric part score, never a count or a score the sentence goes on about', () => {
+    for (const kept of ['Paying: 2/12 hosts pay for Pro.', 'Sessions: 40/40 booked this month.', 'Fit: 2/2 is Rohan\'s own score.'])
+      expect(holdVerdict(`It leans WEAK. ${kept}`, [refused]), kept).toBe(`It leans ${NOT_WRITTEN}. ${kept}\n\n${LINE}`);
+    expect(holdVerdict('Fit: 1/2', [refused])).toBe(`Fit: ${NOT_WRITTEN}\n\n${LINE}`);
+  });
+
   it('holds on any turn whose prompt says the verdict is not written', () => {
     const system = turnSources([{ role: 'system', content: `You are Priya, the judge.\n\n${verdictStanding('Rohan has not written "4. Founder-market fit" yet', OUTCOMES)}` }]);
     expect(holdVerdict('**PIVOT REQUIRED** (6/10) once section 4 is in.', [], system)).toBe(`**${NOT_WRITTEN}** once section 4 is in.\n\n${LINE}`);
@@ -516,5 +523,23 @@ describe('a reply with its flagged sentences taken out, for memory', () => {
     // A flagged "2" never takes out a sentence with a real "12".
     expect(dropFlagged('We have 12 beta users.\n\nUnsourced figures: 2 (not found in anything this turn read).')).toBe('We have 12 beta users.');
     expect(dropFlagged('Nothing flagged here.')).toBe('Nothing flagged here.');
+  });
+});
+
+// Review 7: "10 non-paying beta users contacted for testing" was never flagged, so memory kept it.
+describe('outreach claimed as done', () => {
+  it('knows contacted, reached out, called, interviewed, spoke to and emailed as actions a tool must back', () => {
+    expect(unreceiptedClaims('10 non-paying beta users contacted for testing.', [])).toEqual(['contacted']);
+    expect(unreceiptedClaims('I reached out to the 2 paying hosts.', [])).toEqual(['reached out']);
+    expect(unreceiptedClaims('I\'ve interviewed 3 hosts and spoke to Lena.', [])).toEqual(['interviewed']);
+    expect(unreceiptedClaims('I spoke to Lena today.', [])).toEqual(['spoke to']);
+    expect(unreceiptedClaims('I called the 2 paying hosts.', [])).toEqual(['called']);
+    expect(unreceiptedClaims('4 hosts emailed back.', [])).toEqual([]);
+    // Backed by a tool that reaches out, said as a plan, or a name: not a claim.
+    expect(unreceiptedClaims('I contacted the 12 beta users.', [{ name: 'send_email', ok: true }])).toEqual([]);
+    for (const reply of ['Once you have contacted the 12 beta users, tell me.', '3 users called it confusing.', 'Nobody contacted them yet.'])
+      expect(unreceiptedClaims(reply, []), reply).toEqual([]);
+    const lines = checkReply({ reply: '10 non-paying beta users contacted for testing.', receipts: [], sources: ['Beta users: 12. Paying users: 2.'] });
+    expect(lines).toEqual(['Unconfirmed: this reply claims an action no tool confirmed (contacted).']);
   });
 });

@@ -390,8 +390,11 @@ describe('the partner slice: the bets ledger', () => {
     expect(row.detail).toContain('Add a Metrics card from the brief and take the bet: taking it adds a Metrics card with Paying users at 2, wired to Sam.');
 
     deps.body = async () => ({ accept: true });
-    await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/bets/${row.id.split(':')[1]}`);
+    // Two quick yeses add one card: the second finds it by the metric's key.
+    const url = `/api/partner/bets/${row.id.split(':')[1]}`;
+    await Promise.allSettled([part.route!({ method: 'POST' } as never, {} as never, url), part.route!({ method: 'POST' } as never, {} as never, url)]);
     const after = await deps.store.loadStage();
+    expect((after.cards ?? []).filter((one) => one.kind === 'metrics')).toHaveLength(1);
     const card = (after.cards ?? []).find((one) => one.kind === 'metrics')!;
     expect(card).toMatchObject({ kind: 'metrics', title: 'Numbers' });
     expect(after.wires.filter((wire) => wire.from === 'p1' && wire.to === card.id)).toHaveLength(1);

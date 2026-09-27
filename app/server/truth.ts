@@ -12,11 +12,16 @@ const WRITES = /write|create|append|replace|remember|retain|note_|add_|log_|clos
 const KINDS: { verbs: RegExp; tools: RegExp }[] = [
   { verbs: /^(saved|wrote|written|updated|created|stored|recorded)$/i, tools: WRITES },
   { verbs: /^(sent|emailed|mailed|messaged)$/i, tools: /send|mail|reach|telegram|ask_person|note_founder/ },
+  // Outreach: someone was contacted, called or interviewed. Only a tool that reaches people backs it.
+  { verbs: /^(contacted|reached out|called|interviewed|spoke to)$/i, tools: /send|mail|reach|telegram|outreach|message|call|interview|leads/ },
   { verbs: /^(posted|published)$/i, tools: /post|publish|send|reach|browse|edit_site|make_site/ },
   { verbs: /^(scheduled|booked)$/i, tools: /watch|automation|schedule|repeat|propose_|remind|nudge|delegate/ },
   { verbs: /^proposed$/i, tools: /propose_/ },
 ];
-const VERBS = 'saved|wrote|written|updated|created|stored|recorded|sent|emailed|mailed|messaged|posted|published|scheduled|booked';
+const VERBS = 'saved|wrote|written|updated|created|stored|recorded|sent|emailed|mailed|messaged|contacted|reached out|called|interviewed|spoke to|posted|published|scheduled|booked';
+// Review 7: "10 non-paying beta users contacted for testing", a count of people with the outreach done to them and
+// no "I" or "has been" in front. "Called" is left out here: "3 users called it confusing" names, it does not phone.
+const REACHED = /\b\d[\d,]*\s+(?:[\w-]+\s+){0,4}?(contacted|emailed|messaged|interviewed)\b(?!\s+(?:back|us|me|in)\b)/gi;
 // "I saved", "I've just sent", "we have posted"; "it has been saved", "the draft was saved"; a sentence that opens with
 // the verb, "Saved it to plan.md". A bare "we sent" is the company's own history, not this turn, and a bare "is
 // updated" or "was created" says how things are or were ("updated weekly", "created in 2010"), so the passive counts
@@ -56,7 +61,7 @@ function sentenceAround(text: string, at: number): { before: string; rest: strin
 // The action verbs this reply claims as done that no working receipt of the same kind stands behind, in the order said.
 export function unreceiptedClaims(reply: string, receipts: Receipt[]): string[] {
   const found: { at: number; verb: string }[] = [];
-  for (const pattern of [FIRST, WE_DID, PASSIVE, MADE, OPENING, PROPOSED]) {
+  for (const pattern of [FIRST, WE_DID, PASSIVE, MADE, OPENING, PROPOSED, REACHED]) {
     for (const match of reply.matchAll(pattern)) {
       const verb = match[1];
       const at = match.index + match[0].length - verb.length;
@@ -474,7 +479,10 @@ const SCORE = /\b\d{1,2}(?:\.\d)?\s*\/\s*10\b|\b\d{1,2}(?:\.\d)?\s+(?:out\s+)?of
 const TWICE = /\[not written\]((?:\*\*|__)?)(?:[\s,;:\u2013\u2014-]*|\s*\()\[not written\]\)?/g;
 // A part's score beside its label, "Fit: 2/2" or "**Pain:** 1/2": while the verdict is unwritten the parts add up to it,
 // so journey 9's "Flaws: 1/2 ... Fit: 2/2 ... Why Now: 1/2" beside "Verdict: [not written]" gave the total away.
-const PART = /(\b[A-Za-z][A-Za-z -]{0,24}(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*)\d{1,2}(?:\.\d)?\s*\/\s*\d{1,2}\b/g;
+// Review 7: only a rubric part, scored out of five or less and not over its top, and only where the score ends the
+// phrase: "Paying: 2/12 hosts", "Sessions: 40/40 booked" and "Fit: 2/2 is Rohan's own score" stay as said.
+const PART = /(\b[A-Za-z][A-Za-z -]{0,24}(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*)(\d(?:\.\d)?)\s*\/\s*([1-5])\b(?!\s*(?:\*\*|__)?\s+(?!(?:and|or)\b)[A-Za-z])/g;
+const maskPart = (whole: string, label: string, got: string, top: string) => (Number(got) <= Number(top) ? `${label}${NOT_WRITTEN}` : whole);
 // What stays of a sentence masked whole: its bullet and a bold label ("- **Score:** [not written]").
 const MASK_LEAD = /^\s*(?:(?:[-*+]|\d+[.)])\s+)?(?:(?:\*\*|__)[^*_\n]{1,30}?(?::(?:\*\*|__)|(?:\*\*|__):)\s*)?/;
 const masks = (text: string) => text.split(NOT_WRITTEN).length - 1;
@@ -502,7 +510,7 @@ export function holdVerdict(reply: string, receipts: Receipt[], sources: string[
   let changed = false;
   const lines = reply.split('\n').map((line) => {
     if (/^(?:Unconfirmed: |Unsourced figures: |Currency changed: )/.test(line)) return line;
-    let out = [...words, SCORE].reduce((kept, word) => kept.replace(word, NOT_WRITTEN), line).replace(PART, `$1${NOT_WRITTEN}`);
+    let out = [...words, SCORE].reduce((kept, word) => kept.replace(word, NOT_WRITTEN), line).replace(PART, maskPart);
     if (out === line) return line;
     changed = true;
     while (TWICE.test(out)) out = out.replace(TWICE, `${NOT_WRITTEN}$1`);

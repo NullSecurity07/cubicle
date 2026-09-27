@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { ChatMessage } from '../shared/model.ts';
 import { createMemory, recent } from './memory.ts';
 import { createStore } from './store.ts';
+import { checkReply } from './truth.ts';
 
 const message = (index: number, chars = 900): ChatMessage => ({ id: `m${index}`, role: index % 2 ? 'assistant' : 'user', text: `turn ${index} ${'x'.repeat(chars)}`, at: index });
 // A fixed clock: Sunday 20 September 2026, noon where the machine is.
@@ -86,12 +87,16 @@ describe('memory', () => {
     const store = await fresh();
     const asked: string[] = [];
     const memory = createMemory(store, async (messages) => { asked.push(messages[1].content); return 'Kept.'; }, () => NOON);
+    // The flag line is the truth net's own, for the journey line as it was said beside the brief's 12 and 2.
+    const said = 'Hosts like the €19 tier. 10 non-paying beta users contacted for testing.';
+    const flags = checkReply({ reply: said, receipts: [], sources: ['Price: €19. Beta users: 12. Paying users: 2.'] });
+    expect(flags).toEqual(['Unconfirmed: this reply claims an action no tool confirmed (contacted).']);
     for (let index = 0; index < 16; index += 1) {
-      await store.appendChat('marketing', index === 1 ? { ...message(index), text: 'Hosts like the €19 tier. 10 non-paying beta users contacted for testing.\n\nUnsourced figures: 10 (not found in anything this turn read).' } : message(index));
+      await store.appendChat('marketing', index === 1 ? { ...message(index), text: `${said}\n\n${flags.join('\n')}` } : message(index));
     }
     expect(await memory.fold('marketing')).toBe(true);
     expect(asked[0]).toContain('You: Hosts like the €19 tier.');
-    expect(asked[0]).not.toMatch(/contacted|Unsourced/);
+    expect(asked[0]).not.toMatch(/contacted|Unconfirmed|Unsourced/);
   });
 
   it('stamps a new note with the day it was kept, and still matches a note written before there were days', async () => {

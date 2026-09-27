@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { formatValue, isDay } from '../../shared/metrics.ts';
+import { formatValue, isDay, keyOf } from '../../shared/metrics.ts';
 import { newMessageId, type Attention, type Stage } from '../../shared/model.ts';
 import { bare, companyLine, isPlanDoc, SHARED_RECORD, parsePlan, PARTNER_CHANNEL, planStepLine, type Bet, type BetVerdict, type MorningNote, type PlanStep } from '../../shared/partner.ts';
 import { localDay } from '../clock.ts';
@@ -121,11 +121,12 @@ async function briefNumber(stage: Stage, store: { readDoc(id: string): Promise<s
 }
 
 // The founder took a bet whose number only the brief held: a Metrics card with that row, wired to the partner (or
-// whoever proposed it), so the check day has a number to read.
+// whoever proposed it), so the check day has a number to read. Named by the metric's key, so two quick yeses make one card.
 export async function metricsFromBrief(workspace: string, store: Pick<Deps['store'], 'patchStage'>, row: BriefRow, roomId: string | undefined, now: number): Promise<string> {
-  const id = `metrics-${Math.random().toString(36).slice(2, 8)}`;
+  const id = `metrics-${keyOf(row.label)}`;
   await writeAtomic(join(workspace, 'metrics', `${id}.json`), JSON.stringify(briefMetrics(row, localDay(now), now), null, 2), { mkdir: true });
   await store.patchStage((draft) => {
+    if ((draft.cards ?? []).some((card) => card.id === id)) return;
     draft.cards = [...(draft.cards ?? []), { id, kind: 'metrics', title: 'Numbers', ...placeOf(draft), w: 380, h: 440 }];
     if (roomId && draft.rooms.some((room) => room.id === roomId)) draft.wires.push({ id: `${roomId}-${id}`, from: roomId, fromHandle: 'r', to: id, toHandle: 'l' });
   });
@@ -527,7 +528,9 @@ export function createPartner(options: PartnerOptions = {}) {
               const taking = sent?.accept === true ? (await book.list()).find((one) => one.id === bet[1] && one.status === 'proposed') : undefined;
               const stage = await deps.store.loadStage();
               if (taking?.brief && (await readMetric(deps.workspace, stage, taking.metric)).value === null) {
-                await metricsFromBrief(deps.workspace, deps.store, taking.brief as BriefRow, partnerOf(stage)?.id ?? taking.roomId, now());
+                // The brief as it stands now, in case the founder changed the number since the bet was put.
+                const row = await briefNumber(stage, deps.store, taking.metric).catch(() => null) ?? taking.brief as BriefRow;
+                await metricsFromBrief(deps.workspace, deps.store, row, partnerOf(stage)?.id ?? taking.roomId, now());
               }
               await book.answer(bet[1], sent?.accept === true); await betsChanged(); deps.json(res, 200, { ok: true }); return true;
             }
