@@ -151,4 +151,13 @@ describe('a Mistral key whose free plan is off, in a Keys check (round 6 final)'
     expect(usage.dead('mistral')).toBe(false);
     expect(await row('MISTRAL_API_KEY')).toMatchObject({ state: 'set' });
   });
+
+  it('marks a model whose key answered the check as checked, so its dot no longer reads untested (pass 8)', async () => {
+    const usage = createUsage(null);
+    const answering: ModelClient = { name: 'nvidia', model: 'k', maxPromptChars: 1000, tools: true, limits: {}, step: async (_messages, { onToken }) => { onToken('ok'); return { text: '', calls: [] }; } };
+    const { call } = await setup('NVIDIA_API_KEY=nvapi-key-0001\n', usage, [answering]);
+    expect(usage.info([answering])[0].checked).toBeUndefined();
+    await call('/api/keys-file/check', 'POST');
+    expect(usage.info([answering])[0]).toMatchObject({ name: 'nvidia', requests: 0, checked: true });
+  });
 });

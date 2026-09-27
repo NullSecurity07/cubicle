@@ -41,13 +41,35 @@ describe('a provider with more than one key', () => {
   });
 
   it('shows the founder one provider, its keys counted together', () => {
-    const usage = createUsage(null);
+    let now = Date.parse('2026-09-27T10:00:00Z');
+    const usage = createUsage(null, () => now);
     usage.record('groq', { input: 100, output: 20 });
+    now += 1000;
     usage.record('groq#2', { input: 300, output: 40 });
     usage.record('gemini', { input: 10, output: 1 });
     expect(usage.info(pool())).toEqual([
-      { name: 'groq', model: 'oss', ready: true, left: 0.9, requests: 2, tokens: 460 },
-      { name: 'gemini', model: 'flash', ready: true, left: 0.9, requests: 1, tokens: 11 },
+      { name: 'groq', model: 'oss', ready: true, left: 0.9, requests: 2, tokens: 460, lastAnswerAt: now },
+      { name: 'gemini', model: 'flash', ready: true, left: 0.9, requests: 1, tokens: 11, lastAnswerAt: now },
     ]);
+  });
+
+  it('says when a provider last answered, whether a key check passed, and whether every key rests slow (pass 8)', () => {
+    let now = Date.parse('2026-09-27T23:59:00Z');
+    const usage = createUsage(null, () => now);
+    usage.record('gemini');
+    const answered = now;
+    // A new day zeroes the count, not what is known: it answered, so it is not untested.
+    now += 120_000;
+    expect(usage.info(pool()).find((one) => one.name === 'gemini')).toMatchObject({ requests: 0, lastAnswerAt: answered });
+    usage.revive('groq#2');
+    const quiet = new Error('no first word within 20 s (timed out)');
+    for (let at = 0; at < 2; at += 1) usage.failed('groq', quiet);
+    const groq = usage.info(pool()).find((one) => one.name === 'groq')!;
+    expect(groq.checked).toBe(true);
+    // One key of two slow is not the provider slow: its other key still serves.
+    expect(groq.slow).toBeUndefined();
+    for (let at = 0; at < 2; at += 1) usage.failed('groq#2', quiet);
+    expect(usage.info(pool()).find((one) => one.name === 'groq')!.slow).toBe(true);
+    expect(usage.info(pool()).find((one) => one.name === 'gemini')!.slow).toBeUndefined();
   });
 });

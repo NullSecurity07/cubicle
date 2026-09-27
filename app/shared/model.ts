@@ -260,7 +260,9 @@ export type RoomEvent = { roomId: string } & (
   | { turn: string; tool: ToolEvent } | { turn: string; restart: true } | { turn: string; ended: true });
 // One configured model as the client sees it: `left` is the share of today's free quota still there, 0 to 1.
 // `planOff`: every key this provider has is refused because its free plan is not turned on; it answers nobody until it is.
-export type ModelInfo = { name: string; model: string; ready: boolean; left: number; requests: number; tokens: number; planOff?: boolean };
+// `lastAnswerAt`: when any of its keys last answered, known across a new day's zeroed count; `checked`: a key check found
+// a key answering; `slow`: every key rests after giving no first word twice (breaker.ts). What a dot is drawn from.
+export type ModelInfo = { name: string; model: string; ready: boolean; left: number; requests: number; tokens: number; planOff?: boolean; lastAnswerAt?: number; checked?: boolean; slow?: boolean };
 
 export const newMessageId = () => `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 export const newTurnId = () => `t-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
