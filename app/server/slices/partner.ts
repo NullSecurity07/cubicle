@@ -8,7 +8,7 @@ import { askedInstead, betDue, betsAttention, betsBook, closedLine, metricChoice
 import { companyDocOf, ensureCompany, syncDecisions, writeBets } from '../partner/company.ts';
 import { hub } from '../events.ts';
 import { saysSomething } from '../missions.ts';
-import { FAKE_MORNING, morningDue, morningInputs, morningMessage, writeMorning } from '../partner/morning.ts';
+import { FAKE_MORNING, MOST_TRIES, morningDue, morningInputs, morningMessage, writeMorning } from '../partner/morning.ts';
 import { addPlan, boardFor, boardForPlan, NO_BOARD, planAttention, stepsFrom } from '../partner/plans.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import type { ModelMessage } from '../prompt.ts';
@@ -235,7 +235,8 @@ export function createPartner(options: PartnerOptions = {}) {
         const count = held.tries?.day === today ? held.tries.count : 0;
         await state.change((draft) => { draft.tries = { day: today, count: count + 1, last: at }; });
         const written = await writeMorning({
-          name: partner.name, ask,
+          // The founder's own ask, or the day's last try, gets a note even when it is still at fault.
+          name: partner.name, ask, last: asked || count + 1 >= MOST_TRIES,
           promptFor: (on, roomId) => deps.promptFor(on, roomId, [], true),
           sources: {
             workspace: deps.workspace, stage, partnerId: partner.id, now: at, bets, company: inputs.company,

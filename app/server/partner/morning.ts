@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Lead } from '../../shared/leads.ts';
 import type { ChatMessage, Decision, Stage, Task } from '../../shared/model.ts';
-import { bare, morningText, readMorning, type Bet, type MorningNote } from '../../shared/partner.ts';
+import { bare, morningText, readMorning, type Bet, type Morning, type MorningNote } from '../../shared/partner.ts';
 import { localDay, weekDay } from '../clock.ts';
 import type { ModelMessage } from '../prompt.ts';
 import { sectionBody, filled, verdictOf } from '../tools/verdict.ts';
@@ -157,8 +157,18 @@ export async function gatherMorning(from: MorningSources): Promise<string> {
 
 // One morning turn: the partner's own prompt, the ask and the facts, and the reply held to its shape. Gives back the
 // note, or null when the reply lost the shape (nothing is posted then; the next try comes later).
+// Why a note that kept its shape still is not one the founder can use, or null when it is.
+export function shapeFault(read: Morning, company: string, stage: Stage): string | null {
+  if (restates(read.things, company)) return 'The three moves only restate the Company document: give moves the founder can start today.';
+  if (!namesAPlace(read.risk, stage)) return 'The risk names no room, document or number: name where the contradiction or risk is.';
+  return null;
+}
+const LOST_SHAPE = 'The reply lost the shape: three numbered moves, then one Risk line and one Question line.';
+
+// `last` is the day's last try, or one the founder asked for: a note that is still at fault after it is asked again
+// is posted with a line saying so, rather than leaving the founder with nothing today.
 export async function writeMorning(input: {
-  sources: MorningSources; name: string;
+  sources: MorningSources; name: string; last?: boolean;
   promptFor: (stage: Stage, roomId: string) => Promise<ModelMessage[]>;
   // The reply's words, and which model wrote them when the asker knows.
   ask: (messages: ModelMessage[]) => Promise<string | { text: string; provider?: string; model?: string }>;
@@ -166,14 +176,22 @@ export async function writeMorning(input: {
   const { sources } = input;
   const facts = await gatherMorning(sources);
   const messages: ModelMessage[] = [...await input.promptFor(sources.stage, sources.partnerId), { role: 'user', content: `${MORNING_ASK}\n\n${facts}` }];
-  const answered = await input.ask(messages);
-  const { text: reply, provider, model } = typeof answered === 'string' ? { text: answered } as { text: string; provider?: string; model?: string } : answered;
-  const read = readMorning(reply);
-  if (!read || restates(read.things, sources.company ?? '') || !namesAPlace(read.risk, sources.stage)) return null;
+  const once = async (these: ModelMessage[]) => {
+    const answered = await input.ask(these);
+    const said = typeof answered === 'string' ? { text: answered } as { text: string; provider?: string; model?: string } : answered;
+    const read = readMorning(said.text);
+    return { ...said, read, fault: read ? shapeFault(read, sources.company ?? '', sources.stage) : LOST_SHAPE };
+  };
+  let reply = await once(messages);
+  // At fault: asked once more in the same try, with the reason in front of it, not the same prompt half an hour on.
+  if (reply.fault) reply = await once([...messages, { role: 'assistant', content: reply.text }, { role: 'user', content: `${reply.fault} Write the note again, in exactly the same shape.` }]);
+  const { read, provider, model, fault } = reply;
+  if (!read || (fault && !input.last)) return null;
   // The truth net, as every turn has it: a figure in the note that nothing it was given holds is flagged under it,
   // and the note is posted all the same, so the founder sees both.
   // Checked as posted: the reshaped note, not the raw reply, so the flags name only what the founder reads.
   const flags = checkReply({ reply: morningText(read), receipts: [], sources: messages.map((message) => (typeof message.content === 'string' ? message.content : '')) });
+  if (fault) flags.push(`Note check: ${fault.split(':')[0].replace(/^The /, 'the ')}, even when asked again.`);
   return { ...read, day: localDay(sources.now), at: sources.now, roomId: sources.partnerId, who: input.name, ...(flags.length ? { flags } : {}), ...(provider ? { provider } : {}), ...(model ? { model } : {}) };
 }
 

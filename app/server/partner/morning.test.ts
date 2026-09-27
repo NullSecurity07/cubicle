@@ -203,6 +203,32 @@ describe('one morning turn', () => {
     expect(note).toMatchObject({ things: ['a', 'b', 'c'], provider: 'gemini', model: 'gemini-3.5-flash-lite' });
   });
 
+  // The review: a vague note used to burn a try and come back half an hour later to the same prompt, three times.
+  it('asks once more in the same try with the reason, and takes the second answer when it holds', async () => {
+    const heard: ModelMessage[][] = [];
+    const replies = ['Three moves for today:\n1. a\n2. b\n3. c\nRisk: execution could slip\nQuestion: q?', 'Three moves for today:\n1. a\n2. b\n3. c\nRisk: Maya priced it at $9\nQuestion: q?'];
+    const note = await writeMorning({ sources: await sources(), name: 'Sam', promptFor: async () => [{ role: 'system', content: 'You are Sam.' }], ask: async (messages) => { heard.push(messages); return replies[heard.length - 1]; } });
+    expect(heard).toHaveLength(2);
+    expect(heard[1].at(-1)?.content).toMatch(/^The risk names no room, document or number/);
+    expect(heard[1].at(-2)).toEqual({ role: 'assistant', content: replies[0] });
+    expect(note).toMatchObject({ risk: 'Maya priced it at $9' });
+    expect(note?.flags).toBeUndefined();
+  });
+
+  it('gives nothing when it is still at fault on an early try, and posts it with a line saying so on the last', async () => {
+    const vague = 'Three moves for today:\n1. a\n2. b\n3. c\nRisk: execution could slip\nQuestion: q?';
+    const prompt = async (): Promise<ModelMessage[]> => [{ role: 'system', content: 'You are Sam.' }];
+    let asked = 0;
+    expect(await writeMorning({ sources: await sources(), name: 'Sam', promptFor: prompt, ask: async () => { asked += 1; return vague; } })).toBeNull();
+    expect(asked).toBe(2);
+    const last = await writeMorning({ sources: await sources(), name: 'Sam', promptFor: prompt, last: true, ask: async () => vague });
+    expect(last?.risk).toBe('execution could slip');
+    expect(last?.flags).toEqual(['Note check: the risk names no room, document or number, even when asked again.']);
+    expect(morningMessage(last!)).toContain('Note check: the risk names no room');
+    // A reply with no shape at all has nothing to post, last try or not.
+    expect(await writeMorning({ sources: await sources(), name: 'Sam', promptFor: prompt, last: true, ask: async () => 'Good morning!' })).toBeNull();
+  });
+
   it('gives back nothing when the reply lost the shape', async () => {
     expect(await writeMorning({ sources: await sources(), name: 'Sam', promptFor: prompt, ask: async () => 'Good morning!' })).toBeNull();
   });

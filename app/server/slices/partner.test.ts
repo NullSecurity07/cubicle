@@ -198,7 +198,8 @@ describe('the partner slice: the morning note', () => {
     clock -= 86_400_000; await part.tick!(); clock += 86_400_000;
     await part.tick!();
     await part.tick!();
-    expect(asked).toBe(1);
+    // One try is the ask and one ask again with the reason, then the wait.
+    expect(asked).toBe(2);
     expect(await deps.store.readChat('p1')).toEqual([]);
     expect((await deps.attention.list()).some((one) => one.kind === 'morning-note')).toBe(false);
     await part.close!();
