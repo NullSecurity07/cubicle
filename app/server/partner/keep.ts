@@ -195,12 +195,19 @@ const amount = (value: string) => {
 const MONTHS = /(\d+(?:\.\d+)?)(\s?(?:-|–)?\s?months?)\b/gi;
 const RUNWAY_WORDS = /\b(?:runway|left|remaining|of cash|in the bank)\b/i;
 // Said as a bound, not a figure: "under 4 months" is true of 3.8.
-const BOUND = /\b(?:under|less than|below|nearly|almost|short of|not even|at most|up to)\s*(?:~|\*\*)?\s*$/i;
+// A floor is a bound too: "at least 6 months of runway" is a precondition, not the runway now (journey 9).
+const BOUND = /\b(?:under|less than|below|nearly|almost|short of|not even|at most|up to|at least|more than|over|above|a minimum of|minimum)\s*(?:~|\*\*)?\s*$/i;
+// Another input in the sentence: a scenario ("new", "if", "after", "would"), or a comparison ("vs", "from 5.9 to 6").
+const SCENARIO = /\b(?:new|if|after|assum\w*|would|could|instead|scenario|once)\b/i;
+const COMPARED = /\b(?:vs\.?|versus|compared|than|from\b[^.!?\n]*\bto)\b|→|->/i;
+// A money figure in the sentence: "€1,500 burn" or "with €19" puts a figure in that is not the Numbers' own.
+const SUM_SAID = /[$€£]\s?\d[\d,]*(?:\.\d+)?\s?[km]?\b|\b\d[\d,]*(?:\.\d+)?\s?(?:[km]\b\s*)?(?:dollars|euros|pounds|usd|eur)\b/gi;
 
-// Runway is never rounded toward the better side. A months figure in a sentence about runway or cash that is a
-// rounded-up version of cash over burn, as the Company numbers or the founder have them, gets the months to one
-// decimal, rounded down, beside it: "4 months (3.8 months)". A figure past the next whole month is left alone, since
-// it may count revenue against the burn.
+// Runway is never rounded toward the better side. A months figure in a sentence about runway or cash that is
+// cash over burn of the current Company numbers rounded up (to the whole month, or to the tenth it is said in) gets
+// the months to one decimal, rounded down, beside it: "4 months (3.8 months)". Journey 9 pasted "(5.9 months)" after
+// "New runway: 6.4 months" and "At least 6 months", so it is put only once, and never beside a bound, a scenario, a
+// comparison, another money figure than the Numbers' own, or a sentence that already says the right months.
 export function runwayFix(reply: string, facts: string): string {
   const numbers = companyFacts(facts).numbers;
   const cash = amount(numbers.find((one) => one.label === 'Cash')?.value ?? '');
@@ -220,7 +227,14 @@ export function runwayFix(reply: string, facts: string): string {
     // first" names a duration, and runway only in the next clause.
     const clause = `${reply.slice(start, at).split(/[,;]|\band\b|\bso\b|\bbut\b/).at(-1)}${whole}${reply.slice(at + whole.length).split(/[,;.!?\n]|\band\b|\bbut\b/)[0]}`;
     if (value <= most + 1e-9 || value - exact >= 1 || /\.\d{2,}/.test(figure) || BOUND.test(before) || /\d\s*(?:to|–|-)\s*$/.test(before)) return whole;
-    if (!RUNWAY_WORDS.test(clause) || /\b(?:if|net|mrr|revenue)\b/i.test(sentence)) return whole;
+    if (!RUNWAY_WORDS.test(clause) || /\b(?:net|mrr|revenue)\b/i.test(sentence)) return whole;
+    // Rounded up from the current figure, at the precision it is said in: 6 or 6.0 from 5.94, never 6.4.
+    const tenths = figure.includes('.');
+    if (value !== (tenths ? Math.ceil(exact * 10) / 10 : Math.ceil(exact))) return whole;
+    if (SCENARIO.test(sentence) || COMPARED.test(sentence)) return whole;
+    if ([...sentence.matchAll(SUM_SAID)].some((found) => ![cash, burn, mrr].includes(amount(found[0]) ?? -1))) return whole;
+    // Said already: the right months beside it, or anywhere in the sentence.
+    if (new RegExp(`(?:^|[^\\d.])${String(down).replace('.', '\\.')}\\s?-?\\s?months?\\b`, 'i').test(sentence)) return whole;
     return `${figure}${unit} (${down} months)`;
   });
 }

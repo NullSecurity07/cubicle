@@ -203,4 +203,26 @@ describe('runway said in months', () => {
     expect(runwayFix('You have 4 months of runway.', `${NUMBERS}\n- MRR: €87 (founder, 2026-09-27)`)).toBe('You have 4 months of runway.');
     expect(runwayFix('You have 5 months of runway.', `${NUMBERS}\n- MRR: €87 (founder, 2026-09-27)`)).toBe('You have 5 months of runway.');
   });
+
+  // Journey 9: €9,800 over €1,650 is 5.94. "(5.9 months)" was pasted after a precondition, a scenario and a figure
+  // the reply had already said.
+  it('never pastes the months beside a bound, a new scenario, a comparison or a sentence that already says them', () => {
+    const KINDLING = '- Cash: €9,800 (founder, 2026-09-27)\n- Burn: €1,650/month (founder, 2026-09-27)\n- Runway: 5.9 months';
+    for (const reply of [
+      '2. At least 6 months of runway (we have 5.9 months of runway at the current burn).',
+      '- Precondition: at least 6 months of runway before you hire.',
+      '**New runway:** **6.4 months**',
+      'With the €19 tier and 2 more paying users, runway would be 6 months.',
+      'At €1,500 burn, runway is 6 months.',
+      'Runway goes from 5.9 months to 6 months with that cut.',
+      'Today 5.9 vs 6 months after the cut in runway.',
+      'You have 6 months (5.9 months) of runway.',
+    ]) expect(runwayFix(reply, KINDLING), reply).toBe(reply);
+    // The current figure rounded up is still put right, once.
+    const once = runwayFix('You have 6 months of runway.', KINDLING);
+    expect(once).toBe('You have 6 months (5.9 months) of runway.');
+    expect(runwayFix(once, KINDLING)).toBe(once);
+    // A figure that is not cash over burn rounded up (6.4 is not 5.94 rounded up) is not the current runway.
+    expect(runwayFix('Your runway is 6.4 months.', KINDLING)).toBe('Your runway is 6.4 months.');
+  });
 });
