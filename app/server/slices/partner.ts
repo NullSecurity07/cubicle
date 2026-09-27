@@ -8,9 +8,10 @@ import { askedInstead, betDue, betsAttention, betsBook, cannotLose, closedLine, 
 import { companyDocOf, ensureCompany, syncDecisions, writeBets } from '../partner/company.ts';
 import { hub } from '../events.ts';
 import { saysSomething } from '../missions.ts';
-import { FAKE_MORNING, MOST_TRIES, morningDue, morningInputs, morningMessage, writeMorning } from '../partner/morning.ts';
+import { FAKE_MORNING, MOST_TRIES, morningDue, morningInputs, morningMessage, writeMorning, type MorningSources } from '../partner/morning.ts';
 import { addPlan, boardFor, boardForPlan, NO_BOARD, planAttention, stepsFrom } from '../partner/plans.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
+import { standingBlock, standingParts, type StandingParts } from '../partner/standing.ts';
 import type { ModelMessage } from '../prompt.ts';
 import { complete, fakeClient, promptSize } from '../providers.ts';
 import { partnerRoute } from '../partner/route.ts';
@@ -168,6 +169,7 @@ export function createPartner(options: PartnerOptions = {}) {
     const bets = (): Promise<Bet[]> => book.list();
     // A bet changed: the Company document's Bets section is written again from the ledger, and Needs you is told.
     const betsChanged = async () => {
+      standing = null;
       const doc = await companyNow();
       if (doc) await writeBets(deps.store, doc.id, await book.list(), changed);
       await deps.attention.refresh().catch(() => {});
@@ -183,7 +185,7 @@ export function createPartner(options: PartnerOptions = {}) {
         await state.change(async (held) => { Object.assign(held, await syncDecisions(deps.store, doc.id, list, held, changed, now())); });
       } finally { syncing = null; }
     })());
-    const offDecisions = deps.decisions.onChange(() => { void sync().catch(() => {}); });
+    const offDecisions = deps.decisions.onChange(() => { standing = null; void sync().catch(() => {}); });
 
     // A partner on the stage owns the Company document: with none recorded yet it is made or adopted, and each
     // partner is wired to it once. A wire the founder takes away later stays away; so does a document they removed.
@@ -213,6 +215,27 @@ export function createPartner(options: PartnerOptions = {}) {
 
     // Today's note, written now if it is due (or asked for), else the one already written, else null.
     let writing: Promise<(MorningNote & { unchanged?: true }) | null> | null = null;
+    // Everything the partner reads across the rooms, as it stands now: the morning note and the standing facts both
+    // read from this.
+    const sourcesFor = (stage: Stage, partnerId: string, company: string): MorningSources => ({
+      workspace: deps.workspace, stage, partnerId, now: now(), bets, company,
+      decisions: () => deps.decisions.list(), boards: (id) => deps.boards.list(id), leads: (id) => leadsFor(deps.workspace).list(id),
+      chat: (roomId) => deps.store.readChat(roomId), doc: (id) => deps.store.readDoc(id),
+    });
+    // The standing facts, gathered once and kept until the next tick or until something they read changes (a bet, a
+    // decision, a write by a tool). What waits in Needs you is read fresh every turn.
+    let standing: Promise<StandingParts> | null = null;
+    async function standingFor(stage: Stage, partnerId: string) {
+      if (!standing) {
+        const doc = await companyNow(stage);
+        const gathering = standingParts(sourcesFor(stage, partnerId, doc ? await deps.store.readDoc(doc.id).catch(() => '') : ''));
+        standing = gathering;
+        gathering.catch(() => { if (standing === gathering) standing = null; });
+      }
+      const [parts, waiting] = await Promise.all([standing, deps.attention.list().catch(() => [])]);
+      return standingBlock(parts, waiting);
+    }
+
     // What the note is read from, as it stands now.
     async function inputsNow(stage: Stage, partnerId: string) {
       const doc = await companyNow(stage);
@@ -242,11 +265,7 @@ export function createPartner(options: PartnerOptions = {}) {
           // The founder's own ask, or the day's last try, gets a note even when it is still at fault.
           name: partner.name, ask, last: asked || count + 1 >= MOST_TRIES,
           promptFor: (on, roomId) => deps.promptFor(on, roomId, [], true),
-          sources: {
-            workspace: deps.workspace, stage, partnerId: partner.id, now: at, bets, company: inputs.company,
-            decisions: () => deps.decisions.list(), boards: (id) => deps.boards.list(id), leads: (id) => leadsFor(deps.workspace).list(id),
-            chat: (roomId) => deps.store.readChat(roomId), doc: (id) => deps.store.readDoc(id),
-          },
+          sources: { ...sourcesFor(stage, partner.id, inputs.company), now: at },
         }).catch((error: Error) => { console.error(`partner morning: ${error.message}`); return null; });
         if (!written) return null;
         const note = { ...written, inputs: inputs.key };
@@ -274,6 +293,8 @@ export function createPartner(options: PartnerOptions = {}) {
     const afterTool: Handler<'tool:after'> = async (payload, next) => {
       const { event, roomId } = payload;
       const effect = event.effect;
+      // Whatever a tool changed may be a standing fact: they are gathered again for the next turn.
+      if (event.ok && effect) standing = null;
       if (event.ok && (effect?.kind === 'doc-created' || effect?.kind === 'doc-changed')) {
         try {
           const stage = await deps.store.loadStage();
@@ -288,12 +309,23 @@ export function createPartner(options: PartnerOptions = {}) {
     const offSeam = deps.seams.on('tool:after', afterTool);
     // The prompt finds the company document by its title. One the founder renamed is still the company's (it is
     // found here by the id recorded for it), so the line saying it is the shared record is added here instead.
+    // The partner's turn carries the standing facts at the end of the system prompt, where the morning note's facts
+    // come from, so the verdict the note leads with is in every answer too.
     const beforeTurn: Handler<'turn:before'> = async (payload, next) => {
       const system = payload.messages[0];
-      if (system?.role !== 'system' || system.content.includes(SHARED_RECORD)) return next(payload);
-      const { companyId } = await state.read();
-      const doc = companyId ? companyDocOf(await deps.store.loadStage(), companyId) : undefined;
-      return next(doc?.pinned ? withSystem(payload, companyLine(doc.title)) : payload);
+      if (system?.role !== 'system') return next(payload);
+      const stage = await deps.store.loadStage();
+      let out = payload;
+      if (!system.content.includes(SHARED_RECORD)) {
+        const { companyId } = await state.read();
+        const doc = companyId ? companyDocOf(stage, companyId) : undefined;
+        if (doc?.pinned) out = withSystem(out, companyLine(doc.title));
+      }
+      if (stage.rooms.some((one) => one.id === payload.roomId && one.partner)) {
+        const block = await standingFor(stage, payload.roomId).catch((error: Error) => { console.error(`partner standing facts: ${error.message}`); return ''; });
+        out = withSystem(out, block);
+      }
+      return next(out);
     };
     const offTurn = deps.seams.on('turn:before', beforeTurn);
 
@@ -318,6 +350,8 @@ export function createPartner(options: PartnerOptions = {}) {
         return tools.filter((tool) => (partner || !PARTNER_TOOLS.includes(tool.name)) && (board || !BOARD_TOOLS.includes(tool.name)));
       },
       async tick() {
+        // The standing facts are gathered again at most once a tick.
+        standing = null;
         // The day a partner first shows up is noted, so their first note is the next morning's.
         const arrived = partnerOf(await deps.store.loadStage());
         if (arrived && !(await state.read()).partnerSince) await state.change((draft) => { draft.partnerSince = localDay(now()); });
@@ -380,6 +414,7 @@ export function createPartner(options: PartnerOptions = {}) {
             }
             const made = accept ? await addPlan(deps.boards, await deps.store.loadStage(), held) : null;
             await state.change((draft) => { draft.plans = draft.plans.filter((one) => one.id !== held.id); });
+            standing = null;
             await deps.attention.refresh();
             deps.json(res, 200, { ok: true, ...(made ?? {}) });
             return true;

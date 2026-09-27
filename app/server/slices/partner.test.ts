@@ -405,6 +405,52 @@ describe('the partner slice: the bets ledger', () => {
   });
 });
 
+// Journey 5: the verdict reached the morning note only; minutes later the partner's answers said "ship invoicing" and
+// "approve the tasks waiting in Needs you" after they had been approved.
+describe('the partner slice: standing facts in every partner turn', () => {
+  const EVAL = '# Evaluation\n\n## 4. Founder-market fit\n\nFit 8.\n\n## 6. Verdict\n\nVerdict: WEAK\nScore: 5/10\nNext 7-day action: conduct 10 discovery conversations before writing further code.\n';
+  async function setUp() {
+    const { deps, part, workspace } = await installed({}, { now: () => new Date('2026-09-27T10:00').getTime(), ask: async () => SHAPED });
+    await mkdir(join(workspace, 'metrics'), { recursive: true });
+    await writeFile(join(workspace, 'metrics', 'metrics-1.json'), JSON.stringify({ updatedAt: 0, metrics: [{ key: 'paying_users', label: 'paying_users', unit: '', better: 'up', points: [{ at: '2026-09-27', value: 3, from: 'founder' }] }] }));
+    const stage = await deps.store.loadStage();
+    await deps.store.saveStage({ ...stage, rooms: [...stage.rooms, room('p1', 'Sam', { partner: true })], cards: [{ id: 'metrics-1', kind: 'metrics', x: 0, y: 0, w: 1, h: 1 }],
+      docs: [...stage.docs, { id: 'eval', title: 'Evaluation', x: 0, y: 0, w: 1, h: 1, rules: { framework: 'startup-evaluation', sections: [{ heading: '4. Founder-market fit', by: 'fit' }], verdict: { heading: '6. Verdict', by: 'judge' }, outcomes: ['PIVOT REQUIRED', 'WEAK', 'STRONG'] } }] } as Stage);
+    await deps.store.writeDoc('eval', EVAL);
+    await part.tick!();
+    const system = async (roomId: string, query = 'what do I do now?') => (await deps.seams.run('turn:before', { roomId, source: 'chat', query, messages: [{ role: 'system', content: 'You are someone.' }] })).messages[0].content as string;
+    return { deps, part, system };
+  }
+
+  it('carries the team verdict into a partner turn, and not into a staff turn', async () => {
+    const { part, system } = await setUp();
+    const said = await system('p1');
+    expect(said).toContain('Standing facts, read in code from every room just now. When one contradicts the founder\'s ask or your own advice, say so first:');
+    expect(said).toMatch(/- Evaluation, 6\. Verdict: WEAK, score 5\/10\. .*before writing further code/);
+    expect(said).toContain('Waiting in Needs you: nothing.');
+    expect(await system('marketing')).not.toContain('Standing facts');
+    await part.close!();
+  });
+
+  it('lists what waits in Needs you by kind and count, and drops it the moment it is answered', async () => {
+    const { deps, part, system } = await setUp();
+    await part.tools!.find((one) => one.name === 'propose_bet')!.run({ what: 'Five paying users', hypothesis: 'invoices bring two more', metric: 'paying_users', target: 5, check_date: '2026-10-11' }, { stage: await deps.store.loadStage(), roomId: 'p1', store: deps.store, granted: new Map() } as never);
+    await deps.decisions.propose({ title: 'Raise the price?', options: ['$29', '$49'] });
+    deps.attention.source(decisionAttention(deps.decisions));
+    const before = await system('p1');
+    expect(before).toContain('1 bet to take or leave ("Five paying users")');
+    expect(before).toContain('1 decision to make ("Raise the price?")');
+    deps.body = async () => ({ accept: true });
+    const id = (await deps.attention.list()).find((one) => one.kind === 'proposed-bet')!.id.split(':')[1];
+    await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/bets/${id}`);
+    const after = await system('p1');
+    expect(after).not.toContain('bet to take');
+    expect(after).toContain('Waiting in Needs you: 1 decision to make ("Raise the price?"). Nothing else waits there');
+    expect(after).toMatch(/Bets on record:\n- Open: Five paying users\./);
+    await part.close!();
+  });
+});
+
 describe('the partner slice: plans become tasks', () => {
   const PLAN = '# Flipside: 2-week plan\n\n### Mon 28 Sep (Day 1)\n- Draft the landing page\n- Set up the pre-order form\n\n### Tue 29 Sep (Day 2)\n- List 30 projects\n\n## KPIs\n- Revenue >= $150\n';
 

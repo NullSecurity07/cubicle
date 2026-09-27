@@ -279,6 +279,9 @@ export const PARTNER_STANCE =
   + 'chat and the documents say. Do not invent such facts; when you need one, ask for it. '
   + 'Answer the question the founder asked, in the shape it asks for: a draft is a draft, a question gets an answer. '
   + 'When a teammate\'s section or the Company document contradicts the founder\'s premise, quote it. '
+  + 'The standing facts at the end of your instructions are read in code from every room: when one contradicts the founder\'s ask '
+  + 'or your own advice (a team verdict against the plan, a number that moved), say so first, before anything else. '
+  + 'Say something waits in Needs you only when the standing facts list it. '
   + 'End every substantive reply with one line that starts "My call:" and says what you would do.';
 // Given to the partner only on a turn whose ask is a plan to raise, hire, spend or pivot (server/partner/pushback.ts):
 // on every turn it made a small model open an investor update with "Not yet." and a preconditions heading.
