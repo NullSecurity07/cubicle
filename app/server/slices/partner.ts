@@ -393,7 +393,14 @@ export function createPartner(options: PartnerOptions = {}) {
     const onPromise: Handler<'turn:reply'> = async (payload, next) => {
       if (payload.reply.stopped) return next(payload);
       const kept = [];
-      for (const said of promisesIn(payload.query, now())) if (await promises.add({ ...said, roomId: payload.roomId })) kept.push(said);
+      // A promises book that cannot be read (not a damaged file, which is rescued: a folder in its place, no access)
+      // costs the receipt line, never the reply.
+      try {
+        for (const said of promisesIn(payload.query, now())) if (await promises.add({ ...said, roomId: payload.roomId })) kept.push(said);
+      } catch (error) {
+        console.log(`the partner could not keep a promise: ${(error as Error).message}`);
+        return next(payload);
+      }
       if (!kept.length) return next(payload);
       await deps.attention.refresh().catch(() => {});
       return next({ ...payload, reply: { ...payload.reply, text: `${payload.reply.text.replace(/\s+$/, '')}\n\n${keptPromiseLine(kept)}` } });

@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Room, Stage } from '../../shared/model.ts';
 import { COMPANY_LINE, companyLine } from '../../shared/partner.ts';
 import type { Deps, Installed } from '../install.ts';
@@ -710,5 +710,20 @@ describe('the partner slice: the founder\'s promises', () => {
     expect((await deps.attention.list()).some((one) => one.kind === 'promise')).toBe(false);
     expect(await system()).not.toContain('The founder\'s promises');
     await part.close!();
+  });
+});
+
+describe('the partner slice: a promises book that cannot be read', () => {
+  it('still saves the founder\'s reply, and only leaves out the receipt line', async () => {
+    const { deps, part } = await installed({ json: () => {} }, { now: () => new Date('2026-09-28T10:00').getTime(), ask: async () => SHAPED });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    // A folder where the file should be: every read of it fails, and it is not a damaged file to rescue.
+    await mkdir(join(deps.workspace, 'promises.json'), { recursive: true });
+    const quiet = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const out = await deps.seams.run('turn:reply', { roomId: 'marketing', query: 'OK. I\'ll call 5 beta users by Friday.', reply: { text: 'Good.', tools: [], provider: '', model: '', usage: { input: 0, output: 0 }, stopped: false } });
+      expect(out.reply.text).toBe('Good.');
+      expect(quiet.mock.calls.some(([line]) => String(line).includes('could not keep'))).toBe(true);
+    } finally { quiet.mockRestore(); await part.close!(); }
   });
 });
