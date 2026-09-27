@@ -177,11 +177,14 @@ export async function readTokens(deps: Pick<Deps, 'workspace' | 'usage' | 'clien
   const byProvider = deps.usage.info(deps.clients).map((info) => {
     const limit = limits.get(info.name) ?? {};
     const capped = limit.rpd || limit.tpd;
+    // One pool for every key a provider has on the account, so any of its keys says it.
+    const pool = deps.clients.filter((client) => providerOf(client.name) === info.name).map((client) => deps.usage.neurons(client)).find(Boolean);
     return {
       name: info.name, model: info.model, usedToday: { requests: info.requests, tokens: info.tokens }, limits: limit,
       leftPct: Math.round(info.left * 100),
       // The usage book starts each provider's day on the UTC date, whatever the founder's clock says.
       window: !capped ? 'no daily limit' : spent.has(info.name) ? 'daily free turns used; resets at midnight UTC' : 'resets at midnight UTC',
+      ...(pool ? { neurons: { used: Math.round(pool.used), of: pool.of, pictures: Math.round(pool.pictures), drawn: pool.drawn } } : {}),
     };
   });
 

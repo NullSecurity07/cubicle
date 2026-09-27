@@ -10,8 +10,13 @@ import { localImages } from './local-image.ts';
 // drawing must never be the reason the server will not start.
 const gradio = () => import('@gradio/client');
 import listed from './pictures.json' with { type: 'json' };
+import { pictureDrawn } from '../usage.ts';
 
 const API = 'https://api.cloudflare.com/client/v4';
+// What one FLUX.1 schnell picture costs from the day's 10,000 free neurons, by Cloudflare's price list: 4.8 neurons a
+// 512-pixel tile (a 1024 square is four) and 9.6 a step (four are asked for), about 58. Workers AI does not say it in
+// the answer, so it is worked out here and counted into the pool the turns draw from (usage.ts).
+const FLUX_NEURONS = Math.ceil(4 * 4.8 + 4 * 9.6);
 const TIMEOUT = 90_000;
 export const SETUP_HINT = 'No picture maker is set up. The founder adds CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID to .env — a free Cloudflare account covers hundreds of pictures a day — then restarts the app.';
 
@@ -56,7 +61,9 @@ export function cloudflareImages(env: NodeJS.ProcessEnv = process.env, http: typ
         signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
       });
       if (!response.ok) throw new Error(`Cloudflare answered ${response.status}: ${(await response.text()).slice(0, 200)}`);
-      return pictureOf(Buffer.from(await response.arrayBuffer()), response.headers.get('content-type') ?? '');
+      const piece = pictureOf(Buffer.from(await response.arrayBuffer()), response.headers.get('content-type') ?? '');
+      if (flux) pictureDrawn(FLUX_NEURONS);
+      return piece;
     },
   };
 }

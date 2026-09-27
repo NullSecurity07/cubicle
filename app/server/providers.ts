@@ -368,12 +368,17 @@ export function poolOf(name: string): string {
   return pool ? (at ? `${pool}#${at}` : pool) : name;
 }
 // The free daily pool a key's answers draw from when it shares one with the pictures: Cloudflare's neurons, one pool
-// per token (the models on it share it; `#2` is another account). Undefined for a key that has no such pool.
+// per account, named by the variable its address carries the account id in (CLOUDFLARE_ACCOUNT_ID). Every model and
+// every token on the account shares it: a second token (`#2`) is still that one account, and so are the pictures.
+// Undefined for a key that has no such pool.
 export function neuronPoolOf(name: string): string | undefined {
-  const [base, at] = name.split('#');
-  const entry = ENTRIES.find((one) => one.name === base);
-  return entry?.sharedPool ? (at ? `${entry.keyEnv}#${at}` : entry.keyEnv) : undefined;
+  const entry = ENTRIES.find((one) => one.name === providerOf(name));
+  if (!entry?.sharedPool) return undefined;
+  const account = needs(entry).slice(1);
+  return account.length ? account.join('+') : entry.keyEnv;
 }
+// The pool Cloudflare's pictures draw from: the same account as its models.
+export const PICTURE_POOL = 'CLOUDFLARE_ACCOUNT_ID';
 // Groq's free models, whose room is a per-minute token wall (7-8k) rather than what the model can read.
 export const walled = (client: Pick<ModelClient, 'name'>) => providerOf(client.name).startsWith('groq');
 

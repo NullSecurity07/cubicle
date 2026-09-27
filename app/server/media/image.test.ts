@@ -11,6 +11,7 @@ import {
   type Picture, type PictureConnect, pictureOf, pictureSpaces, pictureUrlOf, SETUP_HINT,
 } from './image.ts';
 import { createMedia } from './jobs.ts';
+import { onPictureNeurons } from '../usage.ts';
 
 const keys = { CLOUDFLARE_API_TOKEN: 'token', CLOUDFLARE_ACCOUNT_ID: 'account' };
 const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
@@ -47,6 +48,17 @@ describe('Cloudflare pictures', () => {
     expect(await maker.make({ prompt: 'a kite', shape: 'tall' }, { report: () => {} })).toEqual({ ext: 'jpg', bytes: jpg });
     expect(asked[0].url).toContain('stable-diffusion-xl-base-1.0');
     expect(asked[0].body).toEqual({ prompt: 'a kite', width: 768, height: 1280 });
+  });
+
+  it('counts the neurons a FLUX picture costs (four tiles and four steps) into the pool the turns draw from, and nothing for a failure (round 6)', async () => {
+    const heard: [string, number][] = [];
+    const off = onPictureNeurons((pool, neurons) => heard.push([pool, neurons]));
+    try {
+      await cloudflareImages(keys, answers(() => Response.json({ result: { image: png.toString('base64') } }))).make({ prompt: 'a paper plane' }, { report: () => {} });
+      expect(heard).toEqual([['CLOUDFLARE_ACCOUNT_ID', 58]]);
+      await expect(cloudflareImages(keys, answers(() => new Response('no', { status: 401 }))).make({ prompt: 'a kite' }, { report: () => {} })).rejects.toThrow();
+      expect(heard).toHaveLength(1);
+    } finally { off(); }
   });
 
   it('passes on what went wrong in one line', async () => {
