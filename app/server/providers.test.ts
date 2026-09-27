@@ -409,7 +409,7 @@ describe('the second hosted model on the Cloudflare key (round 5)', () => {
   it('makes gpt-oss and Qwen from the one key, with Scout kept last', () => {
     const clients = realClients(env);
     expect(clients.map((one) => one.name)).toEqual(['cloudflare-gpt-oss', 'cloudflare-qwen', 'cloudflare']);
-    expect(clients[0]).toMatchObject({ model: '@cf/openai/gpt-oss-120b', maxPromptChars: 100_000, tools: true, limits: { rpd: 40 } });
+    expect(clients[0]).toMatchObject({ model: '@cf/openai/gpt-oss-120b', maxPromptChars: 100_000, tools: true, limits: { rpd: 25 } });
     expect(clients[1]).toMatchObject({ model: '@cf/qwen/qwen3.8-27b', maxPromptChars: 60_000, tools: true });
     expect(clients[2].model).toBe('@cf/meta/llama-4-scout-17b-16e-instruct');
   });
@@ -450,9 +450,9 @@ describe('Groq on a turn with tools that is over its cap (round 5)', () => {
 });
 
 describe('the Cloudflare models on the day\'s neuron pool', () => {
-  it('marks gpt-oss and Qwen as sharing the pool with the pictures, and Scout not', () => {
+  it('marks gpt-oss, Qwen and Scout as sharing the pool with the pictures', () => {
     const clients = realClients({ CLOUDFLARE_API_TOKEN: 't', CLOUDFLARE_ACCOUNT_ID: 'abc' } as NodeJS.ProcessEnv);
-    expect(clients.map((one) => [one.name, !!one.sharedPool])).toEqual([['cloudflare-gpt-oss', true], ['cloudflare-qwen', true], ['cloudflare', false]]);
+    expect(clients.map((one) => [one.name, !!one.sharedPool])).toEqual([['cloudflare-gpt-oss', true], ['cloudflare-qwen', true], ['cloudflare', true]]);
   });
 });
 
@@ -472,5 +472,42 @@ describe('the long clock, said (round 5)', () => {
 
   it('keeps the short line when the usual clock cut it', () => {
     expect(plainFailure('no provider answered — gemini: no first word within 20 s (timed out); cloudflare: 503')).toBe('gemini said nothing for too long, cloudflare down');
+  });
+});
+
+describe('Groq over its cap, when the models behind it cannot answer after all (review 5)', () => {
+  const tools = [{ name: 'read_doc', description: '', parameters: {} }];
+  const long = [{ role: 'user' as const, content: 'old '.repeat(3000) }, { role: 'assistant' as const, content: 'ok' }, { role: 'user' as const, content: 'raise now?' }];
+
+  it('cuts its history and answers when the one behind it is a local model kept off tool turns', async () => {
+    const local: ModelClient = { ...client('ollama', ['never']), local: true };
+    expect((await complete(long, { onToken: () => {}, tools }, [client('groq', ['cut short'], 5000), local])).text).toBe('cut short');
+  });
+
+  it('cuts its history and answers when the one behind it is busy', async () => {
+    const busy: ModelClient = { ...client('cloudflare-gpt-oss', ['never']), busy: () => true };
+    expect((await complete(long, { onToken: () => {}, tools }, [client('groq', ['cut short'], 5000), busy])).text).toBe('cut short');
+  });
+
+  it('cuts its history and answers when the one behind it is resting', async () => {
+    const resting = (one: ModelClient) => one.name === 'cloudflare-gpt-oss';
+    expect((await complete(long, { onToken: () => {}, tools }, [client('groq', ['cut short'], 5000), client('cloudflare-gpt-oss', ['never'])], () => {}, () => true, resting)).text).toBe('cut short');
+  });
+});
+
+describe('Cloudflare\'s neurons, read from the answer (review 5)', () => {
+  it('keeps the neurons a Cloudflare answer says it spent', async () => {
+    const [oss] = realClients({ CLOUDFLARE_API_TOKEN: 't', CLOUDFLARE_ACCOUNT_ID: 'abc' } as NodeJS.ProcessEnv);
+    async function* chunks() {
+      yield { choices: [{ delta: { content: 'fine' } }] };
+      yield { choices: [], usage: { prompt_tokens: 6400, completion_tokens: 300, neurons: 236.4 } };
+    }
+    (oss.openai!.chat.completions as unknown as { create: unknown }).create = () => ({ withResponse: async () => ({ data: chunks(), response: { headers: new Headers() } }) });
+    expect((await oss.step(messages, { onToken: () => {} })).usage).toEqual({ input: 6400, output: 300, neurons: 236.4 });
+  });
+
+  it('caps each Cloudflare model so the three together leave the pictures room, and puts all three on the pool', () => {
+    const clients = realClients({ CLOUDFLARE_API_TOKEN: 't', CLOUDFLARE_ACCOUNT_ID: 'abc' } as NodeJS.ProcessEnv);
+    expect(clients.map((one) => [one.name, one.limits.rpd, !!one.sharedPool])).toEqual([['cloudflare-gpt-oss', 25, true], ['cloudflare-qwen', 5, true], ['cloudflare', 10, true]]);
   });
 });

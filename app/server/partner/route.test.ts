@@ -46,9 +46,9 @@ describe('the partner and a model on this machine', () => {
 describe('the partner\'s second hosted model (round 5)', () => {
   const all = ['groq', 'groq-qwen', 'cerebras', 'gemini', 'nvidia', 'mistral', 'sambanova', 'cloudflare-gpt-oss', 'cloudflare-qwen', 'cloudflare', 'openrouter', 'openrouter-qwen'];
 
-  it('asks Gemini, Cloudflare gpt-oss and the other strong ones, then OpenRouter Qwen and Cloudflare Qwen, then the rest, and never Groq', () => {
+  it('asks Gemini and the other strong ones, Cloudflare gpt-oss last of them, then OpenRouter Qwen and Cloudflare Qwen, then the rest, and never Groq', () => {
     const { order } = partnerRoute(all.map((name) => client(name)), createUsage(null), want);
-    expect(order.map((one) => one.name)).toEqual(['gemini', 'cloudflare-gpt-oss', 'nvidia', 'mistral', 'sambanova', 'openrouter-qwen', 'cloudflare-qwen', 'cloudflare', 'openrouter', 'cerebras']);
+    expect(order.map((one) => one.name)).toEqual(['gemini', 'nvidia', 'mistral', 'sambanova', 'cloudflare-gpt-oss', 'openrouter-qwen', 'cloudflare-qwen', 'cloudflare', 'openrouter', 'cerebras']);
   });
 
   it('with only the keys set here today (Gemini, Groq, Cloudflare), gpt-oss stands right behind Gemini', () => {

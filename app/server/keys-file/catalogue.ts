@@ -69,7 +69,7 @@ export function fallbackList(isSet: (name: string) => boolean, entries: { keyEnv
   if (!unset.length) return null;
   return unset.map((name) => {
     const models = entries.filter((entry) => entry.keyEnv === name).map((entry) => entry.model.split('/').pop());
-    return `${PROVIDERS[name].label} at ${PROVIDERS[name].where} (${models.join(', ')})`;
+    return `${PROVIDERS[name]?.label ?? name}${PROVIDERS[name] ? ` at ${PROVIDERS[name].where}` : ''} (${models.join(', ')})`;
   }).join('; ');
 }
 

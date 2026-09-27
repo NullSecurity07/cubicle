@@ -169,3 +169,20 @@ describe('two models on one OpenRouter account (round 5)', () => {
     expect(usage.left(second)).toBe(0.75);
   });
 });
+
+describe('Cloudflare\'s neuron pool (review 5)', () => {
+  it('leaves every model on the pool out once the day\'s turns have spent 9,000 neurons between them, whatever their own counts', () => {
+    const usage = createUsage(null);
+    const oss = client('cloudflare-gpt-oss', { limits: { rpd: 25 }, sharedPool: true });
+    const scout = client('cloudflare', { limits: { rpd: 10 }, sharedPool: true });
+    const second = client('cloudflare#2', { limits: { rpd: 10 }, sharedPool: true });
+    usage.record('cloudflare-gpt-oss', { input: 1, output: 1, neurons: 5000 });
+    expect(usage.spent(scout)).toBe(false);
+    usage.record('cloudflare-qwen', { input: 1, output: 1, neurons: 4000 });
+    expect(usage.spent(oss)).toBe(true);
+    expect(usage.spent(scout)).toBe(true);
+    // A second token is a second account, with its own pool.
+    expect(usage.spent(second)).toBe(false);
+    expect(names(route([oss, scout, client('gemini')], usage, { promptChars: 10, tools: true }))).toEqual(['gemini']);
+  });
+});

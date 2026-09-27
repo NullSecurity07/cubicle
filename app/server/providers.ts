@@ -174,6 +174,8 @@ export async function complete(
   messages: ModelMessage[], options: StepOptions, clients: ModelClient[], onFailure: (failure: Failure) => void = () => {},
   // Asked right before a client is tried: a key whose breaker is open is passed over, as one too small would be.
   admit: (client: ModelClient) => boolean = () => true,
+  // Whether a client is resting (a 429's wait, an open breaker, a refused key) without asking to be let in: only looks.
+  resting: (client: ModelClient) => boolean = () => false,
 ): Promise<Completion> {
   // The tool definitions go to the model too, and count against what it can hold.
   const toolChars = options.tools?.length ? JSON.stringify(wireTools(options.tools)).length : 0;
@@ -190,8 +192,9 @@ export async function complete(
     if (smallFor(client, options, clients)) { failures.push(`${client.name}: kept off turns with tools`); continue; }
     // Groq's cap is its per-minute token wall: on a turn with tools it is not squeezed in with the history cut while
     // a model behind it can hold the whole prompt.
+    // Only a model that would really be asked counts: not one kept off tool turns, busy, or resting after failing.
     if (options.tools?.length && walled(client) && promptSize(messages) + toolChars > client.maxPromptChars
-      && clients.slice(index + 1).some((other) => !walled(other) && other.tools && promptSize(messages) + toolChars <= other.maxPromptChars)) {
+      && clients.slice(index + 1).some((other) => able(other) && !walled(other) && !resting(other) && promptSize(messages) + toolChars <= other.maxPromptChars)) {
       failures.push(`${client.name}: prompt too large`); oversize.push(client.name); continue;
     }
     // A model that holds less gets the oldest history cut, not the whole turn refused.
@@ -320,8 +323,9 @@ export type Entry = (typeof models)[number] & { side?: boolean; sharedPool?: boo
 // same key. NVIDIA's terms are for prototyping, development and evaluation. Z.ai's flash model and Ollama's cloud take
 // one request at a time (`concurrency: 1`); Z.ai's 10 a minute is our own guess, it publishes none. Vercel gives $5 of
 // credit a month, and buying any ends the free part. Cloudflare gives 10,000 neurons a day (about 130k tokens out on
-// Scout) and needs the account id in its address; gpt-oss spends about 236 of them on a 25k-character turn and Qwen
-// about 394, so their `rpd` is the ~40 and ~25 turns that pool holds, shared with the pictures. SambaNova is 20 requests a day: the last resort.
+// Scout) and needs the account id in its address; gpt-oss spends about 236 of them on a 25k-character request, Qwen
+// about 394 and Scout 166. Their `rpd` (25, 5, 10 requests, a tool turn being two or three) come to about 9,500 at
+// most, and the turns stop at 9,000 neurons counted from the answers, so the pictures keep the rest of the pool. SambaNova is 20 requests a day: the last resort.
 export const ENTRIES = models as Entry[];
 
 // Every name in the environment an entry needs: its key, then whatever its address carries as `${NAME}`.
@@ -344,6 +348,13 @@ export function poolOf(name: string): string {
   const [base, at] = name.split('#');
   const pool = ENTRIES.find((entry) => entry.name === base)?.pool;
   return pool ? (at ? `${pool}#${at}` : pool) : name;
+}
+// The free daily pool a key's answers draw from when it shares one with the pictures: Cloudflare's neurons, one pool
+// per token (the models on it share it; `#2` is another account). Undefined for a key that has no such pool.
+export function neuronPoolOf(name: string): string | undefined {
+  const [base, at] = name.split('#');
+  const entry = ENTRIES.find((one) => one.name === base);
+  return entry?.sharedPool ? (at ? `${entry.keyEnv}#${at}` : entry.keyEnv) : undefined;
 }
 // Groq's free models, whose room is a per-minute token wall (7-8k) rather than what the model can read.
 export const walled = (client: Pick<ModelClient, 'name'>) => providerOf(client.name).startsWith('groq');
@@ -409,7 +420,10 @@ function clientOf(name: string, entry: Shape, api: OpenAI, firstWordMs?: number)
       let cut = false;
       for await (const chunk of stream) {
         clearTimeout(timer);
-        if (chunk.usage) usage = { input: chunk.usage.prompt_tokens ?? 0, output: chunk.usage.completion_tokens ?? 0 };
+        if (chunk.usage) {
+          const neurons = (chunk.usage as { neurons?: number }).neurons;
+          usage = { input: chunk.usage.prompt_tokens ?? 0, output: chunk.usage.completion_tokens ?? 0, ...(typeof neurons === 'number' ? { neurons } : {}) };
+        }
         const delta = chunk.choices[0]?.delta;
         if (chunk.choices[0]?.finish_reason === 'length') cut = true;
         if (delta?.content) onToken(delta.content);
