@@ -617,3 +617,19 @@ describe('the first-word clock for a slow model (round 6 review)', () => {
     } finally { vi.useRealTimers(); }
   });
 });
+
+describe('the request clock for a slow model (round 6 integrate)', () => {
+  it('gives a request whose first word may take over 30 s that long plus 15 s, so the 45 s request clock never cuts it first', async () => {
+    const clients = realClients({ NVIDIA_API_KEY: 'nvapi-x', GROQ_API_KEY: 'g' } as NodeJS.ProcessEnv);
+    const asked: { name: string; timeout?: number }[] = [];
+    for (const one of clients.filter((client) => client.name === 'nvidia' || client.name === 'groq')) {
+      (one.openai!.chat.completions as unknown as { create: unknown }).create = (_body: unknown, options: { timeout?: number }) => {
+        asked.push({ name: one.name, timeout: options.timeout });
+        async function* chunks() { yield { choices: [{ delta: { content: 'ok' } }] }; }
+        return { withResponse: async () => ({ data: chunks(), response: { headers: new Headers() } }) };
+      };
+      await one.step(messages, { onToken: () => {} });
+    }
+    expect(asked).toEqual([{ name: 'groq', timeout: undefined }, { name: 'nvidia', timeout: 75_000 }]);
+  });
+});

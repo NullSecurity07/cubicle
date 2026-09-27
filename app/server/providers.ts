@@ -398,6 +398,9 @@ type Shape = { model: string; maxPromptChars: number; maxTokens: number; tools: 
 // request timeout, and the next model is asked. Once anything streams, the model has all the time the request has.
 const FIRST_WORD_MS = 20_000;
 const PATIENT_MS = 90_000;
+// A first-word wait longer than this (Kimi's minute) outlasts the 45 s request clock, which would cut the request before
+// the wait was up while the provider holds its headers back until the first token: such a request gets the wait and 15 s.
+const LONG_WAIT_MS = 30_000;
 
 function clientOf(name: string, entry: Shape, api: OpenAI, firstWordMs?: number): ModelClient {
   // Requests out on this key now. Kept here, beside the one handle every copy of the client shares, so a caller that
@@ -440,7 +443,7 @@ function clientOf(name: string, entry: Shape, api: OpenAI, firstWordMs?: number)
         ...(entry.streamUsage === false ? {} : { stream_options: { include_usage: true } }),
         ...(tools?.length ? { tools: wireTools(tools) } : {}),
         ...(entry.extra ?? {}),
-      } as OpenAI.Chat.ChatCompletionCreateParamsStreaming, { signal: either, ...(patient && wait ? { timeout: wait + 15_000 } : {}) }).withResponse();
+      } as OpenAI.Chat.ChatCompletionCreateParamsStreaming, { signal: either, ...(wait && (patient || wait > LONG_WAIT_MS) ? { timeout: wait + 15_000 } : {}) }).withResponse();
 
       const calls: ToolCall[] = [];
       let usage: Usage | undefined;
