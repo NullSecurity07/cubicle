@@ -5,7 +5,9 @@ import { useSyncExternalStore } from 'react';
 export type Layer = { kind: 'focus'; id: string } | { kind: 'panel'; name: string };
 
 const same = (a: Layer, b: Layer) => (a.kind === 'focus' ? b.kind === 'focus' : b.kind === 'panel' && a.name === b.name);
-export const pushLayer = (stack: Layer[], layer: Layer): Layer[] => [...stack.filter((held) => !same(layer, held)), layer];
+// One card and one sheet at most: a sheet opened from another sheet ("Decide" in Needs you) takes its place rather than
+// waiting under it, so one Escape closes it and leaves no shade over the stage. A focused card stays under either.
+export const pushLayer = (stack: Layer[], layer: Layer): Layer[] => [...stack.filter((held) => !same(layer, held) && !(layer.kind === 'panel' && held.kind === 'panel')), layer];
 export const popLayer = (stack: Layer[]): Layer[] => stack.slice(0, -1);
 
 // The overview is a side view: it slides in from the left edge and leaves the canvas beside it as it is, undimmed. Every

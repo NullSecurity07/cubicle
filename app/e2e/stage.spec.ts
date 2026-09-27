@@ -1152,9 +1152,16 @@ test('decisions: a person lays a choice out, only the founder decides, and every
   await panel.getByLabel('Why').fill('Support cost.');
   await panel.getByRole('button', { name: 'Decide' }).click();
   await expect(panel.getByRole('navigation', { name: 'All decisions' }).getByRole('button', { name: /No free tier/ })).toContainText('Trial only, 14 days');
-  await page.keyboard.press('Escape');
+  // "Decide" handed Needs you over to Decisions rather than stacking on it: one Escape clears both, shade and all,
+  // and the next click on the stage lands.
   await page.keyboard.press('Escape');
   await expect(panel).toBeHidden();
+  await expect(page.getByRole('dialog', { name: 'Needs you' })).toBeHidden();
+  await expect(page.locator('.overlay__shade')).toBeHidden();
+  await page.getByRole('button', { name: 'Frameworks', exact: true }).click({ timeout: 5_000 });
+  await expect(page.getByRole('dialog', { name: 'Frameworks' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.overlay__shade')).toBeHidden();
 
   // From now on every person works from it, and can read it in full.
   await send(page, 'build', '/tool read_decision {"title":"launch channel"}');
