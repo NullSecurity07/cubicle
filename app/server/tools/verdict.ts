@@ -96,8 +96,16 @@ function wordAt(text: string, word: string): number {
 }
 
 const SPELLED = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty'];
-const NUMBER = `(\\d+|${SPELLED.join('|')})`;
-const countOf = (word: string) => (/^\d+$/.test(word) ? Number(word) : SPELLED.indexOf(word.toLowerCase()));
+// A count as people write one: 12, "25+", twelve, "a dozen", "half a dozen", "two dozen". Ends where a word would
+// go on, since a "+" has no word boundary after it.
+const NUMBER = `((?:half\\s+a|a|\\d+|${SPELLED.join('|')})\\s+dozen|\\d+\\+?|${SPELLED.join('|')})(?![\\w+])`;
+function countOf(said: string): number {
+  const words = said.toLowerCase().replace(/\+$/, '').split(/\s+/);
+  const one = (word: string) => (/^\d+$/.test(word) ? Number(word) : SPELLED.indexOf(word));
+  if (words.at(-1) !== 'dozen') return one(words[0]);
+  if (words[0] === 'half') return 6;
+  return (words[0] === 'a' ? 1 : one(words[0])) * 12;
+}
 
 // How many customer conversations a section records, or null when it records none at all. The template's line comes
 // first, read past bold and bullets; a section written as prose is read for a number next to the conversations
@@ -108,7 +116,7 @@ export function conversations(section: string, label: string): number | null {
     // What follows the label, past the template's own "(of ten to twenty)" and whatever separates the two.
     const value = line.slice(label.length).replace(/^\s*\([^)]*\)/, '').replace(/^[\s:=\-–—]+/, '');
     if (/^\W*(none|no\b|nil)/i.test(value)) return 0;
-    const count = new RegExp(`\\b${NUMBER}\\b`, 'i').exec(value);
+    const count = new RegExp(`\\b${NUMBER}`, 'i').exec(value);
     if (count) return countOf(count[1]);
   }
   // Clause by clause, and never one that denies or only plans them: "none of the 12 interviews happened", "10 calls
@@ -116,11 +124,14 @@ export function conversations(section: string, label: string): number | null {
   for (const clause of bare(section.replace(/\n/g, ' ')).split(/[.;,!?]+/)) {
     if (/\b(none|no|not|never|planned|plan|booked|scheduled|will|next)\b/i.test(clause)) continue;
     const hit = new RegExp(`\\b${NUMBER}\\s+(?:[\\w-]+\\s+){0,3}?(?:conversations?|interviews?|calls?)\\b`, 'i').exec(clause)
-      ?? new RegExp(`\\b(?:talked (?:to|with)|spoke (?:to|with)|interviewed|called)\\s+${NUMBER}\\b`, 'i').exec(clause);
+      ?? new RegExp(`\\b(?:talked (?:to|with)|spoke (?:to|with)|interviewed|called)\\s+${NUMBER}`, 'i').exec(clause);
     if (hit) return countOf(hit[1]);
   }
   return null;
 }
+
+// A section's words, without its layout: each line bare of list marks and emphasis, spaces run together, blank lines gone.
+const words = (body: string | null) => (body ?? '').split('\n').map((line) => bare(line).replace(/\s+/g, ' ')).filter(Boolean).join('\n');
 
 export type Guarded = { text: string; note?: string; held?: boolean };
 
@@ -129,7 +140,9 @@ export type Guarded = { text: string; note?: string; held?: boolean };
 export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string; writerId: string; before: string; after: string; now: number }): Guarded {
   const { rules, stage, docId, writerId, before, now } = input;
   let after = input.after;
-  const changed = (heading: string) => (sectionBody(before, heading) ?? '') !== (sectionBody(after, heading) ?? '');
+  // A section has changed when its words have: a whole rewrite that only re-spaced or re-bulleted a colleague's
+  // section, as models do when they copy a doc back, was refused whole, the writer's own section with it.
+  const changed = (heading: string) => words(sectionBody(before, heading)) !== words(sectionBody(after, heading));
   const writer = stage.rooms.find((room) => room.id === writerId);
 
   // Only the person placed for a section writes it. The verdict judge above all: a missing section is theirs to name.

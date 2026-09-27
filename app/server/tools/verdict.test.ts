@@ -192,9 +192,43 @@ describe('the conversations cap, however the pain section is written', () => {
     expect(conversations('No workaround. Talked to 12 founders, all angry.', LABEL)).toBe(12);
   });
 
+  it('counts a dozen, dozens by number and a count with a plus', () => {
+    const LABEL = 'Real customer conversations done';
+    expect(conversations('Painkiller. Talked to a dozen founders who sold a side project.', LABEL)).toBe(12);
+    expect(conversations('Painkiller: 25+ interviews with indie buyers.', LABEL)).toBe(25);
+    expect(conversations('Painkiller. Two dozen calls, most of them angry.', LABEL)).toBe(24);
+    expect(conversations('Painkiller. Half a dozen interviews so far.', LABEL)).toBe(6);
+    expect(conversations('Real customer conversations done (of ten to twenty): 25+', LABEL)).toBe(25);
+    expect(conversations('Real customer conversations done: a dozen', LABEL)).toBe(12);
+    expect(conversations('Real customer conversations done: two dozen, all founders', LABEL)).toBe(24);
+    // Still none when the dozen was only planned.
+    expect(conversations('A dozen interviews are booked for next week.', LABEL)).toBeNull();
+  });
+
   it('asks the pain validator to keep the count line', async () => {
     const { framework } = await setup();
     expect(framework.rooms.find((room) => room.key === 'pain')!.brief).toContain('Real customer conversations done: <n>');
+  });
+});
+
+describe('a whole rewrite that reformats a colleague\'s section', () => {
+  it('is let through when only spacing, bullets and emphasis changed, and refused when a word changed', async () => {
+    const { as, doc, fill } = await setup();
+    await fill();
+    const before = await doc();
+    const deaths = '1. Too few good deals a week — survivable? Yes — cheapest test: count last month\'s listings.';
+    const reformatted = before.replace(deaths, `\n-   **Too few good deals a week** —  survivable? Yes — cheapest test: count last month's listings.\n`)
+      .replace('## 5. Verdict\n', '## 5. Verdict\n\nWEAK: too few deals (2).\n\nScore: 5/10\n');
+    expect(reformatted).not.toBe(before);
+    const out = await as('verdict')('write_doc', { text: reformatted });
+    expect(out.ok, out.text).toBe(true);
+    expect(sectionBody(await doc(), '5. Verdict')).toContain('WEAK: too few deals (2).');
+    // Unmoved in words, the section marks nothing stale either.
+    expect(await doc()).not.toMatch(/^Stale:/m);
+    const worded = (await doc()).replace('count last month', 'count last year');
+    const refused = await as('verdict')('write_doc', { text: worded });
+    expect(refused.ok).toBe(false);
+    expect(refused.text).toMatch(/"2\. Three specific ways it dies" is Vikram's section/);
   });
 });
 
