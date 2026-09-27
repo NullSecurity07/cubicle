@@ -7,6 +7,7 @@ import { addedTwice, replaceSection, rewriteLoss } from './sections.ts';
 import { text, type Tool, type ToolContext } from './registry.ts';
 import { shortDay } from '../clock.ts';
 import { figureCheck, HELD_BACK } from '../truth.ts';
+import { findCompanyDoc } from '../../shared/partner.ts';
 import { filled, guardWrite, sectionBody, unmarked, WHOLE } from './verdict.ts';
 
 // A new doc card's size, and the gap kept round it: the same the window uses when it places one.
@@ -96,6 +97,12 @@ function unsourcedIn(context: ToolContext, before: string, after: string): strin
   return figureCheck(after, [...context.sources(), before]).unsourced.filter((label) => at(label).test(after));
 }
 
+// The Company brief's Numbers section, which a cap on no conversations reads for paying users.
+async function numbersOf(context: Pick<ToolContext, 'stage' | 'store'>): Promise<string> {
+  const company = findCompanyDoc(context.stage.docs);
+  return company ? sectionBody(await context.store.readDoc(company.id).catch(() => ''), 'Numbers') ?? '' : '';
+}
+
 async function save(context: ToolContext, id: string, before: string, written: string, done: string, touches?: string | typeof WHOLE) {
   const rules = await rulesOf(context.stage, id);
   // A team doc with rules is held to its evidence, so an unsourced figure is refused there; anywhere else it is marked.
@@ -109,7 +116,7 @@ async function save(context: ToolContext, id: string, before: string, written: s
   // as a running log repeats "## Monday" on purpose.
   const twice = rules ? addedTwice(before, after, [...rules.sections, rules.verdict].map((one) => one.heading)) : null;
   if (twice) throw new Error(`not written: "${twice}" is already a section of this document; change it with replace_section instead of adding it again.`);
-  const guarded = rules ? guardWrite({ rules, stage: context.stage, docId: id, writerId: context.roomId, before, after, now: Date.now(), touches }) : { text: after };
+  const guarded = rules ? guardWrite({ rules, stage: context.stage, docId: id, writerId: context.roomId, before, after, now: Date.now(), touches, numbers: await numbersOf(context) }) : { text: after };
   await context.store.replaceDoc(id, guarded.text);
   const said = guarded.held ? guarded.note! : [done, guarded.note].filter(Boolean).join(' ');
   return { text: said, effect: { kind: 'doc-changed' as const, id } };
@@ -206,7 +213,7 @@ export async function answerIntoSection(context: ToolContext, targetId: string, 
     if ('error' in next) continue;
     // The section's own checks hold as for any write of theirs; one that fails is said, and the answer still stands.
     let guarded;
-    try { guarded = guardWrite({ rules, stage, docId: id, writerId: targetId, before, after: next.text, now: Date.now(), fromChat: true }); } catch (error) {
+    try { guarded = guardWrite({ rules, stage, docId: id, writerId: targetId, before, after: next.text, now: Date.now(), fromChat: true, numbers: await numbersOf(context) }); } catch (error) {
       // The guard speaks to the writer ("Write it again", "Ask Priya with ask_person"); the asker gets only the reason.
       const why = (error as Error).message.replace(/^not written:\s*/, '').replace(/\s+(?:Write it again|Ask \S+ with ask_person)[\s\S]*$/, '');
       return `Not written into "${heading}": ${why} The section stays empty until ${target.name} writes it within the section's rules.`;

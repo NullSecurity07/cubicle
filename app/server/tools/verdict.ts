@@ -182,6 +182,20 @@ function countRead(section: string, label: string): string {
   return line ? `The count line reads "${line}".` : `There is no "${label}" line, and no count of conversations in the section.`;
 }
 
+// The paying users the Company brief's Numbers section records, as "3 paying users", or null. A cap on no conversations
+// said "0 / 20" to a team whose founder had 3 paying beta users asking for the feature; each of them is a customer
+// the founder may well have talked to, and the writer is told so.
+export function payingUsers(numbers: string): string | null {
+  const count = `(\\d+|${SPELLED.join('|')})`;
+  const unit = '(users|customers|clients)';
+  const text = unmarked(numbers);
+  const hit = new RegExp(`\\b${count}\\s+paying\\s+(?:beta\\s+)?${unit}\\b`, 'i').exec(text)
+    ?? new RegExp(`\\b${count}\\s+(?:beta\\s+)?${unit}\\s+(?:who\\s+)?pay`, 'i').exec(text);
+  const labelled = new RegExp(`\\bpaying\\s+${unit}\\s*[:=\\-–—]\\s*(\\d+)\\b`, 'i').exec(text);
+  const [n, what] = hit ? [countOf(hit[1]), hit[2]] : labelled ? [Number(labelled[2]), labelled[1]] : [0, ''];
+  return n > 0 ? `${n} paying ${what.toLowerCase()}` : null;
+}
+
 export type Guarded = { text: string; note?: string; held?: boolean };
 // What a write touched, when the guard cannot tell from the text alone: a heading written again word for word, or
 // the whole document.
@@ -189,7 +203,7 @@ export const WHOLE = Symbol('whole document');
 
 // `before` and `after` are the whole doc either side of one write by `writerId`. Returns the text to save (with a
 // "not assessed" verdict or a stale mark put in) and a note for the writer, or throws the reason nothing is written.
-export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string; writerId: string; before: string; after: string; now: number; fromChat?: boolean; touches?: string | typeof WHOLE }): Guarded {
+export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string; writerId: string; before: string; after: string; now: number; fromChat?: boolean; touches?: string | typeof WHOLE; numbers?: string }): Guarded {
   const { rules, stage, docId, writerId, before, now } = input;
   // A marker line is read past by the caps and the verdict reader, so one written by hand hid "STRONG, Score: 9/10"
   // from them. Only a colleague's answer put in by ask_person carries one.
@@ -207,6 +221,12 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
     throw new Error('not written: a "(From chat:" line is written only by ask_person, when a colleague\'s answer goes into their section. Write your own words without it.');
   }
   let after = input.after;
+  // Under a refusal on no conversations: the paying users the company has, when it has any.
+  const paying = input.numbers ? payingUsers(input.numbers) : null;
+  const payers = (section: string, label: string) => {
+    const count = conversations(section, label);
+    return paying && !count ? ` ${count === 0 ? '0' : 'No'} conversations recorded; the Numbers section says ${paying}; count them if you talked to them.` : '';
+  };
   // A section has changed when its words have: a whole rewrite that only re-spaced or re-bulleted a colleague's
   // section, as models do when they copy a doc back, was refused whole, the writer's own section with it.
   const changed = (heading: string) => words(sectionBody(before, heading)) !== words(sectionBody(after, heading));
@@ -234,8 +254,8 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
     const { word, score } = verdictOf(body, order, outOf);
     if ((word && order.indexOf(word) > order.indexOf(cap.verdict)) || (score !== undefined && score > cap.score)) {
       throw new Error(`not written: ${cap.why}, so ${cap.name ?? 'this section'} is at most ${cap.verdict} and ${cap.score} of ${outOf}. `
-        + `This one says ${[word, score !== undefined ? `${score} of ${outOf}` : ''].filter(Boolean).join(', ')}. ${countRead(sectionBody(after, cap.heading) ?? '', cap.line)} `
-        + 'Write it again within the cap, and mark what is unproven.');
+        + `This one says ${[word, score !== undefined ? `${score} of ${outOf}` : ''].filter(Boolean).join(', ')}. ${countRead(sectionBody(after, cap.heading) ?? '', cap.line)}`
+        + `${payers(sectionBody(after, cap.heading) ?? '', cap.line)} Write it again within the cap, and mark what is unproven.`);
     }
   }
 
@@ -274,8 +294,8 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
       if (over) {
         const why = `${cap.why}, so the verdict is at most ${cap.verdict} and the score at most ${cap.score} of 10`;
         throw new Error(`not written: ${why}. `
-          + `This one says ${[word, score !== undefined ? `${score} of 10` : ''].filter(Boolean).join(', ')}. ${countRead(sectionBody(text, cap.heading) ?? '', cap.line)} `
-          + `Write it again within the cap, and say which section each fact comes from. ${verdictRefused(why, rules.outcomes ?? [])}`);
+          + `This one says ${[word, score !== undefined ? `${score} of 10` : ''].filter(Boolean).join(', ')}. ${countRead(sectionBody(text, cap.heading) ?? '', cap.line)}`
+          + `${payers(sectionBody(text, cap.heading) ?? '', cap.line)} Write it again within the cap, and say which section each fact comes from. ${verdictRefused(why, rules.outcomes ?? [])}`);
       }
     }
     return null;

@@ -476,6 +476,31 @@ describe('a score with its breakdown in brackets', () => {
   });
 });
 
+describe('a cap on no conversations while the company has paying users', () => {
+  it('names the paying users from the Company brief\'s Numbers, so the writer counts them if they talked', async () => {
+    const { as, fill, store } = await setup();
+    await store.replaceDoc('company-brief', '# Company brief\n\n## Numbers\n\n- Price: $29/month\n- 3 paying users (beta), asked for invoicing\n');
+    await fill();
+    const zero = 'Vitamin — painkiller — hair on fire: hair on fire\n\nReal customer conversations done (of ten to twenty): 0 / 20';
+    const pain = await as('pain')('replace_section', { heading: '3. Is the pain real?', text: zero });
+    expect(pain.ok).toBe(false);
+    expect(pain.text).toContain('0 conversations recorded; the Numbers section says 3 paying users; count them if you talked to them.');
+    expect((await as('pain')('replace_section', { heading: '3. Is the pain real?', text: zero.replace('hair on fire\n', 'painkiller\n') })).ok).toBe(true);
+    const verdict = await as('verdict')('replace_section', { heading: '5. Verdict', text: 'STRONG\n\nScore: 8/10' });
+    expect(verdict.text).toContain('0 conversations recorded; the Numbers section says 3 paying users; count them if you talked to them.');
+  });
+
+  it('says nothing of users when the Numbers section has none', async () => {
+    const { as, fill, store } = await setup();
+    await store.replaceDoc('company-brief', '# Company brief\n\n## Numbers\n\nRunway: €4,200.\n');
+    await fill();
+    await as('pain')('replace_section', { heading: '3. Is the pain real?', text: 'painkiller\n\nReal customer conversations done (of ten to twenty): 0' });
+    const verdict = await as('verdict')('replace_section', { heading: '5. Verdict', text: 'STRONG\n\nScore: 8/10' });
+    expect(verdict.ok).toBe(false);
+    expect(verdict.text).not.toMatch(/paying users/);
+  });
+});
+
 describe('a team run with one section blank', () => {
   it('ends with "not assessed" in the verdict, not the judge\'s own fill-in', async () => {
     const { stage, store, doc, fill } = await setup();
