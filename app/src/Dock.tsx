@@ -235,6 +235,20 @@ function Rail({ open }: { open: Set<string> }) {
 
 const POSITION = { right: 'center-right', left: 'center-left', bottom: 'bottom-center' } as const;
 
+// How tall the dock stands along the bottom, as --dock-block on the canvas, so the first-run card in the corner can sit
+// above a dock that runs the full width of a narrow window (one row or two).
+function useDockBlock() {
+  const [dock, setDock] = useState<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const flow = dock?.closest<HTMLElement>('.react-flow');
+    if (!dock || !flow) return;
+    const watch = new ResizeObserver(() => flow.style.setProperty('--dock-block', `${Math.round(dock.offsetHeight)}px`));
+    watch.observe(dock);
+    return () => { watch.disconnect(); flow.style.removeProperty('--dock-block'); };
+  }, [dock]);
+  return setDock;
+}
+
 // The only chrome on the stage, in two bars. The dock floats at the foot of the window with what the founder does:
 // the command bar, a person, a card, a team, the partner, and the first-run list. The rail stands at the middle of the
 // right edge with what comes to them. The dock can take either edge instead (dockPlace.ts); on the right edge, or in
@@ -255,12 +269,13 @@ export function Dock() {
 
   const folded = useRailFolded();
   const hidden = useDockHidden();
+  const block = useDockBlock();
   // Hidden, the dock keeps only what the rail would show when there is no rail beside it; with a rail, nothing at all.
   if (hidden) return folded ? <Panel position={POSITION[place]} className={`dock dock--hidden bar bar--${place} dock--${place}${place === 'bottom' ? '' : ' bar--vertical dock--vertical'}`}><Incoming place={place} open={open} /></Panel> : <Rail open={open} />;
 
   return (
     <>
-      <Panel position={POSITION[place]} className={`dock bar bar--${place} dock--${place}${place === 'bottom' ? '' : ' bar--vertical dock--vertical'}`}>
+      <Panel ref={block} position={POSITION[place]} className={`dock bar bar--${place} dock--${place}${place === 'bottom' ? '' : ' bar--vertical dock--vertical'}`}>
         <div className="dock__set" role="group" aria-label="Ask">
           <View name="command" label="Command bar" keys={keyHint('command-bar')} open={open.has('command')} className="dock__ask">
             <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.200" /><path d="M13 13l3.800 3.800" /></svg>

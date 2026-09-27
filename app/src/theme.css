@@ -771,7 +771,9 @@ button.msg--learned:hover { color: var(--text); background: rgba(255, 255, 255, 
 
 /* A dock on the side of the window: a column in the middle of that edge, clear of the cards' resize grips. xyflow
    shifts its centred panels by its own 15px margin; this dock keeps its own margin and centres exactly. */
-.react-flow__panel.bar--vertical { margin: 18px; transform: translateY(-50%); }
+.react-flow__panel.bar.bar--vertical { margin: 0 18px; transform: translateY(-50%); }
+/* Along the bottom the same: xyflow's own centring allows for a 15px margin this pill does not have. */
+.react-flow__panel.bar.bar--bottom { transform: translateX(-50%); }
 .bar--vertical, .bar--vertical .dock__set { flex-direction: column; }
 .bar--vertical .dock__gap { width: 22px; height: 1px; margin: 4px 0; }
 .bar--vertical .quota { position: relative; }
@@ -818,13 +820,35 @@ button.msg--learned:hover { color: var(--text); background: rgba(255, 255, 255, 
 .bar--left button.is-open::before { right: -5px; top: calc(50% - 2px); }
 .bar--bottom button.is-open::before { bottom: -5px; left: calc(50% - 2px); }
 /* The rail: what comes to the founder, a slim capsule at the middle of the right edge with smaller plates. */
-.react-flow__panel.rail { padding: 5px; margin: 16px; gap: 2px; }
+.react-flow__panel.bar.rail { padding: 5px; margin: 0 16px; gap: 2px; }
 .rail button { width: 36px; height: 36px; padding: 9px; }
 .rail .dock__set { gap: 2px; }
 .rail .dock__gap { width: 18px; }
 .rail .quota__rings { width: 36px; padding: 8px 0; }
 .rail .ring { width: 15px; height: 15px; }
 .rail .dock__needs b { top: 1px; right: 0; }
+
+/* A narrow window has room for one bar only: the dock runs the full width along the bottom, 16px in from each edge,
+   the rail's buttons folded into it, every button in one flow that wraps onto a second row rather than off the edge.
+   Its menu opens above the whole bar, as wide as the bar, in a single column of cards. */
+@media (max-width: 880px) {
+  .react-flow__panel.bar.bar--bottom { left: 16px; right: 16px; margin: 0 0 16px; transform: none; flex-wrap: wrap; justify-content: center; gap: 2px; border-radius: 28px; }
+  .bar--bottom .dock__set { display: contents; }
+  .bar--bottom .dock__gap { display: none; }
+  .bar--bottom .dock__more { position: static; }
+  .bar.bar--bottom .dock__menu[role="menu"], .bar.bar--bottom .dock__app { left: 0; right: 0; bottom: calc(100% + 10px); width: auto; max-width: none; transform: none; flex-direction: column; align-items: stretch; max-height: min(70vh, calc(100vh - 150px)); }
+  .bar--bottom .dock__menu[role="menu"] .dock__group { flex: none; }
+  .bar--bottom .dock__cards { grid-auto-flow: row; grid-template-rows: none; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .bar.bar--bottom .dock__menu[role="menu"] button { align-items: stretch; }
+  .bar--bottom .dock__menu[role="menu"] small { max-width: 100%; }
+  .bar--bottom .dock__group--apps { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 2px 4px; border-left: 0; padding-left: 0; border-top: 1px solid var(--card-border); padding-top: 4px; }
+  .bar--bottom .dock__group--apps h6 { grid-column: 1 / -1; }
+  .bar.bar--bottom .quota__detail { left: auto; right: 0; transform: none; }
+  /* A phone has room for two columns of names, not their hints; each button still says in full what it adds. */
+  @media (max-width: 480px) { .bar--bottom .dock__menu[role="menu"] small { display: none; } .bar.bar--bottom .dock__menu[role="menu"] button { padding: 8px 10px; } }
+  /* The first-run card stands above the dock, not under it, and never wider than the window. */
+  .react-flow__panel.missions { margin: 16px 16px calc(var(--dock-block, 54px) + 28px); width: min(288px, calc(100vw - 32px)); }
+}
 
 /* The way to ask for anything leads the dock on a faint plate of the accent, the one lit thing in it. */
 .dock button.dock__ask { background: rgba(78, 140, 255, 0.16); color: var(--accent-soft); }
