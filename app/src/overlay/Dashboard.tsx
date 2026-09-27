@@ -9,7 +9,7 @@ import { openFrameworks, useFrameworks, usePlaceFramework } from '../frameworks'
 import { BlocksIcon } from '../nodes/FrameworksPanel';
 import { since, WHAT } from './attention';
 import { compact } from '../numbers';
-import { providerLine } from './providerLine';
+import { providerLeft, providerLine } from './providerLine';
 import { overlay, showDecision, showPlaybook } from './store';
 import './dashboard.css';
 import { PanelShell } from './PanelShell';
@@ -271,9 +271,9 @@ export function Dashboard() {
                   <li key={one.name} className="dash__provider">
                     <div className="dash__provider-head">
                       <b>{one.name}<small>{one.model}</small></b>
-                      <span>{one.limits.rpd || one.limits.tpd ? `${one.leftPct}% left` : 'No daily limit'}</span>
+                      <span className={one.planOff ? 'is-off' : undefined}>{providerLeft(one)}</span>
                     </div>
-                    {(one.limits.rpd || one.limits.tpd) ? (
+                    {!one.planOff && (one.limits.rpd || one.limits.tpd) ? (
                       <div className={`dash__meter${one.leftPct <= 5 ? ' is-out' : one.leftPct < 20 ? ' is-low' : ''}`} role="meter" aria-label={`${one.name}: ${one.leftPct}% left`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={one.leftPct}><i style={{ width: `${one.leftPct}%` }} /></div>
                     ) : null}
                     <small>{providerLine(one)}</small>

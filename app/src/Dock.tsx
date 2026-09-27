@@ -73,7 +73,7 @@ function Quota({ place }: { place: string }) {
               <span className={`quota__dot ring--${dot.tone}`} />
               <span className="quota__name">{model.name}<small>{model.model}</small></span>
               <span className="quota__numbers">
-                {dot.tone === 'refused' ? 'Key refused' : dot.tone === 'untested' ? 'Untested' : dot.words}
+                {dot.tone === 'refused' ? (model.planOff ? 'Plan off' : 'Key refused') : dot.tone === 'untested' ? 'Untested' : dot.words}
                 <small>{dot.tone === 'refused' ? dot.words : dot.tone === 'untested' ? 'No reply yet today · $0' : `${model.requests} replies · ${model.tokens.toLocaleString()} tokens · $0`}</small>
               </span>
             </div>

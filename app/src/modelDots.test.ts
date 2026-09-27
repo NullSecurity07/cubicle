@@ -29,6 +29,11 @@ describe('a model dot says what is known about the model, not a guess', () => {
     expect(dotOf(model('gemini'), keys).tone).toBe('fine');
   });
 
+  it('says free plan not on for a provider every key of which wants a plan, before anything else', () => {
+    expect(dotOf(model('mistral', { planOff: true, requests: 0 }), new Map())).toEqual({ tone: 'refused', words: 'free plan not on' });
+    expect(dotOf(model('mistral', { planOff: true }), refusedKeys([refused('MISTRAL_API_KEY')]))).toEqual({ tone: 'refused', words: 'free plan not on' });
+  });
+
   it('reads only refused-key entries from the founder\'s list', () => {
     expect(refusedKeys([{ id: 'x', kind: 'approval', title: 'Maya needs your OK', at: 1 }]).size).toBe(0);
   });

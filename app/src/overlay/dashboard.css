@@ -122,6 +122,8 @@ button.dash__stat:hover { background: var(--dash-raise-hover); }
 .dash__provider-head { display: flex; align-items: baseline; gap: 10px; }
 .dash__provider-head b { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; text-transform: capitalize; }
 .dash__provider-head b small { margin-left: 8px; font-size: 11.5px; font-weight: 450; color: var(--muted); text-transform: none; }
+/* A provider that answers nobody until its free plan is turned on: said in amber, with no meter under it. */
+.dash__provider-head span.is-off { color: #f0b35a; font-weight: 550; }
 .dash__provider-head span { font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .dash__provider > small { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .dash__meter { height: 4px; border-radius: 2px; overflow: hidden; background: var(--dash-line); }

@@ -17,6 +17,8 @@ export function refusedKeys(list: Attention[]): Map<string, string> {
 }
 
 export function dotOf(model: ModelInfo, refused: Map<string, string>): Dot {
+  // The server knows when every key wants a plan turned on; that says more than a refusal line, so it comes first.
+  if (model.planOff) return { tone: 'refused', words: 'free plan not on' };
   const key = KEY_OF.get(model.name);
   const told = key ? refused.get(key) : undefined;
   if (told) return { tone: 'refused', words: told };
