@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { Lead } from '../../shared/leads.ts';
 import type { Metrics } from '../../shared/metrics.ts';
 import type { Stage } from '../../shared/model.ts';
-import { betDue, betsAttention, betsBook, metricAsked, metricChoices, metricFits, missingMetric, readMetric } from './bets.ts';
+import { askedInstead, betDue, betsAttention, betsBook, metricAsked, metricChoices, metricFits, missingMetric, readMetric } from './bets.ts';
 
 const card = (id: string, kind: 'metrics' | 'leads' | 'survey') => ({ id, kind, x: 0, y: 0, w: 1, h: 1, ...(kind === 'survey' ? { title: 'PMF', questions: [] } : {}) }) as NonNullable<Stage['cards']>[number];
 
@@ -92,6 +92,22 @@ describe('the metric an ask names', () => {
     expect(metricAsked('Bet on 30 leads by next week')).toBe('leads');
     expect(metricAsked('40 survey answers by the 12th')).toBe('survey');
     for (const said of ['Plan how we spend the $300 ad budget', 'Propose a bet on the launch', 'Get conversion to 10% by Oct 10', 'Bet: 3 weeks to launch']) expect(metricAsked(said), said).toBeUndefined();
+  });
+
+  // The review's probes: the first counted noun is not always the bet's. The one whose number is the target is.
+  it('picks the noun whose number is the target, and reads "signups: 50" and "fifty signups"', () => {
+    expect(metricAsked('we have 3 cofounders and want 50 signups by Oct 10', 50)).toBe('signups');
+    expect(metricAsked('run 5 interviews then 50 signups', 50)).toBe('signups');
+    expect(metricAsked('Bet: signups: 50 by Oct 10', 50)).toBe('signups');
+    expect(metricAsked('fifty signups by the 10th', 50)).toBe('signups');
+    expect(metricAsked('run 5 interviews then 50 signups')).toBe('interviews');
+  });
+
+  it('lets a pick through that fits any number the ask counts, when none is the target', async () => {
+    const { workspace, stage } = await seeded();
+    expect(await askedInstead(workspace, stage, 'signups', 'run 5 interviews then 50 signups', 40)).toBeNull();
+    expect(await askedInstead(workspace, stage, 'signups', 'we have 3 cofounders and want 50 signups', 50)).toBeNull();
+    expect(await askedInstead(workspace, stage, 'leads', 'we have 3 cofounders and want 50 signups', 50)).toMatch(/counts signups/);
   });
 
   it('holds a pick to the ask: signups is not leads or a survey, and "Signups" or "newsletter_signups" is signups', () => {

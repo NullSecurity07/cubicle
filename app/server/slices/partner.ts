@@ -57,7 +57,7 @@ export function betTools(book: BetsBook, workspace: string, changed: () => Promi
         if (!Number.isFinite(target)) throw new Error('"target" must be a number');
         const metric = text(args, 'metric', 80).trim();
         // Held to what the founder's ask counts, before anything else is said about the pick.
-        const instead = await askedInstead(workspace, context.stage, metric, context.query ?? '');
+        const instead = await askedInstead(workspace, context.stage, metric, context.query ?? '', target);
         if (instead) throw new Error(instead);
         const choices = await metricChoices(workspace, context.stage);
         if (!choices.some((one) => one.toLowerCase() === metric.toLowerCase()) && (await readMetric(workspace, context.stage, metric)).value === null) {

@@ -124,16 +124,30 @@ export function missingMetric(stage: Stage, metric: string, choices: string[]): 
 // What a founder's ask counts, as the metric that measures it: "50 newsletter signups by Oct 10" is the "signups"
 // row on a Metrics card, never "leads". A number with a plural noun after it, up to two words on ("20 paying
 // customers"); a sum of money, a percentage or a length of time names no metric.
-const COUNTED = /(?<![$€£\d.,])\b\d[\d,]*(?:\.\d+)?\s*k?\s+(?:[a-z][a-z'-]*\s+){0,2}?([a-z][a-z-]*s)\b/gi;
+const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty'];
+const TENS: Record<string, number> = { thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90, hundred: 100 };
+const NUMBER = `\\d[\\d,]*(?:\\.\\d+)?\\s*k?|${[...WORDS, ...Object.keys(TENS)].join('|')}`;
+// "50 newsletter signups", "fifty signups": a number, up to two words, a plural noun. "signups: 50": the noun first.
+const COUNTED = new RegExp(`(?<![$€£\\d.,])\\b(${NUMBER})\\s+(?:[a-z][a-z'-]*\\s+){0,2}?([a-z][a-z-]*s)\\b|\\b([a-z][a-z-]*s)\\s*:\\s*(\\d[\\d,]*)\\b`, 'gi');
 const NOT_COUNTS = new Set(['minutes', 'hours', 'days', 'weeks', 'months', 'years', 'times', 'percents', 'dollars', 'euros', 'pounds', 'steps', 'things', 'ways', 'others']);
 const FROM_CARDS: Record<string, string> = { leads: 'leads', replies: 'leads:replied', meetings: 'leads:meeting', answers: 'survey', responses: 'survey' };
-export function metricAsked(ask: string): string | undefined {
-  for (const found of ask.matchAll(COUNTED)) {
-    const noun = found[1].toLowerCase();
-    if (NOT_COUNTS.has(noun)) continue;
-    return FROM_CARDS[noun] ?? noun;
-  }
-  return undefined;
+const valueOf = (said: string) => {
+  const word = said.trim().toLowerCase();
+  if (WORDS.includes(word)) return WORDS.indexOf(word);
+  if (TENS[word]) return TENS[word];
+  return Number(word.replace(/[,\s]/g, '').replace(/k$/, '')) * (/k$/.test(word) ? 1000 : 1);
+};
+// Every number the ask counts, in the order said, each as the metric that would measure it.
+export function metricsAsked(ask: string): { metric: string; value: number }[] {
+  return [...ask.matchAll(COUNTED)].flatMap((found) => {
+    const noun = (found[2] ?? found[3]).toLowerCase();
+    return NOT_COUNTS.has(noun) ? [] : [{ metric: FROM_CARDS[noun] ?? noun, value: valueOf(found[1] ?? found[4]) }];
+  });
+}
+// The one the bet is about: the noun whose number is the target, else the first counted.
+export function metricAsked(ask: string, target?: number): string | undefined {
+  const all = metricsAsked(ask);
+  return (all.find((one) => one.value === target) ?? all[0])?.metric;
 }
 // Which card a metric is read from.
 const familyOf = (metric: string) => { const said = metric.trim().toLowerCase(); return said === 'leads' || said.startsWith('leads:') ? 'leads' : said === 'survey' ? 'survey' : 'metrics'; };
@@ -148,9 +162,12 @@ export function metricFits(pick: string, asked: string): boolean {
 }
 // A pick is held to the ask when it is read off another card than the ask's number, or off none at all. A Metrics
 // row the founder already keeps under another name ("subs" for signups) stands.
-export async function askedInstead(workspace: string, stage: Stage, pick: string, ask: string): Promise<string | null> {
-  const asked = metricAsked(ask);
-  if (!asked || metricFits(pick, asked)) return null;
+export async function askedInstead(workspace: string, stage: Stage, pick: string, ask: string, target?: number): Promise<string | null> {
+  const all = metricsAsked(ask);
+  const named = all.find((one) => one.value === target);
+  const asked = (named ?? all[0])?.metric;
+  // With no count at the target, a pick that fits any count the ask names stands.
+  if (!asked || metricFits(pick, asked) || (!named && all.some((one) => metricFits(pick, one.metric)))) return null;
   if (familyOf(pick) === familyOf(asked) && (await readMetric(workspace, stage, pick)).value !== null) return null;
   const there = (await readMetric(workspace, stage, asked)).value !== null;
   const missing = there ? '' : ` ${missingMetric(stage, asked, [])}`.replace(/^ (\w)/, (_, first: string) => ` ${first.toUpperCase()}`);
