@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { ModelInfo, Usage } from '../shared/model.ts';
-import { createBreaker, refused } from './breaker.ts';
+import { createBreaker, planless, refused } from './breaker.ts';
 import { fromCache, onCache } from './cache.ts';
 import { neuronPoolOf, PICTURE_POOL, poolOf, providerOf, type ModelClient, type Quota } from './providers.ts';
 import { writeAtomic } from './fsx.ts';
@@ -17,6 +17,8 @@ type CacheCount = { hits: number; misses: number; tokensSaved: number };
 // `pictures`: by neuron pool, the pictures drawn on it today and the neurons they cost.
 type State = { day: string; providers: Record<string, Count>; kinds?: Record<string, Count>; tools?: Record<string, ToolCount>; cache?: Record<string, CacheCount>; pictures?: Record<string, { drawn: number; neurons: number }> };
 type Seen = { at: number; tokens: number };
+// A key refused (`dead`) or answering again. `planless`: refused because its plan allows no requests at all yet.
+export type KeyEvent = { name: string; dead: boolean; status?: number; planless?: boolean };
 
 export type UsageBook = ReturnType<typeof createUsage>;
 
@@ -43,8 +45,8 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
   let saving: Promise<unknown> = Promise.resolve();
   const breaker = createBreaker(now);
   // Every refusal (401, 403) and, while anyone listens, every answer: whoever listens decides what is news.
-  const keyWatchers = new Set<(event: { name: string; dead: boolean; status?: number }) => void>();
-  const tellKey = (event: { name: string; dead: boolean; status?: number }) => { for (const tell of keyWatchers) { try { tell(event); } catch { /* a listener never costs a call */ } } };
+  const keyWatchers = new Set<(event: KeyEvent) => void>();
+  const tellKey = (event: KeyEvent) => { for (const tell of keyWatchers) { try { tell(event); } catch { /* a listener never costs a call */ } } };
   const folder = path ? dirname(path) : null;
 
   const roll = () => { if (state.day !== today(now())) state = { day: today(now()), providers: {} }; };
@@ -139,11 +141,11 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     // timeouts in a row open its breaker, a 401 or 403 rests it six hours as dead. See breaker.ts.
     failed(name: string, error: unknown) {
       const rest = breaker.failed(name, error);
-      if (refused(error)) tellKey({ name, dead: true, status: (error as { status?: number })?.status });
+      if (refused(error)) tellKey({ name, dead: true, status: (error as { status?: number })?.status, ...(planless(error) ? { planless: true } : {}) });
       return rest;
     },
     // Hears a key the provider refused, and the same key answering again.
-    onKey(tell: (event: { name: string; dead: boolean; status?: number }) => void) { keyWatchers.add(tell); return () => { keyWatchers.delete(tell); }; },
+    onKey(tell: (event: KeyEvent) => void) { keyWatchers.add(tell); return () => { keyWatchers.delete(tell); }; },
     // Right before a request goes out: false while the key's breaker is open, or half open with its one try out.
     admit: (name: string) => breaker.admit(name),
     breaker: (name: string) => breaker.state(name),

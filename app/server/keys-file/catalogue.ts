@@ -8,7 +8,7 @@ export type KeyInfo = { name: string; group: string; label: string; where?: stri
 
 // The providers as the README's table names them, and where each key is made. A provider not named here still gets
 // its row, under its name in models.json.
-const PROVIDERS: Record<string, { label: string; where: string }> = {
+export const PROVIDERS: Record<string, { label: string; where: string }> = {
   GROQ_API_KEY: { label: 'Groq', where: 'console.groq.com/keys' },
   CEREBRAS_API_KEY: { label: 'Cerebras', where: 'cloud.cerebras.ai' },
   GEMINI_API_KEY: { label: 'Gemini', where: 'aistudio.google.com/apikey' },

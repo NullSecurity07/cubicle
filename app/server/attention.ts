@@ -6,6 +6,7 @@ import { planTaskTitle, stepText, type Bet, type PlanProposal } from '../shared/
 import type { Boards } from './boards.ts';
 import type { Damage, Store } from './store.ts';
 import { localDay } from './clock.ts';
+import { PROVIDERS } from './keys-file/catalogue.ts';
 import { ENTRIES } from './providers.ts';
 import type { UsageBook } from './usage.ts';
 
@@ -123,24 +124,27 @@ export const boardAttention = (store: Store, boards: Boards) => async (): Promis
   return found;
 };
 
+// A key refused for having no plan, in words the founder can act on: where to turn the free plan on.
+export const planlessWords = (keyEnv: string) => `its plan allows no requests yet: turn on the free plan${PROVIDERS[keyEnv]?.where ? ` at ${PROVIDERS[keyEnv].where}` : ''}`;
+
 // A key the provider refused (401, 403) is one item for the founder, raised once and kept until the key answers again:
 // no turn can fix it, only a new key in Keys can. One item a key: one Groq key serves groq, groq-small and groq-qwen,
 // so the item is named by the key's variable and number, and any model on that key answering clears it.
 export function keyAttention(usage: Pick<UsageBook, 'onKey'>, attention: AttentionBook, now: () => number = Date.now) {
   const open = new Set<string>();
-  return usage.onKey(({ name, dead, status }) => {
+  return usage.onKey(({ name, dead, status, planless }) => {
     const [model, number = '1'] = name.split('#');
     const entry = ENTRIES.find((one) => one.name === model);
     const keyEnv = entry?.keyEnv ?? model;
     const id = `key-rejected:${keyEnv}:${number}`;
     if (dead === open.has(id)) return;
-    // Named after the first model on the key, the way the founder knows it: GROQ_API_KEY is Groq.
+    // Named the way the Keys panel names it (NVIDIA_API_KEY is NVIDIA), or after the first model on the key.
     const first = ENTRIES.find((one) => one.keyEnv === keyEnv)?.name ?? model;
-    const said = first[0].toUpperCase() + first.slice(1);
+    const said = PROVIDERS[keyEnv]?.label ?? first[0].toUpperCase() + first.slice(1);
     const which = number === '1' ? keyEnv : `${keyEnv}_${number}`;
     if (dead) open.add(id); else open.delete(id);
     void (dead
-      ? attention.raise({ id, kind: 'key-rejected', at: now(), title: `${said} key rejected; fix it in Keys`, detail: `${which} was refused (${status ?? 'no status'}): the key is wrong, revoked or out of credit. Other models answer meanwhile; this goes away the next time it answers.` })
+      ? attention.raise({ id, kind: 'key-rejected', at: now(), title: `${said} key rejected; fix it in Keys`, detail: `${which} was refused (${status ?? 'no status'}): ${planless ? planlessWords(keyEnv) : 'the key is wrong, revoked or out of credit'}. Other models answer meanwhile; this goes away the next time it answers.` })
       : attention.clear(id)).catch(() => {});
   });
 }

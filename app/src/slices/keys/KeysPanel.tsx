@@ -6,9 +6,10 @@ import { checkKeys, getKeys, setKey } from './api';
 
 const when = (at: number) => new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 
-// What one row says under its name, in words: that it is there and how it ends, or where to make one.
+// What one row says under its name, in words: that it is there and how it ends, or where to make one. A failing key
+// failed the last check or was refused in a turn, so the words say it is not working, not which.
 function said(row: KeyRow): string {
-  if (row.state === 'failing') return `Set, but the last check failed: ${row.problem}`;
+  if (row.state === 'failing') return `Set, but not working: ${row.problem}`;
   if (row.state === 'missing') return row.where ? `Not set. Make one at ${row.where}.` : 'Not set.';
   const parts = [row.tail ? `Set · ends in ${row.tail}` : 'Set'];
   if (row.spares) parts.push(`${row.spares} more ${row.spares === 1 ? 'key' : 'keys'} beside it`);
