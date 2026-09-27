@@ -397,3 +397,43 @@ describe('what is already done leaves Needs you', () => {
     await expect.poll(() => told.at(-1)).toBe(0);
   });
 });
+
+describe('the new keys refused (round 6)', () => {
+  const settle = () => new Promise((done) => setTimeout(done, 20));
+  it('raises one item for a refused Mistral or NVIDIA key, named the way the Keys panel names them', async () => {
+    const attention = createAttention(await mkdtemp(join(tmpdir(), 'attention-')));
+    const usage = createUsage(null);
+    keyAttention(usage, attention, () => NOON);
+    usage.failed('mistral', Object.assign(new Error('401 Unauthorized'), { status: 401 }));
+    usage.failed('nvidia#2', Object.assign(new Error('403 Forbidden'), { status: 403 }));
+    await settle();
+    const items = await attention.list();
+    expect(items.map((one) => [one.id, one.title])).toEqual([
+      ['key-rejected:MISTRAL_API_KEY:1', 'Mistral key rejected; fix it in Keys'],
+      ['key-rejected:NVIDIA_API_KEY:2', 'NVIDIA key rejected; fix it in Keys'],
+    ]);
+    expect(items[1].detail).toContain('NVIDIA_API_KEY_2 was refused (403)');
+    usage.record('mistral');
+    await settle();
+    expect((await attention.list()).map((one) => one.id)).toEqual(['key-rejected:NVIDIA_API_KEY:2']);
+  });
+
+  it('takes a 429 from a key whose plan allows no requests a minute (Mistral before its free plan is chosen) as refused, and says where to turn the plan on', async () => {
+    const attention = createAttention(await mkdtemp(join(tmpdir(), 'attention-')));
+    const usage = createUsage(null);
+    keyAttention(usage, attention, () => NOON);
+    // What Mistral answered on 2026-09-27 for a key with no plan: a 429 whose headers say the minute allows nothing.
+    const planless = Object.assign(new Error('429 Rate limit exceeded'), { status: 429, headers: new Headers({ 'x-ratelimit-limit-req-minute': '0', 'x-ratelimit-remaining-req-minute': '0' }) });
+    usage.failed('mistral', planless);
+    await settle();
+    expect(usage.dead('mistral')).toBe(true);
+    const [item] = await attention.list();
+    expect(item).toMatchObject({ id: 'key-rejected:MISTRAL_API_KEY:1', title: 'Mistral key rejected; fix it in Keys' });
+    expect(item.detail).toContain('its plan allows no requests yet');
+    expect(item.detail).toContain('console.mistral.ai');
+    // A busy minute is not a refused key.
+    const busy = Object.assign(new Error('429 Rate limit exceeded'), { status: 429, headers: new Headers({ 'x-ratelimit-limit-req-minute': '60', 'x-ratelimit-remaining-req-minute': '0' }) });
+    usage.failed('nvidia', busy);
+    expect(usage.dead('nvidia')).toBe(false);
+  });
+});

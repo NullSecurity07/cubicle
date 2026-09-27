@@ -238,7 +238,7 @@ describe('a model whose free turns for the day are used (round 5)', () => {
 
 describe('the keys that would add a fallback, in Health (round 5)', () => {
   it('is a row while any is unset, and gone once all are', async () => {
-    expect(row(await setup(), 'Keys that would add a fallback')).toMatchObject({ ok: true, detail: expect.stringMatching(/^NVIDIA at build\.nvidia\.com \(kimi-k2\.6\); Mistral/) });
+    expect(row(await setup(), 'Keys that would add a fallback')).toMatchObject({ ok: true, detail: expect.stringMatching(/^NVIDIA at build\.nvidia\.com \(kimi-k3\); Mistral/) });
     const all = { NVIDIA_API_KEY: 'n', MISTRAL_API_KEY: 'm', CEREBRAS_API_KEY: 'c', OPENROUTER_API_KEY: 'o' };
     expect(row(await setup({ env: all }), 'Keys that would add a fallback')).toBeUndefined();
   });

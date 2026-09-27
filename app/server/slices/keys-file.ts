@@ -8,6 +8,7 @@ import { NAME, readEnv, tailOf, withEnv } from '../keys-file/envfile.ts';
 import { backupPlaces, readyFolder } from '../keys-file/places.ts';
 import { backupDirOf, chooseBackupDir } from '../openends/backup.ts';
 import { liveChecks } from '../openends/health.ts';
+import { planlessWords } from '../attention.ts';
 import { ENTRIES, providerOf, type ModelClient } from '../providers.ts';
 
 // The founder's keys, set from the window instead of by editing `.env` by hand. The file is the one the app reads when
@@ -81,6 +82,16 @@ export default {
     let failing = new Map<string, string>();
     let checkedAt: number | null = null;
     let writing: Promise<unknown> = Promise.resolve();
+    // A key a provider refuses in a turn is failing here from that moment, not only after the next check, and is set
+    // again as soon as it answers. Named the way the rows are: `nvidia#2` is NVIDIA_API_KEY_2, shown on NVIDIA's row.
+    const offKey = deps.usage?.onKey(({ name, dead, status, planless }) => {
+      const entry = ENTRIES.find((one) => one.name === providerOf(name));
+      if (!entry) return;
+      const at = Number(name.split('#')[1] ?? 1);
+      const key = at > 1 ? `${entry.keyEnv}_${at}` : entry.keyEnv;
+      if (dead) failing.set(key, planless ? planlessWords(entry.keyEnv) : `refused in a turn (${status ?? 'no status'})`);
+      else failing.delete(key);
+    });
 
     const view = async (): Promise<KeysView> => {
       const rows = rowsOf(known, await readFileEnv(), started, startedFile, failing);
@@ -141,7 +152,7 @@ export default {
         } catch (error) { deps.json(res, 400, { error: (error as Error).message }); }
         return true;
       },
-      async close() { await writing; },
+      async close() { offKey?.(); await writing; },
     };
   },
 } satisfies Slice;

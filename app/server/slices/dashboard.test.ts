@@ -14,7 +14,7 @@ import type { Deps } from '../install.ts';
 import { fakeClient, type ModelClient } from '../providers.ts';
 import { createSkills } from '../skills.ts';
 import { createStore } from '../store.ts';
-import { createUsage } from '../usage.ts';
+import { createUsage, pictureDrawn } from '../usage.ts';
 import slice, { fileCache, localDay, readTeams, readTokens } from './dashboard.ts';
 
 const root = resolve(import.meta.dirname, '../../..');
@@ -278,5 +278,20 @@ describe('the dashboard\'s model rows (round 5)', () => {
     usage.record('cloudflare-gpt-oss');
     expect((await rows()).find((one) => one.name === 'cloudflare-gpt-oss')!.window).toBe('daily free turns used; resets at midnight UTC');
     expect((await rows()).find((one) => one.name === 'gemini')!.window).toBe('resets at midnight UTC');
+  });
+
+  it('show the Cloudflare day\'s neurons used of the 9,000 the turns may spend, pictures included, on each model on the pool (round 6)', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dash-neurons-'));
+    const usage = createUsage(join(workspace, 'usage.json'));
+    const oss: ModelClient = { ...fakeClient, name: 'cloudflare-gpt-oss', model: '@cf/openai/gpt-oss-120b', limits: { rpd: 25 }, sharedPool: true };
+    const clients = [oss, { ...fakeClient, name: 'gemini', model: 'flash', limits: { rpd: 1000 } }];
+    usage.record('cloudflare-gpt-oss', { input: 1, output: 1, neurons: 236 });
+    pictureDrawn(58);
+    const rows = (await readTokens({ workspace, usage, clients }, seedStage, fileCache(), Date.now())).byProvider;
+    expect(rows.find((one) => one.name === 'cloudflare-gpt-oss')).toMatchObject({ usedToday: { requests: 1 }, limits: { rpd: 25 }, neurons: { used: 294, of: 9000, pictures: 58, drawn: 1 } });
+    expect(rows.find((one) => one.name === 'gemini')!.neurons).toBeUndefined();
+    usage.record('cloudflare-gpt-oss', { input: 1, output: 1, neurons: 8800 });
+    const spent = (await readTokens({ workspace, usage, clients }, seedStage, fileCache(), Date.now())).byProvider.find((one) => one.name === 'cloudflare-gpt-oss')!;
+    expect(spent).toMatchObject({ leftPct: 0, window: 'daily free turns used; resets at midnight UTC' });
   });
 });

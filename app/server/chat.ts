@@ -7,6 +7,7 @@ import { holdPartner, PRECONDITION_NUDGE } from './partner/pushback.ts';
 import { partnerRoute } from './partner/route.ts';
 import { teamVerdict } from './partner/standing.ts';
 import { runTurn } from './loop.ts';
+import { needsSlim, slimNotice } from './slim.ts';
 import type { createMemory } from './memory.ts';
 import type { Offered } from './playbook.ts';
 import { complete, plainFailure, promptSize, type ModelClient } from './providers.ts';
@@ -40,13 +41,21 @@ export function createChat(deps: Deps) {
     const target = stage.rooms.find((room) => room.id === toRoomId)!;
     await store.appendChat(toRoomId, { id: newMessageId(), role: 'user', text: question, at: Date.now(), from: asker.name });
     let messages = await promptFor(stage, toRoomId, []);
+    // Nobody able holds the whole prompt: the colleague answers from the short one.
+    let slim = needsSlim(clients, usage, messages, []);
+    if (slim) messages = await promptFor(stage, toRoomId, [], false, true);
     // The colleague is shown what they would be shown in a turn of their own: their playbook, their notes, their
     // cards. Offered nothing, so every procedure that needs a tool is left out, and they still answer in words only.
     // Not while they are in a turn of their own, whose guards and questions to the founder this must not disturb; and
     // as a run, because being asked by a colleague is not the founder answering whatever this person asked them.
     if (!busy.has(toRoomId)) {
-      const before: Payloads['turn:before'] & Offered = { roomId: toRoomId, source: 'run', query: question, messages, offered: [] };
+      const before: Payloads['turn:before'] & Offered = { roomId: toRoomId, source: 'run', query: question, messages, offered: [], ...(slim ? { slim } : {}) };
       messages = (await seams.run('turn:before', before)).messages;
+      // The extras made it too big after all: built short and asked again, as a turn is (loop.ts).
+      if (!slim && needsSlim(clients, usage, messages, [], 0)) {
+        slim = true;
+        messages = (await seams.run('turn:before', { ...before, messages: await promptFor(stage, toRoomId, [], false, true), slim })).messages;
+      }
     }
     const { order } = target.partner && !target.model ? partnerRoute(clients, usage, { promptChars: promptSize(messages), tools: false })
       : route(clients, usage, { pinned: target.model, promptChars: promptSize(messages), tools: false });
@@ -95,7 +104,10 @@ export function createChat(deps: Deps) {
       roomFeed.tell({ roomId, turn, started: { ...(extra.via ? { via: extra.via } : {}) } });
       // The names in the prompt are the narrowed list too: a person is never told about a tool they are not offered.
       const mine = deps.toolsFor(stage, roomId);
-      const messages = await promptFor(stage, roomId, mine.map((tool) => tool.name));
+      let messages = await promptFor(stage, roomId, mine.map((tool) => tool.name));
+      // Nobody able holds the whole prompt, even with the oldest talk cut (only Groq is set up, say): built again short.
+      const slim = needsSlim(clients, usage, messages, mine);
+      if (slim) messages = await promptFor(stage, roomId, mine.map((tool) => tool.name), false, true);
       const room = stage.rooms.find((candidate) => candidate.id === roomId)!;
       const vision = messages.some((message) => message.role === 'user' && !!message.images?.length);
       // The partner answers on the strongest free models unless the founder pinned one for them.
@@ -103,6 +115,7 @@ export function createChat(deps: Deps) {
         : route(clients, usage, { pinned: room.model, promptChars: promptSize(messages), tools: true, vision });
       if (vision && !order[0]?.vision) send({ notice: 'No model that can see images is set up (Gemini can), so the picture is described to the model only by its file name.' });
       if (notice) send({ notice });
+      if (slim && order[0]) send({ notice: slimNotice(order[0]) });
       // The reply is kept as it stands after every step a tool finishes, marked stopped, and the finished reply is
       // written over it under the same id: a restart mid-turn keeps what was said and done, not nothing.
       const replyId = kept.id;
@@ -113,7 +126,9 @@ export function createChat(deps: Deps) {
         kept.writes = kept.writes.then(() => store.putMessage(roomId, draft)).catch(() => {});
       };
       const turnOn = (these: typeof messages, offered = mine) => runTurn({
-        messages: these, tools: offered, clients: order, usage, signal: stop.signal, seams, source: 'chat', query: text,
+        messages: these, tools: offered, clients: order, usage, signal: stop.signal, seams, source: 'chat', query: text, slim,
+        // The short prompt with whatever this call added after the whole one (a second look's answer and nudge).
+        slimmer: async () => [...await promptFor(stage, roomId, mine.map((tool) => tool.name), false, true), ...these.slice(messages.length)],
         // Listened for before it is shown, so an answer given while Needs you is still being written is heard.
         approve: (event, signal) => askFounder(attention, approvals, { id: `approval:${event.id}`, kind: 'approval', title: event.question ?? event.name.replace(/_/g, ' '), at: Date.now(), roomId, who: room.name, event }, signal),
         context: { stage, roomId, store, granted: new Map() },

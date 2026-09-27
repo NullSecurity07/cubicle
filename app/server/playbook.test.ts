@@ -76,6 +76,13 @@ describe('the two numbers', () => {
     expect(blockOf(await ask('what should we have for lunch today'))).toBe('');
     expect(blockOf(await ask('explain how our pricing compares to Notion'))).toBe('');
   });
+
+  it('leaves the playbook out of a short prompt, which is cut to fit a model that holds little (round 6)', async () => {
+    const { seams } = await setup();
+    const messages: ModelMessage[] = [{ role: 'system', content: 'You are Maya, Marketing.' }];
+    const slim = (await seams.run('turn:before', { roomId: 'marketing', source: 'chat', query: 'make a landing page for our launch next week', messages, slim: true })).messages;
+    expect(blockOf(slim)).toBe('');
+  });
 });
 
 describe('the playbook block', () => {

@@ -1,9 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { ModelInfo, Usage } from '../shared/model.ts';
-import { createBreaker, refused } from './breaker.ts';
+import { createBreaker, planless, refused } from './breaker.ts';
 import { fromCache, onCache } from './cache.ts';
-import { neuronPoolOf, poolOf, providerOf, type ModelClient, type Quota } from './providers.ts';
+import { neuronPoolOf, PICTURE_POOL, poolOf, providerOf, type ModelClient, type Quota } from './providers.ts';
 import { writeAtomic } from './fsx.ts';
 
 // `neurons`: what Cloudflare said this key's answers cost from its free daily pool.
@@ -14,8 +14,11 @@ type CallKind = 'turn' | 'side' | 'eval' | 'retain' | 'reflect' | 'compaction';
 type ToolCount = { results: number; before: number; after: number };
 type CacheCount = { hits: number; misses: number; tokensSaved: number };
 // `kinds`, `tools` and `cache` came later: a day written before them still reads, as a day without them.
-type State = { day: string; providers: Record<string, Count>; kinds?: Record<string, Count>; tools?: Record<string, ToolCount>; cache?: Record<string, CacheCount> };
+// `pictures`: by neuron pool, the pictures drawn on it today and the neurons they cost.
+type State = { day: string; providers: Record<string, Count>; kinds?: Record<string, Count>; tools?: Record<string, ToolCount>; cache?: Record<string, CacheCount>; pictures?: Record<string, { drawn: number; neurons: number }> };
 type Seen = { at: number; tokens: number };
+// A key refused (`dead`) or answering again. `planless`: refused because its plan allows no requests at all yet.
+export type KeyEvent = { name: string; dead: boolean; status?: number; planless?: boolean };
 
 export type UsageBook = ReturnType<typeof createUsage>;
 
@@ -23,6 +26,13 @@ const WINDOW = 60_000;
 // Of Cloudflare's 10,000 free neurons a day, what the turns may spend; the rest is the pictures'.
 export const NEURONS_FOR_TURNS = 9000;
 const today = (now: number) => new Date(now).toISOString().slice(0, 10);
+
+// A picture drawn on Cloudflare spends the same day's neurons the turns do, so every usage book with a workspace hears
+// of it and counts it into that pool: the turns then stop at 9,000 with the pictures in, not beside them.
+type PictureListener = (pool: string, neurons: number) => void;
+const pictureListeners = new Set<PictureListener>();
+export function onPictureNeurons(listen: PictureListener) { pictureListeners.add(listen); return () => { pictureListeners.delete(listen); }; }
+export function pictureDrawn(neurons: number, pool = PICTURE_POOL) { for (const listen of pictureListeners) { try { listen(pool, neurons); } catch { /* counting never costs a picture */ } } }
 const share = (used: number, limit?: number) => (limit ? Math.max(0, 1 - used / limit) : 1);
 
 // Keeps count of what each free provider has been asked today, so a person can move on before a limit bites.
@@ -35,8 +45,8 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
   let saving: Promise<unknown> = Promise.resolve();
   const breaker = createBreaker(now);
   // Every refusal (401, 403) and, while anyone listens, every answer: whoever listens decides what is news.
-  const keyWatchers = new Set<(event: { name: string; dead: boolean; status?: number }) => void>();
-  const tellKey = (event: { name: string; dead: boolean; status?: number }) => { for (const tell of keyWatchers) { try { tell(event); } catch { /* a listener never costs a call */ } } };
+  const keyWatchers = new Set<(event: KeyEvent) => void>();
+  const tellKey = (event: KeyEvent) => { for (const tell of keyWatchers) { try { tell(event); } catch { /* a listener never costs a call */ } } };
   const folder = path ? dirname(path) : null;
 
   const roll = () => { if (state.day !== today(now())) state = { day: today(now()), providers: {} }; };
@@ -56,13 +66,30 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     return Object.entries(state.providers).reduce((sum, [one, used]) => sum + (one === name || poolOf(one) === pool ? used.requests : 0), 0);
   };
 
+  // Today's neurons on one pool: every model's answers on it, and the pictures drawn on it.
+  const poolNeurons = (pool: string) => Object.entries(state.providers).reduce((sum, [one, used]) => sum + ((neuronPoolOf(one) ?? providerOf(one)) === pool ? used.neurons ?? 0 : 0), 0)
+    + (state.pictures?.[pool]?.neurons ?? 0);
+  const neuronPool = (client: ModelClient) => (client.sharedPool ? neuronPoolOf(client.name) ?? providerOf(client.name) : undefined);
+
   function left(client: ModelClient) {
     roll();
     const used = count(client.name);
     const header = quotas[client.name];
     const fromHeader = header && today(header.at) === state.day && header.quota.limitRequests && header.quota.remainingRequests !== undefined
       ? header.quota.remainingRequests / header.quota.limitRequests : 1;
-    return Math.min(share(pooled(client.name), client.limits.rpd), share(used.input + used.output, client.limits.tpd), fromHeader);
+    const pool = neuronPool(client);
+    const fromNeurons = pool ? share(poolNeurons(pool), NEURONS_FOR_TURNS) : 1;
+    return Math.min(share(pooled(client.name), client.limits.rpd), share(used.input + used.output, client.limits.tpd), fromHeader, fromNeurons);
+  }
+
+  if (folder) {
+    onPictureNeurons((pool, neurons) => {
+      roll();
+      const one = ((state.pictures ??= {})[pool] ??= { drawn: 0, neurons: 0 });
+      one.drawn += 1;
+      one.neurons += neurons;
+      save();
+    });
   }
 
   // The cache's hits and misses for this workspace, counted into the day like everything else.
@@ -114,11 +141,11 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     // timeouts in a row open its breaker, a 401 or 403 rests it six hours as dead. See breaker.ts.
     failed(name: string, error: unknown) {
       const rest = breaker.failed(name, error);
-      if (refused(error)) tellKey({ name, dead: true, status: (error as { status?: number })?.status });
+      if (refused(error)) tellKey({ name, dead: true, status: (error as { status?: number })?.status, ...(planless(error) ? { planless: true } : {}) });
       return rest;
     },
     // Hears a key the provider refused, and the same key answering again.
-    onKey(tell: (event: { name: string; dead: boolean; status?: number }) => void) { keyWatchers.add(tell); return () => { keyWatchers.delete(tell); }; },
+    onKey(tell: (event: KeyEvent) => void) { keyWatchers.add(tell); return () => { keyWatchers.delete(tell); }; },
     // Right before a request goes out: false while the key's breaker is open, or half open with its one try out.
     admit: (name: string) => breaker.admit(name),
     breaker: (name: string) => breaker.state(name),
@@ -149,10 +176,17 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     spent(client: ModelClient) {
       roll();
       if (client.limits.rpd && pooled(client.name) >= client.limits.rpd) return true;
-      const pool = client.sharedPool ? neuronPoolOf(client.name) ?? providerOf(client.name) : undefined;
-      if (!pool) return false;
-      const neurons = Object.entries(state.providers).reduce((sum, [one, used]) => sum + ((neuronPoolOf(one) ?? one) === pool ? used.neurons ?? 0 : 0), 0);
-      return neurons >= NEURONS_FOR_TURNS;
+      const pool = neuronPool(client);
+      return !!pool && poolNeurons(pool) >= NEURONS_FOR_TURNS;
+    },
+    // The neurons this key's pool has spent today, of the 9,000 the turns may, and how many of them went on pictures.
+    // Undefined for a key that is on no such pool.
+    neurons(client: ModelClient) {
+      roll();
+      const pool = neuronPool(client);
+      if (!pool) return undefined;
+      const pictures = state.pictures?.[pool];
+      return { used: poolNeurons(pool), of: NEURONS_FOR_TURNS, pictures: pictures?.neurons ?? 0, drawn: pictures?.drawn ?? 0 };
     },
     // True while this key rests after a 429, an open breaker or a refused key. Only looks.
     resting: (name: string) => breaker.resting(name),
