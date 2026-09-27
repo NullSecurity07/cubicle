@@ -25,3 +25,7 @@ export function partnerCommands(act: { add(name: string): void; morning(): void 
     { section: 'Do', label: 'Bets', hint: 'What the company bet on, and how each went', action: { do: 'run', run: () => overlay.open({ kind: 'panel', name: 'bets' }) }, when: (typed) => BETS.test(typed), say: ['bets'] },
   ];
 }
+
+// The button on a suggested bet in Needs you. A bet on a number only the Company brief holds says so in its detail
+// ("Add a Metrics card from the brief and take the bet: …"), and taking it puts that card down: the button says so too.
+export const takeBetLabel = (detail?: string) => (detail && /Add a Metrics card from the brief/.test(detail) ? 'Add a Metrics card and take the bet' : 'Take the bet');

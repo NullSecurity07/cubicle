@@ -259,7 +259,8 @@ export type RoomEvent = { roomId: string } & (
   { chat: 'changed' } | { turn: string; started: { via?: ChatVia } } | { turn: string; token: string }
   | { turn: string; tool: ToolEvent } | { turn: string; restart: true } | { turn: string; ended: true });
 // One configured model as the client sees it: `left` is the share of today's free quota still there, 0 to 1.
-export type ModelInfo = { name: string; model: string; ready: boolean; left: number; requests: number; tokens: number };
+// `planOff`: every key this provider has is refused because its free plan is not turned on; it answers nobody until it is.
+export type ModelInfo = { name: string; model: string; ready: boolean; left: number; requests: number; tokens: number; planOff?: boolean };
 
 export const newMessageId = () => `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 export const newTurnId = () => `t-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -284,6 +285,7 @@ export const PARTNER_STANCE =
   + 'When a teammate\'s section or the Company document contradicts the founder\'s premise, quote it. '
   + 'The standing facts at the end of your instructions are read in code from every room: when one contradicts the founder\'s ask '
   + 'or your own advice (a team verdict against the plan, a number that moved), say so first, before anything else. '
+  + 'A team verdict is the team\'s finding about the company, not a score to satisfy: answer in its light, or write "I overrule it because" and your reason. '
   + 'Say something waits in Needs you only when the standing facts list it. '
   + 'Keep the Company document current: what the company does, who it is for and where its numbers stand belong in its Idea, '
   + 'Customer and Numbers sections, and when the founder tells you one of them the app writes it there and says so under your reply. '

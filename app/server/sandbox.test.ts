@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawn } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import { runCode } from './sandbox.ts';
 
@@ -35,5 +36,23 @@ describe('sandbox', () => {
     const python = await runCode({ language: 'python', code: "import js\ntry:\n    js.process.getBuiltinModule('fs').readFileSync('/etc/hostname', 'utf8')\n    print('OPEN')\nexcept Exception:\n    print('blocked')" }, dir);
     expect(python.output).toBe('blocked');
     expect((await runCode({ language: 'javascript', code: "files.read('../../etc/hostname')" }, dir)).output).toContain('outside the shared files folder');
+  }, 90_000);
+
+  it('cannot signal another process, even from escaped code, in either language', async () => {
+    const dummy = spawn('sleep', ['60'], { stdio: 'ignore' });
+    try {
+      const pid = dummy.pid!;
+      const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
+      const dir = await folder();
+      for (const call of [`p.kill(${pid}, 'SIGTERM')`, `p._kill(${pid}, 15)`, 'p.abort()']) {
+        const result = await runCode({ language: 'javascript', code: `const p = this.constructor.constructor('return process')(); ${call}; 'SENT'` }, dir);
+        expect(result).toMatchObject({ ok: false, output: expect.stringContaining('no signals from the sandbox') });
+      }
+      const python = await runCode({ language: 'python', code: `import js\ntry:\n    js.process.kill(${pid}, 'SIGTERM')\n    print('SENT')\nexcept Exception as e:\n    print('blocked', e)` }, dir);
+      expect(python.output).toContain('no signals from the sandbox');
+      await new Promise((wait) => setTimeout(wait, 100));
+      expect(alive()).toBe(true);
+      expect(dummy.exitCode).toBe(null);
+    } finally { dummy.kill('SIGKILL'); }
   }, 90_000);
 });

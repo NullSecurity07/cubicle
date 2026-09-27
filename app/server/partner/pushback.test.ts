@@ -107,11 +107,23 @@ describe('the partner held to a weak team verdict', () => {
       expect(buildsAgainst(reply, PIVOT), reply).toBe(false);
   });
 
+  // Journey 9: after PIVOT REQUIRED 5/10 the partner named the verdict and argued past it.
+  it('knows a reply that argues against the verdict, named or not, unless it says why it overrules it', () => {
+    const FIVE = { title: 'Evaluation', word: 'PIVOT REQUIRED', score: 5 };
+    const journey = 'Priya\'s PIVOT REQUIRED 5/10 is a warning. Do not pivot away from Kindling. Keep building.\n\nMy call: schedule 3 customer interviews this week to satisfy Priya\'s evaluation criteria.';
+    expect(buildsAgainst(journey, FIVE)).toBe(true);
+    for (const reply of ['The verdict is harsh. Don\'t pivot yet.', 'Ignore the verdict for now.\n\nMy call: talk to users.', 'Keep building the host tools.', 'The verdict stands. My call: book 3 calls to satisfy the evaluation criteria.'])
+      expect(buildsAgainst(reply, FIVE), reply).toBe(true);
+    // An explicit overrule with its reason stands, and so do replies that only stop building.
+    for (const reply of [`${journey}\n\nI overrule it because the 2 paying hosts renewed twice.`, 'The PIVOT REQUIRED verdict comes first: stop building and do not keep building features. My call: run 5 interviews.', 'Given the verdict, my call: pause and run 5 interviews.', 'PIVOT REQUIRED is right: you can\'t keep building without users, and we won\'t keep building blind. My call: 5 interviews.'])
+      expect(buildsAgainst(reply, FIVE), reply).toBe(false);
+  });
+
   it('asks once more with the verdict quoted, and labels a second miss', async () => {
     const nudges: string[] = [];
     const again = async (_first: TurnResult, nudge?: string) => { nudges.push(nudge ?? ''); return turn('Still: ship it.\n\nMy call: build the form.'); };
     const held = await holdPartner('what do I do now?', turn('My call: build the invoicing form today.'), again, PIVOT);
-    expect(nudges).toEqual(['The team\'s verdict is PIVOT REQUIRED 6/10 (Evaluation); answer in its light or say why you overrule it. Name the verdict in your reply.']);
+    expect(nudges).toEqual(['The team\'s verdict is PIVOT REQUIRED 6/10 (Evaluation). It is the team\'s finding about the company, not a target to satisfy: answer in its light, or say "I overrule it because" and your reason. Name the verdict in your reply.']);
     expect(held.text).toBe(`Still: ship it.\n\nMy call: build the form.\n\n${UNWEIGHED}`);
     const weighed = await holdPartner('what do I do now?', turn('My call: build the form.'), async () => turn('The PIVOT REQUIRED verdict comes first. My call: run the interviews.'), PIVOT);
     expect(weighed.text).toBe('The PIVOT REQUIRED verdict comes first. My call: run the interviews.');
@@ -130,11 +142,35 @@ describe('the partner held to a weak team verdict', () => {
     expect(held.text).toBe(email);
   });
 
-  it('takes one second look per turn: a raise answer asked again that still builds against the verdict is only labelled', async () => {
+  it('takes one second look per turn, and labels only a second miss of the verdict', async () => {
+    // The raise answer was asked again for its preconditions only: its first miss of the verdict is not labelled.
     let asked = 0;
-    const held = await holdPartner(JOURNEY, turn('Phase 1: SAFE.\n\nMy call: go.'), async () => { asked += 1; return turn('Not yet: no users. My call: build the product first.'); }, PIVOT);
+    const once = await holdPartner(JOURNEY, turn('Phase 1: SAFE.\n\nMy call: go.'), async () => { asked += 1; return turn('Not yet: no users. My call: build the product first.'); }, PIVOT);
     expect(asked).toBe(1);
-    expect(held.text).toBe(`Not yet: no users. My call: build the product first.\n\n${UNWEIGHED}`);
+    expect(once.text).toBe('Not yet: no users. My call: build the product first.');
+    // A first answer that misses both is asked once with both nudges, and a second miss of the verdict is labelled.
+    const nudges: string[] = [];
+    const twice = await holdPartner(JOURNEY, turn('Phase 1: SAFE.\n\nMy call: build the product.'), async (_first, nudge) => { nudges.push(nudge ?? ''); return turn('Not yet: no users. My call: build the product first.'); }, PIVOT);
+    expect(nudges).toHaveLength(1);
+    expect(nudges[0]).toContain(PRECONDITION_NUDGE);
+    expect(nudges[0]).toContain('The team\'s verdict is PIVOT REQUIRED 6/10 (Evaluation).');
+    expect(twice.text).toBe(`Not yet: no users. My call: build the product first.\n\n${UNWEIGHED}`);
+  });
+
+  // Journey 9: the runway answer ran code, so its first miss was labelled at once, "Team verdict not weighed."
+  it('asks once more in words about the verdict even after a first answer that did something, and labels only a second miss', async () => {
+    const ran = turn('Runway is 5.9 months.\n\nMy call: build the €19 tier now.', [{ id: 'c1', name: 'run_code', args: {}, ok: true }]);
+    let asked = 0;
+    const weighed = await holdPartner('how many months of runway do we have?', ran, async () => { asked += 1; return turn('The PIVOT REQUIRED verdict comes first. My call: run 5 interviews.'); }, PIVOT);
+    expect(asked).toBe(1);
+    expect(weighed.text).toBe('The PIVOT REQUIRED verdict comes first. My call: run 5 interviews.');
+    expect(weighed.tools.map((one) => one.id)).toEqual(['c1']);
+    const missed = await holdPartner('how many months of runway do we have?', ran, async () => turn('My call: build the tier.'), PIVOT);
+    expect(missed.text).toBe(`My call: build the tier.\n\n${UNWEIGHED}`);
+    // Every turn starts over: the next turn's first miss is asked again, not labelled.
+    let next = 0;
+    await holdPartner('and now?', turn('My call: build it.'), async () => { next += 1; return turn('Given the verdict, my call: pause.'); }, PIVOT);
+    expect(next).toBe(1);
   });
 });
 

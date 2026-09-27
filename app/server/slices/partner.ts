@@ -1,11 +1,13 @@
-import { isDay } from '../../shared/metrics.ts';
+import { join } from 'node:path';
+import { formatValue, isDay, keyOf } from '../../shared/metrics.ts';
 import { newMessageId, type Attention, type Stage } from '../../shared/model.ts';
 import { bare, companyLine, isPlanDoc, SHARED_RECORD, parsePlan, PARTNER_CHANNEL, planStepLine, type Bet, type BetVerdict, type MorningNote, type PlanStep } from '../../shared/partner.ts';
 import { localDay } from '../clock.ts';
+import { writeAtomic } from '../fsx.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
 import { leadsFor } from '../leads/store.ts';
-import { askedInstead, betDue, betsAttention, betsBook, cannotLose, checkLine, closedLine, metricChoices, missingMetric, readMetric, type BetsBook } from '../partner/bets.ts';
-import { companyDocOf, ensureCompany, sectionText, syncDecisions, writeBets } from '../partner/company.ts';
+import { askedInstead, betDue, betsAttention, betsBook, briefMetrics, CARD_NAMES, cardOf, briefReading, briefRow, cannotLose, checkLine, closedLine, metricChoices, missingMetric, readMetric, type BetsBook, type BriefRow } from '../partner/bets.ts';
+import { companyDocOf, ensureCompany, placeOf, sectionText, syncDecisions, writeBets } from '../partner/company.ts';
 import { hub } from '../events.ts';
 import { saysSomething } from '../missions.ts';
 import { FAKE_MORNING, MOST_TRIES, morningDue, morningInputs, morningMessage, writeMorning, type MorningSources } from '../partner/morning.ts';
@@ -66,16 +68,23 @@ export function betTools(book: BetsBook, workspace: string, changed: () => Promi
         const instead = await askedInstead(workspace, context.stage, metric, context.query ?? '', target);
         if (instead) throw new Error(instead);
         const choices = await metricChoices(workspace, context.stage);
-        if (!choices.some((one) => one.toLowerCase() === metric.toLowerCase()) && (await readMetric(workspace, context.stage, metric)).value === null) {
-          throw new Error(missingMetric(context.stage, metric, choices));
+        let reading = await readMetric(workspace, context.stage, metric);
+        // No card holds it, but the Company brief's Numbers do: the bet is offered with that row, and taking it adds the card.
+        let brief: BriefRow | null = null;
+        if (!choices.some((one) => one.toLowerCase() === metric.toLowerCase()) && reading.value === null) {
+          brief = cardOf(metric) === CARD_NAMES.metrics ? await briefNumber(context.stage, context.store, metric) : null;
+          if (!brief) throw new Error(missingMetric(context.stage, metric, choices));
+          reading = briefReading(brief);
         }
         // A target the number already meets is no bet, unless the ask is to hold it: refused with the number as it stands.
-        const lose = cannotLose(metric, target, await readMetric(workspace, context.stage, metric), `${context.query ?? ''} ${text(args, 'what', 160)}`);
+        const lose = cannotLose(metric, target, reading, `${context.query ?? ''} ${text(args, 'what', 160)}`);
         if (lose) throw new Error(lose);
         const me = speaker(context);
-        const bet = await book.propose({ what: bare(text(args, 'what', 160)), hypothesis: typeof args.hypothesis === 'string' ? args.hypothesis.replace(/\s+/g, ' ').trim().slice(0, 400) : '', metric, target, checkDate, ...(me ? { proposedBy: me.name, roomId: me.id } : {}) });
+        const bet = await book.propose({ what: bare(text(args, 'what', 160)), hypothesis: typeof args.hypothesis === 'string' ? args.hypothesis.replace(/\s+/g, ' ').trim().slice(0, 400) : '', metric, target, checkDate, ...(me ? { proposedBy: me.name, roomId: me.id } : {}), ...(brief ? { brief } : {}) });
         await changed();
-        return { text: `Proposed the bet "${bet.what}" (${bet.metric} to ${bet.target} by ${bet.checkDate}). It waits in Needs you; it is not on record until the founder takes it.` };
+        const wiredTo = partnerOf(context.stage)?.name ?? me?.name ?? 'your partner';
+        const adds = brief ? ` No Metrics card holds "${metric}" yet: taking the bet adds one from the Company brief (${brief.label} ${formatValue(brief.value, brief.unit)}), wired to ${wiredTo}.` : '';
+        return { text: `Proposed the bet "${bet.what}" (${bet.metric} to ${bet.target} by ${bet.checkDate}). It waits in Needs you; it is not on record until the founder takes it.${adds}` };
       },
     },
     {
@@ -102,6 +111,26 @@ export function betTools(book: BetsBook, workspace: string, changed: () => Promi
       },
     },
   ];
+}
+
+// The Company brief's Numbers row a metric names, when no card holds it.
+async function briefNumber(stage: Stage, store: { readDoc(id: string): Promise<string> }, metric: string): Promise<BriefRow | null> {
+  const company = companyDocOf(stage);
+  if (!company) return null;
+  return briefRow(sectionText(await store.readDoc(company.id).catch(() => ''), 'Numbers'), metric);
+}
+
+// The founder took a bet whose number only the brief held: a Metrics card with that row, wired to the partner (or
+// whoever proposed it), so the check day has a number to read. Named by the metric's key, so two quick yeses make one card.
+export async function metricsFromBrief(workspace: string, store: Pick<Deps['store'], 'patchStage'>, row: BriefRow, roomId: string | undefined, now: number): Promise<string> {
+  const id = `metrics-${keyOf(row.label)}`;
+  await writeAtomic(join(workspace, 'metrics', `${id}.json`), JSON.stringify(briefMetrics(row, localDay(now), now), null, 2), { mkdir: true });
+  await store.patchStage((draft) => {
+    if (!(draft.cards ?? []).some((card) => card.id === id)) draft.cards = [...(draft.cards ?? []), { id, kind: 'metrics', title: 'Numbers', ...placeOf(draft), w: 380, h: 440 }];
+    // A card of that key already there (left from before, or the other yes) is wired, never wired twice.
+    if (roomId && draft.rooms.some((room) => room.id === roomId) && !draft.wires.some((wire) => wire.from === roomId && wire.to === id)) draft.wires.push({ id: `${roomId}-${id}`, from: roomId, fromHandle: 'r', to: id, toHandle: 'l' });
+  });
+  return id;
 }
 
 // A plan's steps put to the founder as one question. Only steps never offered from that doc go in: after a yes, an
@@ -495,7 +524,16 @@ export function createPartner(options: PartnerOptions = {}) {
           const bet = /^\/api\/partner\/bets\/(bet-[a-z0-9-]{1,40})(\/close)?$/.exec(path);
           if (bet && method === 'POST') {
             const sent = await deps.body(req);
-            if (!bet[2]) { await book.answer(bet[1], sent?.accept === true); await betsChanged(); deps.json(res, 200, { ok: true }); return true; }
+            if (!bet[2]) {
+              const taking = sent?.accept === true ? (await book.list()).find((one) => one.id === bet[1] && one.status === 'proposed') : undefined;
+              const stage = await deps.store.loadStage();
+              if (taking?.brief && (await readMetric(deps.workspace, stage, taking.metric)).value === null) {
+                // The brief as it stands now, in case the founder changed the number since the bet was put.
+                const row = await briefNumber(stage, deps.store, taking.metric).catch(() => null) ?? taking.brief as BriefRow;
+                await metricsFromBrief(deps.workspace, deps.store, row, partnerOf(stage)?.id ?? taking.roomId, now());
+              }
+              await book.answer(bet[1], sent?.accept === true); await betsChanged(); deps.json(res, 200, { ok: true }); return true;
+            }
             const verdict = VERDICTS.includes(sent?.verdict) ? sent.verdict as BetVerdict : null;
             if (!verdict) { deps.json(res, 400, { error: 'say whether it worked' }); return true; }
             const held = (await book.list()).find((one) => one.id === bet[1]);

@@ -1,7 +1,7 @@
 import { mkdtemp, readdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ToolEvent } from '../shared/model.ts';
 import { FALLBACK_REFUSAL, runTurn, SAY_SOMETHING } from './loop.ts';
 import { CALL_THE_TOOL, HELD_BACK } from './truth.ts';
@@ -605,5 +605,27 @@ describe('a pinned model that cannot hold the prompt', () => {
     });
     expect(result.provider).toBe('gemini');
     expect(notices).toEqual(["groq cannot hold this room's prompt; gemini answers."]);
+  });
+
+  it('is said once a day in a room, not on every turn, and again in another room or on the next day', async () => {
+    const store = createStore(await mkdtemp(join(tmpdir(), 'loop-')));
+    const notices: string[] = [];
+    const turn = async (roomId: string) => runTurn({
+      messages: [{ role: 'user', content: 'where are we?' }], tools: [], usage: createUsage(null),
+      clients: [{ ...scripted(['never']), name: 'groq', maxPromptChars: 1 }, { ...scripted(['Here.']), name: 'gemini' }],
+      context: { stage: await store.loadStage(), roomId, store, granted: new Map() },
+      events: { token: () => {}, tool: () => {}, notice: (text) => notices.push(`${roomId}: ${text}`) },
+    });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date(2026, 8, 27, 10));
+      await turn('once-a');
+      await turn('once-a');
+      await turn('once-b');
+      expect(notices).toEqual(["once-a: groq cannot hold this room's prompt; gemini answers.", "once-b: groq cannot hold this room's prompt; gemini answers."]);
+      vi.setSystemTime(new Date(2026, 8, 28, 10));
+      await turn('once-a');
+      expect(notices).toHaveLength(3);
+    } finally { vi.useRealTimers(); }
   });
 });

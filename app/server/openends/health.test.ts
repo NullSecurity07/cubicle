@@ -149,6 +149,15 @@ describe('a word with each model', () => {
     expect((await liveChecks([]))[0].ok).toBe(false);
   });
 
+  it('hands every failure to whoever listens, so a key found without a plan is marked off before any turn asks it (round 7)', async () => {
+    const off = Object.assign(new Error('429 Rate limit exceeded'), { status: 429, headers: new Headers({ 'x-ratelimit-limit-req-minute': '0' }) });
+    const mistral = { name: 'mistral', model: 'small', step: async () => { throw off; } };
+    const good = { name: 'groq', model: 'gpt-oss', step: async () => ({ text: 'ok', calls: [] }) };
+    const heard: [string, unknown][] = [];
+    await liveChecks([good, mistral] as never, (client, error) => heard.push([client.name, error]));
+    expect(heard).toEqual([['mistral', off]]);
+  });
+
   it('waits for a slow model as long as a turn would, and says a key whose plan is off in words (round 6 final)', async () => {
     vi.useFakeTimers();
     try {

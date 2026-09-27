@@ -133,6 +133,44 @@ describe('a turn', () => {
   });
 });
 
+describe('an approval in a turn', () => {
+  it('is put in Needs you under the room while it waits, and leaves once the founder answers', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'chat-'));
+    const store = createStore(dir);
+    let step = 0;
+    const client: ModelClient = {
+      name: 'script', model: 'm', maxPromptChars: Infinity, tools: true, limits: { rpd: 1000 },
+      async step(_messages, options) {
+        step += 1;
+        if (step === 1) return { text: '', calls: [{ id: 'c1', name: 'run_code', args: JSON.stringify({ language: 'python', code: 'import os' }) }] };
+        options.onToken('Ran it.');
+        return { text: 'Ran it.', calls: [] };
+      },
+    };
+    const runCode: Tool = { name: 'run_code', approval: async () => '', description: 'Runs code.', parameters: { type: 'object', properties: {} }, run: async () => ({ text: 'ran' }) };
+    const attention = createAttention(dir);
+    const approvals = createApprovals();
+    const { chat } = createChat({
+      store, roomFeed: createRoomFeed(), busy: new Set(), clients: [client], usage: createUsage(null), seams: createSeams(),
+      attention, approvals, memory: { fold: async () => false },
+      promptFor: async () => [{ role: 'system', content: 'You are marketing.' }, { role: 'user', content: 'q' }],
+      toolsFor: () => [runCode],
+    });
+    const res = Object.assign(new PassThrough(), { writeHead: () => res }) as unknown as ServerResponse;
+    const turn = chat('marketing', 'Work out the runway', res);
+    let waiting: Awaited<ReturnType<typeof attention.list>> = [];
+    for (let tries = 0; tries < 200 && !waiting.length; tries += 1) {
+      waiting = (await attention.list()).filter((one) => one.kind === 'approval');
+      if (!waiting.length) await new Promise((wait) => setTimeout(wait, 5));
+    }
+    expect(waiting).toEqual([expect.objectContaining({ kind: 'approval', roomId: 'marketing', event: expect.objectContaining({ name: 'run_code', waiting: true }) })]);
+    expect(approvals.answer(waiting[0].event!.id, { ok: true })).toBe(true);
+    await turn;
+    expect((await attention.list()).filter((one) => one.kind === 'approval')).toEqual([]);
+    expect((await store.readChat('marketing')).at(-1)?.tools?.[0]).toMatchObject({ name: 'run_code', ok: true, result: 'ran' });
+  });
+});
+
 describe('a partner\'s turn', () => {
   async function partnerChat(replies: { text: string; calls?: { id: string; name: string; args: string }[] }[]) {
     const dir = await mkdtemp(join(tmpdir(), 'chat-'));
@@ -357,7 +395,7 @@ describe('a partner\'s turn against the team\'s verdict', () => {
     const res = Object.assign(out, { writeHead: () => res }) as unknown as ServerResponse;
     await chat('sam', 'so what do I do right now?', res);
     expect(steps).toHaveLength(2);
-    expect(String(steps[1].at(-1)!.content)).toBe('The team\'s verdict is PIVOT REQUIRED 6/10 (Evaluation); answer in its light or say why you overrule it. Name the verdict in your reply.');
+    expect(String(steps[1].at(-1)!.content)).toBe('The team\'s verdict is PIVOT REQUIRED 6/10 (Evaluation). It is the team\'s finding about the company, not a target to satisfy: answer in its light, or say "I overrule it because" and your reason. Name the verdict in your reply.');
     expect(events).toContainEqual({ notice: 'Sam is taking another look: weighing the team\'s verdict.' });
     expect((await store.readChat('sam')).at(-1)!.text).toBe(replies[1]);
   });
@@ -397,7 +435,7 @@ describe('a verdict the doc does not hold, in a turn', () => {
   it('keeps the judge\'s reply with the verdict word and score replaced, and the Unconfirmed line once', async () => {
     const system = `You are Priya, the judge.\n\n${verdictStanding('Rohan has not written "4. Founder-market fit" yet', OUTCOMES)}`;
     const { kept, shown } = await turn('priya', '**PIVOT REQUIRED**\n\n**Score:** 5/10 (Fit: 1/2)', system);
-    expect(kept).toBe(`**${NOT_WRITTEN}**\n\n**Score:** ${NOT_WRITTEN} (Fit: 1/2)\n\n${LINE}`);
+    expect(kept).toBe(`**${NOT_WRITTEN}**\n\n**Score:** ${NOT_WRITTEN}\n\n${LINE}`);
     expect(shown).toBe(kept);
     expect(kept.match(/Unconfirmed/g)).toHaveLength(1);
   });

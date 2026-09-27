@@ -98,14 +98,15 @@ export async function removeService(where: Where = {}): Promise<{ path: string; 
 }
 
 // Health's row, in the founder's words: does the app keep working when they close it. Not having the service is a
-// choice, not a fault; a service that is switched on and not running is one.
+// choice, not a fault, but it is not Fine either: the morning note and the bet checks wait, so it is worth a look,
+// with the command that switches it on. A service that is switched on and not running is a fault.
 export function serviceRow(state: ServiceState): Check {
   const name = 'Runs while closed';
   const waits = 'the morning note, bet checks, page watches and the daily copy of your work wait until you open the app again';
-  const install = 'In app/, run pnpm service:install, then the command it prints. It is off until you run that.';
-  if (!state.systemd) return { name, ok: true, detail: `no: this machine has no systemd user services, so ${waits}`, fix: 'Nothing to do: the app works while its window is open.' };
-  if (!state.installed) return { name, ok: true, detail: `no: ${waits}. pnpm service:install in app/ keeps it running`, fix: install };
-  if (!state.enabled) return { name, ok: true, detail: `no: the service is installed but not switched on. Switch it on with: systemctl --user enable --now ${SERVICE}`, fix: `Run systemctl --user enable --now ${SERVICE}.` };
+  const install = `In app/, run pnpm service:install, then ${enableLine}. It is off until you run that.`;
+  if (!state.systemd) return { name, ok: true, warn: true, detail: `no: this machine has no systemd user services, so ${waits}`, fix: 'Nothing to do: the app works while its window is open.' };
+  if (!state.installed) return { name, ok: true, warn: true, detail: `no: ${waits}. pnpm service:install in app/ keeps it running`, fix: install };
+  if (!state.enabled) return { name, ok: true, warn: true, detail: `no: the service is installed but not switched on. Switch it on with: systemctl --user enable --now ${SERVICE}`, fix: `Run systemctl --user enable --now ${SERVICE}.` };
   if (state.active !== 'active') return { name, ok: false, detail: `no: the service is switched on but ${state.active === 'failed' ? 'fell over' : 'is not running'}`, fix: `See why with journalctl --user -u ${SERVICE} -n 50. If node moved (an upgrade), run pnpm service:install in app/ again; then systemctl --user restart ${SERVICE}.` };
   return { name, ok: true, detail: 'yes: it runs as a service, starts at login and comes back if it falls over', fix: `pnpm service:remove in app/ takes it away.` };
 }

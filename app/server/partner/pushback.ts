@@ -98,7 +98,17 @@ export const verdictName = (verdict: TeamVerdict) => `${[verdict.word, verdict.s
 export const BUILDS = /\b(?:build|building|ship|shipping|launch|launching|code|coding|develop|developing|implement|implementing|dive\s+(?:straight\s+)?into)\b/i;
 // "Do not build yet", "pause coding", "before you build", "instead of shipping": a call against building.
 const NOT_BUILD = /\b(?:don'?t|do not|not|never|no|pause|stop|hold off(?: on)?|before|until|instead of|rather than|without)\s+(?:\w+\s+){0,2}$/i;
+// Journey 9: after PIVOT REQUIRED 5/10 the partner named the verdict and still said "Do not pivot away from Kindling ...
+// Keep building" and "schedule 3 interviews to satisfy Priya's evaluation criteria". Naming the verdict is not weighing
+// it: a reply that argues against it anywhere is held to it, unless it overrules it in so many words with a reason.
+const DEFIES = /\b(?:keep(?: on)? building|(?:do not|don'?t|not|never|no need to) pivot\w*|ignore\s+(?:\S+\s+){0,2}(?:verdict|score|evaluation)|to satisfy\b[^.\n]{0,50}\b(?:criteria|verdict|score|evaluation|judge)\b)/gi;
+// "Stop building and do not keep building": a word against it just before is not defiance.
+const UNDONE = /\b(?:don'?t|do not|not|never|stop|no longer|can'?t|cannot|won'?t)\s+$/i;
+const OVERRULES = /\bI overrule\b[^\n]*\bbecause\b/i;
+const defies = (reply: string) => [...reply.matchAll(DEFIES)].some((found) => !UNDONE.test(reply.slice(Math.max(0, found.index - 20), found.index)));
 export function buildsAgainst(reply: string, verdict: TeamVerdict): boolean {
+  if (OVERRULES.test(reply)) return false;
+  if (defies(reply)) return true;
   const first = (verdict.word ?? '').split(/\s+/)[0];
   if (/\bverdict\b/i.test(reply) || (first && new RegExp(`\\b${first.replace(/[^\w]/g, '')}\\b`, 'i').test(reply))) return false;
   // Only the partner's call is held to it: a reply with no "My call:" line (a draft, an email) is not a call to build.
@@ -107,8 +117,8 @@ export function buildsAgainst(reply: string, verdict: TeamVerdict): boolean {
   if (!call) return false;
   return [...call.matchAll(new RegExp(BUILDS.source, 'gi'))].some((found) => !NOT_BUILD.test(call.slice(Math.max(0, found.index - 40), found.index)));
 }
-export const verdictNudge = (verdict: TeamVerdict) => `The team's verdict is ${verdictName(verdict)}; answer in its light or say why you overrule it. `
-  + 'Name the verdict in your reply.';
+export const verdictNudge = (verdict: TeamVerdict) => `The team's verdict is ${verdictName(verdict)}. It is the team's finding about the company, `
+  + 'not a target to satisfy: answer in its light, or say "I overrule it because" and your reason. Name the verdict in your reply.';
 // Said under the reply, so short: the founder reads the answer, not the check.
 export const UNWEIGHED = '*Team verdict not weighed.*';
 
@@ -140,29 +150,36 @@ export function stripStance(text: string): string {
 // The partner's finished reply, held to the check. `again` answers once more in words only, with the first answer and
 // the nudge in front of it. A first answer that already did something (wrote a doc, proposed a decision) is not asked
 // again, so nothing is done twice; it is only labelled when it skipped the check.
-// With a weak team verdict on the stage, the reply is held to it too; at most one second look per turn, so a reply
-// asked again for its preconditions that still builds against the verdict is only labelled.
+// With a weak team verdict on the stage, the reply is held to it too; at most one second look per turn. The verdict
+// label goes only under a second miss: journey 9 stamped it on a runway answer's first miss because that answer had
+// run code. A second look is in words only, so one about the verdict is taken after an answer that did something too;
+// one that misses both is asked once with both nudges; and one asked again only for its preconditions that then
+// builds against the verdict has missed it once, and is not labelled.
 export async function holdPartner(asked: string, first: TurnResult, again: (first: TurnResult, nudge?: string) => Promise<TurnResult>, verdict?: TeamVerdict | null): Promise<TurnResult> {
   let reply = first;
   let lookedAgain = false;
+  let verdictAsked = false;
   const label = (turn: TurnResult, line: string) => ({ ...turn, text: `${turn.text.replace(/\s+$/, '')}\n\n${line}` });
   const joined = (one: TurnResult, two: TurnResult) => ({ ...two, tools: [...one.tools, ...two.tools], usage: { input: one.usage.input + two.usage.input, output: one.usage.output + two.usage.output } });
+  // Never on something written for customers: the verdict is the company's own, not theirs to read.
+  const held = verdict && isWeak(verdict) && !forCustomers(asked) ? verdict : null;
+  const misses = (turn: TurnResult) => !!held && !turn.stopped && buildsAgainst(turn.text, held);
   if (!first.stopped && asksCommitment(asked) && !checksPreconditions(first.text)) {
     if (didSomething(first)) reply = label(first, UNCHECKED);
     else {
-      const second = await again(first, PRECONDITION_NUDGE);
+      verdictAsked = misses(first);
+      const second = await again(first, verdictAsked ? `${PRECONDITION_NUDGE} ${verdictNudge(held!)}` : PRECONDITION_NUDGE);
       lookedAgain = true;
       reply = joined(first, second);
       if (!second.stopped && !checksPreconditions(second.text)) reply = label(reply, UNCHECKED);
     }
   }
-  // Never on something written for customers: the verdict is the company's own, not theirs to read.
-  if (verdict && isWeak(verdict) && !reply.stopped && !forCustomers(asked) && buildsAgainst(reply.text, verdict)) {
-    if (lookedAgain || didSomething(reply)) reply = label(reply, UNWEIGHED);
-    else {
-      const second = await again(reply, verdictNudge(verdict));
+  if (misses(reply)) {
+    if (verdictAsked) reply = label(reply, UNWEIGHED);
+    else if (!lookedAgain) {
+      const second = await again(reply, verdictNudge(held!));
       reply = joined(reply, second);
-      if (!second.stopped && buildsAgainst(second.text, verdict)) reply = label(reply, UNWEIGHED);
+      if (misses(second)) reply = label(reply, UNWEIGHED);
     }
   }
   return { ...reply, text: oneCall(stripStance(reply.text)) };

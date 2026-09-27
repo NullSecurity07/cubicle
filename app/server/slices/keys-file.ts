@@ -9,7 +9,7 @@ import { backupPlaces, readyFolder } from '../keys-file/places.ts';
 import { backupDirOf, chooseBackupDir } from '../openends/backup.ts';
 import { liveChecks } from '../openends/health.ts';
 import { planlessWords } from '../attention.ts';
-import { PLANLESS } from '../breaker.ts';
+import { PLANLESS, refused } from '../breaker.ts';
 import { ENTRIES, providerOf, type ModelClient } from '../providers.ts';
 
 // The founder's keys, set from the window instead of by editing `.env` by hand. The file is the one the app reads when
@@ -128,7 +128,8 @@ export default {
         // One word with every model the app started with: which of its keys still answer.
         if (path === '/api/keys-file/check' && method === 'POST') {
           const clients = deps.clients.filter((client) => client.name !== 'fake' && client.name !== 'ollama');
-          const checks = await liveChecks(clients);
+          // A key refused here (a plan that is off, say) is refused in the usage book too: its row and dot say so now.
+          const checks = await liveChecks(clients, (client, error) => { if (refused(error)) deps.usage?.failed(client.name, error); });
           // A key that answered is back now, not after the six hours a refusal rests it (a plan just turned on, say).
           clients.forEach((client, index) => { if (checks[index]?.ok) deps.usage?.revive(client.name); });
           failing = failuresOf(clients, checks);

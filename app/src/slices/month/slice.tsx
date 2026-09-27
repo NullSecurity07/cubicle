@@ -3,6 +3,7 @@ import type { UiSlice } from '..';
 import type { Task } from '../../../shared/model';
 import { request, send } from '../../api';
 import { useJumpTo } from '../../flow';
+import { NOTICE_MS } from '../../notice';
 import './month.css';
 
 // The monthly investor update as a board template: one command puts "Draft the <month> update" on the first board,
@@ -31,7 +32,7 @@ function MonthNotice() {
   const jumpTo = useJumpTo();
   useEffect(() => {
     if (!now) return;
-    const timer = setTimeout(() => say(null), 7000);
+    const timer = setTimeout(() => say(null), NOTICE_MS);
     return () => clearTimeout(timer);
   }, [now]);
   if (!now) return null;

@@ -183,7 +183,8 @@ export async function readTokens(deps: Pick<Deps, 'workspace' | 'usage' | 'clien
       name: info.name, model: info.model, usedToday: { requests: info.requests, tokens: info.tokens }, limits: limit,
       leftPct: Math.round(info.left * 100),
       // The usage book starts each provider's day on the UTC date, whatever the founder's clock says.
-      window: !capped ? 'no daily limit' : spent.has(info.name) ? 'daily free turns used; resets at midnight UTC' : 'resets at midnight UTC',
+      window: info.planOff ? 'free plan not on' : !capped ? 'no daily limit' : spent.has(info.name) ? 'daily free turns used; resets at midnight UTC' : 'resets at midnight UTC',
+      ...(info.planOff ? { planOff: true } : {}),
       ...(pool ? { neurons: { used: Math.round(pool.used), of: pool.of, pictures: Math.round(pool.pictures), drawn: pool.drawn } } : {}),
     };
   });

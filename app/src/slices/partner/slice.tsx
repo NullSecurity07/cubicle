@@ -9,6 +9,7 @@ import { emit } from '../../bus';
 import { feed } from '../../feed';
 import { overlay } from '../../overlay/store';
 import { WIRE, type StageNode } from '../../stage';
+import { NOTICE_MS } from '../../notice';
 import { useFlushStage } from '../../sync';
 import { askMorning } from './api';
 import { BetsPanel } from './BetsPanel';
@@ -17,7 +18,7 @@ import './partner.css';
 
 // The partner, as the founder sees them: "add partner" puts one person and the Company document on the stage, wired
 // together; "morning note" asks for today's note now; "bets" opens the ledger. What happened is said in one quiet
-// line at the foot of the window, with a way to the partner.
+// line at the top of the window, clear of the cards the stage has just brought into view, with a way to the partner.
 
 type Said = { text: string; roomId?: string; problem?: true } | null;
 let said: Said = null;
@@ -67,7 +68,7 @@ function PartnerDesk() {
       void flow.fitView({ nodes: [{ id: roomId }, { id: docId }], duration: 400, padding: 0.25, maxZoom: 1 });
       await flush();
       const { hasIdea } = await request<{ hasIdea?: boolean }>('/api/partner/company', send('POST', { id: docId }));
-      say({ text: hasIdea ? `${name} is your partner and keeps the Company document from here.` : `${name} is your partner. The Company document is theirs to keep: start it with the idea.`, roomId });
+      say({ text: hasIdea ? `${name} is your partner and keeps the Company document.` : `${name} is your partner. Start the Company document with your idea.`, roomId });
     })().catch((error: Error) => say({ text: error.message, problem: true }));
   }, [asked, flow, addCard, flush]);
 
@@ -77,7 +78,7 @@ function PartnerDesk() {
 
   useEffect(() => {
     if (!now || now.text.endsWith('…')) return;
-    const timer = setTimeout(() => say(null), 9000);
+    const timer = setTimeout(() => say(null), NOTICE_MS);
     return () => clearTimeout(timer);
   }, [now]);
   if (!now) return null;

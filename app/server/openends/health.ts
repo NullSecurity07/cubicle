@@ -276,7 +276,8 @@ const planFix = (name: string) => {
   return `Turn on the free plan${where ? ` at ${where}` : " in the provider's console"}; the key itself is fine.`;
 };
 
-export async function liveChecks(clients: ModelClient[]): Promise<Check[]> {
+// `failed` hears each error as it came, so the usage book can know a refused key before a turn is refused by it.
+export async function liveChecks(clients: ModelClient[], failed?: (client: ModelClient, error: unknown) => void): Promise<Check[]> {
   if (!clients.length) return [{ name: 'A word with each model', ok: false, detail: 'there is no provider to ask', fix: 'Put a free key in the .env file beside the app.' }];
   return Promise.all(clients.map(async (client) => {
     const started = Date.now();
@@ -288,6 +289,7 @@ export async function liveChecks(clients: ModelClient[]): Promise<Check[]> {
       try { await client.step([{ role: 'user', content: 'Say ok.' }], { onToken: () => {}, signal: stop.signal }); } finally { clearTimeout(timer); }
       return { name: `A word with ${client.name}`, ok: true, detail: `answered in ${Date.now() - started} ms as ${client.model}`, fix: '' };
     } catch (error) {
+      failed?.(client, error);
       return { name: `A word with ${client.name}`, ok: false, detail: planless(error) ? PLANLESS : (error as Error).message.slice(0, 200), fix: planless(error) ? planFix(client.name) : `Check this provider's key in .env, and whether today's free allowance is used up.` };
     }
   }));

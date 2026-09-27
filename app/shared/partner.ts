@@ -42,6 +42,8 @@ export type BetResult = { at: number; verdict: BetVerdict; value: number | null;
 export type Bet = {
   id: string; made: string; what: string; hypothesis: string; metric: string; target: number; checkDate: string;
   status: 'proposed' | 'open' | 'closed'; at: number; proposedBy?: string; roomId?: string; result?: BetResult;
+  // A number only the Company brief held when the bet was put: taking the bet adds a Metrics card with this row.
+  brief?: { label: string; value: number; unit?: string };
 };
 // A bet's words as they go between full stops: whatever stop the writer ended on is dropped, so a line never reads "product..".
 export const bare = (text: string) => text.replace(/\s+/g, ' ').trim().replace(/[.\u2026\s]+$/, '');

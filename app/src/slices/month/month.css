@@ -1,9 +1,9 @@
 /* One quiet line at the foot of the window, for what the monthly update command just did. */
-.month-notice { position: fixed; left: 50%; bottom: 84px; z-index: 60; transform: translateX(-50%); max-width: min(560px, calc(100vw - 32px)); display: flex; align-items: center; gap: 10px; padding: 9px 8px 9px 15px; border: 1px solid var(--card-border); border-radius: 12px; background: var(--panel-fill); backdrop-filter: blur(18px); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35); color: var(--text); font-size: 13px; line-height: 1.4; animation: month-in 0.22s ease both; }
+.month-notice { position: fixed; left: 50%; top: 14px; z-index: 60; transform: translateX(-50%); max-width: min(560px, calc(100vw - 140px)); display: flex; align-items: center; gap: 10px; padding: 5px 5px 5px 14px; border: 1px solid var(--card-border); border-radius: 12px; background: var(--panel-fill); backdrop-filter: blur(18px); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35); color: var(--text); font-size: 13px; line-height: 1.4; animation: month-in 0.22s ease both; }
 .month-notice.is-problem span { color: var(--problem); }
 .month-notice button { flex: none; border: 0; border-radius: 8px; padding: 5px 11px; background: rgba(255, 255, 255, 0.1); color: var(--text); font: inherit; font-size: 12.5px; font-weight: 550; cursor: pointer; }
 .month-notice button:hover { background: rgba(255, 255, 255, 0.16); }
 .month-notice .month-notice__close { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; background: transparent; color: var(--muted); }
 .month-notice__close svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
-@keyframes month-in { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@keyframes month-in { from { opacity: 0; transform: translate(-50%, -6px); } to { opacity: 1; transform: translate(-50%, 0); } }
 @media (prefers-reduced-motion: reduce) { .month-notice { animation: none; } }

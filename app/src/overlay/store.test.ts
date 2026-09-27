@@ -17,9 +17,17 @@ describe('overlay layers', () => {
     expect(popLayer([])).toEqual([]);
   });
 
-  it('opening a panel that is already open brings it to the top instead of doubling it', () => {
-    const stack = pushLayer(pushLayer(pushLayer([], panel('needs')), panel('messages')), panel('needs'));
-    expect(stack).toEqual([panel('messages'), panel('needs')]);
+  it('shows one sheet at a time: a sheet opened from another sheet takes its place, so Escape leaves nothing behind', () => {
+    const stack = pushLayer(pushLayer([], panel('needs')), panel('decisions'));
+    expect(stack).toEqual([panel('decisions')]);
+    expect(popLayer(stack)).toEqual([]);
+    expect(pushLayer(pushLayer(pushLayer([], panel('needs')), panel('messages')), panel('needs'))).toEqual([panel('needs')]);
+  });
+
+  it('keeps the focused card under a sheet that replaces another sheet', () => {
+    const stack = pushLayer(pushLayer(pushLayer([], focus('maya')), panel('needs')), panel('decisions'));
+    expect(stack).toEqual([focus('maya'), panel('decisions')]);
+    expect(popLayer(stack)).toEqual([focus('maya')]);
   });
 
   it('slides the overview in from the side, over a canvas it leaves undimmed, only while it is the view on top', () => {

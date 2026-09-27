@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
-import { project, todayOf, type Runway } from '../shared/runway';
+import { project, tenths, todayOf, type Runway } from '../shared/runway';
 
 // The Runway card: the founder adds it from the dock, enters cash and two flows and reads months left and the day
 // cash runs out, adds a scenario and sees its line beside Base, exports the numbers, then wires Maya, who reads
@@ -69,7 +69,7 @@ test('the founder builds a runway, compares a scenario, exports it, and a wired 
   const month = today.slice(0, 7);
   const numbers: Runway = { cash: { amount: 120_000, asOf: today }, flows: [{ id: 'a', label: 'Team', monthly: -10_000, from: month }, { id: 'b', label: 'Sales', monthly: 2000, from: month, category: 'revenue' }], scenarios: [] };
   const base = project(numbers, undefined, today);
-  await expect(card.getByLabel('Months left')).toHaveText(base.monthsLeft!.toFixed(1));
+  await expect(card.getByLabel('Months left')).toHaveText(tenths(base.monthsLeft!));
   await expect(card.getByLabel('Cash out')).toHaveText(dayName(base.zero!));
   await expect(card.locator('.runway__facts')).toContainText('$10,000 a month');
   await expect(card.locator('.runway__line')).toHaveCount(1);
@@ -84,11 +84,11 @@ test('the founder builds a runway, compares a scenario, exports it, and a wired 
   await expect(card.locator('.runway__line')).toHaveCount(2);
   await card.getByLabel('Base flows in this plan').getByLabel('Sales').uncheck();
   const lost = project({ ...numbers, scenarios: [{ id: 's', name: 'Lose Sales', changes: [{ drop: 'b' }] }] }, 's', today);
-  await expect(card.getByLabel('Months left')).toHaveText(lost.monthsLeft!.toFixed(1));
+  await expect(card.getByLabel('Months left')).toHaveText(tenths(lost.monthsLeft!));
   await expect(card.locator('.runway__line[data-plan="Lose Sales"]')).toHaveClass(/is-active/);
   await page.screenshot({ path: `${SHOTS}/runway-scenario.png`, clip: (await card.boundingBox())! });
   await card.getByRole('tab', { name: 'Base' }).click();
-  await expect(card.getByLabel('Months left')).toHaveText(base.monthsLeft!.toFixed(1));
+  await expect(card.getByLabel('Months left')).toHaveText(tenths(base.monthsLeft!));
 
   // The numbers go out as a spreadsheet, named for the day.
   const [download] = await Promise.all([page.waitForEvent('download'), card.getByRole('button', { name: 'Export CSV' }).click()]);

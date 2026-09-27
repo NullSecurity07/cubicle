@@ -30,6 +30,8 @@ export type DashDay = {
 export type DashProvider = {
   name: string; model: string; usedToday: { requests: number; tokens: number };
   limits: { rpd?: number; tpd?: number }; leftPct: number; window: string;
+  // Every key refused for want of a plan: `window` then says "free plan not on" and no limit applies.
+  planOff?: boolean;
   neurons?: { used: number; of: number; pictures: number; drawn: number };
 };
 export type DashTokens = {

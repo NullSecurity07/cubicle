@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { Lead } from '../../shared/leads.ts';
 import type { Metrics } from '../../shared/metrics.ts';
 import type { Stage } from '../../shared/model.ts';
-import { askedInstead, betDue, betsAttention, betsBook, cannotLose, metricAsked, metricChoices, metricFits, missingMetric, readMetric } from './bets.ts';
+import { askedInstead, betDue, betsAttention, betsBook, briefRow, cannotLose, metricAsked, metricChoices, metricFits, missingMetric, readMetric } from './bets.ts';
 
 const card = (id: string, kind: 'metrics' | 'leads' | 'survey') => ({ id, kind, x: 0, y: 0, w: 1, h: 1, ...(kind === 'survey' ? { title: 'PMF', questions: [] } : {}) }) as NonNullable<Stage['cards']>[number];
 
@@ -146,5 +146,17 @@ describe('a proposed bet against the team\'s verdict', () => {
     expect(builds.detail).toBe('two more pay. Measured by "paying_users" on the Metrics card: 5 by 2026-10-11. The team\'s verdict is PIVOT REQUIRED 6/10 (Evaluation): this bet builds before it.');
     expect(talks.detail).not.toContain('verdict');
     expect((await betsAttention([bet('Ship the PDF invoice generator')], stage, '/nowhere', '2026-09-27', { title: 'E', word: 'STRONG', score: 8 }))[0].detail).not.toContain('verdict');
+  });
+});
+
+// Journey 9: the brief held "Paying users: 2" and no card did.
+describe('a bet\'s number read from the Company brief', () => {
+  const NUMBERS = '- Cash: €9,800 (founder, 2026-09-27)\n- Beta users: 12 (founder, 2026-09-27)\n- Paying users: 2 (founder, 2026-09-27)\n- MRR: €78';
+  it('finds the one row the metric names, and none when two rows fit', () => {
+    for (const metric of ['paying users', 'paying_users', 'Paying', 'paying-user'])
+      expect(briefRow(NUMBERS, metric), metric).toEqual({ label: 'Paying users', value: 2 });
+    expect(briefRow(NUMBERS, 'mrr')).toEqual({ label: 'MRR', value: 78, unit: '€' });
+    expect(briefRow(NUMBERS, 'users')).toBeNull();
+    expect(briefRow(NUMBERS, 'signups')).toBeNull();
   });
 });

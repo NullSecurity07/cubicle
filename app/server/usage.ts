@@ -44,6 +44,9 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
   const cooling: Record<string, number> = {};
   let saving: Promise<unknown> = Promise.resolve();
   const breaker = createBreaker(now);
+  // Keys last refused because their plan allows no requests. Only true while the refusal itself still holds.
+  const planlessKeys = new Set<string>();
+  const planOff = (name: string) => planlessKeys.has(name) && breaker.dead(name);
   // Every refusal (401, 403) and, while anyone listens, every answer: whoever listens decides what is news.
   const keyWatchers = new Set<(event: KeyEvent) => void>();
   const tellKey = (event: KeyEvent) => { for (const tell of keyWatchers) { try { tell(event); } catch { /* a listener never costs a call */ } } };
@@ -121,6 +124,7 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
       if (usage && fromCache.has(usage)) return;
       roll();
       breaker.ok(name);
+      planlessKeys.delete(name);
       if (keyWatchers.size) tellKey({ name, dead: false });
       const of = ((state.kinds ??= {})[kind] ??= { requests: 0, input: 0, output: 0 });
       of.requests += 1;
@@ -141,6 +145,8 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     // timeouts in a row open its breaker, a 401 or 403 rests it six hours as dead. See breaker.ts.
     failed(name: string, error: unknown) {
       const rest = breaker.failed(name, error);
+      if (planless(error)) planlessKeys.add(name);
+      else if (refused(error)) planlessKeys.delete(name);
       if (refused(error)) tellKey({ name, dead: true, status: (error as { status?: number })?.status, ...(planless(error) ? { planless: true } : {}) });
       return rest;
     },
@@ -151,9 +157,11 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     breaker: (name: string) => breaker.state(name),
     // True while the provider's refusal of this key (401, 403) is fresh.
     dead: (name: string) => breaker.dead(name),
+    // True while this key is refused because its free plan is not on (Mistral's 429 with a limit of 0).
+    planOff,
     // A key a check found answering: whatever its breaker held against it (a refusal's six hours, say, after the founder
     // turned a plan on) is forgotten, and whoever heard of the refusal hears it answer.
-    revive(name: string) { breaker.ok(name); if (keyWatchers.size) tellKey({ name, dead: false }); },
+    revive(name: string) { breaker.ok(name); planlessKeys.delete(name); if (keyWatchers.size) tellKey({ name, dead: false }); },
     // How much one key has carried, the last minute first: what spreads a provider's keys evenly.
     carried(name: string) {
       roll();
@@ -209,17 +217,18 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     // The side model is no one's to pin, so the picker never lists it; the insights ask for it with `withSide`.
     info(clients: ModelClient[], withSide = false): ModelInfo[] {
       roll();
-      const rows = new Map<string, { info: ModelInfo; keys: number }>();
+      const rows = new Map<string, { info: ModelInfo; keys: number; off: number }>();
       for (const client of clients.filter((one) => withSide || !one.side)) {
         const name = providerOf(client.name);
         const used = count(client.name);
-        const row = rows.get(name) ?? { info: { name, model: client.model, ready: true, left: 0, requests: 0, tokens: 0 }, keys: 0 };
+        const row = rows.get(name) ?? { info: { name, model: client.model, ready: true, left: 0, requests: 0, tokens: 0 }, keys: 0, off: 0 };
         rows.set(name, {
-          keys: row.keys + 1,
+          keys: row.keys + 1, off: row.off + (planOff(client.name) ? 1 : 0),
           info: { ...row.info, left: row.info.left + left(client), requests: row.info.requests + used.requests, tokens: row.info.tokens + used.input + used.output },
         });
       }
-      return [...rows.values()].map(({ info, keys }) => ({ ...info, left: info.left / keys }));
+      // A provider none of whose keys has a plan on answers nobody: said as that, not as a full ring.
+      return [...rows.values()].map(({ info, keys, off }) => ({ ...info, left: info.left / keys, ...(off === keys ? { planOff: true } : {}) }));
     },
   };
 }

@@ -280,6 +280,26 @@ describe('the dashboard\'s model rows (round 5)', () => {
     expect((await rows()).find((one) => one.name === 'gemini')!.window).toBe('resets at midnight UTC');
   });
 
+  it('say the free plan is not on, in place of any limit, for a provider whose every key is refused for want of a plan (round 7)', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dash-planoff-'));
+    const usage = createUsage(null);
+    const clients: ModelClient[] = [{ ...fakeClient, name: 'mistral', model: 'mistral-small', limits: {} }, { ...fakeClient, name: 'gemini', model: 'flash', limits: { rpd: 1000 } }];
+    const rows = async () => (await readTokens({ workspace, usage, clients }, seedStage, fileCache(), Date.now())).byProvider;
+    expect((await rows()).find((one) => one.name === 'mistral')).toMatchObject({ window: 'no daily limit' });
+    expect((await rows()).find((one) => one.name === 'mistral')!.planOff).toBeUndefined();
+    usage.failed('mistral', Object.assign(new Error('429 Rate limit exceeded'), { status: 429, headers: new Headers({ 'x-ratelimit-limit-req-minute': '0' }) }));
+    expect((await rows()).find((one) => one.name === 'mistral')).toMatchObject({ planOff: true, window: 'free plan not on' });
+    // The rail's dots read the same book.
+    expect(usage.info(clients).find((one) => one.name === 'mistral')).toMatchObject({ planOff: true });
+    expect(usage.info(clients).find((one) => one.name === 'gemini')!.planOff).toBeUndefined();
+    // A plain busy 429 is not a plan that is off.
+    usage.failed('gemini', Object.assign(new Error('429 busy'), { status: 429, headers: new Headers({ 'x-ratelimit-limit-req-minute': '15' }) }));
+    expect((await rows()).find((one) => one.name === 'gemini')!.planOff).toBeUndefined();
+    // One answer and it is on again.
+    usage.record('mistral');
+    expect((await rows()).find((one) => one.name === 'mistral')!.planOff).toBeUndefined();
+  });
+
   it('show the Cloudflare day\'s neurons used of the 9,000 the turns may spend, pictures included, on each model on the pool (round 6)', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'dash-neurons-'));
     const usage = createUsage(join(workspace, 'usage.json'));
