@@ -29,6 +29,15 @@ describe('prompt', () => {
     expect(rest).toEqual([{ role: 'user', content: 'hi' }]);
   });
 
+  it('leaves a turn that failed out of the talk the model is shown', () => {
+    const [, ...rest] = buildMessages(stage, 'marketing', docs, [
+      { id: 'a', role: 'user', text: 'hi', at: 1 },
+      { id: 'b', role: 'assistant', text: 'No model could answer this time (gemini down). Ask again in a minute.', at: 2, failed: true },
+      { id: 'c', role: 'user', text: 'hi again', at: 3 },
+    ]);
+    expect(rest.map((message) => message.content)).toEqual(['hi', 'hi again']);
+  });
+
   it('tells a person with no docs that they have no background, and never to invent facts', () => {
     const [system] = buildMessages(stage, 'build', docs, []);
     expect(system.content).toContain('no written background');

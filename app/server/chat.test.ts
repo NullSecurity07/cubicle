@@ -179,3 +179,103 @@ describe('a partner\'s turn', () => {
     expect((await store.readChat('sam')).at(-1)!.text).toMatch(/Partner did not check preconditions/);
   });
 });
+
+describe('a turn when models fail', () => {
+  async function turnChat(clients: ModelClient[], roomId = 'build', text = 'Critique the idea.', partner = false) {
+    const dir = await mkdtemp(join(tmpdir(), 'chat-'));
+    const store = createStore(dir);
+    const stage = await store.loadStage();
+    if (partner) await store.saveStage({ ...stage, rooms: [...stage.rooms, { id: roomId, name: 'Sam', role: 'Partner', accent: '#fff', brief: '', partner: true, x: 0, y: 0, w: 1, h: 1 }] });
+    const feed = createRoomFeed();
+    const heard: string[] = [];
+    feed.watch((event) => { if ('restart' in event) heard.push('feed restart'); });
+    const { chat } = createChat({
+      store, roomFeed: feed, busy: new Set(), clients, usage: createUsage(null), seams: createSeams(),
+      attention: createAttention(dir), approvals: createApprovals(), memory: { fold: async () => false },
+      promptFor: async () => [{ role: 'system', content: `You are ${roomId}.` }, { role: 'user', content: 'q' }],
+      toolsFor: () => [],
+    });
+    const out = new PassThrough();
+    const events: Record<string, unknown>[] = [];
+    out.on('data', (chunk: Buffer) => { for (const line of chunk.toString().split('\n')) if (line.startsWith('data: ')) events.push(JSON.parse(line.slice(6))); });
+    const res = Object.assign(out, { writeHead: () => res }) as unknown as ServerResponse;
+    await chat(roomId, text, res);
+    return { store, events, heard };
+  }
+  const answering = (name: string, text: string): ModelClient => ({
+    name, model: `${name}-1`, maxPromptChars: Infinity, tools: true, limits: { rpd: 1000 },
+    async step(_messages, { onToken }) { onToken(text); return { text: '', calls: [] }; },
+  });
+  const breaking: ModelClient = {
+    name: 'groq-qwen', model: 'qwen', maxPromptChars: Infinity, tools: true, limits: { rpd: 1000 },
+    async step(_messages, { onToken }) {
+      for (const token of ['Let', ' me', ' ground']) onToken(token);
+      throw Object.assign(new Error("400 Failed to call a function. See 'failed_generation'."), { status: 400 });
+    },
+  };
+  const down = (name: string): ModelClient => ({
+    name, model: `${name}-1`, maxPromptChars: Infinity, tools: true, limits: { rpd: 1000 },
+    async step() { throw Object.assign(new Error('503 overloaded'), { status: 503 }); },
+  });
+
+  it('empties the bubble on every window when a broken reply is dropped for the next model, and saves only the whole answer', async () => {
+    const { store, events, heard } = await turnChat([breaking, answering('openrouter', 'The whole critique.')]);
+    const order = events.map((one) => ('restart' in one ? 'restart' : 'token' in one ? `token ${one.token}` : 'done' in one ? 'done' : 'notice' in one ? 'notice' : 'turn'));
+    expect(order).toEqual(['turn', 'token Let', 'token  me', 'token  ground', 'restart', 'token The whole critique.', 'notice', 'done']);
+    expect(heard).toEqual(['feed restart']);
+    const saved = (await store.readChat('build')).at(-1)!;
+    expect(saved).toMatchObject({ role: 'assistant', text: 'The whole critique.', provider: 'openrouter' });
+  });
+
+  it('saves the error as the reply when no model answers, so a reload shows it', async () => {
+    const { store, events } = await turnChat([down('gemini'), down('groq')]);
+    expect(events.some((one) => 'error' in one)).toBe(true);
+    const talk = await store.readChat('build');
+    expect(talk.map((one) => one.role)).toEqual(['user', 'assistant']);
+    expect(talk[1].text).toBe('No model could answer this time (gemini down, groq down). Ask again in a minute.');
+    expect(talk[1].failed).toBe(true);
+  });
+
+  it('says a failed tool call and a busy key in plain words, in the notice and in the saved line', async () => {
+    const busy: ModelClient = { ...down('gemini'), async step() { throw Object.assign(new Error('429 Too Many Requests'), { status: 429 }); } };
+    const { store, events } = await turnChat([breaking, busy]);
+    const notices = events.filter((one) => 'notice' in one).map((one) => String(one.notice)).join(' ');
+    expect(notices).not.toMatch(/failed_generation|Failed to call a function/);
+    expect(notices).toMatch(/groq-qwen could not answer \(its tool call came out malformed\)/);
+    const saved = (await store.readChat('build')).at(-1)!;
+    expect(saved.text).not.toMatch(/failed_generation/);
+  });
+
+  it('lets a consult fail over when the colleague\'s stream breaks part way', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'chat-'));
+    const store = createStore(dir);
+    const { consult } = createChat({
+      store, roomFeed: createRoomFeed(), busy: new Set(), clients: [breaking, answering('openrouter', 'About two weeks.')], usage: createUsage(null), seams: createSeams(),
+      attention: createAttention(dir), approvals: createApprovals(), memory: { fold: async () => false },
+      promptFor: async () => [{ role: 'system', content: 'You are build.' }, { role: 'user', content: 'q' }], toolsFor: () => [],
+    });
+    expect(await consult({ fromRoomId: 'marketing', toRoomId: 'build', question: 'How long?' })).toBe('About two weeks.');
+  });
+
+  it('keeps a partner\'s first answer, labelled, when taking another look fails', async () => {
+    let asked = 0;
+    const once: ModelClient = {
+      name: 'gemini', model: 'g', maxPromptChars: Infinity, tools: true, limits: { rpd: 1000 },
+      async step(_messages, { onToken }) {
+        asked += 1;
+        if (asked > 1) throw Object.assign(new Error('503 overloaded'), { status: 503 });
+        onToken('Phase 1: SAFE with a $2M cap.');
+        return { text: '', calls: [] };
+      },
+    };
+    const { store, events } = await turnChat([once], 'sam', 'I want to raise a $2M pre-seed next week. Draft the plan.', true);
+    expect(events.some((one) => 'error' in one)).toBe(false);
+    const saved = (await store.readChat('sam')).at(-1)!;
+    expect(saved.text).toBe('Phase 1: SAFE with a $2M cap.\n\n*Partner did not check preconditions.*');
+    const done = events.find((one) => 'done' in one) as { message: { text: string } };
+    expect(done.message.text).toBe(saved.text);
+    // The window was emptied for the second look, so it is given the first answer back.
+    const tokens = events.map((one) => ('restart' in one ? '<restart>' : 'token' in one ? String(one.token) : '')).join('');
+    expect(tokens.split('<restart>').at(-1)).toBe('Phase 1: SAFE with a $2M cap.');
+  });
+});

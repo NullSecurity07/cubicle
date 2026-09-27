@@ -37,7 +37,7 @@ export async function completeJson<T>(
   const history = [...messages];
   let last = '';
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const reply = await complete(history, { onToken: () => {}, signal: options.signal }, clients);
+    const reply = await complete(history, { onToken: () => {}, onRestart: () => {}, signal: options.signal }, clients);
     options.onReply?.(reply);
     try {
       return check(firstJson(reply.text));

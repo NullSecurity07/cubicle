@@ -128,6 +128,68 @@ describe('runTurn', () => {
     void run;
   });
 
+  it('drops a reply that broke part way, keeps the words of earlier steps, and answers from the next model', async () => {
+    const store = createStore(await mkdtemp(join(tmpdir(), 'loop-')));
+    const shown: string[] = [];
+    const notices: string[] = [];
+    let window = '';
+    const usage = createUsage(null);
+    // Step one: words and a tool call from the first model. Step two: three words, then Groq's 400.
+    let steps = 0;
+    const qwen: ModelClient = {
+      ...scripted([]), name: 'groq-qwen',
+      async step(_messages, { onToken }) {
+        steps += 1;
+        if (steps === 1) { onToken('Checking the files.'); return { text: '', calls: [{ id: 'c1', name: 'list_files', args: '{}' }] }; }
+        for (const token of ['Let', ' me', ' ground']) onToken(token);
+        throw Object.assign(new Error("400 Failed to call a function. See 'failed_generation'."), { status: 400 });
+      },
+    };
+    const result = await runTurn({
+      messages: [{ role: 'user', content: 'critique it' }], tools: fileTools, clients: [qwen, scripted(['The whole critique.'])], usage,
+      context: { stage: await store.loadStage(), roomId: 'build', store, granted: new Map() },
+      events: {
+        token: (token) => { window += token; shown.push(token); }, tool: () => {}, notice: (text) => notices.push(text),
+        restart: () => { window = ''; shown.push('<restart>'); },
+      },
+    });
+    expect(result.text).toBe('Checking the files.\n\nThe whole critique.');
+    expect(result.provider).toBe('script');
+    expect(window).toBe(result.text);
+    expect(shown).toContain('<restart>');
+    expect(result.text).not.toMatch(/failed_generation|cut short/);
+    expect(notices.join(' ')).toMatch(/groq-qwen could not answer .*so script answers/);
+  });
+
+  it('keeps the broken words with a plain reason only when every model fails', async () => {
+    const store = createStore(await mkdtemp(join(tmpdir(), 'loop-')));
+    let window = '';
+    const notices: string[] = [];
+    const qwen: ModelClient = {
+      ...scripted([]), name: 'groq-qwen',
+      async step(_messages, { onToken }) {
+        for (const token of ['Let', ' me', ' ground']) onToken(token);
+        throw Object.assign(new Error("400 Failed to call a function. See 'failed_generation'."), { status: 400 });
+      },
+    };
+    const down: ModelClient = { ...scripted([]), name: 'openrouter', async step() { throw Object.assign(new Error('503 overloaded'), { status: 503 }); } };
+    const usage = createUsage(null);
+    const recorded: string[] = [];
+    const record = usage.record.bind(usage);
+    usage.record = (name, ...rest) => { recorded.push(name); return record(name, ...rest); };
+    const result = await runTurn({
+      messages: [{ role: 'user', content: 'critique it' }], tools: [], clients: [qwen, down], usage,
+      context: { stage: await store.loadStage(), roomId: 'build', store, granted: new Map() },
+      events: { token: (token) => { window += token; }, tool: () => {}, notice: (text) => notices.push(text), restart: () => { window = ''; } },
+    });
+    expect(result.text).toBe('Let me ground\n\n(reply cut short: its tool call came out malformed)');
+    expect(window).toBe(result.text);
+    expect(result.text).not.toMatch(/failed_generation/);
+    expect(notices.join(' ')).not.toMatch(/so groq-qwen answers/);
+    // Its failure was counted; it is not then counted as a good answer that would close its breaker again.
+    expect(recorded).toEqual([]);
+  });
+
   it('tells the founder when a reply was cut at the model\'s length limit', async () => {
     const short: ModelClient = { ...scripted([]), name: 'short', async step(_messages, { onToken }) { onToken('The plan has three par'); return { text: '', calls: [], cut: true }; } };
     const notices: string[] = [];
@@ -395,9 +457,20 @@ describe('runTurn, the truth net', () => {
   it('flags a figure nothing gave it, and not one quoted from a wired doc or a tool result', async () => {
     const wired: ModelMessage[] = [{ role: 'system', content: '## Doc: Numbers\nMRR $22,000, churn 2.3%' }, { role: 'user', content: 'how are we doing?' }];
     expect((await turn(scripted(['MRR is $22,000 and churn is 2.3%.']), wired)).reply.text).toBe('MRR is $22,000 and churn is 2.3%.');
-    expect((await turn(scripted(['MRR is $22,000 and we should charge $29.']), wired)).reply.text).toMatch(/\n\nUnsourced figures: \$29 \(not found/);
+    expect((await turn(scripted(['MRR is $22,000 and the price is $29.']), wired)).reply.text).toMatch(/\n\nUnsourced figures: \$29 \(not found/);
+    // Put forward as a proposal, the same price is the person's suggestion, not a claim.
+    expect((await turn(scripted(['MRR is $22,000 and we should charge $29.']), wired)).reply.text).toBe('MRR is $22,000 and we should charge $29.');
     const read = scripted([[{ name: 'write_file', args: { path: 'late.md', text: '34% pay late' } }], [{ name: 'read_file', args: { path: 'late.md' } }], 'The note says 34% pay late.']);
     expect((await turn(read)).reply.text).toBe('The note says 34% pay late.');
+  });
+
+  it('does not take a figure in the person\'s own brief as a source, only the founder\'s words and the documents', async () => {
+    const prompt: ModelMessage[] = [
+      { role: 'system', content: 'You are Sam, Partner. Push for churn under 2%.\n\nThe founder has connected these documents to your room. Treat them as what the founder wants you to know.\n\n## Doc: Numbers\nMRR $22,000' },
+      { role: 'user', content: 'We have 40 customers.' },
+    ];
+    expect((await turn(scripted(['MRR is $22,000 over 40 customers, $550 each.']), prompt)).reply.text).toBe('MRR is $22,000 over 40 customers, $550 each.');
+    expect((await turn(scripted(['Good churn is under 2% a month.']), prompt)).reply.text).toMatch(/\n\nUnsourced figures: 2% \(not found/);
   });
 
   it('asks once more when the tool call came back written as text, and keeps the leak out of the reply', async () => {

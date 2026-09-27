@@ -1,13 +1,13 @@
 import type { ToolEvent, Usage } from '../shared/model.ts';
 import type { ModelMessage } from './prompt.ts';
-import { complete, type Failure, type ModelClient } from './providers.ts';
+import { complete, plainBreak, type Failure, type ModelClient } from './providers.ts';
 import type { Answer } from './approvals.ts';
 import { limitWords } from './breaker.ts';
 import { resultCap } from './context/shrink.ts';
 import type { Offered } from './playbook.ts';
 import type { Payloads, Seams, Source } from './seams.ts';
 import { runTool, type Tool, type ToolContext } from './tools/registry.ts';
-import { ANSWER_IN_WORDS, CALL_THE_TOOL, checkReply, HELD_BACK, proseToolCall } from './truth.ts';
+import { ANSWER_IN_WORDS, CALL_THE_TOOL, checkReply, HELD_BACK, proseToolCall, turnSources } from './truth.ts';
 import type { UsageBook } from './usage.ts';
 
 const MAX_STEPS = 8;
@@ -47,7 +47,9 @@ export function receiptSummary(done: ToolEvent[], why?: string): string {
   return `${why ?? 'I ran these steps but gave no answer'}, so here is what they said:\n\n${lines.join('\n')}`;
 }
 
-type TurnEvents = { token(token: string): void; tool(event: ToolEvent): void; notice?(text: string): void };
+// `restart`: the words shown so far are replaced; the window empties the bubble, and whatever was said before this
+// step is streamed again straight after it.
+type TurnEvents = { token(token: string): void; tool(event: ToolEvent): void; notice?(text: string): void; restart?(): void };
 // `flags`: the truth net's lines under this reply, the same ones appended to its text, for whoever wants them apart.
 export type TurnResult = { text: string; tools: ToolEvent[]; provider: string; model: string; usage: Usage; stopped: boolean; flags?: string[] };
 
@@ -73,7 +75,8 @@ export async function runTurn(input: {
   let answered: ModelClient | undefined;
   const failed: string[] = [];
   let unanswered = '';
-  // What this turn really read, for the truth net: the prompt as sent and the whole of every tool result.
+  // What this turn really read, for the truth net: the facts of the prompt as sent (not its rules) and the whole of
+  // every tool result.
   const results: string[] = [];
   // Why the stream broke off mid-reply, when it did; whether a tool call came back as text and was already asked about
   // once; whether it came back so twice and was held back; whether the reply had to be made from the receipts.
@@ -85,7 +88,7 @@ export async function runTurn(input: {
   // When the model that should have answered could not, the founder hears which one stepped in and why.
   const onFailure = ({ client, error }: Failure) => {
     const status = (error as { status?: number }).status;
-    failed.push(`${client.name} could not answer (${status === 429 ? limitWords(error) : (error.message || 'error').slice(0, 120)})`);
+    failed.push(`${client.name} could not answer (${status === 429 ? limitWords(error) : plainBreak(error.message || 'error').slice(0, 120)})`);
     // A 429 rests the key, five breakdowns in a row open its breaker; either way its siblings serve meanwhile.
     usage.failed(client.name, error);
   };
@@ -102,9 +105,18 @@ export async function runTurn(input: {
     const stepStart = text.length;
     const gap = text && !/\s$/.test(text) ? '\n\n' : '';
     let first = true;
+    // A model whose stream broke part way is dropped for the next one: its words leave the reply and the window,
+    // and the words of the steps before this one are shown again. Only a window that can empty a bubble takes this.
+    const restart = events.restart ? () => {
+      text = text.slice(0, stepStart);
+      first = true;
+      events.restart!();
+      if (text) events.token(text);
+    } : undefined;
     const ask = () => complete(messages, {
       tools: offered, signal,
       onToken: (token) => { const piece = first ? gap + token : token; first = false; text += piece; events.token(piece); },
+      ...(restart ? { onRestart: restart } : {}),
     }, clients, onFailure, (client) => usage.admit(client.name));
     // A step every model refused — usually because the prompt outgrew them — gets one more chance: whatever listens
     // here shortens it and says so, and we ask again with what it left.
@@ -124,10 +136,12 @@ export async function runTurn(input: {
     });
     if (!turn) break;
 
-    if (failed.length) events.notice?.(`${failed.splice(0).join('; ')}, so ${turn.client.name} answers.`);
+    // A broken reply handed back after every model failed was already counted among the failures: nobody "answers".
+    if (failed.length) events.notice?.(turn.broke ? `${failed.splice(0).join('; ')}, so no model could finish this reply.` : `${failed.splice(0).join('; ')}, so ${turn.client.name} answers.`);
     // Words already shown stay; the founder is told they stop short. (A cut reply with no words moved to the next model already.)
     if (turn.cut && !turn.broke) events.notice?.(`${turn.client.name} hit its length limit, so this reply is cut short. Ask for the rest, or for a shorter answer.`);
-    usage.record(turn.client.name, turn.usage, turn.quota);
+    // A broken reply every model failed on was counted as a failure already, not a good answer.
+    if (!turn.reported) usage.record(turn.client.name, turn.usage, turn.quota);
     total.input += turn.usage?.input ?? 0;
     total.output += turn.usage?.output ?? 0;
     answered = turn.client;
@@ -205,11 +219,14 @@ export async function runTurn(input: {
   if (done.length && !text.trim() && !signal?.aborted) {
     if (!unanswered) {
       messages.push({ role: 'user', content: SAY_SOMETHING });
-      const said = await complete(messages, { tools: [], signal, onToken: (token) => { text += token; events.token(token); } }, clients, onFailure, (client) => usage.admit(client.name))
+      const said = await complete(messages, {
+        tools: [], signal, onToken: (token) => { text += token; events.token(token); },
+        ...(events.restart ? { onRestart: () => { text = ''; events.restart!(); } } : {}),
+      }, clients, onFailure, (client) => usage.admit(client.name))
         .catch((error: Error) => { if (!/empty reply/.test(error.message)) unanswered = error.message; return null; });
       if (said) {
-        if (failed.length) events.notice?.(`${failed.join('; ')}, so ${said.client.name} answers.`);
-        usage.record(said.client.name, said.usage, said.quota);
+        if (failed.length) events.notice?.(said.broke ? `${failed.join('; ')}, so no model could finish this reply.` : `${failed.join('; ')}, so ${said.client.name} answers.`);
+        if (!said.reported) usage.record(said.client.name, said.usage, said.quota);
         total.input += said.usage?.input ?? 0;
         total.output += said.usage?.output ?? 0;
         answered = said.client;
@@ -231,7 +248,7 @@ export async function runTurn(input: {
   // they did, since the words that would have said it never came.
   let flags: string[] = [];
   if (!signal?.aborted && !held && !summarised && text.trim()) {
-    flags = checkReply({ reply: text, receipts: done, sources: [...inputs.map((message) => message.content), ...results, query] });
+    flags = checkReply({ reply: text, receipts: done, sources: [...turnSources(inputs), ...results, query] });
     const tail = [...(broke ? [`(reply cut short: ${broke})`] : []), ...(broke && done.length ? [receiptSummary(done, 'The reply broke off after these steps')] : []), ...flags];
     if (tail.length) {
       const line = `${/\s$/.test(text) ? '' : '\n\n'}${tail.join('\n\n')}`;
