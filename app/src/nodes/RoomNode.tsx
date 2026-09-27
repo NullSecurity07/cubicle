@@ -48,7 +48,7 @@ export function RoomNode({ id, data, selected }: NodeProps<RoomNodeType>) {
       {/* The chat stays mounted under the form, so a reply in flight survives an edit. */}
       <div className="card__row" hidden={setup}>
         <div className="card__body">
-          {data.name && <Chat id={id} name={data.name} role={data.role} onStatus={(next, ask) => { setStatus(next); setLastAsk(ask); }} />}
+          {data.name && <Chat id={id} name={data.name} role={data.role} partner={data.partner} onStatus={(next, ask) => { setStatus(next); setLastAsk(ask); }} />}
         </div>
         {focused && data.name && <RoomSide id={id} name={data.name} status={status} onEditMemory={() => setRemembering(true)} />}
       </div>
