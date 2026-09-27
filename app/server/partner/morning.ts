@@ -7,6 +7,7 @@ import type { ModelMessage } from '../prompt.ts';
 import { sectionBody, filled, verdictOf } from '../tools/verdict.ts';
 import { checkReply, stripFlagged } from '../truth.ts';
 import { gatherMonth } from '../slices/month.ts';
+import { cardOf } from './bets.ts';
 import type { PartnerState } from './state.ts';
 
 // The partner's morning: once a day, unasked, they read the Company document (it is in their prompt), what changed
@@ -90,8 +91,8 @@ const numbersOf = (company: string) => filled(sectionBody(company, 'Numbers')).j
 const FLAGS = /^(?:Unconfirmed: this reply claims|Unsourced figures: ).*$/gm;
 
 const betLine = (bet: Bet) => (bet.status === 'open'
-  ? `- Open: ${bare(bet.what)}. Bet: ${bare(bet.hypothesis) || 'unsaid'}. ${bet.metric} to ${bet.target} by ${bet.checkDate}.`
-  : `- Closed ${bet.checkDate}: ${bare(bet.what)}. ${bet.result?.verdict === 'worked' ? 'Worked' : 'Did not work'}; ${bet.metric} was ${bet.result?.value ?? 'unread'} against ${bet.target}.${bet.result?.note ? ` ${bet.result.note}` : ''}`);
+  ? `- Open: ${bare(bet.what)}. Bet: ${bare(bet.hypothesis) || 'unsaid'}. Measured by "${bet.metric}" on ${cardOf(bet.metric)}: ${bet.target} by ${bet.checkDate}.`
+  : `- Closed ${bet.checkDate}: ${bare(bet.what)}. ${bet.result?.verdict === 'worked' ? 'Worked' : 'Did not work'}; "${bet.metric}" was ${bet.result?.value ?? 'unread'} against ${bet.target}.${bet.result?.note ? ` ${bet.result.note}` : ''}`);
 
 export async function gatherMorning(from: MorningSources): Promise<string> {
   const yesterday = localDay(from.now - DAY);

@@ -4,7 +4,7 @@ import { bare, companyLine, isPlanDoc, SHARED_RECORD, parsePlan, PARTNER_CHANNEL
 import { localDay } from '../clock.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
 import { leadsFor } from '../leads/store.ts';
-import { betDue, betsAttention, betsBook, closedLine, metricChoices, missingMetric, readMetric, type BetsBook } from '../partner/bets.ts';
+import { askedInstead, betDue, betsAttention, betsBook, closedLine, metricChoices, missingMetric, readMetric, type BetsBook } from '../partner/bets.ts';
 import { companyDocOf, ensureCompany, syncDecisions, writeBets } from '../partner/company.ts';
 import { hub } from '../events.ts';
 import { saysSomething } from '../missions.ts';
@@ -39,6 +39,7 @@ export function betTools(book: BetsBook, workspace: string, changed: () => Promi
       description: 'Put a bet on record for the founder to take: something the company does, what it should move, by how much and by when. '
         + 'It waits in Needs you; it is only on record once the founder takes it. Measure it by a number the app can read: '
         + 'a Metrics card number (its key or name), "leads", "leads:<stage>" such as "leads:replied", or "survey" (answers). '
+        + 'Name it after what the founder\'s ask counts: "50 newsletter signups" is measured by "signups" on a Metrics card, never by leads. '
         + 'When it says a card or a row is missing, tell the founder exactly which card and row to add.',
       parameters: { type: 'object', properties: {
         what: { type: 'string', description: 'What the company does, in a few words' },
@@ -55,6 +56,9 @@ export function betTools(book: BetsBook, workspace: string, changed: () => Promi
         const target = typeof args.target === 'string' ? Number(args.target.replace(/[,$€£%\s]/g, '')) : Number(args.target);
         if (!Number.isFinite(target)) throw new Error('"target" must be a number');
         const metric = text(args, 'metric', 80).trim();
+        // Held to what the founder's ask counts, before anything else is said about the pick.
+        const instead = await askedInstead(workspace, context.stage, metric, context.query ?? '');
+        if (instead) throw new Error(instead);
         const choices = await metricChoices(workspace, context.stage);
         if (!choices.some((one) => one.toLowerCase() === metric.toLowerCase()) && (await readMetric(workspace, context.stage, metric)).value === null) {
           throw new Error(missingMetric(context.stage, metric, choices));

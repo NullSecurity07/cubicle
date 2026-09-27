@@ -60,8 +60,8 @@ describe('what the partner reads in the morning', () => {
     expect(text).toContain('Not on the stage: Metrics, Runway, Board.');
     expect(text).toContain('Maya (Marketing):\n  Founder: Price it at $9?\n  Maya: Yes, $9 for the pre-order.');
     expect(text).not.toContain('old talk');
-    expect(text).toContain('- Open: Post in r/SaaS. Bet: founders sign up. signups to 20 by 2026-10-03.');
-    expect(text).toContain('- Closed 2026-09-20: Cold email 30. Did not work; leads:replied was 1 against 5.');
+    expect(text).toContain('- Open: Post in r/SaaS. Bet: founders sign up. Measured by "signups" on the Metrics card: 20 by 2026-10-03.');
+    expect(text).toContain('- Closed 2026-09-20: Cold email 30. Did not work; "leads:replied" was 1 against 5.');
     expect(text).not.toContain('Proposed only');
   });
 });
