@@ -11,6 +11,7 @@ import { runTool, type Tool, type ToolContext } from './tools/registry.ts';
 import { ANSWER_IN_WORDS, CALL_THE_TOOL, checkReply, HELD_BACK, proseToolCall, turnSources } from './truth.ts';
 import type { UsageBook } from './usage.ts';
 import { needsSlim, slimNotice } from './slim.ts';
+import { localDay } from './clock.ts';
 
 const MAX_STEPS = 8;
 // The most tool calls that change something a stand-in model (one that answers because the first could not, or one on this machine) may
@@ -57,6 +58,10 @@ export function receiptSummary(done: ToolEvent[], why?: string): string {
 
 // `restart`: the words shown so far are replaced; the window empties the bubble, and whatever was said before this
 // step is streamed again straight after it.
+// Which room has already been told today that its first model cannot hold the prompt, and which model answers instead.
+// The same line on every card of every turn was noise: once a day in a room is enough to know.
+const sizeTold = new Map<string, string>();
+
 type TurnEvents = { token(token: string): void; tool(event: ToolEvent): void; notice?(text: string): void; restart?(): void };
 // `flags`: the truth net's lines under this reply, the same ones appended to its text, for whoever wants them apart.
 export type TurnResult = { text: string; tools: ToolEvent[]; provider: string; model: string; usage: Usage; stopped: boolean; flags?: string[] };
@@ -170,7 +175,11 @@ export async function runTurn(input: {
     // said once, in a line, rather than dropped without a word.
     if (!sizeSaid && primary && turn.client !== primary && turn.oversize?.includes(primary.name)) {
       sizeSaid = true;
-      events.notice?.(`${primary.name} cannot hold this room's prompt; ${turn.client.name} answers.`);
+      const told = `${roomId}|${primary.name}|${turn.client.name}`;
+      if (sizeTold.get(told) !== localDay(Date.now())) {
+        sizeTold.set(told, localDay(Date.now()));
+        events.notice?.(`${primary.name} cannot hold this room's prompt; ${turn.client.name} answers.`);
+      }
     }
     if (failed.length) events.notice?.(turn.broke ? `${failed.splice(0).join('; ')}, so no model could finish this reply.` : `${failed.splice(0).join('; ')}, so ${turn.client.name} answers.`);
     // Words already shown stay; the founder is told they stop short. (A cut reply with no words moved to the next model already.)
