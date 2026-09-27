@@ -55,9 +55,10 @@ describe('attachments in the prompt', () => {
 
   it('sends a turn with a picture to a model that can see', () => {
     const client = (name: string, vision = false): ModelClient => ({ name, model: name, maxPromptChars: 1e6, tools: true, vision, limits: {}, step: async () => ({ text: '', calls: [] }) });
-    const clients = [client('groq'), client('gemini', true)];
-    expect(route(clients, createUsage(null), { promptChars: 10, tools: true, vision: true }).order.map((one) => one.name)).toEqual(['gemini', 'groq']);
-    expect(route(clients, createUsage(null), { promptChars: 10, tools: true }).order[0].name).toBe('groq');
+    // Two models level in the shared order, so only the picture moves the one that can see ahead.
+    const clients = [client('vercel'), client('cloudflare', true)];
+    expect(route(clients, createUsage(null), { promptChars: 10, tools: true, vision: true }).order.map((one) => one.name)).toEqual(['cloudflare', 'vercel']);
+    expect(route(clients, createUsage(null), { promptChars: 10, tools: true }).order[0].name).toBe('vercel');
     expect(route(clients, createUsage(null), { promptChars: 10, tools: true, vision: true }).notice).toBeUndefined();
   });
 });

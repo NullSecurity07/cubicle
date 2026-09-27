@@ -199,7 +199,9 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
       const pictures = state.pictures?.[pool];
       return { used: poolNeurons(pool), of: NEURONS_FOR_TURNS, pictures: pictures?.neurons ?? 0, drawn: pictures?.drawn ?? 0 };
     },
-    // True while this key rests after a 429, an open breaker or a refused key. Only looks.
+    // True while this model rests after giving no first word twice in a row (breaker.ts): at the back, not dead.
+    slow: (name: string) => breaker.slow(name),
+    // True while this key rests after a 429, an open breaker, a refused key or two silences. Only looks.
     resting: (name: string) => breaker.resting(name),
     // True when one more request of this size would likely hit the per-minute wall.
     // A key that takes one request at a time and has one out counts as out of room until it is back.

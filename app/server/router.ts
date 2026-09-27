@@ -6,6 +6,24 @@ import type { UsageBook } from './usage.ts';
 export const FLOOR = 0.05;
 const title = (name: string) => name[0].toUpperCase() + name.slice(1);
 
+// One order for every turn, the partner's and everyone else's: the strongest free models first. Gemini held its ground
+// in the live runs; gpt-oss on Cloudflare held a 25-40k room prompt with a tool call and answered best and fast; Kimi on
+// NVIDIA took 13-44 s to a first word, so it stands behind both, where a colleague's turn in journey 10 waited 20 s on
+// Gemini and then 60 s on it before gpt-oss answered. SambaNova is 20 requests a day.
+export const STRONG = ['gemini', 'cloudflare-gpt-oss', 'nvidia', 'mistral', 'sambanova'];
+// Behind them, the Qwens that also held a room prompt: OpenRouter's (only there when its key is set), then
+// Cloudflare's, which invented one claim. Everything else follows in the order it is listed.
+export const SECOND = ['openrouter-qwen', 'cloudflare-qwen'];
+// gpt-oss at low reasoning effort (Groq, Cerebras) drafted a raise plan for a company with no users: last.
+export const LOW_EFFORT = ['groq', 'cerebras'];
+// Where a model stands in that order; a sort by it is stable, so the listed order breaks ties.
+export const tier = (client: ModelClient) => {
+  const name = providerOf(client.name);
+  const at = [...STRONG, ...SECOND].indexOf(name);
+  const rest = STRONG.length + SECOND.length;
+  return at >= 0 ? at : LOW_EFFORT.includes(name) ? rest + 1 : rest;
+};
+
 // A turn is a person answering; a side call is one of the calls around it (a summary, a reflection, a compaction
 // note). Side calls go to the small side model first and may be answered from the cache; a turn never reaches either.
 type CallRoute = 'turn' | 'side';
@@ -37,7 +55,8 @@ export function spread(order: ModelClient[], usage: UsageBook): ModelClient[] {
 // A pinned model always goes first; the rest stay behind it only as a net for a hard failure.
 // Auto keeps the configured order but moves any model that is out of room, or about to be, to the back.
 export function route(clients: ModelClient[], usage: UsageBook, want: Want) {
-  if ((want.kind ?? 'turn') === 'turn') return rank(clients.filter((client) => !client.side), usage, want);
+  // A side call keeps the order it was given: summaries read the list backwards on purpose.
+  if ((want.kind ?? 'turn') === 'turn') return rank([...clients.filter((client) => !client.side)].sort((a, b) => tier(a) - tier(b)), usage, want);
   const found = rank(clients, usage, want);
   // The small model first while it has room; the rest behind it keep the fallthrough as it always was.
   const side = found.order.filter((client) => client.side && usage.left(client) > FLOOR && !usage.hot(client, want.promptChars));
@@ -76,7 +95,8 @@ function rank(clients: ModelClient[], usage: UsageBook, want: Want) {
   // One that is only busy with another request for a moment is not near any limit, and nothing is said. Otherwise
   // the founder hears which wall it was: a refused key, the day's quota (what the dashboard's "left" counts) or only
   // this minute, so the notice never says "limit" while the dashboard says most of the day is left.
-  const why = !first ? '' : usage.dead?.(first.name) ? 'refused its key' : usage.left(first) <= FLOOR ? "has used today's free quota" : 'is busy this minute';
+  const why = !first ? '' : usage.dead?.(first.name) ? 'refused its key' : usage.left(first) <= FLOOR ? "has used today's free quota"
+    : usage.slow?.(first.name) ? 'was slow to start answering twice' : 'is busy this minute';
   const notice = order[0] && first && order[0] !== first && !first.busy?.()
     ? why === 'refused its key' ? `${title(providerOf(first.name))}'s key was refused, so ${title(providerOf(order[0].name))} answers. Fix it in Keys.`
       : `${title(first.name)} ${why}, so ${title(order[0].name)} answers for now.` : undefined;

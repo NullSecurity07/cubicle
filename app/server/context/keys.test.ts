@@ -25,7 +25,7 @@ describe('a provider with more than one key', () => {
     const usage = createUsage(null);
     const clients = pool();
     usage.cool('groq', 30_000);
-    expect(names(route(clients, usage, { promptChars: 10, tools: true }).order)).toEqual(['groq#2', 'gemini', 'groq']);
+    expect(names(route(clients, usage, { promptChars: 10, tools: true }).order)).toEqual(['gemini', 'groq#2', 'groq']);
   });
 
   it('takes a person pinned to a provider to whichever of its keys has room', () => {
