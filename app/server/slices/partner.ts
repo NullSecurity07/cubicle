@@ -12,6 +12,8 @@ import { FAKE_MORNING, MOST_TRIES, morningDue, morningInputs, morningMessage, wr
 import { addPlan, boardFor, boardForPlan, NO_BOARD, planAttention, stepsFrom } from '../partner/plans.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import { standingBlock, standingParts, type StandingParts } from '../partner/standing.ts';
+import { companyFacts, keepFacts, keptLine } from '../partner/keep.ts';
+import { wired } from '../prompt.ts';
 import type { ModelMessage } from '../prompt.ts';
 import { complete, fakeClient, promptSize } from '../providers.ts';
 import { partnerRoute } from '../partner/route.ts';
@@ -329,6 +331,31 @@ export function createPartner(options: PartnerOptions = {}) {
     };
     const offTurn = deps.seams.on('turn:before', beforeTurn);
 
+    // The founder told the partner where the company stands (a price, the cash, the burn, the users, what it does):
+    // it goes into the Company document's own section, with a receipt under the reply. Never with the wire taken away.
+    const onReply: Handler<'turn:reply'> = async (payload, next) => {
+      const stage = await deps.store.loadStage();
+      const me = stage.rooms.find((one) => one.id === payload.roomId && one.partner);
+      const facts = companyFacts(payload.query);
+      if (!me || payload.reply.stopped || (!facts.numbers.length && !facts.idea && !facts.customer)) return next(payload);
+      let line = '';
+      try {
+        const doc = await companyNow(stage);
+        if (doc) {
+          const before = await deps.store.readDoc(doc.id);
+          const kept = keepFacts(before, facts, localDay(now()));
+          if (kept.kept.length && wired(stage, me.id, [doc.id]).length) {
+            await deps.store.writeDoc(doc.id, kept.text);
+            changed(doc.id);
+            standing = null;
+            line = keptLine(kept.kept);
+          } else if (kept.kept.length) line = `*Not kept: the "${doc.title}" document is not wired to ${me.name}, so ${kept.kept.join(', ')} are not in it. Wire it to ${me.name} to keep it current.*`;
+        }
+      } catch (error) { console.error(`partner keep: ${(error as Error).message}`); }
+      return next(line ? { ...payload, reply: { ...payload.reply, text: `${payload.reply.text.replace(/\s+$/, '')}\n\n${line}` } } : payload);
+    };
+    const offReply = deps.seams.on('turn:reply', onReply);
+
     // Which bets were due at the last look, so a bet whose day has just come is said once, not every half minute.
     let due: Set<string> | null = null;
     async function checkBets() {
@@ -432,6 +459,7 @@ export function createPartner(options: PartnerOptions = {}) {
         offDecisions();
         offSeam();
         offTurn();
+        offReply();
         await syncing?.catch(() => {});
         await writing?.catch(() => {});
         await state.settled();

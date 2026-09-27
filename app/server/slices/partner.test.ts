@@ -451,6 +451,42 @@ describe('the partner slice: standing facts in every partner turn', () => {
   });
 });
 
+// Journey 5: after a week, Idea, Customer and Numbers were still empty, so a new person knew neither the name nor the cash.
+describe('the partner slice: the founder\'s facts kept in the Company document', () => {
+  const DAY_ONE = "I'm building Ledgerly: $29/month bookkeeping for EU solo consultants that drafts VAT returns from bank feeds. "
+    + 'We have 3 paying beta users; two of them asked for invoicing. I have €4,200 in the bank and burn €1,100/month. I\'m a solo technical founder. Tear it apart.';
+  const reply = (text: string) => ({ text, tools: [], provider: 'p', model: 'm', usage: { input: 1, output: 1 }, stopped: false });
+
+  it('writes the Day-1 facts into Numbers, Idea and Customer, with a receipt under the partner\'s reply', async () => {
+    const { deps, part } = await installed({}, { now: () => new Date('2026-09-27T10:00').getTime(), ask: async () => SHAPED });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    const out = await deps.seams.run('turn:reply', { roomId: 'p1', query: DAY_ONE, reply: reply('Runway is short.\n\nMy call: call the three users.') });
+    const doc = await deps.store.readDoc(companyDocOf(await deps.store.loadStage())!.id);
+    expect(doc).toMatch(/## Idea\n\n- I'm building Ledgerly: \$29\/month bookkeeping/);
+    expect(doc).toContain('- Price: $29/month (founder, 2026-09-27)');
+    expect(doc).toContain('- Cash: €4,200 (founder, 2026-09-27)');
+    expect(doc).toContain('- Burn: €1,100/month (founder, 2026-09-27)');
+    expect(doc).toContain('- Paying beta users: 3 (founder, 2026-09-27)');
+    expect(out.reply.text).toBe('Runway is short.\n\nMy call: call the three users.\n\n*Kept in the Company document: Numbers (Price $29/month, Paying beta users 3, Cash €4,200, Burn €1,100/month), Idea, Customer.*');
+    // Said again, nothing new: no second write, no receipt. A staff room never writes it.
+    expect((await deps.seams.run('turn:reply', { roomId: 'p1', query: DAY_ONE, reply: reply('Ok.') })).reply.text).toBe('Ok.');
+    expect((await deps.seams.run('turn:reply', { roomId: 'marketing', query: 'We have 9 paying users.', reply: reply('Ok.') })).reply.text).toBe('Ok.');
+    await part.close!();
+  });
+
+  it('writes nothing when the founder took the partner\'s wire to it away, and says so', async () => {
+    const { deps, part } = await installed({}, { now: () => new Date('2026-09-27T10:00').getTime(), ask: async () => SHAPED });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    await deps.store.patchStage((stage) => { stage.wires = stage.wires.filter((wire) => wire.from !== 'p1'); });
+    const out = await deps.seams.run('turn:reply', { roomId: 'p1', query: DAY_ONE, reply: reply('Ok.') });
+    expect(out.reply.text).toBe('Ok.\n\n*Not kept: the "Company brief" document is not wired to Sam, so Numbers (Price $29/month, Paying beta users 3, Cash €4,200, Burn €1,100/month), Idea, Customer are not in it. Wire it to Sam to keep it current.*');
+    expect(await deps.store.readDoc(companyDocOf(await deps.store.loadStage())!.id)).not.toContain('€4,200');
+    await part.close!();
+  });
+});
+
 describe('the partner slice: plans become tasks', () => {
   const PLAN = '# Flipside: 2-week plan\n\n### Mon 28 Sep (Day 1)\n- Draft the landing page\n- Set up the pre-order form\n\n### Tue 29 Sep (Day 2)\n- List 30 projects\n\n## KPIs\n- Revenue >= $150\n';
 

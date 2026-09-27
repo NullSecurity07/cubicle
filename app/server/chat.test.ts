@@ -295,3 +295,27 @@ describe('a turn when models fail', () => {
     expect(tokens.split('<restart>').at(-1)).toBe('Phase 1: SAFE with a $2M cap.');
   });
 });
+
+describe('the last look at a reply', () => {
+  it('keeps and shows what a slice adds under the reply, in the saved message and as a token', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'chat-'));
+    const store = createStore(dir);
+    const seams = createSeams();
+    const asked: string[] = [];
+    seams.on('turn:reply', async (payload, next) => { asked.push(payload.query); return next({ ...payload, reply: { ...payload.reply, text: `${payload.reply.text}\n\n*Kept.*` } }); });
+    const client: ModelClient = { name: 'gemini', model: 'm', maxPromptChars: Infinity, tools: true, limits: { rpd: 1000 }, async step(_messages, { onToken }) { onToken('Fine.'); return { text: '', calls: [] }; } };
+    const { chat } = createChat({
+      store, roomFeed: createRoomFeed(), busy: new Set(), clients: [client], usage: createUsage(null), seams,
+      attention: createAttention(dir), approvals: createApprovals(), memory: { fold: async () => false },
+      promptFor: async () => [{ role: 'system', content: 'You are Maya.' }, { role: 'user', content: 'q' }], toolsFor: () => [],
+    });
+    const out = new PassThrough();
+    const events: Record<string, unknown>[] = [];
+    out.on('data', (chunk: Buffer) => { for (const line of chunk.toString().split('\n')) if (line.startsWith('data: ')) events.push(JSON.parse(line.slice(6))); });
+    const res = Object.assign(out, { writeHead: () => res }) as unknown as ServerResponse;
+    await chat('marketing', 'We have 3 paying users.', res);
+    expect(asked).toEqual(['We have 3 paying users.']);
+    expect(events.filter((one) => 'token' in one).map((one) => one.token).join('')).toBe('Fine.\n\n*Kept.*');
+    expect((await store.readChat('marketing')).at(-1)!.text).toBe('Fine.\n\n*Kept.*');
+  });
+});

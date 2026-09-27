@@ -1,0 +1,55 @@
+import { describe, expect, it } from 'vitest';
+import { companyTemplate } from '../../shared/partner.ts';
+import { companyFacts, keepFacts, keptLine } from './keep.ts';
+
+// Journey 4's first message, as the founder wrote it on Day 1.
+export const DAY_ONE = "I'm building Ledgerly: $29/month bookkeeping for EU solo consultants that drafts VAT returns from bank feeds. "
+  + 'We have 3 paying beta users; two of them asked for invoicing. I have €4,200 in the bank and burn €1,100/month. I\'m a solo technical founder. Tear it apart.';
+
+describe('company facts in what the founder says', () => {
+  it('reads the price, cash, burn, the users and the one line of what the company does', () => {
+    expect(companyFacts(DAY_ONE)).toEqual({
+      numbers: [
+        { label: 'Price', value: '$29/month' },
+        { label: 'Paying beta users', value: '3' },
+        { label: 'Cash', value: '€4,200' },
+        { label: 'Burn', value: '€1,100/month' },
+      ],
+      idea: "I'm building Ledgerly: $29/month bookkeeping for EU solo consultants that drafts VAT returns from bank feeds",
+      customer: 'EU solo consultants',
+    });
+  });
+
+  it('reads other ways of saying them, and nothing from a question with no facts', () => {
+    expect(companyFacts('We charge €49 a month. Cash: $80k. We spend $6,500 per month. 120 customers so far.').numbers).toEqual([
+      { label: 'Price', value: '€49 a month' }, { label: 'Cash', value: '$80k' }, { label: 'Burn', value: '$6,500 per month' }, { label: 'Customers', value: '120' },
+    ]);
+    expect(companyFacts('should we raise the price? Give me a number.')).toEqual({ numbers: [] });
+    expect(companyFacts('What do I do right now?')).toEqual({ numbers: [] });
+    // Past figures and plans are not where the company stands.
+    expect(companyFacts('Help me plan how we spend $300 on ads next week.').numbers).toEqual([]);
+  });
+});
+
+describe('keeping the Company document current', () => {
+  it('writes Numbers, Idea and Customer into an empty document, and says what it kept', () => {
+    const { text, kept } = keepFacts(companyTemplate(), companyFacts(DAY_ONE), '2026-09-27');
+    expect(text).toContain('## Idea\n\n- I\'m building Ledgerly: $29/month bookkeeping for EU solo consultants that drafts VAT returns from bank feeds (founder, 2026-09-27)\n');
+    expect(text).toContain('## Customer\n\n- EU solo consultants (founder, 2026-09-27)\n');
+    expect(text).toContain('## Numbers\n\n- Price: $29/month (founder, 2026-09-27)\n- Paying beta users: 3 (founder, 2026-09-27)\n- Cash: €4,200 (founder, 2026-09-27)\n- Burn: €1,100/month (founder, 2026-09-27)\n');
+    expect(kept).toEqual(['Numbers (Price $29/month, Paying beta users 3, Cash €4,200, Burn €1,100/month)', 'Idea', 'Customer']);
+    expect(keptLine(kept)).toBe('*Kept in the Company document: Numbers (Price $29/month, Paying beta users 3, Cash €4,200, Burn €1,100/month), Idea, Customer.*');
+  });
+
+  it('puts a new figure in place of the old one, leaves one that did not change, and never writes over the founder\'s idea', () => {
+    const first = keepFacts(companyTemplate(), companyFacts(DAY_ONE), '2026-09-27').text;
+    const again = keepFacts(first, companyFacts('I have €3,900 in the bank now. We still charge $29/month. We are building an invoicing tool for freelancers.'), '2026-09-30');
+    expect(again.text).toContain('- Cash: €3,900 (founder, 2026-09-30)');
+    expect(again.text).not.toContain('€4,200');
+    expect(again.text).toContain('- Price: $29/month (founder, 2026-09-27)');
+    expect(again.text).toContain('Ledgerly');
+    expect(again.text).not.toContain('invoicing tool for freelancers');
+    expect(again.kept).toEqual(['Numbers (Cash €3,900)']);
+    expect(keepFacts(again.text, companyFacts(DAY_ONE.replace('€4,200', '€3,900')), '2026-09-30').kept).toEqual([]);
+  });
+});
