@@ -398,6 +398,11 @@ type Shape = { model: string; maxPromptChars: number; maxTokens: number; tools: 
 // request timeout, and the next model is asked. Once anything streams, the model has all the time the request has.
 const FIRST_WORD_MS = 20_000;
 const PATIENT_MS = 90_000;
+// Once a model has said something, how long it may then say nothing before it is taken as stalled: after the headers the
+// SDK's own timeout is gone and only the 300 s body clock is left, so a stream that stops mid-reply held the room for
+// five minutes. The last model able waits longer, as it does for its first word.
+const IDLE_MS = 30_000;
+const PATIENT_IDLE_MS = 90_000;
 // A first-word wait longer than this (Kimi's minute) outlasts the 45 s request clock, which would cut the request before
 // the wait was up while the provider holds its headers back until the first token: such a request gets the wait and 15 s.
 const LONG_WAIT_MS = 30_000;
@@ -435,7 +440,12 @@ function clientOf(name: string, entry: Shape, api: OpenAI, firstWordMs?: number)
     // took 58.8 s to its first word on a verdict, and cutting it left the founder with no answer at all.
     const wait = firstWordMs && patient ? Math.max(PATIENT_MS, firstWordMs * 4) : firstWordMs;
     const silent = wait ? new AbortController() : undefined;
-    const timer = silent ? setTimeout(() => silent.abort(), wait) : undefined;
+    // One clock, two waits: until the first words or tool call (an empty chunk saying only who speaks does not count, or
+    // a provider that sends it and then nothing never tripped the clock), and after them between any two chunks.
+    const idle = patient ? PATIENT_IDLE_MS : IDLE_MS;
+    let spoken = false;
+    let timer = silent ? setTimeout(() => silent.abort(), wait) : undefined;
+    const rearm = () => { clearTimeout(timer); timer = setTimeout(() => silent!.abort(), idle); };
     const either = silent ? (signal ? AbortSignal.any([signal, silent.signal]) : silent.signal) : signal;
     try {
       const { data: stream, response } = await api.chat.completions.create({
@@ -449,7 +459,9 @@ function clientOf(name: string, entry: Shape, api: OpenAI, firstWordMs?: number)
       let usage: Usage | undefined;
       let cut = false;
       for await (const chunk of stream) {
-        clearTimeout(timer);
+        const said = chunk.choices[0]?.delta;
+        if (said?.content || said?.tool_calls?.length) spoken = true;
+        if (silent && spoken) rearm();
         if (chunk.usage) {
           const neurons = (chunk.usage as { neurons?: number }).neurons;
           usage = { input: chunk.usage.prompt_tokens ?? 0, output: chunk.usage.completion_tokens ?? 0, ...(typeof neurons === 'number' ? { neurons } : {}) };
@@ -461,7 +473,10 @@ function clientOf(name: string, entry: Shape, api: OpenAI, firstWordMs?: number)
       }
       return { text: '', calls: calls.filter(Boolean).map((call) => ({ ...call, id: call.id && !PER_TURN_ID.test(call.id) ? call.id : callId() })), usage, quota: readQuota(response.headers), ...(cut ? { cut } : {}) };
     } catch (error) {
-      if (silent?.signal.aborted && !signal?.aborted) throw new Error(`no first word within ${Math.round(wait! / 100) / 10} s${patient ? ', the last model able' : ''} (timed out)`);
+      if (silent?.signal.aborted && !signal?.aborted) {
+        if (spoken) throw new Error(`stalled: nothing more within ${idle / 1000} s${patient ? ', the last model able' : ''} (timed out)`);
+        throw new Error(`no first word within ${Math.round(wait! / 100) / 10} s${patient ? ', the last model able' : ''} (timed out)`);
+      }
       throw error;
     } finally {
       clearTimeout(timer);

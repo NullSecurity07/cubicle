@@ -633,3 +633,73 @@ describe('the request clock for a slow model (round 6 integrate)', () => {
     expect(asked).toEqual([{ name: 'groq', timeout: undefined }, { name: 'nvidia', timeout: 75_000 }]);
   });
 });
+
+describe('the first-word and idle clocks on a stream (reliability audit 3)', () => {
+  type Piece = { after: number; chunk: unknown };
+  // A provider whose stream sends each piece after its wait, and ends when the request is aborted.
+  const streaming = (one: ModelClient, pieces: Piece[]) => {
+    (one.openai!.chat.completions as unknown as { create: unknown }).create = (_body: unknown, options: { signal?: AbortSignal }) => ({
+      withResponse: async () => {
+        async function* chunks() {
+          for (const piece of pieces) {
+            await new Promise<void>((done, fail) => {
+              const timer = setTimeout(done, piece.after);
+              options.signal?.addEventListener('abort', () => { clearTimeout(timer); fail(new Error('Request was aborted.')); }, { once: true });
+            });
+            yield piece.chunk;
+          }
+        }
+        return { data: chunks(), response: { headers: new Headers() } };
+      },
+    });
+  };
+  const role = { choices: [{ delta: { role: 'assistant' } }] };
+  const words = (content: string) => ({ choices: [{ delta: { content } }] });
+  const groqOf = () => realClients({ GROQ_API_KEY: 'g' } as NodeJS.ProcessEnv).find((one) => one.name === 'groq')!;
+  const run = async (one: ModelClient, advance: number, patient = false) => {
+    let said = '';
+    const turn = one.step(messages, { onToken: (token) => { said += token; }, patient }).then(() => null, (error: Error) => error);
+    await vi.advanceTimersByTimeAsync(advance);
+    return { error: await turn, said };
+  };
+
+  it('is not stopped by a chunk that only says who speaks: the silence after it still trips the first-word clock', async () => {
+    vi.useFakeTimers();
+    try {
+      const groq = groqOf();
+      streaming(groq, [{ after: 100, chunk: role }, { after: 60_000, chunk: words('too late') }]);
+      const { error } = await run(groq, 21_000);
+      expect(error?.message).toMatch(/no first word within 20 s/);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('takes 35 s of silence after the first words as a stall, and the next model answers from the start', async () => {
+    vi.useFakeTimers();
+    try {
+      const groq = groqOf();
+      streaming(groq, [{ after: 100, chunk: words('Half') }, { after: 35_000, chunk: words(' an answer') }]);
+      const { error, said } = await run(groq, 31_000);
+      expect(said).toBe('Half');
+      expect(error?.message).toMatch(/stalled: nothing more within 30 s/);
+      const again = groqOf();
+      streaming(again, [{ after: 100, chunk: words('Half') }, { after: 35_000, chunk: words(' an answer') }]);
+      let restarted = 0;
+      const done = complete(messages, { onToken: () => {}, onRestart: () => { restarted += 1; } }, [again, client('b', ['A whole answer.'])]);
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect((await done)).toMatchObject({ text: 'A whole answer.' });
+      expect(restarted).toBe(1);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('lets a steady stream run as long as it needs, and waits longer between chunks for the last model able', async () => {
+    vi.useFakeTimers();
+    try {
+      const steady = groqOf();
+      streaming(steady, [role, ...Array.from({ length: 6 }, (_, i) => words(`${i} `))].map((chunk, i) => ({ after: i ? 10_000 : 100, chunk })));
+      expect(await run(steady, 61_000)).toEqual({ error: null, said: '0 1 2 3 4 5 ' });
+      const last = groqOf();
+      streaming(last, [{ after: 100, chunk: words('Slow') }, { after: 35_000, chunk: words(' but whole') }]);
+      expect(await run(last, 36_000, true)).toEqual({ error: null, said: 'Slow but whole' });
+    } finally { vi.useRealTimers(); }
+  });
+});
