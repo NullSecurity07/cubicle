@@ -171,6 +171,7 @@ const LETTERED = /^[\s*\-]*(?:\*\*|__)?\s*\(?[A-E][):.](?:\*\*|__)?\s/;
 const EITHER = /\beither\b/i;
 const BETWEEN = /\bbetween\s+(?:[$€£]?\s?\d[\d,.]*\s?[a-z%/]*\s+and\s+)?$/i;
 const OR_FIGURE = /(?:[$€£]\s?\d|\d\s?%)[^.!?\n]*\bor\s+(?:[a-z]+\s+){0,3}$/i;
+const PROPOSES = /\b(?:keep|move\s+to|go\s+(?:with|to)|pick|test|try|offer|could|options?)\b|^[\s*\-\d.)]*(?:price|charge|set)\b/i;
 function offered(reply: string, at: number): boolean {
   const lines = reply.slice(0, at).split('\n');
   const line = lines.at(-1)!;
@@ -184,6 +185,9 @@ function offered(reply: string, at: number): boolean {
       break;
     }
   }
+  // A pair, a choice or a range said of the market ("competitors charge either $49 or $79", "accountants charge
+  // between €80 and €200") is a claim: these shapes are the person's options only in a sentence that proposes.
+  if (!PROPOSES.test(sentence)) return false;
   if (EITHER.test(sentence)) return !STATUS.test(sentence.slice(sentence.search(EITHER)));
   return BETWEEN.test(sentence) || OR_FIGURE.test(sentence);
 }
