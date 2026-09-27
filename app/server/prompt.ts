@@ -118,7 +118,7 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
   const said = (at: number) => (at ? `${dayKey(at) === dayKey(now) ? 'Today' : shortDay(at)} · ` : '');
   const team = colleagueIds(stage, roomId).map((id) => {
     const other = stage.rooms.find((candidate) => candidate.id === id)!;
-    const recent = (colleagues[id] ?? []).filter((message) => message.text.trim()).slice(-4)
+    const recent = (colleagues[id] ?? []).filter((message) => message.text.trim() && !message.failed).slice(-4)
       .map((message) => `  ${said(message.at)}${message.role === 'assistant' ? other.name : message.from ?? 'Founder'}: ${stripFlagged(message.text).replace(/\s+/g, ' ').trim().slice(0, EXCERPT)}`);
     return `- ${other.name}, ${other.role}. ${other.brief}${recent.length ? `\n  Lately in ${other.name}'s room:\n${recent.join('\n')}` : ''}`;
   });
@@ -200,7 +200,7 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
 
   // Old talk reaches the model with no sense of when it was said, so a message from three weeks ago reads as just now.
   // The first message of each day carries its day, and only when the talk in front of the model spans more than one.
-  const kept = recent(history);
+  const kept = recent(history.filter((message) => !message.failed));
   const days = kept.map((message) => dayKey(message.at));
   const spans = new Set(days).size > 1;
   const stamp = (index: number) => (!spans || days[index] === days[index - 1] ? ''

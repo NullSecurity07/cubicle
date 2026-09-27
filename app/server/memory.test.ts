@@ -69,6 +69,18 @@ describe('memory', () => {
     expect(asked[0]).toMatch(/\[\d{1,2} \w+ 2026\] You: turn 1/);
   });
 
+  it('leaves a failed turn out of what it folds', async () => {
+    const store = await fresh();
+    const asked: string[] = [];
+    const memory = createMemory(store, async (messages) => { asked.push(messages[1].content); return 'Kept.'; }, () => NOON);
+    for (let index = 0; index < 16; index += 1) {
+      await store.appendChat('marketing', index === 1 ? { ...message(index), text: 'No model could answer this time (gemini down). Ask again in a minute.', failed: true } : message(index));
+    }
+    expect(await memory.fold('marketing')).toBe(true);
+    expect(asked[0]).toContain('turn 0');
+    expect(asked[0]).not.toContain('No model could answer');
+  });
+
   it('stamps a new note with the day it was kept, and still matches a note written before there were days', async () => {
     const store = await fresh();
     const memory = createMemory(store, async () => '', () => NOON);

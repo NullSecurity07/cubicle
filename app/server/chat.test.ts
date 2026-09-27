@@ -232,7 +232,29 @@ describe('a turn when models fail', () => {
     expect(events.some((one) => 'error' in one)).toBe(true);
     const talk = await store.readChat('build');
     expect(talk.map((one) => one.role)).toEqual(['user', 'assistant']);
-    expect(talk[1].text).toMatch(/^No model could answer this time.*gemini: 503 overloaded/s);
+    expect(talk[1].text).toBe('No model could answer this time (gemini down, groq down). Ask again in a minute.');
+    expect(talk[1].failed).toBe(true);
+  });
+
+  it('says a failed tool call and a busy key in plain words, in the notice and in the saved line', async () => {
+    const busy: ModelClient = { ...down('gemini'), async step() { throw Object.assign(new Error('429 Too Many Requests'), { status: 429 }); } };
+    const { store, events } = await turnChat([breaking, busy]);
+    const notices = events.filter((one) => 'notice' in one).map((one) => String(one.notice)).join(' ');
+    expect(notices).not.toMatch(/failed_generation|Failed to call a function/);
+    expect(notices).toMatch(/groq-qwen could not answer \(its tool call came out malformed\)/);
+    const saved = (await store.readChat('build')).at(-1)!;
+    expect(saved.text).not.toMatch(/failed_generation/);
+  });
+
+  it('lets a consult fail over when the colleague\'s stream breaks part way', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'chat-'));
+    const store = createStore(dir);
+    const { consult } = createChat({
+      store, roomFeed: createRoomFeed(), busy: new Set(), clients: [breaking, answering('openrouter', 'About two weeks.')], usage: createUsage(null), seams: createSeams(),
+      attention: createAttention(dir), approvals: createApprovals(), memory: { fold: async () => false },
+      promptFor: async () => [{ role: 'system', content: 'You are build.' }, { role: 'user', content: 'q' }], toolsFor: () => [],
+    });
+    expect(await consult({ fromRoomId: 'marketing', toRoomId: 'build', question: 'How long?' })).toBe('About two weeks.');
   });
 
   it('keeps a partner\'s first answer, labelled, when taking another look fails', async () => {

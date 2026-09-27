@@ -239,6 +239,8 @@ export type ChatMessage = {
   // Set when the words came from a colleague's consult, not from the founder: the colleague's name.
   from?: string; via?: ChatVia;
   provider?: string; model?: string; usage?: Usage; tools?: ToolEvent[]; stopped?: boolean; attachments?: Attachment[];
+  // A turn that failed: kept so a reload shows why the question has no answer, and never shown to a model again.
+  failed?: boolean;
 };
 // `turn` names the turn this stream is; the same name goes out on the rooms feed, so the window that asked for a
 // reply can tell its own turn from one it is only watching.

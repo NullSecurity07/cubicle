@@ -173,8 +173,12 @@ describe('runTurn', () => {
       },
     };
     const down: ModelClient = { ...scripted([]), name: 'openrouter', async step() { throw Object.assign(new Error('503 overloaded'), { status: 503 }); } };
+    const usage = createUsage(null);
+    const recorded: string[] = [];
+    const record = usage.record.bind(usage);
+    usage.record = (name, ...rest) => { recorded.push(name); return record(name, ...rest); };
     const result = await runTurn({
-      messages: [{ role: 'user', content: 'critique it' }], tools: [], clients: [qwen, down], usage: createUsage(null),
+      messages: [{ role: 'user', content: 'critique it' }], tools: [], clients: [qwen, down], usage,
       context: { stage: await store.loadStage(), roomId: 'build', store, granted: new Map() },
       events: { token: (token) => { window += token; }, tool: () => {}, notice: (text) => notices.push(text), restart: () => { window = ''; } },
     });
@@ -182,6 +186,8 @@ describe('runTurn', () => {
     expect(window).toBe(result.text);
     expect(result.text).not.toMatch(/failed_generation/);
     expect(notices.join(' ')).not.toMatch(/so groq-qwen answers/);
+    // Its failure was counted; it is not then counted as a good answer that would close its breaker again.
+    expect(recorded).toEqual([]);
   });
 
   it('tells the founder when a reply was cut at the model\'s length limit', async () => {

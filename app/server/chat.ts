@@ -8,7 +8,7 @@ import { partnerRoute } from './partner/route.ts';
 import { runTurn } from './loop.ts';
 import type { createMemory } from './memory.ts';
 import type { Offered } from './playbook.ts';
-import { complete, promptSize, type ModelClient } from './providers.ts';
+import { complete, plainFailure, promptSize, type ModelClient } from './providers.ts';
 import type { RoomFeed } from './rooms-feed.ts';
 import { route } from './router.ts';
 import type { ModelMessage } from './prompt.ts';
@@ -50,7 +50,8 @@ export function createChat(deps: Deps) {
     const { order } = target.partner && !target.model ? partnerRoute(clients, usage, { promptChars: promptSize(messages), tools: false })
       : route(clients, usage, { pinned: target.model, promptChars: promptSize(messages), tools: false });
     // The same road a turn takes: a key that is resting is passed over, and a key that fails is rested.
-    const ask = (these: ModelMessage[]) => complete(these, { onToken: () => {}, signal }, order, ({ client, error }) => usage.failed(client.name, error), (client) => usage.admit(client.name));
+    // Nothing is shown while a colleague answers, so a stream that breaks part way can go straight to the next model.
+    const ask = (these: ModelMessage[]) => complete(these, { onToken: () => {}, onRestart: () => {}, signal }, order, ({ client, error }) => usage.failed(client.name, error), (client) => usage.admit(client.name));
     let reply = await ask(messages);
     usage.record(reply.client.name, reply.usage, reply.quota);
     // A tool call written as text would land in the asker's reasoning as if it were the answer: asked once more, then held back.
@@ -134,7 +135,7 @@ export function createChat(deps: Deps) {
               // No model could take the second look: the first answer stands, back in every window, and is labelled
               // as unchecked below. Its tools and usage are already counted once.
               if (stop.signal.aborted) throw error;
-              send({ notice: `${room.name} could not take another look (${error.message.slice(0, 160)}), so the first answer stands.` });
+              send({ notice: `${room.name} could not take another look (${plainFailure(error.message)}), so the first answer stands.` });
               send({ restart: true });
               roomFeed.tell({ roomId, turn, restart: true });
               kept.text = first.text;
@@ -159,7 +160,10 @@ export function createChat(deps: Deps) {
       // Whatever a tool already did stays on it. A founder's Stop is not a failure and leaves nothing behind.
       if (!stop.signal.aborted && kept.id) {
         await kept.writes;
-        const failure = { id: kept.id, role: 'assistant' as const, text: `No model could answer this time: ${(error as Error).message.slice(0, 400)}. Ask again in a minute.`, at: Date.now(), ...(kept.tools.length ? { tools: kept.tools } : {}) };
+        const said = (error as Error).message ?? '';
+        const text = /^no provider answered/.test(said) ? `No model could answer this time (${plainFailure(said)}). Ask again in a minute.`
+          : `This reply failed before it was done (${said.slice(0, 120)}). Ask again.`;
+        const failure = { id: kept.id, role: 'assistant' as const, text, at: Date.now(), failed: true, ...(kept.tools.length ? { tools: kept.tools } : {}) };
         await store.putMessage(roomId, failure).catch(() => {});
       }
     } finally {

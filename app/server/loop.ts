@@ -1,6 +1,6 @@
 import type { ToolEvent, Usage } from '../shared/model.ts';
 import type { ModelMessage } from './prompt.ts';
-import { complete, type Failure, type ModelClient } from './providers.ts';
+import { complete, plainBreak, type Failure, type ModelClient } from './providers.ts';
 import type { Answer } from './approvals.ts';
 import { limitWords } from './breaker.ts';
 import { resultCap } from './context/shrink.ts';
@@ -88,7 +88,7 @@ export async function runTurn(input: {
   // When the model that should have answered could not, the founder hears which one stepped in and why.
   const onFailure = ({ client, error }: Failure) => {
     const status = (error as { status?: number }).status;
-    failed.push(`${client.name} could not answer (${status === 429 ? limitWords(error) : (error.message || 'error').slice(0, 120)})`);
+    failed.push(`${client.name} could not answer (${status === 429 ? limitWords(error) : plainBreak(error.message || 'error').slice(0, 120)})`);
     // A 429 rests the key, five breakdowns in a row open its breaker; either way its siblings serve meanwhile.
     usage.failed(client.name, error);
   };
@@ -140,7 +140,8 @@ export async function runTurn(input: {
     if (failed.length) events.notice?.(turn.broke ? `${failed.splice(0).join('; ')}, so no model could finish this reply.` : `${failed.splice(0).join('; ')}, so ${turn.client.name} answers.`);
     // Words already shown stay; the founder is told they stop short. (A cut reply with no words moved to the next model already.)
     if (turn.cut && !turn.broke) events.notice?.(`${turn.client.name} hit its length limit, so this reply is cut short. Ask for the rest, or for a shorter answer.`);
-    usage.record(turn.client.name, turn.usage, turn.quota);
+    // A broken reply every model failed on was counted as a failure already, not a good answer.
+    if (!turn.reported) usage.record(turn.client.name, turn.usage, turn.quota);
     total.input += turn.usage?.input ?? 0;
     total.output += turn.usage?.output ?? 0;
     answered = turn.client;
@@ -225,7 +226,7 @@ export async function runTurn(input: {
         .catch((error: Error) => { if (!/empty reply/.test(error.message)) unanswered = error.message; return null; });
       if (said) {
         if (failed.length) events.notice?.(said.broke ? `${failed.join('; ')}, so no model could finish this reply.` : `${failed.join('; ')}, so ${said.client.name} answers.`);
-        usage.record(said.client.name, said.usage, said.quota);
+        if (!said.reported) usage.record(said.client.name, said.usage, said.quota);
         total.input += said.usage?.input ?? 0;
         total.output += said.usage?.output ?? 0;
         answered = said.client;

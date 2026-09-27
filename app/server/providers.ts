@@ -43,7 +43,9 @@ export type ModelClient = {
   step(messages: ModelMessage[], options: StepOptions): Promise<ModelTurn>;
 };
 
-export type Completion = ModelTurn & { client: ModelClient };
+// `reported`: a broken reply handed back after its model's failure was already told to `onFailure`; whoever records
+// usage must not count it as a good answer, which would close the breaker the failure just moved.
+export type Completion = ModelTurn & { client: ModelClient; reported?: boolean };
 export type Failure = { client: ModelClient; error: Error };
 
 // A name for one tool call that no other call anywhere shares. Some providers send none, and numbering them from
@@ -70,12 +72,38 @@ export function retryAfter(error: unknown): number | undefined {
   return (error as { status?: number }).status === 429 ? headerWait(error) : undefined;
 }
 
+const MALFORMED_CALL = /failed_generation|failed to call a function|tool call validation|failed to parse tool/i;
 // Why a stream broke off, in words the founder can read, for the line under a reply that stops short.
 export function plainBreak(message: string): string {
-  if (/failed_generation|failed to call a function|tool call validation|failed to parse tool/i.test(message)) return 'its tool call came out malformed';
+  if (MALFORMED_CALL.test(message)) return 'its tool call came out malformed';
   if (/no first word/i.test(message)) return message;
   if (/timed? ?out|timeout/i.test(message)) return 'it stopped answering (timed out)';
   return (message || 'the stream broke off').slice(0, 160);
+}
+
+// What one model's failure was, in a few plain words: never the provider's own text, which means nothing to a founder.
+function failureWords(message: string): string {
+  if (MALFORMED_CALL.test(message)) return 'tool call came out malformed';
+  if (/no first word/i.test(message)) return 'said nothing for too long';
+  if (/\b429\b|too many requests|rate limit|already answering/i.test(message)) return 'busy';
+  if (/timed? ?out|timeout/i.test(message)) return 'timed out';
+  if (/\b40[13]\b|unauthori[sz]ed|forbidden|invalid api key/i.test(message)) return 'refused the key';
+  if (/\b5\d\d\b|overloaded|unavailable|ECONNRESET|ECONNREFUSED|fetch failed|connection error/i.test(message)) return 'down';
+  if (/prompt too large/i.test(message)) return 'prompt too large';
+  if (/resting/i.test(message)) return 'resting';
+  if (/no tool support/i.test(message)) return 'cannot use tools';
+  if (/empty reply/i.test(message)) return 'answered with nothing';
+  return 'failed';
+}
+
+// The error `complete` throws when no model answered, as one plain line: "gemini timed out, groq busy".
+export function plainFailure(message: string): string {
+  const all = /^no provider answered — (.*)$/s.exec(message);
+  if (!all) return failureWords(message);
+  return all[1].split('; ').map((part) => {
+    const at = part.indexOf(': ');
+    return at < 0 ? failureWords(part) : `${part.slice(0, at)} ${failureWords(part.slice(at + 2))}`;
+  }).join(', ');
 }
 
 // Tries each client in order. Moves on when one throws before saying anything, answers with nothing,
@@ -121,7 +149,7 @@ export async function complete(
           if (!options.onRestart) return cut;
           onFailure({ client, error: error as Error });
           failures.push(`${client.name}: ${message}`);
-          if (!broken || text.length > broken.text.length) broken = cut;
+          if (!broken || text.length > broken.text.length) broken = { ...cut, reported: true };
           break;
         }
         // A per-minute limit that clears in a few seconds is worth waiting out once; anything longer goes to the next model.

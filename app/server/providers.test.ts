@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { wireTools, collectCalls, complete, expand, portable, readQuota, realClients, unset, type ModelClient, type ToolCall } from './providers.ts';
+import { plainFailure, wireTools, collectCalls, complete, expand, portable, readQuota, realClients, unset, type ModelClient, type ToolCall } from './providers.ts';
 
 const client = (name: string, tokens: string[] | Error, maxPromptChars = Infinity): ModelClient => ({
   name, model: `${name}-1`, maxPromptChars, tools: true, limits: {},
@@ -283,5 +283,12 @@ describe('the free providers set up here', () => {
     expect(zai.busy!()).toBe(false);
     expect((await complete(messages, { onToken: () => {} }, [zai])).client.name).toBe('zai-flash');
     expect(sent).toBe(2);
+  });
+});
+
+describe('a failure in plain words', () => {
+  it('says what each model did, never the raw provider text', () => {
+    expect(plainFailure("no provider answered — gemini: Request timed out.; groq-qwen: 400 Failed to call a function. See 'failed_generation'.; groq: 429 Too Many Requests; openrouter: prompt too large"))
+      .toBe('gemini timed out, groq-qwen tool call came out malformed, groq busy, openrouter prompt too large');
   });
 });
