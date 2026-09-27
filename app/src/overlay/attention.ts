@@ -25,6 +25,7 @@ export const WHAT: Record<Attention['kind'], string> = {
   'file-damaged': 'A file could not be read',
   'backup-failed': 'The daily backup failed',
   'morning-note': 'left you the morning note', 'bet-check': 'A bet to check', 'proposed-bet': 'suggests a bet', 'proposed-plan': 'suggests tasks from a plan',
+  promise: 'Something you said you would do',
 };
 export const ago = (at: number, now = Date.now()) => {
   const minutes = Math.max(0, Math.round((now - at) / 60_000));

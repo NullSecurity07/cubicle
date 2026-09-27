@@ -62,6 +62,7 @@ describe('what the partner reads in the morning', () => {
     expect(text).not.toContain('old talk');
     expect(text).toContain('- Open: Post in r/SaaS. Bet: founders sign up. Measured by "signups" on the Metrics card: 20 by 2026-10-03.');
     expect(text).toContain('- Closed 2026-09-20: Cold email 30. Did not work; "leads:replied" was 1 against 5.');
+    expect(text).toContain('What we learned (closed bets):\n- 2026-09-20: Cold email 30 did not work; "leads:replied" was 1 against 5.');
     expect(text).not.toContain('Proposed only');
   });
 });
@@ -122,6 +123,8 @@ describe('the morning thinks across the rooms', () => {
     expect(MORNING_ASK).toContain('the biggest contradiction or risk across the rooms today');
     expect(MORNING_ASK).toMatch(/word for word/);
     expect(MORNING_ASK).toMatch(/why it is today's/);
+    // A closed bet's lesson is cited, not guessed again.
+    expect(MORNING_ASK).toContain('cite its What we learned line');
   });
 
   it('refuses a note whose risk names no room, document or number, and takes one that does', async () => {

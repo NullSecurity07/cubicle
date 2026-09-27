@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import type { Attention } from '../../../shared/model';
 import { overlay } from '../../overlay/store';
-import { answerBet, answerPlan, closeBet, morningDone } from './api';
+import { answerBet, answerPlan, closeBet, closePromise, morningDone } from './api';
 
 // What the founder can do from Needs you about the partner's things: read the morning note where it was written and
-// say it is read, take a suggested bet or leave it, say how a bet went, and put a plan's steps on the board.
+// say it is read, take a suggested bet or leave it, say how a bet went, put a plan's steps on the board, and close a
+// promise they made.
 // The bet or plan is named in the entry's id, so Needs you needs nothing else to answer it.
 export function PartnerNeed({ entry, attempt }: { entry: Attention; attempt: (work: Promise<unknown>) => void }) {
   const item = entry.id.slice(entry.id.indexOf(':') + 1);
@@ -28,6 +29,11 @@ export function PartnerNeed({ entry, attempt }: { entry: Attention; attempt: (wo
     <button type="button" className="primary" onClick={() => attempt(closeBet(item, 'worked'))}>It worked</button>
   </>;
   if (entry.kind === 'proposed-plan') return <PlanNeed item={item} attempt={attempt} />;
+  // Only the founder closes their own promise.
+  if (entry.kind === 'promise') return <>
+    <button type="button" onClick={() => attempt(closePromise(item, false))}>Drop it</button>
+    <button type="button" className="primary" onClick={() => attempt(closePromise(item, true))}>Done</button>
+  </>;
   return null;
 }
 

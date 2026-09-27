@@ -388,6 +388,48 @@ describe('the partner slice: the bets ledger', () => {
     await part.close!();
   });
 
+  // Program 6: a bet ran end to end only on paper. On its day the check is posted in the partner's room with the
+  // number read in code, once, even across a restart; a close lands in Bets and What we learned, and the partner's
+  // standing facts and morning note carry the lesson.
+  it('posts the check with its number once on the day, and a close reaches Bets, What we learned, the standing facts and the morning note', async () => {
+    let clock = new Date('2026-09-26T10:00').getTime();
+    const asked: string[] = [];
+    const options: PartnerOptions = { now: () => clock, ask: async (messages) => { asked.push(String(messages.at(-1)!.content)); return SHAPED; } };
+    const { deps, part, workspace } = await installed({ json: () => {} }, options);
+    await mkdir(join(workspace, 'metrics'), { recursive: true });
+    await writeFile(join(workspace, 'metrics', 'metrics-1.json'), JSON.stringify({ updatedAt: 0, metrics: [{ key: 'signups', label: 'Signups', unit: '', better: 'up', points: [{ at: '2026-09-20', value: 4, from: 'founder' }] }] }));
+    const stage = await deps.store.loadStage();
+    await deps.store.saveStage({ ...stage, rooms: [...stage.rooms, room('p1', 'Sam', { partner: true })], cards: [{ id: 'metrics-1', kind: 'metrics', x: 0, y: 0, w: 1, h: 1 }] });
+    await part.tools!.find((one) => one.name === 'propose_bet')!.run({ what: 'Post in r/SaaS', hypothesis: 'founders sign up', metric: 'signups', target: 20, check_date: '2026-10-03' }, { stage: await deps.store.loadStage(), roomId: 'marketing', store: deps.store, granted: new Map() } as never);
+    const id = (await deps.attention.list()).find((one) => one.kind === 'proposed-bet')!.id.split(':')[1];
+    deps.body = async () => ({ accept: true });
+    await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/bets/${id}`);
+    const checks = async () => (await deps.store.readChat('p1')).filter((one) => one.text.startsWith('**Check the bet:**'));
+    await part.tick!();
+    expect(await checks()).toHaveLength(0);
+
+    clock = new Date('2026-10-03T10:00').getTime();
+    await part.tick!();
+    await part.tick!();
+    expect((await checks()).map((one) => one.text)).toEqual(['**Check the bet:** Post in r/SaaS. The target was 20 by 2026-10-03; now Signups is 4 (2026-09-20), read from the Metrics card. Did it work? Say so here, or in Needs you.']);
+    await part.close!();
+    const again = (await createPartner(options)(deps)) as Installed;
+    await again.tick!();
+    expect(await checks()).toHaveLength(1);
+
+    deps.body = async () => ({ verdict: 'did-not', note: 'only 4 came' });
+    await again.route!({ method: 'POST' } as never, {} as never, `/api/partner/bets/${id}/close`);
+    const company = await deps.store.readDoc(companyDocOf(await deps.store.loadStage())!.id);
+    const LEARNED = '- 2026-10-03: Post in r/SaaS did not work; "signups" was 4 against 20. only 4 came.';
+    expect(company).toContain('- Did not work: Post in r/SaaS. Measured by "signups" on the Metrics card: was 4 against 20 (checked 2026-10-03). only 4 came.');
+    expect(company).toContain(`## What we learned\n\n${LEARNED}`);
+    const system = (await deps.seams.run('turn:before', { roomId: 'p1', source: 'chat', query: 'what now?', messages: [{ role: 'system', content: 'You are Sam.' }] })).messages[0].content as string;
+    expect(system).toContain(`What we learned (closed bets; cite the line when advice rests on it):\n${LEARNED}`);
+    await again.route!({ method: 'POST' } as never, {} as never, '/api/partner/morning');
+    expect(asked.at(-1)).toContain(`What we learned (closed bets):\n${LEARNED}`);
+    await again.close!();
+  });
+
   it('lets the founder say how a due bet went from Needs you', async () => {
     const answers: [number, unknown][] = [];
     const { deps, part } = await installed({ json: (_res, status, body) => { answers.push([status, body]); } }, { now: () => new Date('2026-10-05T10:00').getTime(), ask: async () => SHAPED });
@@ -447,6 +489,38 @@ describe('the partner slice: standing facts in every partner turn', () => {
     expect(after).not.toContain('bet to take');
     expect(after).toContain('Waiting in Needs you: 1 decision to make ("Raise the price?"). Nothing else waits there');
     expect(after).toMatch(/Bets on record:\n- Open: Five paying users\./);
+    await part.close!();
+  });
+});
+
+// Program 6: "what do I do now?" was answered from one room; the reply is held to the standing facts in code.
+describe('the partner slice: "what now" held to the standing facts', () => {
+  it('asks the partner once more with the facts quoted when the reply names fewer than two, and labels a second miss', async () => {
+    const { deps, part, workspace } = await installed({}, { now: () => new Date('2026-09-27T10:00').getTime(), ask: async () => SHAPED });
+    await mkdir(join(workspace, 'metrics'), { recursive: true });
+    const stage = await deps.store.loadStage();
+    await deps.store.saveStage({ ...stage, rooms: [...stage.rooms, room('p1', 'Sam', { partner: true })],
+      docs: [...stage.docs, { id: 'eval', title: 'Evaluation', x: 0, y: 0, w: 1, h: 1, rules: { framework: 'startup-evaluation', sections: [], verdict: { heading: '6. Verdict', by: 'judge' }, outcomes: ['PIVOT REQUIRED', 'WEAK', 'STRONG'] } }] } as Stage);
+    await deps.store.writeDoc('eval', '# Evaluation\n\n## 6. Verdict\n\nVerdict: PIVOT REQUIRED\nScore: 6/10\nInterview 10 more consultants before writing further code.\n');
+    const company = companyDocOf(await deps.store.loadStage())!;
+    await deps.store.writeDoc(company.id, `${await deps.store.readDoc(company.id)}`.replace('## Numbers', '## Numbers\n\n- Cash: €4,200\n- Monthly burn: €1,100'));
+    await part.tick!();
+    const base = { tools: [], provider: 'p', model: 'm', usage: { input: 1, output: 1 }, stopped: false };
+    const nudges: string[] = [];
+    const reply = async (query: string, first: string, second: string, lookedAgain = false) => (await deps.seams.run('turn:reply', {
+      roomId: 'p1', query, reply: { ...base, text: first }, lookedAgain,
+      again: async (_first, nudge) => { nudges.push(nudge); return { ...base, text: second }; },
+    })).reply.text;
+    const GOOD = 'The PIVOT REQUIRED verdict comes first, and €4,200 cash buys under four months.\n\nMy call: book five interviews today.';
+    expect(await reply('so what do I do right now?', 'My call: build the PDF invoicing today.', GOOD)).toBe(GOOD);
+    expect(nudges).toHaveLength(1);
+    expect(nudges[0]).toContain('Take another look before this goes to the founder: they asked what to do next.');
+    expect(nudges[0]).toMatch(/- Evaluation, 6\. Verdict: PIVOT REQUIRED, score 6\/10/);
+    expect(nudges[0]).toContain('- Cash: €4,200');
+    expect(await reply('what\'s next?', 'My call: build it.', 'My call: build it now.')).toBe('My call: build it now.\n\n*Not tied to the standing facts.*');
+    expect(await reply('what\'s next?', 'My call: build it.', GOOD, true)).toBe('My call: build it.\n\n*Not tied to the standing facts.*');
+    expect(await reply('Write the beta update', 'Hi all.', GOOD)).toBe('Hi all.');
+    expect(nudges).toHaveLength(2);
     await part.close!();
   });
 });
@@ -596,6 +670,45 @@ describe('the partner slice: plans become tasks', () => {
     const said = await tool.run({ title: 'Launch week', steps: ['Day 1: ship', 'Day 2: post'] }, { stage: withBoard, roomId: 'marketing' } as never);
     expect(said.text).toContain('Offered 2 tasks');
     expect((await deps.attention.list()).find((one) => one.kind === 'proposed-plan')?.detail).toBe('Day 1: ship; Day 2: post.');
+    await part.close!();
+  });
+});
+
+// Program 6: "I'll call five users by Friday" was gone the moment it was said. A co-founder remembers it, brings it up
+// on the day, asks once when it is late, and lets the founder close it.
+describe('the partner slice: the founder\'s promises', () => {
+  it('keeps a promise said in any room, brings it to Needs you and Today\'s five on its day, chases it once, and lets the founder close it', async () => {
+    let clock = new Date('2026-09-28T10:00').getTime();
+    const told: string[] = [];
+    const { deps, part } = await installed({ notify: (title) => { told.push(title); }, json: () => {} }, { now: () => clock, ask: async () => SHAPED });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    const reply = async (roomId: string, query: string, stopped = false) => (await deps.seams.run('turn:reply', { roomId, query, reply: { text: 'Good.', tools: [], provider: '', model: '', usage: { input: 0, output: 0 }, stopped } })).reply.text;
+    expect(await reply('marketing', 'OK. I\'ll call 5 beta users by Friday.')).toBe('Good.\n\n*Kept as a promise: call 5 beta users by Friday (due 2026-10-02). It comes to Needs you on the day.*');
+    expect(await reply('marketing', 'I\'ll call 5 beta users by Friday.')).toBe('Good.');
+    expect(await reply('marketing', 'I\'ll email the bank tomorrow.', true)).toBe('Good.');
+    expect(await reply('marketing', 'Should I raise the price this week?')).toBe('Good.');
+    expect((await deps.attention.list()).some((one) => one.kind === 'promise')).toBe(false);
+    const system = async () => (await deps.seams.run('turn:before', { roomId: 'p1', source: 'chat', query: 'what now?', messages: [{ role: 'system', content: 'You are Sam.' }] })).messages[0].content as string;
+    expect(await system()).toContain('The founder\'s promises:\n- call 5 beta users by Friday (due 2026-10-02)');
+
+    clock = new Date('2026-10-02T10:00').getTime();
+    await part.tick!();
+    const due = (await deps.attention.list()).find((one) => one.kind === 'promise')!;
+    expect(due).toMatchObject({ title: 'You said you would call 5 beta users by Friday', detail: 'Due today. Said on 2026-09-28.', roomId: 'marketing' });
+    expect((await todayFive(deps, clock)).find((one) => one.kind === 'promise')).toMatchObject({ reason: expect.stringContaining('Something you said you would do') });
+    const chases = async () => (await deps.store.readChat('p1')).filter((one) => one.text.startsWith('You said you would'));
+    expect(await chases()).toHaveLength(0);
+
+    clock = new Date('2026-10-03T10:00').getTime();
+    await part.tick!();
+    await part.tick!();
+    expect((await chases()).map((one) => one.text)).toEqual(['You said you would call 5 beta users by Friday (due 2026-10-02). Done? Close it in Needs you, or tell me what got in the way.']);
+    expect(told.filter((one) => one === 'A promise is late')).toHaveLength(1);
+
+    deps.body = async () => ({ done: true });
+    await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/promises/${due.id.split(':')[1]}`);
+    expect((await deps.attention.list()).some((one) => one.kind === 'promise')).toBe(false);
+    expect(await system()).not.toContain('The founder\'s promises');
     await part.close!();
   });
 });

@@ -1,7 +1,7 @@
 // The truth net: what a finished reply says, checked in code against what this turn really did and really read.
 // Prompt lines ask a person to claim no save no tool made and to invent no figure; the models still do both now and
 // then, so the reply is read afterwards and the founder is told, in a line under it, what nothing backs. The model's
-// words are never taken away.
+// words are never taken away, with one exception: a verdict word or score the team doc refused (holdVerdict).
 
 import { PARTNER_STANCE, STANCE } from '../shared/model.ts';
 
@@ -426,7 +426,7 @@ export const verdictStanding = (reason: string, outcomes: string[]) =>
 const STANDING = /Your verdict is not written: (.+?)\. Name no verdict word \(([^)]*)\) or score in chat until it is\./;
 // After a refused write, or on a turn whose prompt says the verdict is not written, any verdict word in the reply
 // reads as the verdict, with or without a score ("it leans WEAK"). A write that stands this turn answers both.
-export function verdictUnwritten(reply: string, receipts: Receipt[], sources: string[] = []): string | null {
+function unwrittenOf(receipts: Receipt[], sources: string[]): { reason: string; outcomes: string[] } | null {
   let last: RegExpExecArray | null = null;
   for (const source of sources) last = STANDING.exec(source) ?? last;
   for (const receipt of receipts) {
@@ -434,10 +434,52 @@ export function verdictUnwritten(reply: string, receipts: Receipt[], sources: st
     if (refused) last = refused;
     else if (receipt.ok && (receipt.result ?? '').includes(VERDICT_WRITTEN)) last = null;
   }
-  if (!last) return null;
-  // The verdict words as written, capitals and all: "a weak signal" gives no verdict.
-  const words = last[2].split(', ').map((word) => new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '[\\s-]+')}\\b`));
-  return words.some((word) => word.test(reply)) ? `Unconfirmed: the verdict was not written; ${last[1]}.` : null;
+  return last ? { reason: last[1], outcomes: last[2].split(', ') } : null;
+}
+// The verdict words as written, capitals and all: "a weak signal" gives no verdict.
+const wordsOf = (outcomes: string[]) => outcomes.filter(Boolean).map((word) => new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '[\\s-]+')}\\b`, 'g'));
+const unwrittenLine = (reason: string) => `Unconfirmed: the verdict was not written; ${reason}.`;
+export function verdictUnwritten(reply: string, receipts: Receipt[], sources: string[] = []): string | null {
+  const held = unwrittenOf(receipts, sources);
+  if (!held) return null;
+  return wordsOf(held.outcomes).some((word) => new RegExp(word.source).test(reply)) ? unwrittenLine(held.reason) : null;
+}
+
+// What the founder reads in place of a verdict word or a score the doc does not hold.
+export const NOT_WRITTEN = '[not written]';
+// A score out of ten, however it is put: "5/10", "6 / 10", "6 of 10", "8 out of 10", whatever words follow it. A
+// part's "1/2" is not the verdict, and "3 of 10 interviews" is a count: "of 10" before a plural noun stays.
+const SCORE = /\b\d{1,2}(?:\.\d)?\s*\/\s*10\b|\b\d{1,2}(?:\.\d)?\s+(?:out\s+)?of\s+10\b(?!\s+(?!(?:is|was|has|as|this|thus|us|yes|plus)\b)[a-z-]{2,}s\b)/g;
+// "[not written] ([not written])", "[not written], [not written]": said once.
+const TWICE = /\[not written\]((?:\*\*|__)?)(?:[\s,;:\u2013\u2014-]*|\s*\()\[not written\]\)?/g;
+// A line consult answers carry up to a colleague when the judge's verdict was not written: the relay is held too.
+const RELAYED = /^Unconfirmed: the verdict was not written; (.+)\.$/m;
+// Journeys 6-8: the refused judge said "PIVOT REQUIRED ... 5/10" and only a line under it said the doc refused it; the
+// founder read the verdict first. So after a refused or unwritten verdict, the reply's verdict words and scores are
+// replaced by NOT_WRITTEN before it is kept, with the Unconfirmed line under it once. A colleague relaying such an
+// answer (a tool result this turn carries the line) is held to `outcomes`, the stage's verdict words. The truth net's
+// own lines are left as they are: they may name the cap.
+export function holdVerdict(reply: string, receipts: Receipt[], sources: string[] = [], outcomes: string[] = []): string {
+  let held = unwrittenOf(receipts, sources);
+  if (!held && outcomes.length) {
+    const relayed = receipts.map((receipt) => RELAYED.exec(receipt.result ?? '')).find(Boolean);
+    if (relayed) held = { reason: relayed[1], outcomes };
+  }
+  if (!held) return reply;
+  const words = wordsOf(held.outcomes);
+  let changed = false;
+  const lines = reply.split('\n').map((line) => {
+    if (/^(?:Unconfirmed: |Unsourced figures: |Currency changed: )/.test(line)) return line;
+    let out = [...words, SCORE].reduce((kept, word) => kept.replace(word, NOT_WRITTEN), line);
+    if (out === line) return line;
+    changed = true;
+    while (TWICE.test(out)) out = out.replace(TWICE, `${NOT_WRITTEN}$1`);
+    return out;
+  });
+  if (!changed) return reply;
+  const text = lines.join('\n');
+  const line = unwrittenLine(held.reason);
+  return text.includes(line) ? text : `${text.trimEnd()}\n\n${line}`;
 }
 
 // The lines the founder sees under a reply that says more than this turn can back.
