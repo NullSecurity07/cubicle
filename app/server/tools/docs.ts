@@ -8,6 +8,7 @@ import { text, type Tool, type ToolContext } from './registry.ts';
 import { shortDay } from '../clock.ts';
 import { figureCheck, HELD_BACK } from '../truth.ts';
 import { findCompanyDoc } from '../../shared/partner.ts';
+import { evidenceCheck } from './evidence.ts';
 import { filled, guardWrite, sectionBody, unmarked, WHOLE } from './verdict.ts';
 
 // A new doc card's size, and the gap kept round it: the same the window uses when it places one.
@@ -97,6 +98,33 @@ function unsourcedIn(context: ToolContext, before: string, after: string): strin
   return figureCheck(after, [...context.sources(), before]).unsourced.filter((label) => at(label).test(after));
 }
 
+// The founder's own words in every room: a count the founder gave the partner on day one is a source for a colleague
+// writing it down, though it was never said in the colleague's room. A colleague's question is not the founder's.
+async function founderWords(context: Pick<ToolContext, 'stage' | 'store'>): Promise<string[]> {
+  const chats = await Promise.all(context.stage.rooms.map((room) => context.store.readChat(room.id).catch(() => [])));
+  return chats.flat().filter((message) => message.role === 'user' && !message.from && !message.failed).map((message) => message.text);
+}
+
+// What a write to a doc with rules may rest on, or null outside a turn, where there is nothing to check against.
+// `read` gives counts: what the turn read (the doc itself too) and the founder's words. `said` gives claims: only the
+// founder's words and the tool results that worked.
+type Evidence = { read: string[]; said: string[] };
+async function evidenceFor(context: ToolContext, before: string, given?: Evidence): Promise<Evidence | null> {
+  const turn = given ?? context.evidence?.() ?? (context.sources ? { read: context.sources(), said: context.sources() } : null);
+  if (!turn) return null;
+  const founder = await founderWords(context);
+  return { read: [...turn.read, ...founder, before], said: [...turn.said, ...founder] };
+}
+
+// A team doc's added lines held to the evidence (server/tools/evidence.ts): throws what is not written, or gives the
+// text with a view marked "(assumption)" and a note saying which.
+async function heldToEvidence(context: ToolContext, before: string, after: string, given?: Evidence): Promise<{ text: string; note: string }> {
+  const read = await evidenceFor(context, before, given);
+  if (!read) return { text: after, note: '' };
+  const { text, marked } = evidenceCheck({ before, after, counts: read.read, said: read.said });
+  return { text, note: marked.length ? ` Marked as a view: ${marked.map((one) => `"${one}"`).join(', ')}, with "(assumption)" after it.` : '' };
+}
+
 // The Company brief's Numbers section, which a cap on no conversations reads for paying users.
 async function numbersOf(context: Pick<ToolContext, 'stage' | 'store'>): Promise<string> {
   const company = findCompanyDoc(context.stage.docs);
@@ -110,8 +138,13 @@ async function save(context: ToolContext, id: string, before: string, written: s
   if (unsourced.length && rules) {
     throw new Error(`not written: ${unsourced.join(', ')} ${unsourced.length > 1 ? 'are' : 'is'} not in anything this turn read. Search or read for them first, take them out, or write "(unsourced)" right after each.`);
   }
-  const after = unsourced.reduce((text, label) => text.replace(at(label), `${label}${MARK}`), written);
+  let after = unsourced.reduce((text, label) => text.replace(at(label), `${label}${MARK}`), written);
   if (unsourced.length) done = `${done} Marked as unsourced, since nothing this turn read gives them: ${unsourced.join(', ')}.`;
+  if (rules) {
+    const held = await heldToEvidence(context, before, after);
+    after = held.text;
+    done = `${done}${held.note}`;
+  }
   // Only a team doc's own sections are kept to one copy, where a second would slip past the checks; a plain doc such
   // as a running log repeats "## Monday" on purpose.
   const twice = rules ? addedTwice(before, after, [...rules.sections, rules.verdict].map((one) => one.heading)) : null;
@@ -207,9 +240,13 @@ export function substance(answer: string, heading: string): string {
 // what the founder said in the colleague's own room, and the documents the colleague reads. Their memory is not here,
 // so a figure only it holds reads as unsourced.
 async function colleagueRead(context: ToolContext, targetId: string, question: string): Promise<string[]> {
+  return [...(context.sources?.() ?? []), question, ...await colleagueOwn(context, targetId)];
+}
+// What the founder said in the colleague's room, and the documents the colleague reads.
+async function colleagueOwn(context: ToolContext, targetId: string): Promise<string[]> {
   const chat = await context.store.readChat(targetId).catch(() => []);
   const docs = await Promise.all(readableDocIds(context.stage, targetId).map((id) => context.store.readDoc(id).catch(() => '')));
-  return [...(context.sources?.() ?? []), question, ...chat.filter((message) => message.role === 'user').map((message) => message.text), ...docs];
+  return [...chat.filter((message) => message.role === 'user').map((message) => message.text), ...docs];
 }
 
 // The figures in a colleague's answer that nothing they read gives, in the order said: money, shares and counts with a
@@ -263,9 +300,18 @@ export async function answerIntoSection(context: ToolContext, targetId: string, 
     if (invented.length) return `Not written into "${heading}": ${target.name}'s answer gives ${invented.join(', ')} that nothing ${target.name} read gives. The section stays empty until ${target.name} writes it with a source, or the founder gives the figure.`;
     const next = replaceSection(before, heading, body);
     if ('error' in next) continue;
+    // A count or a claim of evidence is held as in the colleague's own write, to what they read and the founder said;
+    // the asker's question is not evidence ("after your 12 interviews?"), nor are the asker's own replies.
+    const turn = context.evidence?.() ?? { read: context.sources?.() ?? [], said: [] };
+    let text: string;
+    try {
+      text = (await heldToEvidence(context, before, next.text, { read: [...await colleagueOwn(context, targetId), ...turn.read], said: turn.said })).text;
+    } catch (error) {
+      return `Not written into "${heading}": ${(error as Error).message.replace(/^not written:\s*/, '')} The section stays empty until ${target.name} writes it with a source, or the founder gives it.`;
+    }
     // The section's own checks hold as for any write of theirs; one that fails is said, and the answer still stands.
     let guarded;
-    try { guarded = guardWrite({ rules, stage, docId: id, writerId: targetId, before, after: next.text, now: Date.now(), fromChat: true, numbers: await numbersOf(context) }); } catch (error) {
+    try { guarded = guardWrite({ rules, stage, docId: id, writerId: targetId, before, after: text, now: Date.now(), fromChat: true, numbers: await numbersOf(context) }); } catch (error) {
       // The guard speaks to the writer ("Write it again", "Ask Priya with ask_person"); the asker gets only the reason.
       const why = (error as Error).message.replace(/^not written:\s*/, '').replace(/\s+(?:Write it again|Ask \S+ with ask_person)[\s\S]*$/, '');
       return `Not written into "${heading}": ${why} The section stays empty until ${target.name} writes it within the section's rules.`;
