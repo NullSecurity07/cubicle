@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { preset, type AppKey } from '../shared/apps';
 import { useAttention } from './overlay/attention';
 import { overlay, useLayers } from './overlay/store';
-import { useDockPlace, useRailFolded } from './dockPlace';
+import { useDockHidden, useDockPlace, useRailFolded } from './dockPlace';
 import { useAddCard, type CardKind } from './addCard';
 import { openFrameworks } from './frameworks';
 import { openLibrary } from './library';
@@ -225,6 +225,14 @@ function Incoming({ place, open }: { place: string; open: Set<string> }) {
   );
 }
 
+function Rail({ open }: { open: Set<string> }) {
+  return (
+    <Panel position="center-right" className="rail bar bar--right bar--vertical" aria-label="For you">
+      <Incoming place="rail" open={open} />
+    </Panel>
+  );
+}
+
 const POSITION = { right: 'center-right', left: 'center-left', bottom: 'bottom-center' } as const;
 
 // The only chrome on the stage, in two bars. The dock floats at the foot of the window with what the founder does:
@@ -246,6 +254,9 @@ export function Dock() {
   const addApp = (key: AppKey, name?: string, home?: string) => { const app = preset(key, name, home); close(); addCard('browser', { app }); };
 
   const folded = useRailFolded();
+  const hidden = useDockHidden();
+  // Hidden, the dock keeps only what the rail would show when there is no rail beside it; with a rail, nothing at all.
+  if (hidden) return folded ? <Panel position={POSITION[place]} className={`dock dock--hidden bar bar--${place} dock--${place}${place === 'bottom' ? '' : ' bar--vertical dock--vertical'}`}><Incoming place={place} open={open} /></Panel> : <Rail open={open} />;
 
   return (
     <>
@@ -300,11 +311,7 @@ export function Dock() {
         </div>
         {folded && <><span className="dock__gap" aria-hidden="true" /><Incoming place={place} open={open} /></>}
       </Panel>
-      {!folded && (
-        <Panel position="center-right" className="rail bar bar--right bar--vertical" aria-label="For you">
-          <Incoming place="rail" open={open} />
-        </Panel>
-      )}
+      {!folded && <Rail open={open} />}
     </>
   );
 }

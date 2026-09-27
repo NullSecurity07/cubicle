@@ -105,6 +105,19 @@ describe('command bar', () => {
     expect(commandWords().some((word) => word.say.includes('dock bottom'))).toBe(true);
   });
 
+  it('hides the dock and brings it back by the words a founder would type, and moving it brings it back too', async () => {
+    const { dockHidden, dockPlace } = await import('../dockPlace');
+    const run = (typed: string) => { const action = first(typed).action; expect(action.do, typed).toBe('run'); if (action.do === 'run') action.run(); };
+    for (const typed of ['hide dock', 'hide the dock', 'Hide the dock']) { run('show dock'); run(typed); expect(dockHidden(), typed).toBe(true); }
+    for (const typed of ['show dock', 'show the dock', 'unhide dock', 'bring back the dock']) { run('hide dock'); run(typed); expect(dockHidden(), typed).toBe(false); }
+    run('hide dock');
+    run('dock left');
+    expect(dockHidden()).toBe(false);
+    expect(dockPlace()).toBe('left');
+    expect(suggest('', known).some((one) => /dock/i.test(one.label))).toBe(false);
+    expect(commandWords().some((word) => word.say.includes('hide dock'))).toBe(true);
+  });
+
   it('never guesses: text that matches nothing is offered to each person as a question', () => {
     const offered = suggest('what should our refund policy be', known);
     expect(offered.map((one) => one.action)).toEqual([

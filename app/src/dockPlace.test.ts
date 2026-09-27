@@ -6,6 +6,7 @@ function browser({ saved, narrow = false, broken = false }: { saved?: string; na
   vi.stubGlobal('localStorage', {
     getItem: (key: string) => { if (broken) throw new Error('denied'); return items.get(key) ?? null; },
     setItem: (key: string, value: string) => { if (broken) throw new Error('denied'); items.set(key, value); },
+    removeItem: (key: string) => { if (broken) throw new Error('denied'); items.delete(key); },
   });
   vi.stubGlobal('matchMedia', (query: string) => ({ matches: narrow && query.includes('880px'), addEventListener() {}, removeEventListener() {} }));
   return items;
@@ -64,5 +65,23 @@ describe('dock place', () => {
     expect(railIsFolded()).toBe(true);
     browser({ saved: 'left', narrow: true });
     expect((await fresh()).railIsFolded()).toBe(true);
+  });
+
+  it('hides the dock when the founder says so, keeps it hidden after a reload, and a move brings it back', async () => {
+    const items = browser();
+    const first = await fresh();
+    expect(first.dockHidden()).toBe(false);
+    first.setDockHidden(true);
+    expect(first.dockHidden()).toBe(true);
+    expect(items.get('dock-hidden')).toBe('yes');
+    const again = await fresh();
+    expect(again.dockHidden()).toBe(true);
+    again.setDockPlace('left');
+    expect(again.dockHidden()).toBe(false);
+    expect(items.has('dock-hidden')).toBe(false);
+    browser({ broken: true });
+    const locked = await fresh();
+    expect(() => locked.setDockHidden(true)).not.toThrow();
+    expect(locked.dockHidden()).toBe(true);
   });
 });

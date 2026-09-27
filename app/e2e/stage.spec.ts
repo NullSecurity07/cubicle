@@ -1260,16 +1260,21 @@ test('missions: the first-run list ticks itself from what the workspace holds, a
   await item('Connect something').getByRole('button').click();
   await expect(item('Connect something')).toContainText('Drag from a dot on a person');
 
-  // Collapsed it stays out of the way; hidden for good survives a reload.
+  // Closed it leaves the corner empty and the dock's ring brings it back; hidden for good survives a reload, ring and all.
+  const ring = page.locator('.dock').getByRole('button', { name: /Getting started|You know your way around/ });
+  await expect(ring).toHaveAttribute('aria-pressed', 'true');
   await card.getByRole('button', { name: /of 6/ }).click();
-  await expect(card.getByRole('list')).toBeHidden();
-  await card.getByRole('button', { name: /of 6/ }).click();
+  await expect(card).toBeHidden();
+  await expect(ring).toHaveAttribute('aria-pressed', 'false');
+  await ring.click();
+  await expect(card.getByRole('list')).toBeVisible();
   await card.getByRole('button', { name: /hide this/i }).click();
   await expect(card).toBeHidden();
   await page.reload();
   await expect(node(page, 'marketing')).toBeVisible();
   await page.waitForTimeout(1200);
   await expect(card).toBeHidden();
+  await expect(ring).toHaveCount(0);
 });
 
 test('a voice studio switched to OmniVoice says plainly that what it makes is not for sale, and asks for permission to clone', async ({ page }) => {
