@@ -79,6 +79,10 @@ const TOO_LARGE = /\b413\b|request too large|payload too large|context length|ma
 // request ids ("org_01m24…", "req_…", "in organization `…`").
 export function scrubProvider(message: string): string {
   return message
+    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/\b(?:sk|gsk|csk|nvapi|AIza|hf|key)[-_][\w*.…-]+/gi, '')
     .replace(/\[?\{[\s\S]*\}\]?/g, '')
     .replace(/\s*in organi[sz]ation\s+`[^`]*`/gi, '')
     .replace(/\b(?:org|req|request|proj|user|acct)[_-][\w-]+/gi, '')
@@ -94,6 +98,10 @@ export function plainBreak(message: string, provider?: string): string {
   if (TOO_LARGE.test(message)) return `the prompt is too large for ${provider ?? 'this model'}`;
   if (REJECTED.test(message)) return 'the model rejected the request';
   if (/timed? ?out|timeout/i.test(message)) return 'it stopped answering (timed out)';
+  // Anything else is said by its kind (down, busy, the key refused) before the provider's own words are ever used, and
+  // those only with their tags, keys, addresses and ids taken out.
+  const words = failureWords(message);
+  if (words !== 'failed') return words;
   return scrubProvider(message || 'the stream broke off').slice(0, 160) || 'it failed';
 }
 
@@ -145,8 +153,9 @@ export function fitHistory(messages: ModelMessage[], cap: number): ModelMessage[
 // A small model on this machine (or one kept for side calls) never takes a turn with tools while a hosted model is
 // there: a local 7B made six calls under one id and broke the room for the week. With no hosted model at all it
 // still answers, since it is all there is.
+// One the founder pinned (first in the order) keeps its turn: the pin is theirs to make.
 const smallFor = (client: ModelClient, options: StepOptions, clients: ModelClient[]) =>
-  !!options.tools?.length && (!!client.local || !!client.side) && clients.some((other) => !other.local && !other.side);
+  !!options.tools?.length && (!!client.local || !!client.side) && client !== clients[0] && clients.some((other) => !other.local && !other.side);
 
 // Tries each client in order. Moves on when one throws before saying anything, answers with nothing,
 // or cannot hold the prompt. A reply that breaks off mid-stream moves on too when the caller can take its words back

@@ -532,14 +532,16 @@ describe('a turn whose model repeats a tool call id', () => {
     expect(second.filter((message) => message.role === 'tool').map((message) => message.role === 'tool' && message.tool_call_id)).toEqual(result.tools.map((tool) => tool.id));
   });
 
-  it('lets a stand-in model make at most three tool calls in a turn', async () => {
+  it('lets a stand-in model make at most three calls that change something in a turn, reads not counted', async () => {
     const store = createStore(await mkdtemp(join(tmpdir(), 'loop-')));
     let steps = 0;
+    const write = (n: number) => ({ id: `w${n}`, name: 'write_file', args: JSON.stringify({ path: `notes/${n}.md`, text: 'x' }) });
     const ollama: ModelClient = {
       ...scripted([]), name: 'ollama', local: true,
       async step(_messages, { onToken }) {
         steps += 1;
-        if (steps === 1) return { text: '', calls: [0, 1, 2, 3, 4].map((n) => ({ id: `c${n}`, name: 'list_files', args: '{}' })) };
+        // Three searches of the files, then five writes.
+        if (steps === 1) return { text: '', calls: [...[0, 1, 2].map((n) => ({ id: `r${n}`, name: 'list_files', args: '{}' })), ...[0, 1, 2, 3, 4].map(write)] };
         onToken('Done.');
         return { text: '', calls: [] };
       },
@@ -549,7 +551,7 @@ describe('a turn whose model repeats a tool call id', () => {
       context: { stage: await store.loadStage(), roomId: 'build', store, granted: new Map() },
       events: { token: () => {}, tool: () => {} },
     });
-    expect(result.tools.map((tool) => tool.ok)).toEqual([true, true, true, false, false]);
-    expect(result.tools[3].result).toBe(FALLBACK_REFUSAL);
+    expect(result.tools.map((tool) => tool.ok)).toEqual([true, true, true, true, true, true, false, false]);
+    expect(result.tools[6].result).toBe(FALLBACK_REFUSAL);
   });
 });

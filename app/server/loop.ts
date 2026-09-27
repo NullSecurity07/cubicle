@@ -12,10 +12,12 @@ import { ANSWER_IN_WORDS, CALL_THE_TOOL, checkReply, HELD_BACK, proseToolCall, t
 import type { UsageBook } from './usage.ts';
 
 const MAX_STEPS = 8;
-// The most tool calls a stand-in model (one that answers because the first could not, or one on this machine) may
+// The most tool calls that change something a stand-in model (one that answers because the first could not, or one on this machine) may
 // make in a turn: a local 7B that took over a partner turn called propose_bet seven times.
 export const FALLBACK_CALLS = 3;
-export const FALLBACK_REFUSAL = `A stand-in model may make at most ${FALLBACK_CALLS} tool calls in one turn. Do not call more; answer in words with what you have.`;
+// Tools that only read: they cost a stand-in none of its calls.
+const READS = /^(read_|list_|web_search|web_fetch|recall|search_|gather_|crawl_site|ask_person)/;
+export const FALLBACK_REFUSAL = `A stand-in model may make at most ${FALLBACK_CALLS} tool calls that change something in one turn. Do not make more; answer in words with what you have.`;
 // What the founder's receipt keeps of a result. The model is handed the whole of it: a five-page read, the last of
 // several searches and the error at the end of a long run all sit past this, and the shrinker at the door knows how
 // to make a long result small without throwing its end away.
@@ -195,8 +197,10 @@ export async function runTurn(input: {
       const tool = tools.find((candidate) => candidate.name === call.name);
       let rawArgs = call.args;
       let refusal = tool?.ready?.() ?? null;
-      if (standIn && tool) refusal = refusal ?? (standInCalls >= FALLBACK_CALLS ? FALLBACK_REFUSAL : null);
-      if (standIn && tool && !refusal) standInCalls += 1;
+      // Only calls that change something count: a stand-in that searched three times may still write what it found.
+      const changes = !!tool && !READS.test(call.name);
+      if (standIn && changes) refusal = refusal ?? (standInCalls >= FALLBACK_CALLS ? FALLBACK_REFUSAL : null);
+      if (standIn && changes && !refusal) standInCalls += 1;
       // The founder may have said yes in advance to calls that reach exactly this far. It only skips the asking.
       let approved = false;
       if (seams) {

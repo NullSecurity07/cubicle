@@ -309,6 +309,22 @@ describe('the fallback that broke a room (journey 6)', () => {
     expect((await complete(messages, { onToken: () => {}, tools: tool }, [ollama])).client.name).toBe('ollama');
   });
 
+  it('keeps a local model the founder pinned, first in the order, on a turn with tools', async () => {
+    const ollama: ModelClient = { ...client('ollama', ['from ollama']), local: true };
+    expect((await complete(messages, { onToken: () => {}, tools: tool }, [ollama, client('gemini', ['from gemini'])])).client.name).toBe('ollama');
+    // Behind a hosted model it is still kept off.
+    await expect(complete(messages, { onToken: () => {}, tools: tool }, [failing('gemini', GEMINI_400, 400), ollama])).rejects.toThrow(/ollama: kept off turns with tools/);
+  });
+
+  it('says an HTML error page and a refused key by their kind, with no tags, key or address', () => {
+    const page = '500 <!DOCTYPE html><html><head><title>Error</title><style>body{color:red}</style></head><body><h1>Internal Server Error</h1><p>Ray ID: 8a1b2c</p></body></html>';
+    expect(plainBreak(page, 'cloudflare')).toBe('down');
+    const key = '401 Incorrect API key provided: gsk_abcd****************wxyz. You can find your API key at https://console.groq.com/keys.';
+    expect(plainBreak(key, 'groq')).toBe('refused the key');
+    expect(scrubProvider(page)).not.toMatch(/[<>]|DOCTYPE/);
+    expect(scrubProvider(key)).not.toMatch(/gsk_|https?:|console\./);
+  });
+
   it('says the journey\'s two errors in words, with no JSON and no organisation id', () => {
     expect(plainBreak(GEMINI_400, 'gemini')).toBe('the model rejected the request');
     expect(plainBreak(GROQ_413, 'groq')).toBe('the prompt is too large for groq');
