@@ -428,7 +428,7 @@ describe('the new keys refused (round 6)', () => {
     await settle();
     expect(usage.dead('mistral')).toBe(true);
     const [item] = await attention.list();
-    expect(item).toMatchObject({ id: 'key-rejected:MISTRAL_API_KEY:1', title: 'Mistral key rejected; fix it in Keys' });
+    expect(item).toMatchObject({ id: 'key-rejected:MISTRAL_API_KEY:1', title: 'Mistral\'s free plan is not on; turn it on at console.mistral.ai' });
     expect(item.detail).toContain('its plan allows no requests yet');
     expect(item.detail).toContain('console.mistral.ai');
     // A busy minute is not a refused key.

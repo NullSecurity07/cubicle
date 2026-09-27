@@ -8,18 +8,20 @@ import type { Deps } from '../install.ts';
 import { chosenBackupDir } from '../openends/backup.ts';
 import keysFile, { envFileOf, failuresOf, fromOwnPage, rowsOf } from './keys-file.ts';
 import { createUsage, type UsageBook } from '../usage.ts';
+import { PLANLESS } from '../breaker.ts';
+import type { ModelClient } from '../providers.ts';
 
 const OWN = { ports: [7420, 7421], token: 't' };
 const PAGE = { origin: 'http://localhost:7420', 'sec-fetch-site': 'same-origin' };
 const kept = { ...process.env };
 afterEach(() => { for (const name of ['STAGE_BACKUP_DIR', 'STAGE_ENV_FILE', 'OPENOUTFIND_OPERATOR_EMAIL']) { if (kept[name] === undefined) delete process.env[name]; else process.env[name] = kept[name]; } });
 
-async function setup(before = '', usage?: UsageBook) {
+async function setup(before = '', usage?: UsageBook, clients: ModelClient[] = []) {
   const workspace = await mkdtemp(join(tmpdir(), 'keys-file-'));
   if (before) await writeFile(join(workspace, '.env'), before);
   const answered: { status: number; body: any }[] = [];
   let sent: unknown = {};
-  const deps = { workspace, root: '/nowhere', fake: true, own: OWN, clients: [], usage, json: (_res: ServerResponse, status: number, body: unknown) => answered.push({ status, body }), body: async () => sent } as unknown as Deps;
+  const deps = { workspace, root: '/nowhere', fake: true, own: OWN, clients, usage, json: (_res: ServerResponse, status: number, body: unknown) => answered.push({ status, body }), body: async () => sent } as unknown as Deps;
   const part = await keysFile.install(deps);
   const call = async (path: string, method = 'GET', body: unknown = {}, headers: Record<string, string> = PAGE) => {
     sent = body;
@@ -130,5 +132,23 @@ describe('a key refused in a turn, in the Keys panel (round 6)', () => {
     const { row } = await setup('MISTRAL_API_KEY=mistral-key-0001\n', usage);
     usage.failed('mistral', Object.assign(new Error('429 Rate limit exceeded'), { status: 429, headers: new Headers({ 'x-ratelimit-limit-req-minute': '0' }) }));
     expect(await row('MISTRAL_API_KEY')).toMatchObject({ state: 'failing', problem: 'its plan allows no requests yet: turn on the free plan at console.mistral.ai' });
+  });
+});
+
+describe('a Mistral key whose free plan is off, in a Keys check (round 6 final)', () => {
+  it('keeps saying where to turn the plan on, not the raw 429', () => {
+    const failed = failuresOf([{ name: 'mistral' }], [{ ok: false, detail: PLANLESS }]);
+    expect(failed.get('MISTRAL_API_KEY')).toBe('its plan allows no requests yet: turn on the free plan at console.mistral.ai');
+  });
+
+  it('brings a key refused in a turn back at once when a check finds it answering', async () => {
+    const usage = createUsage(null);
+    const answering: ModelClient = { name: 'mistral', model: 'm', maxPromptChars: 1000, tools: true, limits: {}, step: async () => ({ text: 'ok', calls: [] }) };
+    const { call, row } = await setup('MISTRAL_API_KEY=mistral-key-0001\n', usage, [answering]);
+    usage.failed('mistral', Object.assign(new Error('429 Rate limit exceeded'), { status: 429, headers: new Headers({ 'x-ratelimit-limit-req-minute': '0' }) }));
+    expect(usage.dead('mistral')).toBe(true);
+    await call('/api/keys-file/check', 'POST');
+    expect(usage.dead('mistral')).toBe(false);
+    expect(await row('MISTRAL_API_KEY')).toMatchObject({ state: 'set' });
   });
 });

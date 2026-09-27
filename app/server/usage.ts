@@ -151,6 +151,9 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     breaker: (name: string) => breaker.state(name),
     // True while the provider's refusal of this key (401, 403) is fresh.
     dead: (name: string) => breaker.dead(name),
+    // A key a check found answering: whatever its breaker held against it (a refusal's six hours, say, after the founder
+    // turned a plan on) is forgotten, and whoever heard of the refusal hears it answer.
+    revive(name: string) { breaker.ok(name); if (keyWatchers.size) tellKey({ name, dead: false }); },
     // How much one key has carried, the last minute first: what spreads a provider's keys evenly.
     carried(name: string) {
       roll();

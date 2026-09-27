@@ -9,6 +9,7 @@ import { localDay } from './clock.ts';
 import { PROVIDERS } from './keys-file/catalogue.ts';
 import { ENTRIES } from './providers.ts';
 import type { UsageBook } from './usage.ts';
+import { PLANLESS } from './breaker.ts';
 
 export type AttentionBook = ReturnType<typeof createAttention>;
 type Source = () => Promise<Attention[]>;
@@ -125,7 +126,7 @@ export const boardAttention = (store: Store, boards: Boards) => async (): Promis
 };
 
 // A key refused for having no plan, in words the founder can act on: where to turn the free plan on.
-export const planlessWords = (keyEnv: string) => `its plan allows no requests yet: turn on the free plan${PROVIDERS[keyEnv]?.where ? ` at ${PROVIDERS[keyEnv].where}` : ''}`;
+export const planlessWords = (keyEnv: string) => `${PLANLESS}: turn on the free plan${PROVIDERS[keyEnv]?.where ? ` at ${PROVIDERS[keyEnv].where}` : ''}`;
 
 // A key the provider refused (401, 403) is one item for the founder, raised once and kept until the key answers again:
 // no turn can fix it, only a new key in Keys can. One item a key: one Groq key serves groq, groq-small and groq-qwen,
@@ -144,7 +145,7 @@ export function keyAttention(usage: Pick<UsageBook, 'onKey'>, attention: Attenti
     const which = number === '1' ? keyEnv : `${keyEnv}_${number}`;
     if (dead) open.add(id); else open.delete(id);
     void (dead
-      ? attention.raise({ id, kind: 'key-rejected', at: now(), title: `${said} key rejected; fix it in Keys`, detail: `${which} was refused (${status ?? 'no status'}): ${planless ? planlessWords(keyEnv) : 'the key is wrong, revoked or out of credit'}. Other models answer meanwhile; this goes away the next time it answers.` })
+      ? attention.raise({ id, kind: 'key-rejected', at: now(), title: planless ? `${said}'s free plan is not on; turn it on${PROVIDERS[keyEnv]?.where ? ` at ${PROVIDERS[keyEnv].where}` : ' in its console'}` : `${said} key rejected; fix it in Keys`, detail: `${which} was refused (${status ?? 'no status'}): ${planless ? planlessWords(keyEnv) : 'the key is wrong, revoked or out of credit'}. Other models answer meanwhile; this goes away the next time it answers.` })
       : attention.clear(id)).catch(() => {});
   });
 }

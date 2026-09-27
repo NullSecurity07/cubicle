@@ -3,6 +3,7 @@ import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Check } from '../../shared/openends.ts';
 import { fallbackList } from '../keys-file/catalogue.ts';
+import { planless, PLANLESS } from '../breaker.ts';
 import { ENTRIES, unset, type ModelClient } from '../providers.ts';
 import type { EngineHealth } from '../opencode/server.ts';
 import { graphifyVersion, INSTALL, mcpCommand, PIN } from '../slices/graph.ts';
@@ -274,10 +275,14 @@ export async function liveChecks(clients: ModelClient[]): Promise<Check[]> {
   return Promise.all(clients.map(async (client) => {
     const started = Date.now();
     try {
-      await client.step([{ role: 'user', content: 'Say ok.' }], { onToken: () => {}, signal: AbortSignal.timeout(30_000) });
+      // As long as a turn would wait for this model's first word, and 15 s more: Kimi on NVIDIA takes 13-44 s, and cut
+      // at 30 s a good key read as not working.
+      const stop = new AbortController();
+      const timer = setTimeout(() => stop.abort(), Math.max(30_000, (client.firstWordMs ?? 0) + 15_000));
+      try { await client.step([{ role: 'user', content: 'Say ok.' }], { onToken: () => {}, signal: stop.signal }); } finally { clearTimeout(timer); }
       return { name: `A word with ${client.name}`, ok: true, detail: `answered in ${Date.now() - started} ms as ${client.model}`, fix: '' };
     } catch (error) {
-      return { name: `A word with ${client.name}`, ok: false, detail: (error as Error).message.slice(0, 200), fix: `Check this provider's key in .env, and whether today's free allowance is used up.` };
+      return { name: `A word with ${client.name}`, ok: false, detail: planless(error) ? PLANLESS : (error as Error).message.slice(0, 200), fix: `Check this provider's key in .env, and whether today's free allowance is used up.` };
     }
   }));
 }

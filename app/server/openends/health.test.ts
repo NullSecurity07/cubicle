@@ -1,7 +1,8 @@
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { PLANLESS } from '../breaker.ts';
 import { backupRow, checkAll, freeProviders, healthRows, keyChecks, keyPools, keysOf, liveChecks, liveReaders, LIVE_FEED, LIVE_REDDIT, LIVE_REDDIT_FEED, onPath, ytdlpVersion } from './health.ts';
 import type { Check } from '../../shared/openends.ts';
 
@@ -146,6 +147,24 @@ describe('a word with each model', () => {
     expect(checks[0]).toMatchObject({ name: 'A word with groq', ok: true });
     expect(checks[1]).toMatchObject({ name: 'A word with gemini', ok: false, detail: '401 the key is not valid' });
     expect((await liveChecks([]))[0].ok).toBe(false);
+  });
+
+  it('waits for a slow model as long as a turn would, and says a key whose plan is off in words (round 6 final)', async () => {
+    vi.useFakeTimers();
+    try {
+      // Answers after 40 s unless stopped first, as Kimi on NVIDIA does on a bad minute.
+      const slow = (name: string, firstWordMs?: number) => ({ name, model: 'm', ...(firstWordMs ? { firstWordMs } : {}), step: (_messages: unknown, { signal }: { signal: AbortSignal }) => new Promise((done, fail) => {
+        const timer = setTimeout(() => done({ text: 'ok', calls: [] }), 40_000);
+        signal.addEventListener('abort', () => { clearTimeout(timer); fail(new Error('Request was aborted.')); }, { once: true });
+      }) });
+      const planless = { name: 'mistral', model: 'm', step: async () => { throw Object.assign(new Error('429 Rate limit exceeded'), { status: 429, headers: new Headers({ 'x-ratelimit-limit-req-minute': '0' }) }); } };
+      const asked = liveChecks([slow('nvidia', 60_000), slow('groq'), planless] as never);
+      await vi.advanceTimersByTimeAsync(41_000);
+      const [nvidia, groq, mistral] = await asked;
+      expect(nvidia.ok).toBe(true);
+      expect(groq).toMatchObject({ ok: false });
+      expect(mistral).toMatchObject({ ok: false, detail: PLANLESS });
+    } finally { vi.useRealTimers(); }
   });
 });
 

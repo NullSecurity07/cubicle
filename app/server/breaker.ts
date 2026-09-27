@@ -24,6 +24,8 @@ export const planless = (error: unknown) => {
   headers.forEach((value, name) => { if (/^x-ratelimit-limit-/i.test(name) && value.trim() === '0') none = true; });
   return none;
 };
+// What a key whose plan allows no requests is said to be, before where to turn the plan on is added (attention.ts).
+export const PLANLESS = 'its plan allows no requests yet';
 // A 403 for a prompt the provider's moderation flagged (OpenRouter does this) says nothing about the key.
 export const refused = (error: unknown) => statusOf(error) === 401
   || (statusOf(error) === 403 && !/moderat|flagged/i.test(String((error as Error)?.message ?? '')))
