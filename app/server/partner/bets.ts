@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { LEAD_STAGES, STAGE_NAMES, type LeadStage } from '../../shared/leads.ts';
-import { findMetric, formatValue, isDay, type Metrics } from '../../shared/metrics.ts';
+import { findMetric, formatValue, guessBetter, isDay, type Metrics } from '../../shared/metrics.ts';
 import type { Attention, Stage } from '../../shared/model.ts';
 import { bare, VERDICT_WORDS, type Bet, type BetVerdict } from '../../shared/partner.ts';
 import { localDay } from '../clock.ts';
@@ -177,10 +177,13 @@ export async function askedInstead(workspace: string, stage: Stage, pick: string
 
 // A bet has to be able to lose: its target beats the number as it stands, up for most numbers and down for one that
 // is better lower (churn, burn, cost). Null when it does; else what to tell the person, with the number read now.
-export function cannotLose(metric: string, target: number, reading: Reading): string | null {
+// A row that does not say which way is better is read by its name, as the Metrics card guesses it. A hold ("keep our 3
+// paying users") can lose too, through churn, so an equal target stands when the ask says keep, hold or retain.
+export function cannotLose(metric: string, target: number, reading: Reading, ask = ''): string | null {
   if (reading.value === null) return null;
-  const lower = reading.better === 'down';
+  const lower = (reading.better ?? guessBetter(metric)) === 'down';
   if (lower ? target < reading.value : target > reading.value) return null;
+  if (target === reading.value && /\b(?:keep|hold|retain|maintain)\b/i.test(ask)) return null;
   const where = /read from (the \w+ card)/.exec(reading.said)?.[1] ?? 'its card';
   const way = lower ? `${metric.charAt(0).toUpperCase()}${metric.slice(1)} is better lower: propose a target below ${reading.value}` : `Propose a target above ${reading.value}`;
   return `"${metric}" is ${reading.value} now, read from ${where}: a target of ${target} cannot lose. ${way}, one this bet could miss, and tell the founder the number it starts from.`;

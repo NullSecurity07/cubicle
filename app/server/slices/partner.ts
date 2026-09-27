@@ -67,8 +67,8 @@ export function betTools(book: BetsBook, workspace: string, changed: () => Promi
         if (!choices.some((one) => one.toLowerCase() === metric.toLowerCase()) && (await readMetric(workspace, context.stage, metric)).value === null) {
           throw new Error(missingMetric(context.stage, metric, choices));
         }
-        // A target the number already meets is no bet: it is refused with the number as it stands.
-        const lose = cannotLose(metric, target, await readMetric(workspace, context.stage, metric));
+        // A target the number already meets is no bet, unless the ask is to hold it: refused with the number as it stands.
+        const lose = cannotLose(metric, target, await readMetric(workspace, context.stage, metric), `${context.query ?? ''} ${text(args, 'what', 160)}`);
         if (lose) throw new Error(lose);
         const me = speaker(context);
         const bet = await book.propose({ what: bare(text(args, 'what', 160)), hypothesis: typeof args.hypothesis === 'string' ? args.hypothesis.replace(/\s+/g, ' ').trim().slice(0, 400) : '', metric, target, checkDate, ...(me ? { proposedBy: me.name, roomId: me.id } : {}) });

@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { Lead } from '../../shared/leads.ts';
 import type { Metrics } from '../../shared/metrics.ts';
 import type { Stage } from '../../shared/model.ts';
-import { askedInstead, betDue, betsAttention, betsBook, metricAsked, metricChoices, metricFits, missingMetric, readMetric } from './bets.ts';
+import { askedInstead, betDue, betsAttention, betsBook, cannotLose, metricAsked, metricChoices, metricFits, missingMetric, readMetric } from './bets.ts';
 
 const card = (id: string, kind: 'metrics' | 'leads' | 'survey') => ({ id, kind, x: 0, y: 0, w: 1, h: 1, ...(kind === 'survey' ? { title: 'PMF', questions: [] } : {}) }) as NonNullable<Stage['cards']>[number];
 
@@ -115,5 +115,20 @@ describe('the metric an ask names', () => {
     expect(metricFits('survey', 'signups')).toBe(false);
     for (const pick of ['signups', 'Signups', 'newsletter_signups', 'signup']) expect(metricFits(pick, 'signups'), pick).toBe(true);
     expect(metricFits('leads:replied', 'leads:replied')).toBe(true);
+  });
+});
+
+describe('a bet that can lose', () => {
+  const read = (value: number, better?: 'up' | 'down') => ({ value, said: `x is ${value}, read from the Metrics card`, ...(better ? { better } : {}) });
+  it('guesses the way a number should move from its name when the row does not say', () => {
+    expect(cannotLose('churn', 5, read(7))).toBeNull();
+    expect(cannotLose('churn', 8, read(7))).toMatch(/Churn is better lower: propose a target below 7/);
+    expect(cannotLose('signups', 5, read(7))).toMatch(/Propose a target above 7/);
+  });
+
+  it('allows holding a number where it is when the ask says keep, hold or retain, and never a silent equal target', () => {
+    expect(cannotLose('paying_users', 3, read(3, 'up'), 'keep our 3 paying users through October')).toBeNull();
+    expect(cannotLose('paying_users', 3, read(3, 'up'), 'make the 2-week bet')).toMatch(/a target of 3 cannot lose/);
+    expect(cannotLose('paying_users', 2, read(3, 'up'), 'keep our 3 paying users')).toMatch(/a target of 2 cannot lose/);
   });
 });
