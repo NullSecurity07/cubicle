@@ -279,7 +279,7 @@ describe('the partner slice: the morning note', () => {
   });
 
   it('posts a note with an unsourced figure all the same, with the flag line under it in the partner\'s chat', async () => {
-    const { deps, part } = await installed({}, { now: () => NINE, ask: async () => 'Three moves for today:\n1. Charge $29/month from Monday.\n2. Email the replied leads.\n3. Log signups.\nRisk: r\nQuestion: q?' });
+    const { deps, part } = await installed({}, { now: () => NINE, ask: async () => 'Three moves for today:\n1. Charge $29/month from Monday.\n2. Email the replied leads.\n3. Log signups.\nRisk: the Company document holds no price\nQuestion: q?' });
     await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
     await part.route!({ method: 'POST' } as never, {} as never, '/api/partner/morning');
     const said = (await deps.store.readChat('p1')).at(-1)!.text;

@@ -236,7 +236,7 @@ export function createPartner(options: PartnerOptions = {}) {
           sources: {
             workspace: deps.workspace, stage, partnerId: partner.id, now: at, bets, company: inputs.company,
             decisions: () => deps.decisions.list(), boards: (id) => deps.boards.list(id), leads: (id) => leadsFor(deps.workspace).list(id),
-            chat: (roomId) => deps.store.readChat(roomId),
+            chat: (roomId) => deps.store.readChat(roomId), doc: (id) => deps.store.readDoc(id),
           },
         }).catch((error: Error) => { console.error(`partner morning: ${error.message}`); return null; });
         if (!written) return null;

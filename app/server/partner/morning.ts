@@ -4,6 +4,7 @@ import type { ChatMessage, Decision, Stage, Task } from '../../shared/model.ts';
 import { bare, morningText, readMorning, type Bet, type MorningNote } from '../../shared/partner.ts';
 import { localDay, weekDay } from '../clock.ts';
 import type { ModelMessage } from '../prompt.ts';
+import { sectionBody, filled, verdictOf } from '../tools/verdict.ts';
 import { checkReply, stripFlagged } from '../truth.ts';
 import { gatherMonth } from '../slices/month.ts';
 import type { PartnerState } from './state.ts';
@@ -35,12 +36,16 @@ export function morningDue(state: Pick<PartnerState, 'morning' | 'tries' | 'part
 }
 
 export const MORNING_ASK = 'Nobody asked you for this. It is your own daily look at the company, and the founder reads it first thing. '
-  + 'Below is what changed since yesterday, the board and the bets on record; the Company document is above. '
+  + 'Below is what changed since yesterday, the team verdicts, the figures the truth net flagged, the Company numbers, the board and the bets on record; the Company document is above. '
+  + 'Think across the rooms: set the plan against the verdicts, the flags and each person\'s numbers before you choose. '
   + 'Give three moves for today: what to do, and why, each a concrete step the founder or a person can start today. '
+  + 'A move that repeats a plan step or a board task word for word is no move, unless it says why it is today\'s. '
   + 'Do not restate the Company document or the brief: the founder wrote it and knows it. '
   + 'Use only these facts: name the number or the line each move rests on, and never invent one. '
+  + 'The risk is the biggest contradiction or risk across the rooms today (a verdict against the plan, a flagged figure, two numbers that disagree), '
+  + 'and it names the room, the document or the number it rests on. '
   + 'Reply in exactly this shape and nothing else, each line under thirty words, with no "My call" line here:\n'
-  + 'Three moves for today:\n1. …\n2. …\n3. …\nRisk: one risk, and the fact it rests on\nQuestion: one question for the founder';
+  + 'Three moves for today:\n1. …\n2. …\n3. …\nRisk: the biggest contradiction or risk, and where it is\nQuestion: one question for the founder';
 
 // Everything the note is read from, as one short key: decisions, bets, the Company document and what the founder or a
 // person said last in each room. The partner's own messages are left out, since the note itself is one of them.
@@ -51,6 +56,16 @@ export function morningInputs(input: { stage: Stage; partnerId: string; decision
   });
   const text = JSON.stringify([input.decisions.map((one) => [one.id, one.status, one.decidedAt ?? 0]), input.bets.map((one) => [one.id, one.status, one.result?.at ?? 0]), input.company, talk]);
   return createHash('sha1').update(text).digest('hex').slice(0, 16);
+}
+
+// A risk the founder can check names where it is: a person, a document or a number. "Execution could slip" names
+// nothing and could be said of any company on any day.
+export function namesAPlace(risk: string, stage: Stage): boolean {
+  if (/\d/.test(risk)) return true;
+  const said = risk.toLowerCase();
+  const names = [...stage.rooms.flatMap((room) => [room.name, room.role]), ...stage.docs.map((doc) => doc.title), 'Company document']
+    .map((name) => name?.trim().toLowerCase()).filter((name): name is string => !!name && name.length > 1);
+  return names.some((name) => new RegExp(`(?<![a-z])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![a-z])`).test(said));
 }
 
 // A note whose three moves are all lines of the Company document tells the founder what they wrote, not what to do.
@@ -64,7 +79,15 @@ export type MorningSources = {
   chat: (roomId: string) => Promise<ChatMessage[]>; bets: () => Promise<Bet[]>;
   // The Company document's text, to tell a note that only restates it from one that moves the company.
   company?: string;
+  // A document's text by id: the team verdicts are read out of their own documents.
+  doc?: (docId: string) => Promise<string>;
 };
+
+const VERDICT_CHARS = 400;
+// The Company document's Numbers section, the one place a person's figure should agree with.
+const numbersOf = (company: string) => filled(sectionBody(company, 'Numbers')).join('\n');
+// A flag line as the truth net writes it under a reply.
+const FLAGS = /^(?:Unconfirmed: this reply claims|Unsourced figures: ).*$/gm;
 
 const betLine = (bet: Bet) => (bet.status === 'open'
   ? `- Open: ${bare(bet.what)}. Bet: ${bare(bet.hypothesis) || 'unsaid'}. ${bet.metric} to ${bet.target} by ${bet.checkDate}.`
@@ -95,12 +118,37 @@ export async function gatherMorning(from: MorningSources): Promise<string> {
     for (const task of await from.boards(card.id).catch(() => [] as Task[])) if (task.due && task.due <= today && task.column !== 'done') planned.push(`- ${task.due < today ? `left from ${task.due}: ` : ''}${task.title}`);
   }
 
+  // Every team's verdict and score, as its own document has it: a WEAK beside a plan is the first thing to weigh.
+  const verdicts: string[] = [];
+  for (const doc of from.stage.docs.filter((one) => one.rules)) {
+    const rules = doc.rules!;
+    const body = sectionBody(from.doc ? await from.doc(doc.id).catch(() => '') : '', rules.verdict.heading);
+    const lines = filled(body);
+    if (!lines.length) { verdicts.push(`- ${doc.title}, ${rules.verdict.heading}: not written yet.`); continue; }
+    const { word, score } = verdictOf(body ?? '', rules.outcomes ?? []);
+    const read = [word, score !== undefined ? `score ${score}/10` : ''].filter(Boolean).join(', ');
+    verdicts.push(`- ${doc.title}, ${rules.verdict.heading}: ${read ? `${read}. ` : ''}${lines.join(' ').replace(/\s+/g, ' ').slice(0, VERDICT_CHARS)}`);
+  }
+
+  // What the truth net flagged since yesterday, each flag on a line of its own: the model reads it, and the net
+  // itself still treats the figure it names as unsourced when the note repeats it.
+  const flagged: string[] = [];
+  for (const room of from.stage.rooms) {
+    const lines = (await from.chat(room.id).catch(() => [] as ChatMessage[])).filter((message) => message.role === 'assistant' && message.at >= start)
+      .flatMap((message) => message.text.match(FLAGS) ?? []);
+    if (lines.length) flagged.push(`${room.name} (${room.role}):`, ...[...new Set(lines)].slice(-4));
+  }
+  const numbers = numbersOf(from.company ?? '');
+
   const bets = (await from.bets().catch(() => [] as Bet[])).filter((bet) => bet.status !== 'proposed');
   const open = bets.filter((bet) => bet.status === 'open');
   const closed = bets.filter((bet) => bet.status === 'closed').slice(-5);
   return [
     changed,
     `Said since ${yesterday}:`, chats || '- nothing',
+    ...(verdicts.length ? ['Team verdicts:', ...verdicts] : []),
+    ...(flagged.length ? [`Flagged by the truth net since ${yesterday} (figures nothing backed):`, ...flagged] : []),
+    `Company Numbers:\n${numbers || '- none written'}`,
     'On the board for today:', ...(planned.length ? planned.slice(0, 12) : ['- nothing dated today']),
     'Bets:', ...(open.length || closed.length ? [...open, ...closed].map(betLine) : ['- none on record']),
   ].join('\n');
@@ -118,7 +166,7 @@ export async function writeMorning(input: {
   const messages: ModelMessage[] = [...await input.promptFor(sources.stage, sources.partnerId), { role: 'user', content: `${MORNING_ASK}\n\n${facts}` }];
   const reply = await input.ask(messages);
   const read = readMorning(reply);
-  if (!read || restates(read.things, sources.company ?? '')) return null;
+  if (!read || restates(read.things, sources.company ?? '') || !namesAPlace(read.risk, sources.stage)) return null;
   // The truth net, as every turn has it: a figure in the note that nothing it was given holds is flagged under it,
   // and the note is posted all the same, so the founder sees both.
   // Checked as posted: the reshaped note, not the raw reply, so the flags name only what the founder reads.
@@ -130,4 +178,4 @@ export async function writeMorning(input: {
 export const morningMessage = (note: MorningNote) => [`**Morning, ${weekDay(note.at)}**`, morningText(note), ...(note.flags ?? [])].join('\n\n');
 
 // The fake model's morning, for a run with no model at all: the same shape, said plainly.
-export const FAKE_MORNING = 'Three moves for today:\n1. Fill the empty sections of the Company document, so every answer rests on it.\n2. Decide what waits in Needs you, so nobody works on a guess.\n3. Check the bets that are due against their numbers.\nRisk: the record is thin, so every choice rests on guesses.\nQuestion: What is the one number this week should move?';
+export const FAKE_MORNING = 'Three moves for today:\n1. Fill the empty sections of the Company document, so every answer rests on it.\n2. Decide what waits in Needs you, so nobody works on a guess.\n3. Check the bets that are due against their numbers.\nRisk: the Company document is thin, so every choice rests on guesses.\nQuestion: What is the one number this week should move?';
