@@ -26,6 +26,7 @@ describe('company facts in what the founder says', () => {
     ]);
     expect(companyFacts('should we raise the price? Give me a number.')).toEqual({ numbers: [] });
     expect(companyFacts('What do I do right now?')).toEqual({ numbers: [] });
+    expect(companyFacts('Draft a short update for our 3 beta users about what we are building')).toEqual({ numbers: [] });
     // Past figures and plans are not where the company stands.
     expect(companyFacts('Help me plan how we spend $300 on ads next week.').numbers).toEqual([]);
   });

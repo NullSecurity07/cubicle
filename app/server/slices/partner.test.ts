@@ -488,6 +488,23 @@ describe('the partner slice: the founder\'s facts kept in the Company document',
     await part.close!();
   });
 
+  it('holds a beta-user update to what customers may read, and tells the partner so before it writes', async () => {
+    const { deps, part } = await installed({}, { now: () => new Date('2026-09-27T10:00').getTime(), ask: async () => SHAPED });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    await deps.seams.run('turn:reply', { roomId: 'p1', query: DAY_ONE, reply: reply('Ok.') });
+    const ask = 'Draft a short update for our 3 beta users about what we are building';
+    const system = (await deps.seams.run('turn:before', { roomId: 'p1', source: 'chat', query: ask, messages: [{ role: 'system', content: 'You are Sam.' }] })).messages[0].content as string;
+    expect(system).toContain('This is for the company\'s customers to read, not for investors');
+    const draft = 'Hi all,\n\nWe are building PDF invoicing first [Decisions].\n\n### Numbers\n- We have €4,200 in the bank.\n\n### Asks\n- (founder to add)\n\nReady to send.';
+    const out = await deps.seams.run('turn:reply', { roomId: 'p1', query: ask, reply: reply(draft) });
+    expect(out.reply.text).toBe('Hi all,\n\nWe are building PDF invoicing first.\n\n### Numbers\n- We have €4,200 in the bank.\n\nNot for customers: cash. Take them out before this goes to anyone outside the company.');
+    // An investor update is left as the partner wrote it.
+    const investor = await deps.seams.run('turn:reply', { roomId: 'p1', query: 'help me write an investor update', reply: reply(draft) });
+    expect(investor.reply.text).toBe(draft);
+    await part.close!();
+  });
+
   it('writes nothing when the founder took the partner\'s wire to it away, and says so', async () => {
     const { deps, part } = await installed({}, { now: () => new Date('2026-09-27T10:00').getTime(), ask: async () => SHAPED });
     await withRooms(deps, [room('p1', 'Sam', { partner: true })]);

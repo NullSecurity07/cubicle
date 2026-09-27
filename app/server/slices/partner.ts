@@ -13,6 +13,7 @@ import { addPlan, boardFor, boardForPlan, NO_BOARD, planAttention, stepsFrom } f
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import { standingBlock, standingParts, type StandingParts } from '../partner/standing.ts';
 import { companyFacts, keepFacts, keptLine, runwayFix } from '../partner/keep.ts';
+import { CUSTOMER_LINE, customerReply, forCustomers } from '../partner/audience.ts';
 import { wired } from '../prompt.ts';
 import type { ModelMessage } from '../prompt.ts';
 import { complete, fakeClient, promptSize } from '../providers.ts';
@@ -326,6 +327,8 @@ export function createPartner(options: PartnerOptions = {}) {
       if (stage.rooms.some((one) => one.id === payload.roomId && one.partner)) {
         const block = await standingFor(stage, payload.roomId).catch((error: Error) => { console.error(`partner standing facts: ${error.message}`); return ''; });
         out = withSystem(out, block);
+        // Written for customers: said before it is written, and held to it after (the reply seam below).
+        if (forCustomers(payload.query)) out = withSystem(out, CUSTOMER_LINE);
       }
       return next(out);
     };
@@ -340,6 +343,7 @@ export function createPartner(options: PartnerOptions = {}) {
       if (!me || payload.reply.stopped || !payload.reply.text.trim()) return next(payload);
       const facts = companyFacts(payload.query);
       let text = payload.reply.text;
+      let receipt = '';
       try {
         const doc = await companyNow(stage);
         let company = doc ? await deps.store.readDoc(doc.id) : '';
@@ -353,9 +357,13 @@ export function createPartner(options: PartnerOptions = {}) {
             company = kept.text;
             line = keptLine(kept.kept);
           } else if (kept.kept.length) line = `*Not kept: the "${doc.title}" document is not wired to ${me.name}, so ${kept.kept.join(', ')} are not in it. Wire it to ${me.name} to keep it current.*`;
-          if (line) text = `${text.replace(/\s+$/, '')}\n\n${line}`;
+          if (line) receipt = line;
         }
-        text = runwayFix(text, `${sectionText(company, 'Numbers')}\n${payload.query}`);
+        const numbers = `${sectionText(company, 'Numbers')}\n${payload.query}`;
+        // What customers will read carries no source tags, placeholders or company money, and is not called ready while it does.
+        if (forCustomers(payload.query)) text = customerReply(text, numbers);
+        text = runwayFix(text, numbers);
+        if (receipt) text = `${text.replace(/\s+$/, '')}\n\n${receipt}`;
       } catch (error) { console.error(`partner keep: ${(error as Error).message}`); }
       return next(text === payload.reply.text ? payload : { ...payload, reply: { ...payload.reply, text } });
     };

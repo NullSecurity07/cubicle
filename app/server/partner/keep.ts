@@ -19,6 +19,8 @@ const BURN = /\b(?:burn\w*|spend\w*|expenses?|costs? us)\b/i;
 const CASH = /\b(?:bank|cash|savings|saved|left|runway)\b/i;
 const MRR = /\b(?:mrr|revenue|making|bringing in)\b/i;
 const PRICE = /\b(?:charge|charging|price[ds]?|pricing|costs?|subscription|plan)\b/i;
+// A request to the partner ("draft an update about what we are building") says what the founder wants, not what the company does.
+const ASKING = /^(?:please\s+)?(?:draft|write|help|make|create|send|give|tell|show|plan|prepare|put|email|can you|could you|would you)\b|\b(?:what|how|why)\s+(?:i'?m|i am|we'?re|we are)\s+building\b/i;
 const IDEA = /\b(?:(?:i'?m|i am|we'?re|we are)\s+building|we (?:make|build|sell|help)|(?:it|this) is an?)\b/i;
 
 const sentences = (said: string) => said.split(/\n+/).flatMap((line) => line.replace(/\s+/g, ' ').split(/(?<=[.!?])\s+/)).map((one) => one.trim()).filter(Boolean);
@@ -30,7 +32,7 @@ export function companyFacts(said: string): CompanyFacts {
   let idea: string | undefined;
   for (const sentence of sentences(said)) {
     const plain = sentence.replace(/[.!]+$/, '');
-    if (!idea && !sentence.endsWith('?') && IDEA.test(plain)) idea = plain.slice(0, 200);
+    if (!idea && !sentence.endsWith('?') && !ASKING.test(plain) && IDEA.test(plain)) idea = plain.slice(0, 200);
     if (NOT_NOW.test(plain) || sentence.endsWith('?')) continue;
     for (const match of plain.matchAll(MONEY)) {
       // What the figure is: the words before it back to a comma, a colon or an "and", and the few words after it.
@@ -44,6 +46,8 @@ export function companyFacts(said: string): CompanyFacts {
       else if (period || PRICE.test(before)) put('Price', value);
     }
     for (const match of plain.matchAll(COUNT)) {
+      // "an update for our 3 beta users" names who a thing is for, not how many there are now.
+      if (/\b(?:to|for|with)\s+(?:(?:our|my|the|all|your)\s+)?$/i.test(plain.slice(0, match.index))) continue;
       const count = WORD_COUNTS.includes(match[1].toLowerCase()) ? String(WORD_COUNTS.indexOf(match[1].toLowerCase())) : match[1];
       put(capital(`${match[2].toLowerCase()}${match[3].toLowerCase()}`), count);
     }
