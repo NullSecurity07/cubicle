@@ -9,7 +9,9 @@ const at = new Date('2026-09-20T09:00:00').getTime();
 const DAY = 86_400_000;
 const setup = async (extra: Partial<Parameters<typeof checkAll>[0]> = {}) => {
   const workspace = await mkdtemp(join(tmpdir(), 'health-'));
-  return checkAll({ workspace, root: '/nowhere', env: {}, now: () => at, backupDir: '/tmp/backups', backups: async () => [], outside: () => [], ...extra });
+  // The workspace and the backups on two disks, unless a test says otherwise: tmp is one disk on most machines.
+  const stat = async (path: string) => ({ dev: path === workspace ? 1 : 2 });
+  return checkAll({ workspace, root: '/nowhere', env: {}, now: () => at, backupDir: '/tmp/backups', backups: async () => [], outside: () => [], stat, ...extra });
 };
 const row = (checks: Awaited<ReturnType<typeof checkAll>>, name: string) => checks.find((one) => one.name === name)!;
 
@@ -89,6 +91,21 @@ describe('the rest of the checks', () => {
     expect(row(await setup({ backups: async () => [{ at: at - 9 * DAY }] }), 'Backup')).toMatchObject({ ok: false, detail: expect.stringContaining('9 days ago') });
     // The point of a backup is a second disk: the fix says so.
     expect(row(await setup(), 'Backup').fix).toContain('second disk');
+  });
+
+  it('warn, not fail, when a fresh backup is on the same disk as the workspace; red stays for none, failed or old', async () => {
+    const same = async () => ({ dev: 7 });
+    const one = row(await setup({ backups: async () => [{ at }], stat: same }), 'Backup');
+    expect(one).toMatchObject({ ok: true, warn: true });
+    expect(one.detail).toContain('the newest made today');
+    expect(one.detail).toContain('a copy here dies with this disk; pick another disk');
+    const apart = row(await setup({ backups: async () => [{ at }] }), 'Backup');
+    expect(apart.warn).toBeUndefined();
+    expect(apart.detail).not.toContain('same disk');
+    // Old or missing is red whatever the disk, and not also amber.
+    expect(row(await setup({ backups: async () => [{ at: at - 2 * DAY }], stat: same }), 'Backup')).toMatchObject({ ok: false });
+    expect(row(await setup({ backups: async () => [{ at: at - 2 * DAY }], stat: same }), 'Backup').warn).toBeUndefined();
+    expect(row(await setup({ stat: same }), 'Backup').ok).toBe(false);
   });
 
   it('count a backup folder that cannot be written to as a problem, however fresh the newest', async () => {

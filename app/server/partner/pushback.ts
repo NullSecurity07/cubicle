@@ -5,21 +5,56 @@ import type { TurnResult } from '../loop.ts';
 // an ask that shows no sign of the check is asked for once more with the rule in front of it, and a second miss is
 // posted with a line that tells the founder so.
 
-// A plan that commits money or people: raising a round, hiring someone, spending a sum or a budget, pivoting. The
-// word alone is not enough: "raise the price", "spend the afternoon" and "an investor update" commit nothing.
+// A plan that commits money or people: raising a round, hiring headcount, spending a real sum or setting a budget
+// for something, pivoting. The word alone is not enough: "raise the price", "spend the afternoon", "an investor
+// update", "the monthly email to investors", "the $300 ad budget" and "hire a contractor" are the founder's ordinary
+// week, and asking for preconditions on them only buys a "Not yet" nobody needed.
 const COMMIT = new RegExp([
-  '\\braise\\w*\\b(?!\\s+(?:the\\s+|our\\s+|my\\s+)?(?:price|prices|rate|rates|fee|fees|bar)\\b)[^.?!]{0,40}(?:\\$\\s?\\d|\\d+\\s?[kmb]\\b|round|pre-?seed|seed\\b|series [a-d]|money|capital|funding|from investors|investors)',
+  '\\braise\\w*\\b(?!\\s+(?:the\\s+|our\\s+|my\\s+)?(?:price|prices|rate|rates|fee|fees|bar)\\b)[^.?!]{0,40}(?:\\$\\s?\\d|\\d+\\s?[kmb]\\b|round|pre-?seed|seed\\b|series [a-d]|money|capital|funding|from investors|investors|angels?|vcs?\\b|loan|offer)',
   '\\b(?:fund-?rais\\w*|pre-?seed round|seed round|series [a-d] round)',
   '\\b(?:hire|hiring|recruit\\w*)\\b[^.?!]{0,40}\\b(?:a|an|two|three|four|five|\\d+|first|our|my|someone|people|engineers?|developers?|designers?|marketers?|sales\\w*|staff|team|cto|vp)\\b',
-  '\\bspend\\w*\\b[^.?!]{0,30}(?:\\$\\s?\\d|\\d+\\s?[kmb]\\b|budget|savings|runway|on (?:ads|hiring|a (?:contractor|agency)))',
+  '\\bspend\\w*\\b[^.?!]{0,30}(?:savings|runway|on hiring)',
   '\\bpivot\\w*\\b',
   '\\bshould (?:i|we) (?:raise|fund-?raise|hire)\\b',
-  '\\b(?:outreach|pitch\\w*|intro\\w*|emails?)\\b[^.?!]{0,20}\\binvestors?\\b',
+  '\\b(?:take|accept)\\b[^.?!]{0,40}\\b(?:offer|loan|investment|term sheet)\\b',
   '\\b(?:our|a|the) (?:pre-?)?seed\\b',
 ].join('|'), 'i');
+// Help from outside by the job is not headcount: a contractor, a freelancer or an agency.
+const HIRED_HELP = /\b(?:hire|hiring|recruit\w*)\b[^.?!]{0,30}\b(?:contractors?|freelanc\w*|agency|agencies|virtual assistants?)\b/i;
+const HEADCOUNT = /\b(?:hire|hiring|recruit\w*)\b/i;
+// A sum is a commitment from this much: below it, a spend is a week's ad test, not a bet of the company.
+export const SPEND_FROM = 1000;
+// A sum of money: "$15k", "$50,000", "1,500 dollars", or a bare "10k" (read as money only in the right company).
+const SUM = /\$\s?(\d[\d,]*(?:\.\d+)?)\s?([kmb])?\b|\b(\d[\d,]*(?:\.\d+)?)\s?([kmb])\b|\b(\d[\d,]*(?:\.\d+)?)\s+(?:dollars|usd|euros|pounds)\b/gi;
+// Money about to go out, in the present or the future: "spent", "burned" and "we pay" rent are the past or the
+// running cost, and an "offer" is a raise only when it is taken (the pattern above).
+const MONEY_VERB = /\b(?:spend|spends|spending|put|putting|allocate|allocating|invest|investing|budget|budgeting|burn|burning|loans?)\b/i;
+const NEAR = 30;
+const sums = (said: string) => [...said.matchAll(SUM)].map((found) => {
+  const digits = found[1] ?? found[3] ?? found[5];
+  const scale = (found[2] ?? found[4] ?? '').toLowerCase();
+  return { value: Number(digits.replace(/,/g, '')) * ({ k: 1e3, m: 1e6, b: 1e9 }[scale as 'k'] ?? 1), at: found.index, end: found.index + found[0].length, bare: found[3] !== undefined };
+});
+// A "$" sum or one in dollars counts beside a money verb on either side. A bare "10k" counts only after one
+// ("invest 10k"), and never as a count of something ("20k users").
+const bigSpend = (said: string) => sums(said).some((sum) => {
+  if (sum.value < SPEND_FROM) return false;
+  const before = said.slice(Math.max(0, sum.at - NEAR), sum.at);
+  if (sum.bare) return MONEY_VERB.test(before) && !/^\s+[a-z][a-z-]*s\b/i.test(said.slice(sum.end));
+  return MONEY_VERB.test(`${before} ${said.slice(sum.end, sum.end + NEAR)}`);
+});
+// "The budget for" something is a commitment, unless the sum it names is a small one.
+const budgetFor = (said: string) => /\bbudget for\b/i.test(said) && !sums(said).some((sum) => sum.value < SPEND_FROM);
+const commits = (said: string) => {
+  if (bigSpend(said) || budgetFor(said)) return true;
+  if (!COMMIT.test(said)) return false;
+  // Only a hire of outside help matched: that is not a commitment. A raise or a pivot said beside it still is.
+  if (HIRED_HELP.test(said)) return COMMIT.test(said.replace(HEADCOUNT, ''));
+  return true;
+};
 const PLAN = /\b(plan|draft|prepare|steps|roadmap|timeline|how (?:do|should|can|would) (?:i|we)|should (?:i|we)|thoughts|what would|help me|let'?s|i want to|we want to|we'?re going to|i'?m going to)\b/i;
 // Asked for a plan that commits money or people: "raised the price" is past, and matches neither word list.
-export const asksCommitment = (said: string) => COMMIT.test(said) && PLAN.test(said);
+export const asksCommitment = (said: string) => commits(said) && PLAN.test(said);
 
 // A reply that pushed back or weighed the preconditions, in the ways people say it.
 // Only the reply's own first word counts as a "No": a line further down that starts "No existing marketplace…" or

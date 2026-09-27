@@ -54,7 +54,7 @@ export function createMemory(store: Store, summarise: Summarise, now: () => numb
         if (fresh.length < FOLD_AT) return false;
         // Each line says the day it was said, so what the fold writes down keeps its place in time: without it a price
         // agreed in spring and one agreed yesterday both come back sounding like the price.
-        const talk = fresh.map((message) => `[${shortDay(message.at)}] ${message.role === 'assistant' ? 'You' : message.from ?? 'Founder'}: ${message.text.replace(/\s+/g, ' ').slice(0, 1200)}${message.tools?.length ? ` [did: ${message.tools.map((tool) => tool.name).join(', ')}]` : ''}`).join('\n');
+        const talk = fresh.filter((message) => !message.failed).map((message) => `[${shortDay(message.at)}] ${message.role === 'assistant' ? 'You' : message.from ?? 'Founder'}: ${message.text.replace(/\s+/g, ' ').slice(0, 1200)}${message.tools?.length ? ` [did: ${message.tools.map((tool) => tool.name).join(', ')}]` : ''}`).join('\n');
         const summary = (await summarise([
           { role: 'system', content: `You keep the long-term memory of one person who works for a founder. Today is ${fullDay(now())}. Rewrite the memory so it also covers the new conversation. Keep decisions, facts about the company, product, customers and numbers, the founder's preferences, and work done or promised. `
             + 'Every line of the new conversation is stamped with the day it was said. Anything tied to a time keeps its date, in the line itself: "decided on 12 Sep to…", "the price was 19 as of 3 Aug". '

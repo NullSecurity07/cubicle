@@ -175,7 +175,7 @@ export function createLearner(deps: {
       // own two messages are left out however they are stored, because they are handed over in full below.
       const chat = await deps.store.readChat(turn.roomId).catch(() => []);
       const already = new Set([turn.query.trim(), turn.reply.text.trim()]);
-      for (const message of chat.slice(-(EARLIER + 2))) {
+      for (const message of chat.filter((one) => !one.failed).slice(-(EARLIER + 2))) {
         if (message.text.trim() && !already.has(message.text.trim())) earlier.push(`${message.role === 'assistant' ? name : message.from ?? 'Founder'}: ${message.text.replace(/\s+/g, ' ').slice(0, 300)}`);
       }
     }

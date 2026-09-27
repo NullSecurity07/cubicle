@@ -27,6 +27,8 @@ export const WEIGHTS: Record<string, { weight: number; label: string }> = {
   'proposed-decision': { weight: 60, label: 'A decision is yours to make' },
   'review-due': { weight: 55, label: 'A decision is due for a second look' },
   'key-rejected': { weight: 65, label: 'A model key was refused' },
+  'file-damaged': { weight: 80, label: 'A file could not be read' },
+  'backup-failed': { weight: 60, label: 'The daily backup failed' },
   'run-failed': { weight: 50, label: 'Work stopped halfway' },
   missed: { weight: 45, label: 'A repeat was missed' },
   'task-due': { weight: 40, label: 'Due today' },
@@ -82,6 +84,10 @@ export function rank(signals: Signal[], now: number, dismissed: ReadonlySet<stri
 
 // Everything that might go in: Needs you as it stands, and the repeats that fall due before the day is out. A repeat
 // already in Needs you (missed, failed) is there once, as its Needs you entry.
+// A plan's step that is due by `today`: dated today or left from an earlier day, and not done. A repeat has its own
+// time and is counted by it instead. The dashboard's Due today counts by this too, so the two never disagree.
+export const plannedBy = (task: Task, today: string) => !task.repeat && !!task.due && task.due <= today && task.column !== 'done';
+
 export async function gather(deps: { attention: { list(): Promise<Attention[]> }; boards: Pick<Boards, 'list'>; stage: () => Promise<Stage> }, now: number): Promise<Signal[]> {
   const needs = await deps.attention.list().catch(() => [] as Attention[]);
   const stage = await deps.stage();
@@ -94,7 +100,7 @@ export async function gather(deps: { attention: { list(): Promise<Attention[]> }
     const steps: Task[] = [];
     for (const task of await deps.boards.list(card.id).catch(() => [])) {
       // A plan's steps dated today (or left from an earlier day) and not done: gathered, then said once per board.
-      if (!task.repeat && task.due && task.due <= localDay(now) && task.column !== 'done' && !listed.has(task.id)) { steps.push(task); continue; }
+      if (plannedBy(task, localDay(now)) && !listed.has(task.id)) { steps.push(task); continue; }
       if (listed.has(task.id) || !task.repeat || !task.nextRun || task.nextRun > end.getTime()) continue;
       if (task.run?.state === 'running' || task.run?.state === 'waiting') continue;
       const who = stage.rooms.find((room) => room.id === task.assignee)?.name;

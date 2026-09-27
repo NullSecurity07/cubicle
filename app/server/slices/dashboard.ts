@@ -9,12 +9,13 @@ import { hub } from '../events.ts';
 import { FRAMEWORK_ID, type Framework } from '../../shared/frameworks.ts';
 import type { Deps, Slice } from '../install.ts';
 import { leadsCardIds } from '../leads/store.ts';
-import { backupDirOf, canWrite, listBackups } from '../openends/backup.ts';
+import { backupDirOf, canWrite, listBackups, sameDisk } from '../openends/backup.ts';
 import { backupRow, checkAll, outsideHealth } from '../openends/health.ts';
 import { coderHealth } from '../opencode/server.ts';
 import { providerOf } from '../providers.ts';
 import type { TraceLine } from '../trace.ts';
 import type { Watch } from './crawl.ts';
+import { plannedBy } from '../today/rank.ts';
 
 // The founder's dashboard: one read of what the app already keeps, on one page. It owns nothing. Every number here is
 // read from where it lives (the needs-you list, the boards, the leads, the watches, the trace of every turn, the
@@ -69,7 +70,8 @@ export async function readDay(deps: Pick<Deps, 'workspace' | 'attention' | 'boar
     ...(one.taskId ? { taskId: one.taskId } : {}), ...(one.decisionId ? { decisionId: one.decisionId } : {}),
   }));
 
-  // Repeats that fall due before the day is out, and the ones that were missed; and whatever is running right now.
+  // Repeats that fall due before the day is out, the ones that were missed and a plan's steps dated by today; and
+  // whatever is running right now.
   const tasksDue: DashDay['tasksDue'] = [];
   const tasksRunning: DashDay['tasksRunning'] = [];
   const close = endOfDay(now);
@@ -81,6 +83,8 @@ export async function readDay(deps: Pick<Deps, 'workspace' | 'attention' | 'boar
       if (state === 'running' || state === 'waiting') tasksRunning.push({ ...base, at: task.run!.startedAt, state });
       else if (task.missed) tasksDue.push({ ...base, at: task.nextRun ?? task.createdAt, missed: true });
       else if (task.repeat && task.nextRun && task.nextRun <= close) tasksDue.push({ ...base, at: task.nextRun });
+      // A plan's step dated today, or left from an earlier day, as Today's five counts it.
+      else if (plannedBy(task, localDay(now))) tasksDue.push({ ...base, at: new Date(`${task.due}T00:00:00`).getTime(), day: task.due! });
     }
   }
   tasksDue.sort((a, b) => a.at - b.at);
@@ -301,7 +305,7 @@ export default {
       // One reading of the backups folder for the line and for the Backup row, which the last health check may have
       // read a while ago: both say what is there now.
       const dir = dirOf();
-      const state = { dir, backups: await listBackups(dir), writable: await canWrite(dir) };
+      const state = { dir, backups: await listBackups(dir), writable: await canWrite(dir), sameDisk: await sameDisk(deps.workspace, dir) };
       const backup = { at: state.backups[0]?.at ?? null, dir, writable: state.writable };
       const { fix: _fix, ...row } = backupRow(state, now);
       const rows = health.checks.some((one) => one.name === 'Backup') ? health.checks.map((one) => (one.name === 'Backup' ? row : one)) : health.checks;

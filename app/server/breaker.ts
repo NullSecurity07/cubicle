@@ -32,8 +32,12 @@ export const headerWait = (error: unknown) => {
 };
 // A request that never got an answer is the provider down as much as a 503 is. An abort is the founder's Stop, not a failure.
 const TIMED_OUT = /timed? ?out|ECONNRESET|ECONNREFUSED|fetch failed|Connection error/i;
+// A model that cannot make its own tool call (Groq's 400 failed_generation) is broken for this kind of work, not asked
+// wrongly: five in a row rest it like five 503s would, so it is not first in line again next turn.
+const MALFORMED = /failed_generation|failed to call a function/i;
 const brokeDown = (error: unknown) => {
   const status = statusOf(error);
+  if (status === 400 && MALFORMED.test((error as Error)?.message ?? '')) return true;
   if (status !== undefined) return status >= 500 || status === 408;
   const { name, message } = (error ?? {}) as Error;
   return name !== 'AbortError' && TIMED_OUT.test(`${name} ${message}`);

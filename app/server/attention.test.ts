@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Lapsed } from '../shared/lapsed.ts';
 import type { Attention } from '../shared/model.ts';
-import { boardAttention, createAttention, keyAttention } from './attention.ts';
+import { backupAttention, boardAttention, createAttention, damageAttention, keyAttention } from './attention.ts';
 import { createUsage } from './usage.ts';
 import { createBoards } from './boards.ts';
 import { createStore } from './store.ts';
@@ -209,5 +209,67 @@ describe('a key the provider refuses', () => {
     usage.record('groq#2');
     await new Promise((settle) => setTimeout(settle, 20));
     expect(await attention.list()).toHaveLength(0);
+  });
+});
+
+describe('a file the app could not read', () => {
+  it('says what happened, what it was put back from and where the damaged copy is', () => {
+    const back = damageAttention({ file: 'stage.json', aside: '/w/stage.corrupt-x.json', from: { file: 'cubicle-2026-09-26-0900.tar.gz', at: 1 } }, NOON);
+    expect(back).toMatchObject({ id: 'file-damaged:stage.json:' + NOON, kind: 'file-damaged', at: NOON });
+    expect(back.title).toBe('The canvas file was damaged, and was put back from a backup');
+    expect(back.detail).toContain('/w/stage.corrupt-x.json');
+    expect(back.detail).toContain('cubicle-2026-09-26-0900.tar.gz');
+    const fresh = damageAttention({ file: 'stage.json', aside: '/w/stage.corrupt-x.json', from: null }, NOON);
+    expect(fresh.title).toBe('The canvas file was damaged, and the canvas started again');
+    expect(fresh.detail).toContain('no backup held it');
+    const chat = damageAttention({ file: 'rooms/marketing.json', aside: '/w/rooms/marketing.corrupt-x.json', from: null }, NOON);
+    expect(chat.title).toBe('A conversation file was damaged, and that conversation started again');
+    expect(chat.roomId).toBe('marketing');
+    expect(chat.detail).toContain('/w/rooms/marketing.corrupt-x.json');
+    const memory = damageAttention({ file: 'rooms/marketing.memory.json', aside: '/w/a', from: null }, NOON);
+    expect(memory.title).toBe('A person\'s memory file was damaged, and their memory started again');
+    expect(memory.roomId).toBe('marketing');
+  });
+
+  it('stays through a restart until the founder dismisses it', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'attention-'));
+    const first = createAttention(dir, () => NOON);
+    await first.raise(damageAttention({ file: 'stage.json', aside: '/w/a', from: null }, NOON));
+    await first.settled();
+    const later = createAttention(dir, () => NOON + 3 * 86_400_000);
+    const [held] = await later.list();
+    expect(held).toMatchObject({ kind: 'file-damaged' });
+    expect(held.lapsed).toBeUndefined();
+    await later.dismiss(held.id);
+    expect(await later.list()).toHaveLength(0);
+  });
+});
+
+describe('a daily backup that failed', () => {
+  it('raises one item with the error, keeps it through more failures, and clears it on the next success', async () => {
+    const attention = createAttention(await mkdtemp(join(tmpdir(), 'attention-')), () => NOON);
+    const told = backupAttention(attention, () => NOON);
+    await told({ problem: 'ENOSPC: no space left on device', where: '/media/usb/backups' });
+    const [item] = await attention.list();
+    expect(item).toMatchObject({ id: 'backup-failed', kind: 'backup-failed', title: 'The daily backup failed' });
+    expect(item.detail).toContain('ENOSPC: no space left on device');
+    expect(item.detail).toContain('/media/usb/backups');
+    await told({ problem: 'ENOSPC again', where: '/media/usb/backups' });
+    expect(await attention.list()).toHaveLength(1);
+    // A tick with nothing to do says nothing either way.
+    await told(null);
+    expect(await attention.list()).toHaveLength(1);
+    await told({ made: true });
+    expect(await attention.list()).toHaveLength(0);
+  });
+
+  it('can be dismissed, and is not brought back from the last run: the next start tries again and says so', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'attention-'));
+    const first = createAttention(dir, () => NOON);
+    await backupAttention(first, () => NOON)({ problem: 'EACCES', where: '/x' });
+    await first.settled();
+    expect(await createAttention(dir, () => NOON).list()).toHaveLength(0);
+    await first.dismiss('backup-failed');
+    expect(await first.list()).toHaveLength(0);
   });
 });

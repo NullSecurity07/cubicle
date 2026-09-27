@@ -72,7 +72,8 @@ export function workRoutes(deps: {
     if (path === '/api/founder' && req.method === 'PUT') { await founder.write(String((await body(req)).text ?? '')); return answer(res, 200, { ok: true }); }
     const learns = /^\/api\/rooms\/([^/]+)\/learn$/.exec(path)?.[1];
     if (learns && req.method === 'POST') {
-      const talk = await store.readChat(learns);
+      // A failed turn is nothing to learn from: the last real answer and its question are.
+      const talk = (await store.readChat(learns)).filter((one) => !one.failed);
       const at = talk.findLastIndex((one) => one.role === 'assistant');
       const asked = at > 0 ? talk.slice(0, at).findLast((one) => one.role === 'user') : undefined;
       if (at < 0 || !asked) return answer(res, 400, { error: 'there is nothing finished here to learn from yet' });

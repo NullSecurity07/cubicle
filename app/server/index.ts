@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { resolve } from 'node:path';
 import { isHeaded, type Stage } from '../shared/model.ts';
 import { createApprovals } from './approvals.ts';
-import { boardAttention, createAttention, keyAttention } from './attention.ts';
+import { boardAttention, createAttention, damageAttention, keyAttention } from './attention.ts';
 import { createBoards } from './boards.ts';
 import { createBrowser, dnsResolve, fakeHand, fakeRunner, jinaReader, realRunner } from './browser.ts';
 import { createChat } from './chat.ts';
@@ -39,7 +39,8 @@ import { createSkills } from './skills.ts';
 import { createSources, sourceAttention } from './sources.ts';
 import { guardProcess } from './restart.ts';
 import { readStatic } from './static.ts';
-import { createStore } from './store.ts';
+import { backupDirOf } from './openends/backup.ts';
+import { createStore, type Damage } from './store.ts';
 import { decisionTools } from './tools/decisions.ts';
 import { docTools } from './tools/docs.ts';
 import { fileTools } from './tools/files.ts';
@@ -78,7 +79,14 @@ const workspace = process.env.STAGE_WORKSPACE ?? resolve(root, 'workspace');
 const roomFeed = createRoomFeed();
 // The events feed is made further down, once everything it listens to is; until then a saved stage has nobody to tell.
 let restage: (stage: Stage) => void = () => {};
-const store = createStore(workspace, (roomId) => roomFeed.tell({ roomId, chat: 'changed' }), (stage) => restage(stage));
+// A file that could not be read is put back from the newest backup that holds it; the founder hears of it in Needs
+// you, which is made further down too, so what is found before then waits for it.
+const damaged: Damage[] = [];
+let tellDamage = (damage: Damage) => { damaged.push(damage); };
+const store = createStore(workspace, (roomId) => roomFeed.tell({ roomId, chat: 'changed' }), (stage) => restage(stage), {
+  backups: () => backupDirOf({ fake, workspace, root }),
+  onDamaged: (damage) => tellDamage(damage),
+});
 const usage = createUsage(resolve(workspace, 'usage.json'));
 await usage.load();
 const browser = fake ? createBrowser(fakeRunner, undefined, undefined, fakeHand) : createBrowser(realRunner(), { direct: [redditFeed(), stackExchange()], fallback: process.env.STAGE_NO_READER === '1' ? [] : [jinaReader, archiveCopy()] }, dnsResolve);
@@ -95,6 +103,8 @@ const boards = createBoards(workspace);
 const attention = createAttention(workspace);
 // A key the provider refuses is said once in Needs you, and goes from there when that key answers again.
 keyAttention(usage, attention);
+tellDamage = (damage) => { console.log(`${damage.file} could not be read; the damaged copy is ${damage.aside}`); void attention.raise(damageAttention(damage)).catch(() => {}); };
+for (const damage of damaged.splice(0)) tellDamage(damage);
 attention.source(boardAttention(store, boards));
 boards.onChange(() => { void attention.refresh(); });
 // The studio cards: one job per card, the files in the shared files folder, the rest beside the stage.

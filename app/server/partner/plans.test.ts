@@ -29,9 +29,21 @@ describe('a plan as tasks', () => {
     const boards = createBoards(await mkdtemp(join(tmpdir(), 'plans-')));
     expect(await addPlan(boards, stage, plan, SAT)).toEqual({ boardId: 'board-b', added: 6 });
     const tasks = await boards.list('board-b');
-    expect(tasks.map((task) => [task.title, task.column])).toEqual([['Day 1: draft the page', 'todo'], ['post in r/SaaS', 'todo'], ['Mon 5 Oct: email 20 leads', 'todo'], ['4', 'todo'], ['5', 'todo'], ['6', 'todo']]);
+    expect(tasks.map((task) => [task.title, task.column])).toEqual([['Day 1: draft the page', 'todo'], ['post in r/SaaS', 'todo'], ['email 20 leads', 'todo'], ['4', 'todo'], ['5', 'todo'], ['6', 'todo']]);
     expect(tasks[0].detail).toBe('From the plan "2-week plan", written by Sam.');
     expect(tasks.map((task) => task.due)).toEqual([undefined, undefined, '2026-10-05', undefined, undefined, undefined]);
     await expect(addPlan(boards, { ...stage, cards: [] }, plan)).rejects.toThrow('There is no task board on the stage yet');
+  });
+
+  it('puts a dated step on the board by its words alone, dated, and keeps the whole step in the detail when the title is cut', async () => {
+    const boards = createBoards(await mkdtemp(join(tmpdir(), 'plans-')));
+    const long = 'Set up a dead-simple, free static landing page listing 10 hand-picked abandoned SaaS projects under $5k for indie hackers';
+    await addPlan(boards, stage, { ...plan, steps: [{ day: 'Sep 26', text: long }, { day: 'Sep 28', text: 'Email 20 leads' }] }, SAT);
+    const [first, second] = await boards.list('board-b');
+    expect(first.title.length).toBeLessThanOrEqual(80);
+    expect(first.title.startsWith('Set up a dead-simple')).toBe(true);
+    expect(first.due).toBe('2026-09-26');
+    expect(first.detail).toBe(`${long}\n\nFrom the plan "2-week plan", written by Sam.`);
+    expect([second.title, second.due, second.detail]).toEqual(['Email 20 leads', '2026-09-28', 'From the plan "2-week plan", written by Sam.']);
   });
 });

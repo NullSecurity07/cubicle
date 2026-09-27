@@ -11,6 +11,29 @@ describe('the partner\'s precondition check', () => {
     for (const said of ['What do you think of the name?', 'Draft the landing page copy', 'We raised the price, how do users react?', 'help me write an investor update', "let's spend the afternoon on customer calls", 'I want to raise the price to $20']) expect(asksCommitment(said), said).toBe(false);
   });
 
+  // Routine outreach and small spend are the founder's week, not a commitment: the audits' phrases, each asked for
+  // the preconditions and a "Not yet" they did not need.
+  it('leaves routine investor mail, outreach, small spend and a contractor alone, and still knows a raise, headcount, a big spend or a budget', () => {
+    for (const said of ['Help me draft the monthly email to investors', 'draft monthly email to investors', 'plan outreach to investors', 'Plan intros to two angels who asked for the deck',
+      'plan how we spend the $300 ad budget', 'hire a contractor for the landing page', 'Help me hire a freelancer for the logo', 'should we hire a contractor for the site?',
+      'help me write an investor update', "Let's spend $200 on ads this week", 'Draft the investor update email']) expect(asksCommitment(said), said).toBe(false);
+    for (const said of ['Help me plan a seed round of $500k', "Let's raise $1.5M from angels", 'Plan how we spend $5,000 on ads', 'Draft a budget for the launch', 'Plan how we spend our savings on this',
+      'Help me hire our first engineer', "Let's hire 3 people next quarter", 'Plan the pivot to agencies', 'Should we raise a pre-seed?']) expect(asksCommitment(said), said).toBe(true);
+  });
+
+  // The review's probes: a large sum is a commitment whichever verb sits beside it, and so is money from angels, a VC or a lender.
+  it('knows a large sum beside any money verb, either side, and money from angels, a VC, a loan or an offer', () => {
+    for (const said of ['help me plan a $15k spend on a conference', "Let's put $20k into Google ads", 'Plan to allocate $50,000 to marketing', 'plan spending 1,500 dollars on ads',
+      'Should we take the $250k offer from the VC?', 'I want to raise from angels', 'Should we take on a $100k loan?', 'Help me plan a $5k budget', "Let's invest 10k in a booth"]) expect(asksCommitment(said), said).toBe(true);
+    for (const said of ['Draft a $300 budget for the ad test', 'Should we hire a freelance designer?', "Let's put $200 into boosting the post", 'Plan to pay $50 for the domain']) expect(asksCommitment(said), said).toBe(false);
+  });
+
+  // Round 2: money already spent, a price, a thank-you and a user count are not asks to commit.
+  it('leaves money already spent, a price, an offer of help and a count of users alone', () => {
+    for (const said of ['we pay $1,200/month rent, help me draft the landlord email', 'we burned $3k last month, help me plan the week', 'Help me draft a thank-you note for the $1,000 offer of help',
+      'Help me plan pay-as-you-go pricing at $2k/year', "20k users by Q1, what should we pay attention to? Let's plan", 'We spent $5k on ads last month, help me draft the recap']) expect(asksCommitment(said), said).toBe(false);
+  });
+
   it('knows a reply that checked the preconditions, however it says no', () => {
     for (const reply of ['Not yet. Before that, get 20 paying users.', 'I disagree: no users means no round.\n\nMy call: no.', 'No. Here is why: nobody has paid yet.', "I'd hold off until you have ten users.", 'Plan below.\n\nMy call: not now.', 'Too early. First get ten paying readers.', "Don't raise yet: nobody pays so far.", 'My call: **wait** a month.']) expect(checksPreconditions(reply), reply).toBe(true);
     expect(checksPreconditions('Here is your 7-phase raise plan. 1. Prepare a SAFE with a $2M cap.')).toBe(false);

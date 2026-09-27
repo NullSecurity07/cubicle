@@ -17,6 +17,7 @@
 .health__row .playbook__note { margin: 4px 0 0; }
 .health__verdict { flex: none; align-self: center; font-size: 11.5px; color: var(--muted); }
 .health__row.is-bad .health__verdict { color: var(--needs); }
+.health__row.is-warn .health__verdict { color: #f0b35a; }
 
 .health__files { margin: 0 0 4px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; }
 .health__files li { display: flex; align-items: baseline; gap: 8px; border-radius: 9px; padding: 6px 11px; background: rgba(255, 255, 255, 0.035); }

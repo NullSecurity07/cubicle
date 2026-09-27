@@ -100,7 +100,7 @@ async function setup() {
     const handled = await part.route!({ method: 'GET' } as IncomingMessage, {} as ServerResponse, path);
     return { handled, body: answered.at(-1)?.body as Dashboard };
   };
-  return { workspace, get, running, due };
+  return { workspace, get, running, due, boards };
 }
 
 describe('the dashboard', () => {
@@ -146,7 +146,8 @@ describe('the dashboard', () => {
     // No waiting for the health check to come round: the very next answer agrees with itself.
     const body = (await get()).body;
     expect(body.backup?.at).toBeTruthy();
-    expect(body.health.find((one) => one.name === 'Backup')).toMatchObject({ ok: true, detail: expect.stringMatching(/1 kept in .*the newest made today/) });
+    // Fresh, but in the workspace's own folder, so on its disk: fine, with a warning that says why.
+    expect(body.health.find((one) => one.name === 'Backup')).toMatchObject({ ok: true, warn: true, detail: expect.stringMatching(/1 kept in .*the newest made today, on the same disk as the workspace/) });
   });
 
   it('reads the founder\'s day, each row carrying where it lives', async () => {
@@ -163,6 +164,22 @@ describe('the dashboard', () => {
     expect(body.day.decisionsPending).toEqual([expect.objectContaining({ title: 'Which price?', who: 'Maya' })]);
     expect(body.day.replies).toEqual([expect.objectContaining({ roomId: 'build', name: 'Dev' })]);
     expect(body.day.unreadMessages).toBe(1);
+  });
+
+  // Journey 3: a plan's task due Sat 26 Sept on the board, and the dashboard said "Due today 0".
+  it('counts a plan\'s task dated today as due, and one left from an earlier day, never a later or a done one', async () => {
+    const { get, boards, due } = await setup();
+    const today = localDay(NOW);
+    const planned = await boards.add('board-1', { title: 'Set up the landing page', due: today });
+    const left = await boards.add('board-1', { title: 'Source 3 projects', due: localDay(NOW - 2 * 86_400_000) });
+    await boards.add('board-1', { title: 'Later', due: localDay(NOW + 3 * 86_400_000) });
+    const done = await boards.add('board-1', { title: 'Done already', due: today });
+    await boards.update('board-1', done.id, (task: Task) => { task.column = 'done'; });
+    await boards.settled();
+    const { body } = await get();
+    expect(body.day.tasksDue.map((one) => one.id).sort()).toEqual([due.id, planned.id, left.id].sort());
+    expect(body.day.tasksDue.find((one) => one.id === planned.id)).toMatchObject({ day: today, cardId: 'board-1' });
+    expect(body.day.tasksDue.find((one) => one.id === left.id)).toMatchObject({ day: localDay(NOW - 2 * 86_400_000) });
   });
 
   it('adds up a fortnight of turns by day, a week by person and by tool, and today by provider', async () => {

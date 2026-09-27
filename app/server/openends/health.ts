@@ -8,7 +8,7 @@ import { graphifyVersion, INSTALL, mcpCommand, PIN } from '../slices/graph.ts';
 import { isoDay, parseFeed, REDDIT_AGENT } from '../readers.ts';
 import { which, whichAsync } from '../which.ts';
 import { FIND_VARS, outreachEnv } from '../leads/openoutreach.ts';
-import { canWrite } from './backup.ts';
+import { canWrite, sameDisk, type StatDev } from './backup.ts';
 
 // Is everything this app leans on really here? One question a line, answered yes or no, and when the answer is no,
 // what the founder would do about it — in the words they would use, not ours.
@@ -57,14 +57,18 @@ const ago = (at: number, now: number) => {
 // The Backup row, from one reading of the backups folder. Health and the dashboard both build it here, from the same
 // reading the dashboard's own backup line uses, so the two can never say different things at once.
 // A day, since one is made by itself every day; and a folder it can still be written to, or the next one fails.
-export function backupRow(state: { dir: string; backups: { at: number }[]; writable: boolean }, now: number): Check {
+// Red is for no backup, one that failed or one older than a day. Fresh ones on the workspace's own disk are a warning
+// (amber): the day the disk goes, both go. "Same disk" is the same filesystem as stat sees it: two partitions of one
+// drive look different, and so do two btrfs subvolumes, so the warning is only ever a floor.
+export function backupRow(state: { dir: string; backups: { at: number }[]; writable: boolean; sameDisk?: boolean }, now: number): Check {
   const newest = state.backups[0]?.at ?? 0;
   const fresh = !!newest && now - newest < DAY;
   return {
-    name: 'Backup', ok: fresh && state.writable,
+    name: 'Backup', ok: fresh && state.writable, ...(fresh && state.writable && state.sameDisk ? { warn: true } : {}),
     detail: [
       newest ? `${state.backups.length} kept in ${state.dir}, the newest made ${ago(newest, now)}` : `nothing has been backed up yet (they would go to ${state.dir})`,
       ...(state.writable ? [] : ['and that folder cannot be written to']),
+      ...(state.sameDisk ? ['on the same disk as the workspace: a copy here dies with this disk; pick another disk'] : []),
     ].join(', '),
     fix: 'One is made by itself once a day, and five are kept. Point "Back up to…" in Health at a second disk or a synced folder: a copy on this same disk is gone with it.',
   };
@@ -73,6 +77,8 @@ export function backupRow(state: { dir: string; backups: { at: number }[]; writa
 export type HealthDeps = {
   workspace: string; root: string; env?: NodeJS.ProcessEnv; now?: () => number;
   backups: () => Promise<{ at: number }[]>; backupDir: string;
+  // Which disk a folder is on; `stat` unless a test says otherwise.
+  stat?: StatDev;
   outside: () => { name: string; ok: boolean; detail: string }[];
   // The coder card's opencode: where its program is, and whether its server is up. Absent when nothing owns it.
   coder?: () => (EngineHealth & { bin: string | null }) | null;
@@ -221,7 +227,7 @@ export async function checkAll(deps: HealthDeps): Promise<Check[]> {
     fix: 'Ask a voice studio for one line. The voice fetches itself the first time, about 80 MB, and then speaks without the internet.',
   });
 
-  checks.push(backupRow({ dir: deps.backupDir, backups: await deps.backups(), writable: await canWrite(deps.backupDir) }, now()));
+  checks.push(backupRow({ dir: deps.backupDir, backups: await deps.backups(), writable: await canWrite(deps.backupDir), sameDisk: await sameDisk(workspace, deps.backupDir, deps.stat) }, now()));
 
   checks.push(...keyChecks(env, root));
   // What slices know about themselves right now (the phone, Twenty), each asked once; one that throws is left out.

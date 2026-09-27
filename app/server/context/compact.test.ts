@@ -80,6 +80,13 @@ describe('shortening a piece of work', () => {
     expect(usage.info(clients)[0]).toMatchObject({ name: 'summariser', requests: 1, tokens: 128 });
   });
 
+  it('does not count a note every model broke off part way as a good answer', async () => {
+    const usage = createUsage(null);
+    const broken: ModelClient = { ...client('summariser', 400_000), async step(_messages, { onToken }) { onToken('what hap'); throw Object.assign(new Error('503 overloaded'), { status: 503 }); } };
+    await squeeze(work(14), { clients: [broken], usage }, 5000);
+    expect(usage.info([broken])[0]).toMatchObject({ name: 'summariser', requests: 0 });
+  });
+
   it('leaves the free pass standing when no model will write the note', async () => {
     const messages = work(14);
     const shorter = await squeeze(messages, { clients: [client('down', 400_000, new Error('502'))], usage: createUsage(null) }, 5000);

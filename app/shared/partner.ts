@@ -44,7 +44,7 @@ export type Bet = {
   status: 'proposed' | 'open' | 'closed'; at: number; proposedBy?: string; roomId?: string; result?: BetResult;
 };
 // A bet's words as they go between full stops: whatever stop the writer ended on is dropped, so a line never reads "product..".
-export const bare = (text: string) => text.replace(/\s+/g, ' ').trim().replace(/[.\s]+$/, '');
+export const bare = (text: string) => text.replace(/\s+/g, ' ').trim().replace(/[.\u2026\s]+$/, '');
 export const VERDICT_WORDS: Record<BetVerdict, string> = { worked: 'worked', 'did-not': 'did not work' };
 
 // ---------------------------------------------------------------- the morning note
@@ -52,7 +52,8 @@ export const VERDICT_WORDS: Record<BetVerdict, string> = { worked: 'worked', 'di
 export type Morning = { things: string[]; risk: string; question: string };
 // `inputs` is what the note was read from, as a key: asked again with nothing changed, the same note stands.
 // `flags` are the truth net's lines on it: a figure nothing the note was given holds.
-export type MorningNote = Morning & { day: string; at: number; roomId: string; who: string; inputs?: string; flags?: string[] };
+// `provider` and `model` stamp it with what wrote it, as a chat reply is.
+export type MorningNote = Morning & { day: string; at: number; roomId: string; who: string; inputs?: string; flags?: string[]; provider?: string; model?: string };
 
 const plain = (text: string) => text.replace(/\*\*|__|`/g, '').replace(/\s+/g, ' ').trim();
 // A numbered or bulleted line, the number or bullet bold or not: "1. a", "**1.** a", "- a".
@@ -145,10 +146,23 @@ export function parsePlan(text: string): PlanStep[] {
   return steps;
 }
 
-// The day once, then the step: a step that already starts with its own day is not given it twice.
+// The step without its own day at the front: a step that already starts with its day is not given it twice.
+export const stepText = (step: PlanStep) => (step.day && step.text.toLowerCase().startsWith(step.day.toLowerCase()) ? step.text.slice(step.day.length).replace(/^\s*[:\-–—]\s*/, '') : step.text);
+// The day once, then the step, as the founder is asked about it and as a plan's steps are told apart.
+export const planStepLine = (step: PlanStep) => { const text = stepText(step); return (step.day ? `${step.day}: ${text}` : text).slice(0, 160); };
+export const TITLE_MOST = 80;
+// A task's title on the board. A label that names a calendar day goes, since the card shows its due date; one that
+// names none ("Day 3", "Mon") stays, since nothing else says it. A long step is cut at a word, never mid-word.
 export const planTaskTitle = (step: PlanStep) => {
-  const text = step.day && step.text.toLowerCase().startsWith(step.day.toLowerCase()) ? step.text.slice(step.day.length).replace(/^\s*[:\-–—]\s*/, '') : step.text;
-  return (step.day ? `${step.day}: ${text}` : text).slice(0, 160);
+  const text = stepText(step);
+  const whole = step.day && !dueOf(step.day, '2026-01-01') ? `${step.day}: ${text}` : text;
+  return cutAtWord(whole, TITLE_MOST);
+};
+export const cutAtWord = (text: string, most: number) => {
+  if (text.length <= most) return text;
+  // Up to the last space that leaves room for the ellipsis; one long word is cut where it has to be.
+  const space = text.slice(0, most).lastIndexOf(' ');
+  return `${(space > most / 2 ? text.slice(0, space) : text.slice(0, most - 1)).replace(/[\s,;:.\-–—]+$/, '')}\u2026`;
 };
 
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];

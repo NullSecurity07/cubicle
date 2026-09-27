@@ -154,6 +154,10 @@ export type AttentionKind = 'approval' | 'run-approval' | 'proposed-task' | 'pro
   | 'lead-stale'
   | 'metric-alert' | 'proposed-target' | 'runway-low' | 'proposed-runway'
   | 'key-rejected'
+  // A file the app could not read and put back or started again.
+  | 'file-damaged'
+  // The daily backup that could not be made, until one is.
+  | 'backup-failed'
   // The partner's: the morning note, a bet to check or to take on, and a plan's steps to put on the board.
   | 'morning-note' | 'bet-check' | 'proposed-bet' | 'proposed-plan';
 export type Attention = {
@@ -239,6 +243,8 @@ export type ChatMessage = {
   // Set when the words came from a colleague's consult, not from the founder: the colleague's name.
   from?: string; via?: ChatVia;
   provider?: string; model?: string; usage?: Usage; tools?: ToolEvent[]; stopped?: boolean; attachments?: Attachment[];
+  // A turn that failed: kept so a reload shows why the question has no answer, and never shown to a model again.
+  failed?: boolean;
 };
 // `turn` names the turn this stream is; the same name goes out on the rooms feed, so the window that asked for a
 // reply can tell its own turn from one it is only watching.
@@ -271,10 +277,14 @@ export const PARTNER_STANCE =
   + 'with your reasons, once; then help with what they chose. Be concise. Act only through your tools, and never claim an action '
   + 'that a tool result does not confirm. You know about the founder, the product, the customers and the numbers only what the '
   + 'chat and the documents say. Do not invent such facts; when you need one, ask for it. '
-  + 'Before any plan to raise money, hire, spend or pivot, list its preconditions and check each against the Company document '
-  + 'and the chat. When one is not met, say no first ("Not yet"), give the shortest path to meeting it, and only then any plan. '
+  + 'Answer the question the founder asked, in the shape it asks for: a draft is a draft, a question gets an answer. '
   + 'When a teammate\'s section or the Company document contradicts the founder\'s premise, quote it. '
   + 'End every substantive reply with one line that starts "My call:" and says what you would do.';
+// Given to the partner only on a turn whose ask is a plan to raise, hire, spend or pivot (server/partner/pushback.ts):
+// on every turn it made a small model open an investor update with "Not yet." and a preconditions heading.
+export const PARTNER_PRECONDITIONS =
+  'This ask commits money or people. Before any plan to raise money, hire, spend or pivot, list its preconditions and check each against the Company document '
+  + 'and the chat. When one is not met, say no first ("Not yet"), give the shortest path to meeting it, and only then any plan.';
 
 export const seedStage: Stage = {
   rooms: [

@@ -26,6 +26,17 @@ describe('a stage taken in from another window', () => {
   });
 });
 
+describe('a card written by the server with its keys in another order', () => {
+  it('is not taken for a change this window made, so the other window\'s move still wins', () => {
+    const card = base.rooms[0];
+    // The same card, as a change made on the server wrote it: every field the same, set in another order.
+    const reordered = Object.fromEntries(Object.entries(card).reverse()) as typeof card;
+    const mine: Stage = { ...structuredClone(base), rooms: [reordered, base.rooms[1]] };
+    const theirs: Stage = { ...structuredClone(base), rooms: [{ ...card, x: 42 }, base.rooms[1]], rev: 4 };
+    expect(mergeStage(base, mine, theirs).rooms[0].x).toBe(42);
+  });
+});
+
 describe('a save over a stage that moved on', () => {
   it('takes in the newer stage and saves again once, on its revision', async () => {
     const theirs: Stage = { ...structuredClone(base), cards: [{ id: 'note-1', kind: 'note', text: 'hi', x: 0, y: 0, w: 200, h: 200 }], rev: 7 };

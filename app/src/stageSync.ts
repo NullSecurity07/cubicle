@@ -1,11 +1,13 @@
 import type { Stage } from '../shared/model';
+import { stableJson } from '../shared/stable';
 
 // Two windows on one stage. Each holds the stage as the server last told it (`base`, with its revision) and the stage
 // as the founder has it now (`mine`). When the server has moved on (`theirs`), the two are put together card by card:
 // what this window changed or added since `base` is kept as this window has it, what it took away stays away, and
 // everything else is taken as the server has it, including what the other window added or took away.
 
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+// Compared by value, not by the order the keys happen to be in.
+const same = (a: unknown, b: unknown) => stableJson(a) === stableJson(b);
 
 function mergeList<T extends { id: string }>(base: T[], mine: T[], theirs: T[]): T[] {
   const was = new Map(base.map((one) => [one.id, one]));
