@@ -5,7 +5,9 @@ import type { Box, DocRules, Stage } from '../../shared/model.ts';
 import { readableDocIds, wiredDocIds } from '../prompt.ts';
 import { addedTwice, replaceSection, rewriteLoss } from './sections.ts';
 import { text, type Tool, type ToolContext } from './registry.ts';
-import { guardWrite } from './verdict.ts';
+import { shortDay } from '../clock.ts';
+import { HELD_BACK } from '../truth.ts';
+import { filled, guardWrite, sectionBody, unmarked } from './verdict.ts';
 
 // A new doc card's size, and the gap kept round it: the same the window uses when it places one.
 const [WIDTH, HEIGHT, GAP] = [340, 300, 40];
@@ -94,6 +96,81 @@ async function save(context: ToolContext, id: string, before: string, after: str
   await context.store.replaceDoc(id, guarded.text);
   const said = guarded.held ? guarded.note! : [done, guarded.note].filter(Boolean).join(' ');
   return { text: said, effect: { kind: 'doc-changed' as const, id } };
+}
+
+// Whether a question is about a section: it names the section's words ("founder-market fit") or its number
+// ("section 4"), read past case, hyphens and the heading's own "4." in front.
+function asksAbout(question: string, heading: string): boolean {
+  const flat = (words: string) => words.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const number = /^(\d+)[.)]\s/.exec(heading)?.[1];
+  const words = flat(heading.replace(/^\d+[.)]\s*/, '').replace(/\([^)]*\)/g, ''));
+  return (!!words && flat(question).includes(words)) || (!!number && new RegExp(`\\bsection\\s+${number}\\b`, 'i').test(question));
+}
+
+const HEDGE = /\b(not sure|unsure|don'?t know|do not know|haven'?t|have not|no idea|no clue|unclear|unknown|hard to say|need to ask|ask (?:the )?founder|tbd|n\/a|pending|not yet|can'?t say)\b/i;
+const hedges = (answer: string) => /\?\s*$/.test(answer.trim()) || HEDGE.test(answer.replace(/[’‘]/g, "'"));
+
+// The words an answer says beyond its section's name: three letters or more, and not a bare yes or no. None left
+// ("No." to "have you written section 4 yet?", or "Founder-market fit.") says nothing that could be the section.
+const AFFIRM = new Set(['yes', 'yeah', 'yep', 'nope', 'okay', 'sure']);
+function saying(text: string, heading: string): string[] {
+  const words = (said: string) => said.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word.length > 2);
+  const named = new Set(words(heading));
+  return words(text).filter((word) => !named.has(word) && !AFFIRM.has(word));
+}
+
+// An answer most of whose words are the question's own: the question said back, maybe as dictated to them. The
+// section's own words are left out on both sides, so "Founder-market fit: lived it." is an answer.
+function echoes(answer: string, question: string, heading: string): boolean {
+  const asked = new Set(saying(question, heading));
+  const said = saying(answer, heading);
+  return said.filter((word) => asked.has(word)).length / said.length >= 0.7;
+}
+
+// A colleague asked with ask_person answers in words, without tools, so their answer never reached their own section of
+// a team doc, and a verdict waiting on it waited until the founder answered in the Needs you box. When the asker and
+// the colleague share such a doc, the colleague's section there is empty and the question is about it, the answer is
+// written into it as the colleague's own write, marked as from chat. Returns what to tell the asker, or null.
+export async function answerIntoSection(context: ToolContext, targetId: string, question: string, said: string): Promise<string | null> {
+  // A marker the colleague wrote themselves is dropped: the only one is the one put in below.
+  const answer = unmarked(said).trim();
+  const { stage } = context;
+  const asker = stage.rooms.find((room) => room.id === context.roomId);
+  const target = stage.rooms.find((room) => room.id === targetId);
+  if (!asker || !target) return null;
+  const shared = wiredDocIds(stage, targetId).filter((id) => wiredDocIds(stage, context.roomId).includes(id));
+  const waiting: string[] = [];
+  for (const id of shared) {
+    const rules = await rulesOf(stage, id);
+    const key = target.framework?.id === rules?.framework ? target.framework?.key : undefined;
+    if (!rules || !key) continue;
+    const before = await context.store.readDoc(id);
+    const empty = rules.sections.filter(({ heading, by }) => by === key && sectionBody(before, heading) !== null && !filled(sectionBody(before, heading)).length);
+    const asked = empty.filter(({ heading }) => asksAbout(question, heading));
+    waiting.push(...empty.filter((one) => !asked.includes(one)).map(({ heading }) => heading));
+    // One section at a time: an answer to a question naming two is not split between them.
+    if (asked.length !== 1 || !filled(answer).length || answer.trim() === HELD_BACK) continue;
+    const [{ heading }] = asked;
+    // A colleague answering without tools does not know their reply becomes their section, so they hedge or ask back;
+    // written in, a hedge counted as the section and let a verdict stand on it. Nor is the question said back an answer.
+    if (!saying(answer, heading).length) return `${target.name} answered but did not fill "${heading}"; it stays empty. Ask ${target.name} what goes in it.`;
+    if (hedges(answer) || echoes(answer, question, heading)) return `${target.name} answered but did not fill "${heading}"; it stays empty.`;
+    const asking = question.replace(/\s+/g, ' ').trim();
+    const body = `${answer.trim()}\n\n(From chat: ${target.name} answered ${asker.name} on ${shortDay(Date.now())}, asked "${asking.length > 200 ? `${asking.slice(0, 199)}…` : asking}".)`;
+    const next = replaceSection(before, heading, body);
+    if ('error' in next) continue;
+    // The section's own checks hold as for any write of theirs; one that fails is said, and the answer still stands.
+    let guarded;
+    try { guarded = guardWrite({ rules, stage, docId: id, writerId: targetId, before, after: next.text, now: Date.now(), fromChat: true }); } catch (error) {
+      // The guard speaks to the writer ("Write it again", "Ask Priya with ask_person"); the asker gets only the reason.
+      const why = (error as Error).message.replace(/^not written:\s*/, '').replace(/\s+(?:Write it again|Ask \S+ with ask_person)[\s\S]*$/, '');
+      return `Not written into "${heading}": ${why} The section stays empty until ${target.name} writes it within the section's rules.`;
+    }
+    await context.store.replaceDoc(id, guarded.text);
+    context.report?.({ kind: 'doc-changed', id });
+    return `Written into "${heading}" as ${target.name}'s answer, from chat.`;
+  }
+  return waiting.length ? `${target.name} has not written ${waiting.map((heading) => `"${heading}"`).join(', ')} yet; ask them about it by name and their answer is written there.` : null;
 }
 
 const doc = { type: 'string', description: 'Title of a document connected to your room' };
