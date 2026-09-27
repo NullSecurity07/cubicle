@@ -535,6 +535,10 @@ describe('outreach claimed as done', () => {
     expect(unreceiptedClaims('I spoke to Lena today.', [])).toEqual(['spoke to']);
     expect(unreceiptedClaims('I called the 2 paying hosts.', [])).toEqual(['called']);
     expect(unreceiptedClaims('4 hosts emailed back.', [])).toEqual([]);
+    // "Anyone" and "anybody" are who got it, not nobody: still a claim. A product name before a plural noun is no person.
+    expect(unreceiptedClaims('I emailed anyone who signed up.', [])).toEqual(['emailed']);
+    expect(unreceiptedClaims('I sent anybody on the list the deck.', [])).toEqual(['sent']);
+    expect(unreceiptedClaims('10 Kindling hosts contacted for testing.', [])).toEqual(['contacted']);
     // Backed by a tool that reaches out, said as a plan, or a name: not a claim.
     expect(unreceiptedClaims('I contacted the 12 beta users.', [{ name: 'send_email', ok: true }])).toEqual([]);
     for (const reply of ['Once you have contacted the 12 beta users, tell me.', '3 users called it confusing.', 'Nobody contacted them yet.',

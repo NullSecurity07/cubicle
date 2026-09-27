@@ -22,8 +22,9 @@ const VERBS = 'saved|wrote|written|updated|created|stored|recorded|sent|emailed|
 // Review 7: "10 non-paying beta users contacted for testing", a count of people with the outreach done to them and
 // no "I" or "has been" in front. "Called" is left out here: "3 users called it confusing" names, it does not phone.
 // Nobody may stand between the count and the verb: "the 12 beta users you contacted" is who was reached by someone
-// named, "the 3 hosts Lena interviewed" too. Case is read as written, so a name is a capital word.
-const REACHED = /\b\d[\d,]*\s+(?:(?!(?:you|they|we|i|he|she|someone|somebody)\b)(?![A-Z])[\w-]+\s+){0,4}?(contacted|emailed|messaged|interviewed)\b(?!\s+(?:back|us|me|in)\b)/g;
+// named, "the 3 hosts Lena interviewed" too. Case is read as written: a capital word is a name, unless a plural
+// noun follows it ("10 Kindling hosts contacted" names the product, not who did it).
+const REACHED = /\b\d[\d,]*\s+(?:(?!(?:you|they|we|i|he|she|someone|somebody)\b)(?:[a-z0-9][\w-]*|[A-Z][\w-]*(?=\s+[a-z][\w-]*s\b))\s+){0,4}?(contacted|emailed|messaged|interviewed)\b(?!\s+(?:back|us|me|in)\b)/g;
 // Said as a plan or a goal, not as done: "Plan: 5 hosts interviewed by Friday", "we need 5 users interviewed".
 const AHEAD = /\b(?:need|needs|needed|should|plan|planned|goal|target|aim)\b|\bby (?:mon|tues|wednes|thurs|fri|satur|sun)day\b/i;
 // "I saved", "I've just sent", "we have posted"; "it has been saved", "the draft was saved"; a sentence that opens with
@@ -52,7 +53,7 @@ const HERE = /\b(?:below|above|here|in this (?:reply|message|chat))\b/i;
 const ELSEWHEN = /\b(?:yesterday|last (?:week|month|year|quarter|time)|ago|in (?:19|20)\d\d|you (?:said|told|mentioned|wrote))\b/i;
 // "In March", "last June": a month named as the time of it puts the sentence in the past (case kept, so "in may" is not one).
 const IN_MONTH = /\b(?:[Ii]n|[Dd]uring|[Ss]ince|[Ll]ast|[Bb]ack in|[Ee]arly|[Ll]ate)\s+(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept?|Oct|Nov|Dec)\b/;
-const NOT_A_THING = /^\w+\s+(?:(?:you|them|him|her|us)\s+)?nothing\b|^(?:\w+\s+){1,2}(?:nobody|no one|no-one|anyone|anybody)\b|^\w+\s+my\s+(?:view|mind|thinking|take|estimate|opinion|read|understanding|guess)\b/i;
+const NOT_A_THING = /^\w+\s+(?:(?:you|them|him|her|us)\s+)?nothing\b|^(?:\w+\s+){1,2}(?:nobody|no one|no-one)\b|^\w+\s+my\s+(?:view|mind|thinking|take|estimate|opinion|read|understanding|guess)\b/i;
 
 function sentenceAround(text: string, at: number): { before: string; rest: string } {
   const start = Math.max(text.lastIndexOf('.', at - 1), text.lastIndexOf('!', at - 1), text.lastIndexOf('?', at - 1), text.lastIndexOf('\n', at - 1)) + 1;
