@@ -286,6 +286,7 @@ describe('options the partner lays out', () => {
     expect(figureCheck('Competitors charge either $49 or $79.', sources).unsourced).toEqual(['$49', '$79']);
     expect(figureCheck('Accountants charge between €80 and €200 a month.', sources).unsourced).toEqual(['€80', '€200']);
     expect(figureCheck('Your MRR is $87 or $90.', sources).unsourced).toEqual(['$87', '$90']);
+    expect(figureCheck('Competitors offer either $49 or $79.', sources).unsourced).toEqual(['$49', '$79']);
     expect(figureCheck('Benchmarks:\n- Accountants charge $150 a month', sources).unsourced).toEqual(['$150']);
   });
 });

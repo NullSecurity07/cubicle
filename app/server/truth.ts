@@ -187,7 +187,9 @@ function offered(reply: string, at: number): boolean {
   }
   // A pair, a choice or a range said of the market ("competitors charge either $49 or $79", "accountants charge
   // between €80 and €200") is a claim: these shapes are the person's options only in a sentence that proposes.
-  if (!PROPOSES.test(sentence)) return false;
+  // "Competitors offer either $49 or $79": somebody else's offer is still a claim.
+  const proposing = PROPOSES.exec(sentence);
+  if (!proposing || /\b(?:competitors?|rivals?|incumbents?|market|accountants?|agencies|they|others)\b/i.test(sentence.slice(0, proposing.index))) return false;
   if (EITHER.test(sentence)) return !STATUS.test(sentence.slice(sentence.search(EITHER)));
   return BETWEEN.test(sentence) || OR_FIGURE.test(sentence);
 }

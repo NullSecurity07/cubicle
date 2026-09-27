@@ -40,8 +40,8 @@ describe('a price is the company\'s own', () => {
   });
 
   it('takes it when the company is the one charging', () => {
-    for (const said of ['We charge $39/month.', 'Our price is $39/month.', 'We sell at $39 a month.', 'It is $39/month for our base plan.'])
-      expect(companyFacts(said).numbers, said).toEqual([{ label: 'Price', value: expect.stringMatching(/^\$39/) }]);
+    for (const said of ['We charge $39/month.', 'Our price is $39/month.', 'We sell at $39 a month.', 'It is $39/month for our base plan.', 'We have 3 paying users and charge $39/month.', 'We charge customers $39/month.', 'For EU freelancers we charge $39/month.'])
+      expect(companyFacts(said).numbers.filter((one) => one.label === 'Price'), said).toEqual([{ label: 'Price', value: expect.stringMatching(/^\$39/) }]);
   });
 
   it('never writes over a Price line the founder wrote themselves', () => {

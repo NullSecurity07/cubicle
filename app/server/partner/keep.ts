@@ -30,8 +30,13 @@ function ours(sentence: string, at: number, length: number, isIdea: boolean): bo
   const before = sentence.slice(0, at);
   // Words in quotes are somebody else's.
   if ((before.match(/["\u201c\u201d]/g) ?? []).length % 2 === 1 || /\b(?:wrote|said|says)\s*:/i.test(before)) return false;
-  if (THEIRS.test(before)) return false;
-  return isIdea || OURS_BEFORE.test(before) || OURS_AFTER.test(sentence.slice(at + length));
+  // Only the clause holding the figure says whose it is: "we have 3 paying users and charge $29/month" is ours, and
+  // "we charge customers $29/month" is ours because the company is the one charging.
+  const clause = before.split(/[,;]|\band\b|\bbut\b/).at(-1) ?? '';
+  // "We have 3 users and charge $29/month": the "we" of the sentence charges in the second clause too.
+  if (OURS_BEFORE.test(clause) || (/^\s*(?:charge|sell|bill)\w*\b/i.test(clause) && /^\s*(?:we|i)\b/i.test(sentence))) return true;
+  if (THEIRS.test(clause)) return false;
+  return isIdea || OURS_AFTER.test(sentence.slice(at + length));
 }
 const IDEA = /\b(?:(?:i'?m|i am|we'?re|we are)\s+building|we (?:make|build|sell|help)|(?:it|this) is an?)\b/i;
 

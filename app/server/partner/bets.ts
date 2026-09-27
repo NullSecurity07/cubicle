@@ -177,13 +177,21 @@ export async function askedInstead(workspace: string, stage: Stage, pick: string
 
 // A bet has to be able to lose: its target beats the number as it stands, up for most numbers and down for one that
 // is better lower (churn, burn, cost). Null when it does; else what to tell the person, with the number read now.
+// A hold is about this number: keep, hold, retain or maintain in the same clause as the number or the metric's name
+// ("keep our 3 paying users"), never "make the bet, keep it simple".
+function holds(ask: string, metric: string, target: number): boolean {
+  const words = metric.toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 2).map((word) => word.replace(/s$/, ''));
+  return ask.toLowerCase().split(/[,;.!?]|\band\b|\bbut\b/).some((clause) => /\b(?:keep|hold|retain|maintain)\b/.test(clause)
+    && (new RegExp(`(?<![\\d.])${target}(?![\\d.])`).test(clause) || words.some((word) => new RegExp(`\\b${word}`).test(clause))));
+}
+
 // A row that does not say which way is better is read by its name, as the Metrics card guesses it. A hold ("keep our 3
 // paying users") can lose too, through churn, so an equal target stands when the ask says keep, hold or retain.
 export function cannotLose(metric: string, target: number, reading: Reading, ask = ''): string | null {
   if (reading.value === null) return null;
   const lower = (reading.better ?? guessBetter(metric)) === 'down';
   if (lower ? target < reading.value : target > reading.value) return null;
-  if (target === reading.value && /\b(?:keep|hold|retain|maintain)\b/i.test(ask)) return null;
+  if (target === reading.value && holds(ask, metric, target)) return null;
   const where = /read from (the \w+ card)/.exec(reading.said)?.[1] ?? 'its card';
   const way = lower ? `${metric.charAt(0).toUpperCase()}${metric.slice(1)} is better lower: propose a target below ${reading.value}` : `Propose a target above ${reading.value}`;
   return `"${metric}" is ${reading.value} now, read from ${where}: a target of ${target} cannot lose. ${way}, one this bet could miss, and tell the founder the number it starts from.`;

@@ -130,5 +130,8 @@ describe('a bet that can lose', () => {
     expect(cannotLose('paying_users', 3, read(3, 'up'), 'keep our 3 paying users through October')).toBeNull();
     expect(cannotLose('paying_users', 3, read(3, 'up'), 'make the 2-week bet')).toMatch(/a target of 3 cannot lose/);
     expect(cannotLose('paying_users', 2, read(3, 'up'), 'keep our 3 paying users')).toMatch(/a target of 2 cannot lose/);
+    // The hold has to be about this number: "keep it simple" is not.
+    expect(cannotLose('paying_users', 3, read(3, 'up'), 'make the bet, keep it simple')).toMatch(/a target of 3 cannot lose/);
+    expect(cannotLose('paying_users', 3, read(3, 'up'), 'hold paying users where they are')).toBeNull();
   });
 });
