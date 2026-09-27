@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { preset } from '../shared/apps.ts';
-import { PARTNER_STANCE, STANCE, seedStage, type ChatMessage, type Stage } from '../shared/model.ts';
+import { PARTNER_PRECONDITIONS, PARTNER_STANCE, STANCE, seedStage, type ChatMessage, type Stage } from '../shared/model.ts';
 import { COMPANY_LINE } from '../shared/partner.ts';
 import { buildMessages, colleagueIds, readableDocIds, todayBlock, wiredDocIds } from './prompt.ts';
 
@@ -272,14 +272,32 @@ describe('source websites', () => {
     expect(buildMessages(stage, 'build', {}, [])[0].content).not.toContain(COMPANY_LINE);
   });
 
+  // The journey's investor update came back "Not yet." under a preconditions heading: the rule is only in front of the
+  // partner when the founder's own last message asks for a raise, hire, spend or pivot plan.
+  it('puts the preconditions rule in front of the partner only when the founder asks for a commitment, and says to answer the question otherwise', () => {
+    const withPartner: Stage = { ...stage, rooms: [...stage.rooms, { id: 'partner', name: 'Sam', role: 'Partner', accent: '#fff', brief: 'You hold the company.', partner: true, x: 0, y: 0, w: 1, h: 1 }] };
+    const said = (text: string): ChatMessage[] => [{ id: 'u', role: 'user', text, at: Date.now() }];
+    const routine = buildMessages(withPartner, 'partner', {}, said('help me write an investor update'))[0].content as string;
+    expect(routine).not.toContain(PARTNER_PRECONDITIONS);
+    expect(routine).not.toContain('say no first');
+    expect(routine).toContain('Answer the question the founder asked');
+    const raise = buildMessages(withPartner, 'partner', {}, said('I want to raise a $2M pre-seed next week. Draft the plan.'))[0].content as string;
+    expect(raise).toContain(PARTNER_PRECONDITIONS);
+    expect(raise).toContain('Before any plan to raise money, hire, spend or pivot, list its preconditions');
+    expect(raise).toContain('say no first');
+    // A colleague's question is not the founder's ask, and an older raise ask does not hold the rule on for good.
+    const later = buildMessages(withPartner, 'partner', {}, [...said('Should we raise now?'), { id: 'a', role: 'assistant', text: 'Not yet.', at: Date.now() }, ...said('Draft the landing page copy')])[0].content as string;
+    expect(later).not.toContain(PARTNER_PRECONDITIONS);
+    const staff = buildMessages(withPartner, 'build', {}, said('Should we raise now?'))[0].content as string;
+    expect(staff).not.toContain(PARTNER_PRECONDITIONS);
+  });
+
   it('gives a partner the partner stance in place of the staff one, and everybody else the staff one', () => {
     const withPartner: Stage = { ...stage, rooms: [...stage.rooms, { id: 'partner', name: 'Sam', role: 'Partner', accent: '#fff', brief: 'You hold the company.', partner: true, x: 0, y: 0, w: 1, h: 1 }] };
     const partner = buildMessages(withPartner, 'partner', {}, [])[0].content as string;
     expect(partner).toContain(PARTNER_STANCE);
     expect(partner).not.toContain('you do not run the company');
     expect(partner).toContain('My call:');
-    expect(partner).toContain('Before any plan to raise money, hire, spend or pivot, list its preconditions');
-    expect(partner).toContain('say no first');
     expect(partner).toContain('contradicts the founder\'s premise, quote it');
     const staff = buildMessages(withPartner, 'build', {}, [])[0].content as string;
     expect(staff).toContain(STANCE);
