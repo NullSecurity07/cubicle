@@ -73,6 +73,13 @@ tools = _Tools(_json.loads(_tool_names))
 del _Tools
 `;
 
+// The permission model stops files, programs and the network, but not signals: code that climbs out of vm could still
+// kill or abort any process of the user, the app server included. Take those away before any code runs. process.exit
+// stays, since ending this process is only ending the sandbox.
+for (const name of ['kill', '_kill', 'abort']) {
+  Object.defineProperty(process, name, { value: () => { throw new Error('no signals from the sandbox'); }, writable: false, configurable: false });
+}
+
 let error;
 try {
   if (job.language === 'python') {
