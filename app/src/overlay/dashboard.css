@@ -148,6 +148,9 @@ button.dash__stat:hover { background: var(--dash-raise-hover); }
 .dash__health li.is-bad .dash__mark { background: color-mix(in srgb, var(--dash-bad) 18%, transparent); color: var(--dash-bad); }
 .dash__health li.is-warn .dash__mark { background: color-mix(in srgb, var(--dash-low) 18%, transparent); color: var(--dash-low); }
 .dash__health .dash__text small { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+/* A row that needs a look is read whole; only a fine one is kept to two lines. The folder line is cut at its end. */
+.dash__health li:is(.is-warn, .is-bad) .dash__text small { display: block; -webkit-line-clamp: unset; }
+.dash__health .dash__text small.dash__where { display: block; white-space: nowrap; text-overflow: ellipsis; }
 
 /* Teams: every framework, placed or not, with what it last scored. */
 .dash__teams { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; }

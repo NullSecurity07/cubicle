@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { checkAll, freeProviders, healthRows, keyChecks, keyPools, keysOf, liveChecks, liveReaders, LIVE_FEED, LIVE_REDDIT, LIVE_REDDIT_FEED, onPath, ytdlpVersion } from './health.ts';
+import { backupRow, checkAll, freeProviders, healthRows, keyChecks, keyPools, keysOf, liveChecks, liveReaders, LIVE_FEED, LIVE_REDDIT, LIVE_REDDIT_FEED, onPath, ytdlpVersion } from './health.ts';
 import type { Check } from '../../shared/openends.ts';
 
 const at = new Date('2026-09-20T09:00:00').getTime();
@@ -87,7 +87,7 @@ describe('the rest of the checks', () => {
   it('count a backup as fine for a day and say how long ago in days', async () => {
     expect(row(await setup(), 'Backup').detail).toContain('nothing has been backed up yet');
     expect(row(await setup({ backups: async () => [{ at }] }), 'Backup')).toMatchObject({ ok: true, detail: expect.stringContaining('the newest made today') });
-    expect(row(await setup({ backups: async () => [{ at: at - DAY - 1000 }, { at: at - 2 * DAY }] }), 'Backup')).toMatchObject({ ok: false, detail: expect.stringContaining('2 kept in /tmp/backups, the newest made yesterday') });
+    expect(row(await setup({ backups: async () => [{ at: at - DAY - 1000 }, { at: at - 2 * DAY }] }), 'Backup')).toMatchObject({ ok: false, detail: '2 kept, the newest made yesterday\nKept in /tmp/backups' });
     expect(row(await setup({ backups: async () => [{ at: at - 9 * DAY }] }), 'Backup')).toMatchObject({ ok: false, detail: expect.stringContaining('9 days ago') });
     // The point of a backup is a second disk: the fix says so.
     expect(row(await setup(), 'Backup').fix).toContain('second disk');
@@ -106,6 +106,15 @@ describe('the rest of the checks', () => {
     expect(row(await setup({ backups: async () => [{ at: at - 2 * DAY }], stat: same }), 'Backup')).toMatchObject({ ok: false });
     expect(row(await setup({ backups: async () => [{ at: at - 2 * DAY }], stat: same }), 'Backup').warn).toBeUndefined();
     expect(row(await setup({ stat: same }), 'Backup').ok).toBe(false);
+  });
+
+  it('says the same-disk warning whole on the first line and the folder, however long, on a line of its own', () => {
+    const dir = `/run/media/founder/${'a-long-drive-name/'.repeat(6)}Cubicle backups`;
+    const [first, second, ...more] = backupRow({ dir, backups: [{ at }], writable: true, sameDisk: true }, at).detail.split('\n');
+    expect(first).toBe('1 kept, the newest made today, on the same disk as the workspace: a copy here dies with this disk; pick another disk');
+    expect(second).toBe(`Kept in ${dir}`);
+    expect(more).toEqual([]);
+    expect(backupRow({ dir, backups: [], writable: false }, at).detail.split('\n')).toEqual(['nothing has been backed up yet, and that folder cannot be written to', `They would go to ${dir}`]);
   });
 
   it('count a backup folder that cannot be written to as a problem, however fresh the newest', async () => {
