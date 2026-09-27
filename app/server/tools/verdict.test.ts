@@ -449,6 +449,33 @@ describe('a verdict written again over a section emptied since', () => {
   });
 });
 
+describe('a score with its breakdown in brackets', () => {
+  const write = async (text: string) => {
+    const all = await setup();
+    await all.fill();
+    return { out: await all.as('verdict')('replace_section', { heading: '5. Verdict', text }), doc: all.doc };
+  };
+
+  it('is refused when the parts do not add up to it, with the figure they do add up to', async () => {
+    // The live judge's: five parts out of ten each, 15 of 50, which is 3 of 10 and not 5.
+    const { out, doc } = await write('WEAK\n\nScore: 5/10 (Assumption: 1, Flaws: 3, Pain: 1, Fit: 8, Why Now: 2)');
+    expect(out.ok).toBe(false);
+    expect(out.text).toMatch(/not written: the score says 5 of 10, but its parts \(1, 3, 1, 8, 2\) add up to 15 of 50, which is 3 of 10\. Write the score as 3\/10, or change the parts\./);
+    expect(out.text).toContain('Tell the founder the verdict was not written because');
+    expect(sectionBody(await doc(), '5. Verdict')).not.toContain('5/10');
+    // Parts out of two each, as the template's five parts of ten are.
+    expect((await write('WEAK\n\nScore: 7/10 (1, 1, 1, 1, 0)')).out.text).toMatch(/add up to 4 of 10\. Write the score as 4\/10/);
+  });
+
+  it('lets a score through that its parts add up to, rounded, or out of their own stated maximum', async () => {
+    for (const text of ['WEAK\n\nScore: 3/10 (Assumption: 1, Flaws: 3, Pain: 1, Fit: 8, Why Now: 2)', 'WEAK\n\nScore: 4/10 (1, 1, 1, 1, 0)',
+      'WEAK\n\nScore: 3/10 (2, 3, 1, 8, 3)', 'WEAK\n\nScore: 5/10 (1/2, 2/2, 1/2, 1/2, 0/2)', 'WEAK\n\nScore out of 10 — assumption, flaws, pain, fit, why now:\n\n4/10 (1, 1, 1, 1, 0)',
+      'WEAK because of (3).\n\nScore: 4/10']) {
+      expect((await write(text)).out.ok, text).toBe(true);
+    }
+  });
+});
+
 describe('a team run with one section blank', () => {
   it('ends with "not assessed" in the verdict, not the judge\'s own fill-in', async () => {
     const { stage, store, doc, fill } = await setup();
