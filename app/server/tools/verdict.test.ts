@@ -465,6 +465,11 @@ describe('a score with its breakdown in brackets', () => {
     expect(sectionBody(await doc(), '5. Verdict')).not.toContain('5/10');
     // Parts out of two each, as the template's five parts of ten are.
     expect((await write('WEAK\n\nScore: 7/10 (1, 1, 1, 1, 0)')).out.text).toMatch(/add up to 4 of 10\. Write the score as 4\/10/);
+    // Labels without a colon, as the live judge wrote them: 1 + 0 + 1 + 2 + 2 is 6, not 8.
+    for (const text of ['PIVOT REQUIRED\n\nScore out of 10: 8/10 (assumption 1, flaws 0, pain 1, fit 2, why now 2)', 'PIVOT REQUIRED\n\nScore: 8/10 (Assumption - 1, Why-now 2, fit 2, pain 1, flaws 0)']) {
+      expect((await write(text)).out.text, text).toMatch(/add up to 6 of 10\. Write the score as 6\/10/);
+    }
+    expect((await write('PIVOT REQUIRED\n\nScore: 6/10 (assumption 1, flaws 0, pain 1, fit 2, why now 2)')).out.ok).toBe(true);
   });
 
   it('lets a score through that its parts add up to, rounded, or out of their own stated maximum', async () => {
@@ -561,6 +566,8 @@ describe('the judge told her verdict was refused', () => {
     await fill(['4. Founder-market fit']);
     const held = await as('verdict')('replace_section', { heading: '5. Verdict', text: 'WEAK\n\nScore: 4/10' });
     expect(held.text).toContain('Tell the founder the verdict was not written because Rohan has not written "4. Founder-market fit" yet. Give no verdict word (WEAK, PIVOT REQUIRED, STRONG) and no score in chat until it is written.');
+    // Not even as the verdict it would be once the section is written: a live judge led with "**PIVOT REQUIRED**" after one.
+    expect(held.text).toMatch(/until it is written\. Do not name a verdict word at all, not even as the one it would be\.$/);
     const capped = await setup();
     await capped.fill();
     await capped.as('pain')('replace_section', { heading: '3. Is the pain real?', text: 'Vitamin — painkiller — hair on fire: painkiller\n\nReal customer conversations done (of ten to twenty): 0' });
@@ -593,8 +600,10 @@ describe('the judge told her verdict was refused', () => {
 
 describe('the judge asking a colleague about their empty section', () => {
   // Priya on a script: ask Rohan about his empty section, then write the verdict. Rohan answers on his own script.
-  async function run(question: string, ...answers: string[]) {
+  async function run(question: string, ...rest: (string | { chat: string })[]) {
+    const answers = rest.filter((one): one is string => typeof one === 'string');
     const { stage, store, doc, fill } = await setup();
+    for (const one of rest) if (typeof one !== 'string') await store.appendChat('fit', { id: 'f1', role: 'user', text: one.chat, at: Date.now() });
     await fill(['4. Founder-market fit']);
     const consult: Consult = async () => answers.shift() ?? '';
     const steps: ({ name: string; args: unknown }[] | string)[] = [
@@ -713,6 +722,24 @@ describe('the judge asking a colleague about their empty section', () => {
     const { result, text } = await run('What is the founder-market fit in section 4?', 'The founder-market fit in section 4.');
     expect(result.tools[0].result).toContain('it stays empty');
     expect(filled(sectionBody(text, '4. Founder-market fit'))).toEqual([]);
+  });
+
+  it('takes out a line that repeats the section\'s own heading', async () => {
+    const { text } = await run('What goes in section 4?', '**4. Founder‑market fit**\n\n| Kind | What |\n|---|---|\n| Lived it | freelance consulting for six years |\n\n## 4. Founder-market fit\nIn one sentence: lived it.');
+    const fit = sectionBody(text, '4. Founder-market fit')!;
+    expect(fit).toMatch(/^\| Kind \| What \|/);
+    expect(fit).not.toMatch(/Founder.market fit\*\*|^## /m);
+    expect(fit).toContain('In one sentence: lived it.');
+  });
+
+  it('refuses a figure in a colleague\'s answer that nothing they read gives, and writes one they were told', async () => {
+    // Rohan, asked by Priya, gave a count the founder never said; the net was silent and it went into the doc.
+    const invented = await run('What goes in section 4, the founder-market fit?', 'Earned secret: during those 6 years you built relationships with ~200 solo-consultant peers who pay €150/month for bookkeeping.');
+    expect(invented.result.tools[0].result).toMatch(/Not written into "4\. Founder-market fit": Rohan's answer gives ~200, €150 that nothing Rohan read gives\. The section stays empty/);
+    expect(filled(sectionBody(invented.text, '4. Founder-market fit'))).toEqual([]);
+    // A figure the founder told Rohan in his own room is his to write.
+    const told = await run('What goes in section 4?', 'Lived it: consulted for 6 years and served ~200 clients.', { chat: 'I freelanced for six years and served about 200 clients.' });
+    expect(sectionBody(told.text, '4. Founder-market fit')).toMatch(/^Lived it: consulted for 6 years and served ~200 clients\./);
   });
 
   it('keeps only the substance of a chatty answer, not its status heading or its "you can now" close', async () => {

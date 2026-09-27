@@ -1,6 +1,11 @@
 import type { DocRules, Room, Stage } from '../../shared/model.ts';
 import { shortDay } from '../clock.ts';
 import { VERDICT_WRITTEN, verdictRefused } from '../truth.ts';
+
+// What a refused verdict write tells the judge to say, and not say: after one, a live judge still led her chat reply
+// with "**PIVOT REQUIRED**" as the verdict it would be once the section was written.
+const refusedVerdict = (reason: string, outcomes: string[]) =>
+  `${verdictRefused(reason, outcomes)} Do not name a verdict word at all, not even as the one it would be.`;
 import { wiredDocIds } from '../prompt.ts';
 import { headingKey, headings } from './sections.ts';
 
@@ -98,7 +103,7 @@ export function verdictOf(written: string, outcomes: string[], outOf = 10): { wo
 
 // A score its breakdown in brackets does not reach: "5/10 (Assumption: 1, Flaws: 3, Pain: 1, Fit: 8, Why Now: 2)" is
 // 15 of 50, which is 3 of 10, and a live judge wrote it with nothing to catch it. Each part is a label and one number,
-// or "a/b" out of its own b; anything else in the brackets ("see sections 1, 2 and 4") is no breakdown. A cap's words
+// or "a/b" out of its own b; anything else in the brackets, or brackets that name sections, ("see sections 1, 2 and 4") is no breakdown. A cap's words
 // and a stated sum ("capped from 7: ...", "= 7") are not parts. Parts with no maximum of their own are read as out of
 // the total together (when they add up to it at most) or out of the total each, and the score passes when either
 // reading reaches it. Only a score above its parts is refused: one below them is a cap the evidence set, or parts
@@ -113,7 +118,9 @@ export function breakdownMismatch(written: string, outOf = 10): string | null {
     const stated = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(?:\\/|out of|of)\\s*${outOf}\\b`, 'i').exec(head) ?? (/^score\b/i.test(head) ? /:\s*(\d+(?:\.\d+)?)\s*$/.exec(head.trim()) : null);
     if (!stated) continue;
     const inner = group[1].replace(/\bcapped\s+(?:from|at)\s+\d+(?:\.\d+)?\s*[:;,]?/gi, '').replace(/=\s*\d+(?:\.\d+)?\s*$/, '').replace(/^\s*parts?\b\s*:?/i, '');
-    const parts = inner.split(/[,;+]/).map((part) => /^(?:[\p{L}][\p{L}\s'-]*:\s*)?(\d+(?:\.\d+)?)(?:\s*\/\s*(\d+(?:\.\d+)?))?$/u.exec(part.trim()));
+    // A label before each number, with a colon, a dash or only a space after it: "Fit: 2", "fit 2", "Why-now - 2".
+    if (/\bsections?\b/i.test(inner)) continue;
+    const parts = inner.split(/[,;+]/).map((part) => /^(?:[\p{L}][\p{L}\s'-]*?(?:\s*[:=–—-]\s*|\s+))?(\d+(?:\.\d+)?)(?:\s*\/\s*(\d+(?:\.\d+)?))?$/u.exec(part.trim()));
     if (parts.length < 2 || parts.some((part) => !part)) continue;
     const values = parts.map((part) => Number(part![1]));
     const sum = values.reduce((a, b) => a + b, 0);
@@ -282,13 +289,13 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
         note: byJudge
           ? `Not written: the verdict waits because ${missing.join(', and ')}. The verdict section now says "Not assessed". `
             + `${who.length ? `Ask ${who.join(' or ')} with ask_person, or tell the founder exactly that` : 'Tell the founder exactly that'}: nothing else in the document is wrong. Never write that section yourself. `
-            + verdictRefused(missing.join(', and '), rules.outcomes ?? [])
+            + refusedVerdict(missing.join(', and '), rules.outcomes ?? [])
           : `The verdict now says "Not assessed": ${missing.join(', and ')}.`,
       };
     }
     if (!byJudge) return null;
     const sum = breakdownMismatch(verdict);
-    if (sum) throw new Error(`not written: ${sum} ${verdictRefused(`its score does not add up: ${sum.slice(0, sum.indexOf('. Write'))}`, rules.outcomes ?? [])}`);
+    if (sum) throw new Error(`not written: ${sum} ${refusedVerdict(`its score does not add up: ${sum.slice(0, sum.indexOf('. Write'))}`, rules.outcomes ?? [])}`);
     const { word, score } = verdictOf(verdict, rules.outcomes ?? []);
     for (const cap of (rules.caps ?? []).filter((one) => !one.on)) {
       if (conversations(sectionBody(text, cap.heading) ?? '', cap.line)) continue;
@@ -298,7 +305,7 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
         const why = `${cap.why}, so the verdict is at most ${cap.verdict} and the score at most ${cap.score} of 10`;
         throw new Error(`not written: ${why}. `
           + `This one says ${[word, score !== undefined ? `${score} of 10` : ''].filter(Boolean).join(', ')}. ${countRead(sectionBody(text, cap.heading) ?? '', cap.line)}`
-          + `${payers(sectionBody(text, cap.heading) ?? '', cap.line)} Write it again within the cap, and say which section each fact comes from. ${verdictRefused(why, rules.outcomes ?? [])}`);
+          + `${payers(sectionBody(text, cap.heading) ?? '', cap.line)} Write it again within the cap, and say which section each fact comes from. ${refusedVerdict(why, rules.outcomes ?? [])}`);
       }
     }
     return null;

@@ -158,7 +158,11 @@ function echoes(answer: string, question: string, heading: string): boolean {
 const STATUS = /\b(?:completed?|done|written|updated|filled(?: in)?|finished|ready|here is|here's|below)\b/i;
 const CLOSE = /^(?:you can now|you may now|now you can|you(?:'re| are) (?:now )?(?:ready|free|good) to|feel free|let me know|next,? you can)\b/i;
 export function substance(answer: string, heading: string): string {
-  const lines = answer.trim().split('\n');
+  // A line that only says the section's own heading again, bold or as a heading: it doubled the heading inside the
+  // section on a live run, and as a heading line it would start a second copy of the section.
+  const same = (line: string) => line.replace(/[*_`#>]/g, '').replace(/[‐‑–—]/g, '-').replace(/\s+/g, ' ').trim().toLowerCase();
+  const lines = answer.trim().split('\n').filter((line) => !line.trim() || same(line) !== same(heading));
+  while (lines.length && !lines[0].trim()) lines.shift();
   const plain = (line: string) => line.replace(/[*_`#>]/g, '').replace(/^[^\p{L}\p{N}]+/u, '').trim();
   const names = (line: string) => /\b(?:section|doc|document)\b/i.test(line) || plain(line).toLowerCase().includes(heading.replace(/^\d+[.)]\s*/, '').toLowerCase().replace(/-/g, ' ').slice(0, 12));
   const first = lines[0] ?? '';
@@ -180,6 +184,30 @@ export function substance(answer: string, heading: string): string {
   }
   const kept = lines.join('\n').trim();
   return filled(kept).length ? kept : answer.trim();
+}
+
+// What a colleague answering in chat had in front of them: what the asker's turn read (the question's words with it),
+// what the founder said in the colleague's own room, and the documents the colleague reads. Their memory is not here,
+// so a figure only it holds reads as unsourced.
+async function colleagueRead(context: ToolContext, targetId: string, question: string): Promise<string[]> {
+  const chat = await context.store.readChat(targetId).catch(() => []);
+  const docs = await Promise.all(readableDocIds(context.stage, targetId).map((id) => context.store.readDoc(id).catch(() => '')));
+  return [...(context.sources?.() ?? []), question, ...chat.filter((message) => message.role === 'user').map((message) => message.text), ...docs];
+}
+
+// The figures in a colleague's answer that nothing they read gives, in the order said: money, shares and counts with a
+// unit as the truth net reads them, and a bare count over ten ("~200 solo-consultant peers") that no number they read
+// matches. Years and figures already marked "(unsourced)" are left alone.
+function inventedIn(answer: string, sources: string[]): string[] {
+  const found = figureCheck(answer, sources).unsourced.filter((label) => at(label).test(answer)).map((label) => ({ label, index: answer.search(at(label)) }));
+  const read = new Set(sources.flatMap((source) => [...source.matchAll(/\d[\d,]*(?:\.\d+)?/g)].map((match) => Number(match[0].replace(/,/g, '')))));
+  for (const match of answer.matchAll(/(?<![\d.,/$€£])((?:~|≈|about |around |over |some )?)(\d{1,3}(?:,\d{3})+|\d+)(?![\d.,]?\d|\s*%|\s*\/|\s*\(unsourced)/gi)) {
+    const value = Number(match[2].replace(/,/g, ''));
+    if (value <= 10 || (value >= 1900 && value <= 2099) || read.has(value)) continue;
+    if (found.some((one) => one.label.includes(match[2]))) continue;
+    found.push({ label: `${match[1].trim() === '~' || match[1].trim() === '≈' ? match[1].trim() : ''}${match[2]}`, index: match.index });
+  }
+  return found.sort((a, b) => a.index - b.index).map((one) => one.label);
 }
 
 // A colleague asked with ask_person answers in words, without tools, so their answer never reached their own section of
@@ -212,6 +240,10 @@ export async function answerIntoSection(context: ToolContext, targetId: string, 
     if (hedges(answer) || echoes(answer, question, heading)) return `${target.name} answered but did not fill "${heading}"; it stays empty.`;
     const asking = question.replace(/\s+/g, ' ').trim();
     const body = `${substance(answer, heading)}\n\n(From chat: ${target.name} answered ${asker.name} on ${shortDay(Date.now())}, asked "${asking.length > 200 ? `${asking.slice(0, 199)}…` : asking}".)`;
+    // A figure the colleague could not have read anywhere is not written in as theirs: a live one, asked about the
+    // founder's fit, gave "~200 solo-consultant peers" the founder never said, and it went into the doc unflagged.
+    const invented = inventedIn(substance(answer, heading), [...await colleagueRead(context, targetId, question), before]);
+    if (invented.length) return `Not written into "${heading}": ${target.name}'s answer gives ${invented.join(', ')} that nothing ${target.name} read gives. The section stays empty until ${target.name} writes it with a source, or the founder gives the figure.`;
     const next = replaceSection(before, heading, body);
     if ('error' in next) continue;
     // The section's own checks hold as for any write of theirs; one that fails is said, and the answer still stands.
