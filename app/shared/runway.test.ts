@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  addMonths, alertLevel, amountIn, cleanRunway, daysBetween, MONTH_DAYS, monthsBetween, parseAmount, planOf, project, readBank, runwayCsv,
+  addMonths, alertLevel, months, amountIn, cleanRunway, daysBetween, MONTH_DAYS, monthsBetween, parseAmount, planOf, project, readBank, runwayCsv,
   runwayDetail, runwayLine, type Flow, type Runway,
 } from './runway';
 
@@ -173,5 +173,17 @@ describe('readMonth', () => {
     const { readMonth } = await import('./runway');
     expect(['2027-01', '2027-1', '1/2027', '01.2027', 'Jan 2027', 'january 2027', 'Sept 2026', 'Sep. 2026'].map(readMonth)).toEqual(['2027-01', '2027-01', '2027-01', '2027-01', '2027-01', '2027-01', '2026-09', '2026-09']);
     expect(['2027-13', 'soon', 'Janu 2027', ''].map(readMonth)).toEqual([null, null, null, null]);
+  });
+});
+
+describe('a months figure', () => {
+  it('shows one decimal, rounded to the nearest, never cut short (round 7)', () => {
+    expect(months(6.46)).toBe('6.5 months');
+    expect(months(6.44)).toBe('6.4 months');
+    expect(months(5.94)).toBe('5.9 months');
+    // A tenth that binary cannot hold exactly still rounds up at the half.
+    expect(months(0.15)).toBe('0.2 months');
+    expect(months(1)).toBe('1.0 month');
+    expect(months(0.96)).toBe('1.0 month');
   });
 });
