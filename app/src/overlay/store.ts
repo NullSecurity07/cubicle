@@ -8,6 +8,11 @@ const same = (a: Layer, b: Layer) => (a.kind === 'focus' ? b.kind === 'focus' : 
 export const pushLayer = (stack: Layer[], layer: Layer): Layer[] => [...stack.filter((held) => !same(layer, held)), layer];
 export const popLayer = (stack: Layer[]): Layer[] => stack.slice(0, -1);
 
+// The overview is a side view: it slides in from the left edge and leaves the canvas beside it as it is, undimmed. Every
+// other view is a sheet over a shade. The stack's top layer decides.
+const SIDE = new Set(['dashboard']);
+export const onSide = (layers: Layer[]) => { const top = layers.at(-1); return top?.kind === 'panel' && SIDE.has(top.name); };
+
 let stack: Layer[] = [];
 const watchers = new Set<() => void>();
 const set = (next: Layer[]) => { stack = next; for (const tell of watchers) tell(); };

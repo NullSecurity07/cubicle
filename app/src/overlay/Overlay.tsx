@@ -14,7 +14,7 @@ import { LibraryPanel, NotePanel } from '../nodes/LibraryPanel';
 import { PlaybookPanel } from '../nodes/PlaybookPanel';
 import { SLICES } from '../slices';
 import { held, pressed } from '../keys';
-import { overlay, setHostElement, useLayers } from './store';
+import { onSide, overlay, setHostElement, useLayers } from './store';
 
 // The founder's views, by layer name.
 const PANELS: Record<string, React.ComponentType> = { needs: NeedsPanel, messages: MessagesPanel, decisions: DecisionsPanel, playbook: PlaybookPanel, library: LibraryPanel, note: NotePanel, frameworks: FrameworksPanel, command: CommandBar, keys: Cheatsheet, dashboard: Dashboard };
@@ -81,7 +81,7 @@ export function Overlay() {
   // open, and a slice decides for itself when it is on screen. With no slices there is nothing here to render.
   return createPortal(
     <>
-      <div className={`overlay${layers.length ? ' is-open' : ''}`} ref={top}>
+      <div className={`overlay${layers.length ? ' is-open' : ''}${onSide(layers) ? ' is-side' : ''}`} ref={top}>
         <div className="overlay__shade" onClick={() => overlay.back()} />
         <div className="focus__sheet" ref={focusHost} hidden={!focused || !!View} role="dialog" aria-modal="true" aria-label="Focused card" />
         {View && panel && <Guard name={panel} onClose={() => overlay.back()}><View /></Guard>}

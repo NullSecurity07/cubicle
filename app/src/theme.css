@@ -661,6 +661,16 @@ div.msg--user { position: relative; white-space: pre-wrap; }
 /* The founder's views: one glass sheet over the shade. */
 .panel { position: absolute; top: 7vh; max-height: 86vh; left: 50%; width: min(620px, calc(100% - 40px)); transform: translateX(-50%); display: flex; flex-direction: column; overflow: hidden; border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.14); background: rgba(16, 17, 20, 0.86); -webkit-backdrop-filter: blur(22px) saturate(1.2); backdrop-filter: blur(22px) saturate(1.2); box-shadow: 0 30px 90px rgba(0, 0, 0, 0.6); animation: panel-in 0.18s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .panel--wide { bottom: 7vh; width: min(1120px, calc(100% - 56px)); }
+/* A side view (the dashboard) slides in from the left edge, eased out over a fifth of a second, and leaves the canvas
+   beside it undimmed: the shade stays to catch a click outside, but is clear. */
+.panel.panel--side { top: 16px; bottom: 16px; left: 16px; max-height: none; transform: none; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 2px 8px rgba(0, 0, 0, 0.3), 30px 0 90px -24px rgba(0, 0, 0, 0.65); animation: side-in 0.22s cubic-bezier(0.22, 1, 0.36, 1); }
+.panel.panel--side:focus { outline: none; }
+@keyframes side-in { from { transform: translateX(calc(-100% - 24px)); } }
+.overlay.is-side .overlay__shade { background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; animation: none; }
+@media (prefers-reduced-motion: reduce) { .panel.panel--side { animation: none; } }
+/* A dock along the bottom or on the left would peek out from behind the side view: it steps aside until the view closes. */
+.react-flow__panel.dock { transition: opacity 0.15s; }
+body:has(.overlay.is-side) .react-flow__panel.dock:is(.bar--bottom, .bar--left) { opacity: 0; pointer-events: none; }
 /* A view that could not be drawn says so here, instead of taking the stage with it. */
 .guard { padding: 22px 22px 18px; gap: 14px; }
 .guard p { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text); }

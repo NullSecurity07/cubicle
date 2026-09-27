@@ -189,7 +189,7 @@ export function Dashboard() {
   };
 
   return (
-    <PanelShell name="dashboard" title="Dashboard" note={today} className="dash" onClose={close}>
+    <PanelShell name="dashboard" title="Dashboard" note={today} side className="dash" onClose={close}>
       <div className="dash__frame">
         <nav className="dash__rail" aria-label="Sections">
           {SECTIONS.map((section) => (
