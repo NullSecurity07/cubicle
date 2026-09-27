@@ -9,6 +9,7 @@ try { process.loadEnvFile(resolve(root, '.env')); } catch { /* no .env: the keys
 const { checkAll, liveChecks, liveReaders } = await import('../server/openends/health.ts');
 const { backupDirOf, listBackups } = await import('../server/openends/backup.ts');
 const { connectAll, loadEntries } = await import('../server/openends/mcp.ts');
+const { serviceRow, serviceState } = await import('../server/service.ts');
 
 const workspace = process.env.STAGE_WORKSPACE ?? resolve(root, 'workspace');
 const dir = backupDirOf({ fake: process.env.STAGE_FAKE_MODEL === '1', workspace, root });
@@ -26,6 +27,8 @@ if (process.argv.includes('--live')) {
   checks.push(...await liveReaders());
 }
 for (const one of connections) await one.rpc?.close().catch(() => {});
+// Whether the app keeps working with its window closed: the systemd user service `pnpm service:install` writes.
+checks.push(serviceRow(await serviceState()));
 
 // Twenty is the founder's own, and optional: not configured is fine, configured and silent is not.
 const twentyUrl = process.env.TWENTY_URL?.trim().replace(/\/+$/, '');

@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it } from 'vitest';
-import { guardProcess, restartBudget } from './restart.ts';
+import { answers, guardProcess, restartBudget } from './restart.ts';
 
 describe('restartBudget', () => {
   it('allows three restarts in a minute, refuses the fourth, and allows again once the first is a minute old', () => {
@@ -26,5 +26,17 @@ describe('guardProcess', () => {
     proc.emit('uncaughtException', new Error('something worse'));
     expect(lines.join('\n')).toContain('something worse');
     expect(exits).toEqual([1]);
+  });
+});
+
+describe('answers', () => {
+  it('says whether something already listens on a port, so a second api is not started into a taken one', async () => {
+    const { createServer } = await import('node:net');
+    const server = createServer();
+    await new Promise<void>((done) => { server.listen(0, '127.0.0.1', done); });
+    const port = (server.address() as { port: number }).port;
+    expect(await answers(port)).toBe(true);
+    await new Promise((done) => { server.close(done); });
+    expect(await answers(port)).toBe(false);
   });
 });

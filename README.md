@@ -295,6 +295,25 @@ candidates come from; the free tier has 40 credits), `OPENOUTFIND_OPERATOR_EMAIL
 (who is running it), and `OPENOUTFIND_ACCEPT_LEGAL_NOTICE` (your own acceptance of its legal notice, which the app
 never gives for you). It runs through `uvx`, so `uv` must be installed.
 
+### Keep it running while the window is closed
+
+The morning note, the bet checks, the page watches, the daily backup and the phone all run on the server's
+half-minute tick, and none of them needs a window. They stop only when the server does. To keep the server up while
+the window is closed, and after a restart, install it as a systemd user service (no sudo):
+
+```
+cd app
+pnpm service:install      # writes ~/.config/systemd/user/cubicle.service, switches nothing on
+systemctl --user daemon-reload && systemctl --user enable --now cubicle.service
+```
+
+The service always runs the main checkout's `app/` with its `workspace/` (or `STAGE_WORKSPACE`), with the node and
+the PATH of the shell that installed it, and starts again if it falls over. `pnpm service:install --print` shows the
+unit without writing it, `pnpm service:status` says whether it is installed, switched on and running, and
+`pnpm service:remove` switches it off and takes it away. `loginctl enable-linger` keeps it running after you log out
+too. With the service running, `pnpm dev` and the desktop shell use it rather than starting a second server; after a
+code change, `systemctl --user restart cubicle.service`. Health and `pnpm health` say "Runs while closed: yes" or no.
+
 ### Connect Twenty
 
 The Leads card needs nothing else. If you want a full CRM beside it, run your own **Twenty** and the card mirrors

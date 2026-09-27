@@ -1,3 +1,5 @@
+import { connect } from 'node:net';
+
 // Two things that keep the app up through a bad moment.
 
 // How many times the api may be started again after it fell over, within a stretch of time. Three in a minute is a
@@ -24,4 +26,16 @@ export function guardProcess(proc: Emitter = process, log: (line: string) => voi
   const said = (error: unknown) => (error instanceof Error ? error.stack || error.message : String(error));
   proc.on('unhandledRejection', (error: unknown) => log(`a promise failed and nothing caught it; the app goes on: ${said(error)}`));
   proc.on('uncaughtException', (error: unknown) => { log(`the app stopped on an error nothing caught: ${said(error)}`); exit(1); });
+}
+
+// Whether something already listens on this port here. The api run as a service holds its port while the window is
+// closed; `pnpm dev` then uses that one rather than starting a second api into a port that is taken.
+export function answers(port: number, host = '127.0.0.1', wait = 400): Promise<boolean> {
+  return new Promise((settle) => {
+    const socket = connect({ port, host });
+    const done = (yes: boolean) => { socket.destroy(); settle(yes); };
+    socket.setTimeout(wait, () => done(false));
+    socket.once('connect', () => done(true));
+    socket.once('error', () => done(false));
+  });
 }
