@@ -34,7 +34,7 @@ test.afterEach(async ({ page }) => {
   const gone = new Set([...stage.rooms.filter((room) => room.partner).map((room) => room.id), ...stage.docs.filter((doc) => doc.title === 'Company').map((doc) => doc.id)]);
   await page.request.put('/api/docs/company-brief', { data: { text: brief } });
   await page.request.put('/api/stage', { data: { ...stage, rooms: stage.rooms.filter((room) => !gone.has(room.id)), docs: stage.docs.filter((doc) => !gone.has(doc.id)), wires: stage.wires.filter((wire) => !gone.has(wire.from) && !gone.has(wire.to)) } });
-  for (const name of ['partner.json', 'bets.json', 'today.json']) await rm(join(WORKSPACE, name), { force: true });
+  for (const name of ['partner.json', 'bets.json', 'today.json', 'promises.json']) await rm(join(WORKSPACE, name), { force: true });
   expect(broke).toEqual([]);
 });
 
@@ -79,4 +79,21 @@ test('the founder adds a partner who keeps the Company document and leaves a mor
   const bets = page.getByRole('dialog', { name: 'Bets' });
   await expect(bets).toContainText('Morning note');
   await expect(bets).toContainText('No bets yet');
+});
+
+// A promise the founder makes in any room is kept, dated, and comes to Needs you and Today's five on its day; the
+// founder closes it there.
+test('a promise the founder makes comes to Needs you on its day, and the founder closes it', async ({ page }) => {
+  await page.request.post('/api/rooms/marketing/chat', { data: { text: 'OK. I\'ll call 5 beta users today.' } });
+  const chat = (await (await page.request.get('/api/rooms/marketing/chat')).json()) as { text: string }[];
+  expect(chat.at(-1)!.text).toMatch(/\*Kept as a promise: call 5 beta users today \(due \d{4}-\d{2}-\d{2}\)\. It comes to Needs you on the day\.\*$/);
+  const today = (await (await page.request.get('/api/today')).json()) as { items: { kind: string; reason: string }[] };
+  expect(today.items.find((one) => one.kind === 'promise')).toMatchObject({ reason: expect.stringContaining('Something you said you would do') });
+
+  await bar(page, 'needs', 'Needs you');
+  const row = page.getByRole('dialog', { name: 'Needs you' }).locator('.needs__item--promise');
+  await expect(row).toContainText('You said you would call 5 beta users today');
+  await expect(row).toContainText('Due today.');
+  await row.getByRole('button', { name: 'Done' }).click();
+  await expect(row).toHaveCount(0);
 });

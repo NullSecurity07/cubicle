@@ -90,6 +90,8 @@ const clean = (text: string) => text.replace(/[*_`]/g, '').replace(/\s+/g, ' ').
 // Every promise in a message from the founder, with its day: what they said they would do, from the verb on.
 export function promisesIn(message: string, now: number): Said[] {
   const found: Said[] = [];
+  // A command to the app ("/tool …", "/maya …") is not the founder's word to anyone.
+  if (/^\s*\//.test(message)) return found;
   const sentences = message.split(/(?<=[.!?])\s+|\n+/);
   for (const raw of sentences) {
     const sentence = raw.trim();

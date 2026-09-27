@@ -28,6 +28,7 @@ describe('a promise in the founder\'s words', () => {
       'Should I call them by Friday?', 'What will I need this week?', 'If it rains I\'ll call them tomorrow.', 'I\'ll think about it.',
       'I\'ll paste the CSV now.', 'I\'ll let you know.', 'I will not raise this year.', 'I\'ll be at the conference this week.',
       'We\'ll see.', 'We will grow.', 'Maybe I\'ll call them tomorrow.', 'What is due this week?', 'Revenue grew this week.', 'I\'ll send you the deck.',
+      '/tool generate_voice {"text":"I\'ll ship it this week."}',
     ]) expect(promisesIn(said, MONDAY), said).toEqual([]);
   });
 
