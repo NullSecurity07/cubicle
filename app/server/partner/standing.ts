@@ -60,6 +60,13 @@ export function waitingLine(items: Attention[]): string {
   return `Waiting in Needs you: ${parts.join('; ')}. Nothing else waits there: anything the founder already answered is done.`;
 }
 
+// What waits, held to the bets ledger: a bet row in Needs you whose bet the ledger no longer has as proposed (taken or
+// left a moment ago, the row not yet refreshed) does not wait, whatever the row says.
+export function stillWaiting(items: Attention[], bets: { id: string; status: string }[]): Attention[] {
+  const proposed = new Set(bets.filter((bet) => bet.status === 'proposed').map((bet) => bet.id));
+  return items.filter((item) => item.kind !== 'proposed-bet' || proposed.has(item.id.slice('proposed-bet:'.length)));
+}
+
 const cut = (line: string) => (line.length > LINE_MOST ? `${line.slice(0, LINE_MOST - 1)}…` : line);
 
 // The block itself, in the order it matters, whole lines only and never longer than STANDING_MOST. What waits in
@@ -70,7 +77,8 @@ export function standingBlock(parts: StandingParts, waiting: Attention[]): strin
     ['', [waitingLine(waiting)]],
     ['Company Numbers:', parts.numbers ? parts.numbers.split('\n').filter((line) => line.trim()) : ['- none written yet']],
     ['Decided:', parts.decided],
-    ['Bets on record:', parts.open.map(betLine)],
+    // "Open" alone read as "still to take": journey 10's partner told the founder to accept a bet they had taken.
+    ['Bets on record (the founder took each; none waits in Needs you):', parts.open.map(betLine)],
     ['What we learned (closed bets; cite the line when advice rests on it):', parts.learned ?? []],
     ['Due on the board:', parts.planned],
     ['The founder\'s promises:', parts.promised ?? []],

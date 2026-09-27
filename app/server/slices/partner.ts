@@ -15,7 +15,7 @@ import { addPlan, boardFor, boardForPlan, NO_BOARD, planAttention, stepsFrom } f
 import { asksWhatNext, holdSynthesis, standingFacts } from '../partner/synthesis.ts';
 import { chaseLine, keptPromiseLine, promiseLine, promisesAttention, promisesBook, promisesIn } from '../partner/promises.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
-import { staleNeeds, standingBlock, standingParts, teamVerdict, type StandingParts } from '../partner/standing.ts';
+import { staleNeeds, standingBlock, standingParts, stillWaiting, teamVerdict, type StandingParts } from '../partner/standing.ts';
 import { companyFacts, keepFacts, keptLine, runwayFix } from '../partner/keep.ts';
 import { CUSTOMER_LINE, customerReply, forCustomers } from '../partner/audience.ts';
 import { wired } from '../prompt.ts';
@@ -272,8 +272,9 @@ export function createPartner(options: PartnerOptions = {}) {
       return { ...parts, promised: promised.filter((one) => one.status === 'open').map(promiseLine) };
     }
     async function standingFor(stage: Stage, partnerId: string) {
-      const [parts, waiting] = await Promise.all([partsFor(stage, partnerId), deps.attention.list().catch(() => [])]);
-      return standingBlock(parts, waiting);
+      // Bets are read from the ledger, never from Needs you rows: a row can outlive the take by a refresh.
+      const [parts, waiting, ledger] = await Promise.all([partsFor(stage, partnerId), deps.attention.list().catch(() => []), book.list().catch(() => [] as Bet[])]);
+      return standingBlock(parts, stillWaiting(waiting, ledger));
     }
 
     // What the note is read from, as it stands now.
@@ -410,7 +411,7 @@ export function createPartner(options: PartnerOptions = {}) {
         if (forCustomers(payload.query)) text = customerReply(text, numbers);
         text = runwayFix(text, numbers);
         // Sent to Needs you with nothing waiting there: said under the reply.
-        text = staleNeeds(text, await deps.attention.list().catch(() => []));
+        text = staleNeeds(text, stillWaiting(await deps.attention.list().catch(() => []), await book.list().catch(() => [] as Bet[])));
         if (receipt) text = `${text.replace(/\s+$/, '')}\n\n${receipt}`;
       } catch (error) { console.error(`partner keep: ${(error as Error).message}`); }
       return next(text === payload.reply.text ? payload : { ...payload, reply: { ...payload.reply, text } });

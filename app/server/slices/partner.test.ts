@@ -532,7 +532,24 @@ describe('the partner slice: standing facts in every partner turn', () => {
     const after = await system('p1');
     expect(after).not.toContain('bet to take');
     expect(after).toContain('Waiting in Needs you: 1 decision to make ("Raise the price?"). Nothing else waits there');
-    expect(after).toMatch(/Bets on record:\n- Open: Five paying users\./);
+    expect(after).toMatch(/Bets on record \(the founder took each; none waits in Needs you\):\n- Open: Five paying users\./);
+    await part.close!();
+  });
+
+  it('keeps a taken bet on record and out of what waits, with a second bet waiting and a stale row for the first (journey 10)', async () => {
+    const { deps, part, system } = await setUp();
+    const propose = async (what: string, target: number) => part.tools!.find((one) => one.name === 'propose_bet')!.run({ what, hypothesis: 'offers convert', metric: 'paying_users', target, check_date: '2026-10-31' }, { stage: await deps.store.loadStage(), roomId: 'p1', store: deps.store, granted: new Map() } as never);
+    await propose('Convert 4 more beta users', 6);
+    const first = (await deps.attention.list()).find((one) => one.kind === 'proposed-bet')!;
+    deps.body = async () => ({ accept: true });
+    await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/bets/${first.id.split(':')[1]}`);
+    await propose('Convert 8 more beta users', 10);
+    // A Needs you row for the first bet that outlived its take: bets.json says it is taken, so it is not waiting.
+    deps.attention.source(async () => [first]);
+    const said = await system('p1');
+    expect(said).toContain('Waiting in Needs you: 1 bet to take or leave ("Convert 8 more beta users"). Nothing else waits there');
+    expect(said).toMatch(/Bets on record \(the founder took each; none waits in Needs you\):\n- Open: Convert 4 more beta users\./);
+    expect(said).not.toMatch(/- Open: Convert 8 more/);
     await part.close!();
   });
 });
