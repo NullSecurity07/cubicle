@@ -1,6 +1,6 @@
 import { isDay } from '../../shared/metrics.ts';
 import { newMessageId, type Attention, type Stage } from '../../shared/model.ts';
-import { bare, companyLine, isPlanDoc, SHARED_RECORD, parsePlan, PARTNER_CHANNEL, planTaskTitle, type Bet, type BetVerdict, type MorningNote, type PlanStep } from '../../shared/partner.ts';
+import { bare, companyLine, isPlanDoc, SHARED_RECORD, parsePlan, PARTNER_CHANNEL, planStepLine, type Bet, type BetVerdict, type MorningNote, type PlanStep } from '../../shared/partner.ts';
 import { localDay } from '../clock.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
 import { leadsFor } from '../leads/store.ts';
@@ -98,12 +98,12 @@ export async function offerPlan(state: PartnerStateBook, input: { who: string; r
   return state.change((held) => {
     const docId = input.docId;
     const before = docId && Array.isArray(held.offered?.[docId]) ? new Set(held.offered![docId]) : new Set<string>();
-    const fresh = input.steps.filter((step) => !before.has(planTaskTitle(step)));
+    const fresh = input.steps.filter((step) => !before.has(planStepLine(step)));
     // A new plan is worth a question from two steps; a plan already answered, from one new step.
     if (!fresh.length || (!before.size && fresh.length < 2)) return false;
     const waiting = docId ? held.plans.find((one) => one.docId === docId) : undefined;
     held.plans = [...held.plans.filter((one) => one !== waiting), { id: newId('plan-'), at: now, ...input, steps: [...(waiting?.steps ?? []), ...fresh] }];
-    if (docId) held.offered = { ...held.offered, [docId]: [...before, ...fresh.map(planTaskTitle)] };
+    if (docId) held.offered = { ...held.offered, [docId]: [...before, ...fresh.map(planStepLine)] };
     return true;
   });
 }

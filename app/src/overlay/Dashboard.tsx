@@ -26,6 +26,12 @@ const SECTIONS = [
 type SectionId = (typeof SECTIONS)[number]['id'];
 
 const until = (at: number) => new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+// A plan's step has a day and no time: today's says so, an earlier day's says it is still open.
+const planned = (day: string) => {
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  return day >= today ? 'Planned for today' : `Planned for ${new Date(`${day}T12:00:00`).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' })}, not done yet`;
+};
 const plural = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
 const KIND_WORD: Record<DashMedia['kind'], string> = { picture: 'Picture', voice: 'Voice', film: 'Film' };
 
@@ -214,7 +220,7 @@ export function Dashboard() {
 
               <Group title="Tasks" count={day.tasksDue.length + day.tasksRunning.length} empty={day.tasksDue.length + day.tasksRunning.length ? undefined : 'No task is running or due today.'}>
                 {day.tasksRunning.map((one) => <Row key={one.id} tone="run" title={one.title} meta={`${one.state === 'waiting' ? 'Waiting for your OK' : 'Running'}${one.who ? ` · ${one.who}` : ''} · started ${since(one.at)}`} onGo={() => task(one)} />)}
-                {day.tasksDue.map((one) => <Row key={one.id} tone="calm" title={one.title} meta={`${one.missed ? 'Missed while the app was closed' : `Due at ${until(one.at)}`}${one.who ? ` · ${one.who}` : ''}`} onGo={() => task(one)} />)}
+                {day.tasksDue.map((one) => <Row key={one.id} tone="calm" title={one.title} meta={`${one.missed ? 'Missed while the app was closed' : one.day ? planned(one.day) : `Due at ${until(one.at)}`}${one.who ? ` · ${one.who}` : ''}`} onGo={() => task(one)} />)}
               </Group>
 
               <div className="dash__pair">

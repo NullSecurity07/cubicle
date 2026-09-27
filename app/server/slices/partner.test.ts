@@ -381,7 +381,7 @@ describe('the partner slice: plans become tasks', () => {
     deps.body = async () => ({ accept: true });
     await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/plans/${offered[0].id.split(':')[1]}`);
     expect(answers.at(-1)).toEqual([200, { ok: true, boardId: 'board-1', added: 3 }]);
-    expect((await deps.boards.list('board-1')).map((task) => task.title)).toEqual(['Mon 28 Sep (Day 1): Draft the landing page', 'Mon 28 Sep (Day 1): Set up the pre-order form', 'Tue 29 Sep (Day 2): List 30 projects']);
+    expect((await deps.boards.list('board-1')).map((task) => task.title)).toEqual(['Draft the landing page', 'Set up the pre-order form', 'List 30 projects']);
     expect((await deps.attention.list()).some((one) => one.kind === 'proposed-plan')).toBe(false);
     // The same steps written again are not asked again; changed steps are.
     await wrote('doc-plan');
