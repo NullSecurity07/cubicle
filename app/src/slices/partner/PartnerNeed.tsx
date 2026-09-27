@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { Attention } from '../../../shared/model';
 import { overlay } from '../../overlay/store';
 import { answerBet, answerPlan, closeBet, closePromise, morningDone } from './api';
+import { takeBetLabel } from './words';
 
 // What the founder can do from Needs you about the partner's things: read the morning note where it was written and
 // say it is read, take a suggested bet or leave it, say how a bet went, put a plan's steps on the board, and close a
@@ -22,7 +23,7 @@ export function PartnerNeed({ entry, attempt }: { entry: Attention; attempt: (wo
   }
   if (entry.kind === 'proposed-bet') return <>
     <button type="button" onClick={() => attempt(answerBet(item, false))}>Decline</button>
-    <button type="button" className="primary" onClick={() => attempt(answerBet(item, true))}>Take the bet</button>
+    <button type="button" className="primary" onClick={() => attempt(answerBet(item, true))}>{takeBetLabel(entry.detail)}</button>
   </>;
   if (entry.kind === 'bet-check') return <>
     <button type="button" onClick={() => attempt(closeBet(item, 'did-not'))}>It did not work</button>
