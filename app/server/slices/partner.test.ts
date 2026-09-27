@@ -175,6 +175,8 @@ describe('the partner slice: the morning note', () => {
     expect(chat[0].text).toContain('Three moves for today:\n1. Ship the landing page.');
     const needs = (await deps.attention.list()).find((one) => one.kind === 'morning-note')!;
     expect(needs).toMatchObject({ id: 'morning-note:2026-09-27', who: 'Sam', roomId: 'p1', title: 'Morning note: Ship the landing page.' });
+    // All three moves in the row, not the first one only.
+    expect(needs.detail).toBe('2. Email the five replied leads. 3. Log the signups. Risk: pre-orders are 3 of 17. Question: Keep $9?');
     const five = await todayFive(deps, clock);
     expect(five[0]).toMatchObject({ kind: 'morning-note', reason: expect.stringContaining('From your partner') });
     expect(five.some((one) => one.kind === 'proposed-decision')).toBe(true);
@@ -196,7 +198,8 @@ describe('the partner slice: the morning note', () => {
     clock -= 86_400_000; await part.tick!(); clock += 86_400_000;
     await part.tick!();
     await part.tick!();
-    expect(asked).toBe(1);
+    // One try is the ask and one ask again with the reason, then the wait.
+    expect(asked).toBe(2);
     expect(await deps.store.readChat('p1')).toEqual([]);
     expect((await deps.attention.list()).some((one) => one.kind === 'morning-note')).toBe(false);
     await part.close!();
@@ -216,6 +219,8 @@ describe('the partner slice: the morning note', () => {
     expect(refusedAsked).toBe(1);
     expect(deps.usage.dead('refused')).toBe(true);
     expect((await deps.store.readChat('p1')).at(-1)?.text).toContain('Ship the landing page');
+    // Stamped with the model that wrote it, as a chat reply is.
+    expect((await deps.store.readChat('p1')).at(-1)).toMatchObject({ provider: 'good', model: 'good-1' });
     await part.close!();
   });
 
@@ -279,7 +284,7 @@ describe('the partner slice: the morning note', () => {
   });
 
   it('posts a note with an unsourced figure all the same, with the flag line under it in the partner\'s chat', async () => {
-    const { deps, part } = await installed({}, { now: () => NINE, ask: async () => 'Three moves for today:\n1. Charge $29/month from Monday.\n2. Email the replied leads.\n3. Log signups.\nRisk: r\nQuestion: q?' });
+    const { deps, part } = await installed({}, { now: () => NINE, ask: async () => 'Three moves for today:\n1. Charge $29/month from Monday.\n2. Email the replied leads.\n3. Log signups.\nRisk: the Company document holds no price\nQuestion: q?' });
     await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
     await part.route!({ method: 'POST' } as never, {} as never, '/api/partner/morning');
     const said = (await deps.store.readChat('p1')).at(-1)!.text;
@@ -312,6 +317,12 @@ describe('the partner slice: the bets ledger', () => {
 
     await expect(tool('propose_bet').run({ what: 'Post in r/SaaS', hypothesis: 'founders sign up', metric: 'mrr', target: 20, check_date: '2026-10-03' }, await as('marketing'))).rejects.toThrow('the Metrics card has no "mrr" row. Ask the founder to add one');
     await expect(tool('propose_bet').run({ what: 'x', hypothesis: 'y', metric: 'signups', target: 20, check_date: '2026-09-01' }, await as('marketing'))).rejects.toThrow('before today');
+    // The ask counts signups: a first pick of leads is refused with the row the ask names, not the Leads card.
+    const asking = async (query: string) => ({ ...(await as('p1') as object), query }) as never;
+    const leadsPick = tool('propose_bet').run({ what: 'Newsletter', hypothesis: 'h', metric: 'leads:replied', target: 50, check_date: '2026-10-10' }, await asking('Propose a bet: 50 newsletter signups by Oct 10'));
+    await expect(leadsPick).rejects.toThrow('The founder\'s ask counts signups: propose it again measured by "signups"');
+    await expect(tool('propose_bet').run({ what: 'Newsletter', hypothesis: 'h', metric: 'visitors', target: 50, check_date: '2026-10-10' }, await asking('Propose a bet: 500 visitors by Oct 10'))).rejects.toThrow('the Metrics card has no "visitors" row. Ask the founder to add one');
+    await expect(tool('propose_bet').run({ what: 'Newsletter', hypothesis: 'h', metric: 'leads', target: 500, check_date: '2026-10-10' }, await asking('Propose a bet: 500 visitors by Oct 10'))).rejects.toThrow('The founder\'s ask counts visitors: propose it again measured by "visitors". The Metrics card has no "visitors" row');
     const said = await tool('propose_bet').run({ what: 'Post in r/SaaS', hypothesis: 'founders sign up', metric: 'signups', target: 20, check_date: '2026-10-03' }, await as('marketing'));
     expect(said.text).toContain('It waits in Needs you');
     const proposal = (await deps.attention.list()).find((one) => one.kind === 'proposed-bet')!;
@@ -321,7 +332,7 @@ describe('the partner slice: the bets ledger', () => {
     deps.body = async () => ({ accept: true });
     await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/bets/${proposal.id.split(':')[1]}`);
     const company = companyDocOf(await deps.store.loadStage())!;
-    expect(await deps.store.readDoc(company.id)).toContain('## Bets\n\n- Open: Post in r/SaaS. signups to 20 by 2026-10-03');
+    expect(await deps.store.readDoc(company.id)).toContain('## Bets\n\n- Open: Post in r/SaaS. Measured by "signups" on the Metrics card: 20 by 2026-10-03');
 
     // Staff are never offered close_bet; the partner is, and cannot use it before the day.
     const names = (roomId: string) => part.offer!(part.tools!, { rooms: [room('p1', 'Sam', { partner: true }), room('marketing', 'Maya')], docs: [], wires: [] }, roomId).map((one) => one.name);
@@ -340,7 +351,7 @@ describe('the partner slice: the bets ledger', () => {
     const closed = await tool('close_bet').run({ bet: 'r/saas', verdict: 'did-not', note: 'only 4 came' }, await as('p1'));
     expect(closed.text).toBe('Closed "Post in r/SaaS": it did not work; signups was 4 against 20. (Signups is 4 (2026-09-20), read from the Metrics card.)');
     expect((await deps.attention.list()).some((one) => one.kind === 'bet-check')).toBe(false);
-    expect(await deps.store.readDoc(company.id)).toContain('- Did not work: Post in r/SaaS. signups was 4 against 20 (checked 2026-10-03). only 4 came');
+    expect(await deps.store.readDoc(company.id)).toContain('- Did not work: Post in r/SaaS. Measured by "signups" on the Metrics card: was 4 against 20 (checked 2026-10-03). only 4 came');
     await part.close!();
   });
 
@@ -381,7 +392,7 @@ describe('the partner slice: plans become tasks', () => {
     deps.body = async () => ({ accept: true });
     await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/plans/${offered[0].id.split(':')[1]}`);
     expect(answers.at(-1)).toEqual([200, { ok: true, boardId: 'board-1', added: 3 }]);
-    expect((await deps.boards.list('board-1')).map((task) => task.title)).toEqual(['Mon 28 Sep (Day 1): Draft the landing page', 'Mon 28 Sep (Day 1): Set up the pre-order form', 'Tue 29 Sep (Day 2): List 30 projects']);
+    expect((await deps.boards.list('board-1')).map((task) => task.title)).toEqual(['Draft the landing page', 'Set up the pre-order form', 'List 30 projects']);
     expect((await deps.attention.list()).some((one) => one.kind === 'proposed-plan')).toBe(false);
     // The same steps written again are not asked again; changed steps are.
     await wrote('doc-plan');

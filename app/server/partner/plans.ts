@@ -1,5 +1,5 @@
 import type { Attention, Stage } from '../../shared/model.ts';
-import { dueOf, parsePlan, planTaskTitle, type PlanProposal, type PlanStep } from '../../shared/partner.ts';
+import { dueOf, parsePlan, planStepLine, planTaskTitle, stepText, type PlanProposal, type PlanStep } from '../../shared/partner.ts';
 import type { Boards } from '../boards.ts';
 import { localDay } from '../clock.ts';
 import { wired } from '../prompt.ts';
@@ -19,7 +19,7 @@ export function stepsFrom(lines: string[]): PlanStep[] {
 export const planAttention = (plans: PlanProposal[]): Attention[] => plans.map((plan) => ({
   id: `proposed-plan:${plan.id}`, kind: 'proposed-plan', at: plan.at, who: plan.who, roomId: plan.roomId,
   title: `${plan.steps.length === 1 ? 'Add this task' : `Add these ${plan.steps.length} tasks`} to the board? (${plan.title})`,
-  detail: `${plan.steps.slice(0, SHOWN).map(planTaskTitle).join('; ')}${plan.steps.length > SHOWN ? `; and ${plan.steps.length - SHOWN} more` : ''}.`,
+  detail: `${plan.steps.slice(0, SHOWN).map(planStepLine).join('; ')}${plan.steps.length > SHOWN ? `; and ${plan.steps.length - SHOWN} more` : ''}.`,
 }));
 
 // The board a plan goes on: the one wired to whoever wrote it, else the first on the stage.
@@ -49,7 +49,10 @@ export async function addPlan(boards: Pick<Boards, 'add'>, stage: Stage, plan: P
   const today = localDay(now);
   for (const step of plan.steps) {
     const due = step.day ? dueOf(step.day, today) : undefined;
-    await boards.add(boardId, { title: planTaskTitle(step), detail: `From the plan "${plan.title}", written by ${plan.who}.`, column: 'todo', ...(due ? { due } : {}) });
+    const title = planTaskTitle(step);
+    // A title cut short keeps the whole step in its detail.
+    const whole = title.endsWith('\u2026') ? `${due ? stepText(step) : planStepLine(step)}\n\n` : '';
+    await boards.add(boardId, { title, detail: `${whole}From the plan "${plan.title}", written by ${plan.who}.`, column: 'todo', ...(due ? { due } : {}) });
   }
   return { boardId, added: plan.steps.length };
 }

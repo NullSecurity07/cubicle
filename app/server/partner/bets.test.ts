@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { Lead } from '../../shared/leads.ts';
 import type { Metrics } from '../../shared/metrics.ts';
 import type { Stage } from '../../shared/model.ts';
-import { betDue, betsAttention, betsBook, metricChoices, missingMetric, readMetric } from './bets.ts';
+import { askedInstead, betDue, betsAttention, betsBook, metricAsked, metricChoices, metricFits, missingMetric, readMetric } from './bets.ts';
 
 const card = (id: string, kind: 'metrics' | 'leads' | 'survey') => ({ id, kind, x: 0, y: 0, w: 1, h: 1, ...(kind === 'survey' ? { title: 'PMF', questions: [] } : {}) }) as NonNullable<Stage['cards']>[number];
 
@@ -69,13 +69,51 @@ describe('the ledger', () => {
   it('asks the founder about proposals, and about open bets once their day comes, with the number as it is now', async () => {
     const { workspace, stage } = await seeded();
     const book = betsBook(workspace, () => new Date('2026-09-26T10:00').getTime());
-    const proposed = await book.propose({ what: 'Cold email 30', hypothesis: 'five reply', metric: 'leads:replied', target: 5, checkDate: '2026-10-01', proposedBy: 'Sam', roomId: 'p1' });
+    const proposed = await book.propose({ what: 'Cold email 30', hypothesis: 'Five reply, which gives us a head start.', metric: 'leads:replied', target: 5, checkDate: '2026-10-01', proposedBy: 'Sam', roomId: 'p1' });
     const open = await book.propose({ what: 'Post in r/SaaS', hypothesis: '', metric: 'signups', target: 20, checkDate: '2026-10-03' });
     await book.answer(open.id, true);
     const before = await betsAttention(await book.list(), stage, workspace, '2026-10-02');
-    expect(before).toEqual([{ id: `proposed-bet:${proposed.id}`, kind: 'proposed-bet', title: 'Cold email 30', at: proposed.at, who: 'Sam', roomId: 'p1', detail: 'five reply. Measured by leads:replied: 5 by 2026-10-01.' }]);
+    expect(before).toEqual([{ id: `proposed-bet:${proposed.id}`, kind: 'proposed-bet', title: 'Cold email 30', at: proposed.at, who: 'Sam', roomId: 'p1', detail: 'Five reply, which gives us a head start. Measured by "leads:replied" on the Leads card: 5 by 2026-10-01.' }]);
+    // The journey's "head start..": a hypothesis that ends on its own full stop is not given a second.
+    expect(before[0].detail).not.toContain('..');
     const due = (await betsAttention(await book.list(), stage, workspace, '2026-10-03')).find((one) => one.kind === 'bet-check')!;
     expect(due).toMatchObject({ id: `bet-check:${open.id}`, title: 'Check the bet: Post in r/SaaS', detail: 'The target was 20 by 2026-10-03. Now: Signups is 13 (2026-10-02), read from the Metrics card.' });
     expect(betDue({ ...open, status: 'open' }, '2026-10-02')).toBe(false);
+  });
+});
+
+// Journey 3: "Propose a bet: 50 newsletter signups by Oct 10" came back measured by "leads:replied", then "survey".
+describe('the metric an ask names', () => {
+  it('reads what the ask counts, as the name of the number that measures it', () => {
+    expect(metricAsked('Propose a bet: 50 newsletter signups by Oct 10')).toBe('signups');
+    expect(metricAsked('Bet that we get 20 paying customers this month')).toBe('customers');
+    expect(metricAsked('a bet on 1,000 visitors by Friday')).toBe('visitors');
+    expect(metricAsked('5 replies from the cold emails by Oct 3')).toBe('leads:replied');
+    expect(metricAsked('Bet on 30 leads by next week')).toBe('leads');
+    expect(metricAsked('40 survey answers by the 12th')).toBe('survey');
+    for (const said of ['Plan how we spend the $300 ad budget', 'Propose a bet on the launch', 'Get conversion to 10% by Oct 10', 'Bet: 3 weeks to launch']) expect(metricAsked(said), said).toBeUndefined();
+  });
+
+  // The review's probes: the first counted noun is not always the bet's. The one whose number is the target is.
+  it('picks the noun whose number is the target, and reads "signups: 50" and "fifty signups"', () => {
+    expect(metricAsked('we have 3 cofounders and want 50 signups by Oct 10', 50)).toBe('signups');
+    expect(metricAsked('run 5 interviews then 50 signups', 50)).toBe('signups');
+    expect(metricAsked('Bet: signups: 50 by Oct 10', 50)).toBe('signups');
+    expect(metricAsked('fifty signups by the 10th', 50)).toBe('signups');
+    expect(metricAsked('run 5 interviews then 50 signups')).toBe('interviews');
+  });
+
+  it('lets a pick through that fits any number the ask counts, when none is the target', async () => {
+    const { workspace, stage } = await seeded();
+    expect(await askedInstead(workspace, stage, 'signups', 'run 5 interviews then 50 signups', 40)).toBeNull();
+    expect(await askedInstead(workspace, stage, 'signups', 'we have 3 cofounders and want 50 signups', 50)).toBeNull();
+    expect(await askedInstead(workspace, stage, 'leads', 'we have 3 cofounders and want 50 signups', 50)).toMatch(/counts signups/);
+  });
+
+  it('holds a pick to the ask: signups is not leads or a survey, and "Signups" or "newsletter_signups" is signups', () => {
+    expect(metricFits('leads:replied', 'signups')).toBe(false);
+    expect(metricFits('survey', 'signups')).toBe(false);
+    for (const pick of ['signups', 'Signups', 'newsletter_signups', 'signup']) expect(metricFits(pick, 'signups'), pick).toBe(true);
+    expect(metricFits('leads:replied', 'leads:replied')).toBe(true);
   });
 });

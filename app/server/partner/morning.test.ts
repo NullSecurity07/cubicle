@@ -60,9 +60,72 @@ describe('what the partner reads in the morning', () => {
     expect(text).toContain('Not on the stage: Metrics, Runway, Board.');
     expect(text).toContain('Maya (Marketing):\n  Founder: Price it at $9?\n  Maya: Yes, $9 for the pre-order.');
     expect(text).not.toContain('old talk');
-    expect(text).toContain('- Open: Post in r/SaaS. Bet: founders sign up. signups to 20 by 2026-10-03.');
-    expect(text).toContain('- Closed 2026-09-20: Cold email 30. Did not work; leads:replied was 1 against 5.');
+    expect(text).toContain('- Open: Post in r/SaaS. Bet: founders sign up. Measured by "signups" on the Metrics card: 20 by 2026-10-03.');
+    expect(text).toContain('- Closed 2026-09-20: Cold email 30. Did not work; "leads:replied" was 1 against 5.');
     expect(text).not.toContain('Proposed only');
+  });
+});
+
+// The journey's morning: a plan on the board, a WEAK verdict and an unsurvivable flaw beside it on the stage, and a
+// colleague's figure the truth net flagged. The note copied plan steps 1-3 and said nothing of the rest.
+const EVALUATION = '# Evaluation\n\n## 2. Death hunt\n\nSupply is the flaw nobody survives: 0 sellers signed.\n\n## 5. Verdict\n\nVerdict: WEAK\nScore: 4/10\nSupply decides it; the newsletter alone is a vitamin.\n';
+const COMPANY = '# Company\n\n## Idea\n\nA weekly list of abandoned SaaS.\n\n## Numbers\n\nPrice: $9/month.\nRunway: $8,000.\n\n## Bets\n\n- Open: newsletter.\n';
+async function acrossRooms(): Promise<MorningSources> {
+  const base = await sources();
+  const stage: Stage = {
+    ...base.stage,
+    rooms: [...base.stage.rooms, { id: 'dev', name: 'Dev', role: 'Build', accent: '#fff', brief: '', x: 0, y: 0, w: 1, h: 1 }],
+    docs: [
+      { id: 'eval', title: 'Evaluation', x: 0, y: 0, w: 1, h: 1, rules: { framework: 'startup-evaluation', sections: [{ heading: '2. Death hunt', by: 'hunter' }], verdict: { heading: '5. Verdict', by: 'judge' }, outcomes: ['PIVOT REQUIRED', 'WEAK', 'STRONG'] } },
+      { id: 'empty-eval', title: 'Second evaluation', x: 0, y: 0, w: 1, h: 1, rules: { framework: 'startup-evaluation', sections: [], verdict: { heading: '5. Verdict', by: 'judge' }, outcomes: ['WEAK', 'STRONG'] } },
+    ],
+    cards: [...(base.stage.cards ?? []), { id: 'board-1', kind: 'board', x: 0, y: 0, w: 1, h: 1 }],
+  };
+  const docs: Record<string, string> = { eval: EVALUATION, 'empty-eval': '# Second evaluation\n\n## 5. Verdict\n\n' };
+  const dev: ChatMessage[] = [
+    { id: 'd1', role: 'user', text: 'What is our runway?', at: at('2026-09-26T16:00') },
+    { id: 'd2', role: 'assistant', text: 'Runway is $48,000.\n\nUnsourced figures: $48,000 (not found in anything this turn read).', at: at('2026-09-26T16:01') },
+    { id: 'd0', role: 'assistant', text: 'Old.\n\nUnsourced figures: $1 (not found in anything this turn read).', at: at('2026-09-20T16:01') },
+  ];
+  return {
+    ...base, stage, company: COMPANY,
+    doc: async (id) => docs[id] ?? '',
+    chat: async (roomId) => (roomId === 'dev' ? dev : await base.chat(roomId)),
+    boards: async () => [
+      { id: 't1', title: 'Set up the landing page', column: 'todo', createdAt: 0, detail: '', due: '2026-09-27' },
+      { id: 't2', title: 'Source 3 abandoned projects', column: 'todo', createdAt: 0, detail: '', due: '2026-09-30' },
+    ],
+  };
+}
+
+describe('the morning thinks across the rooms', () => {
+  it('reads every team verdict and its score, the flags of the last day, the Company numbers, open bets and what is due', async () => {
+    const text = await gatherMorning(await acrossRooms());
+    expect(text).toContain('Team verdicts:');
+    expect(text).toMatch(/- Evaluation, 5\. Verdict: WEAK, score 4\/10\. .*Supply decides it/);
+    expect(text).toContain('- Second evaluation, 5. Verdict: not written yet.');
+    expect(text).toContain('Company Numbers:\nPrice: $9/month.\nRunway: $8,000.');
+    expect(text).toContain('Flagged by the truth net since 2026-09-26 (figures nothing backed):\nDev (Build):\nUnsourced figures: $48,000');
+    expect(text).not.toContain('Unsourced figures: $1 ');
+    expect(text).toContain('On the board for today:\n- Set up the landing page');
+    expect(text).not.toContain('- Source 3 abandoned projects');
+    expect(text).toContain('- Open: Post in r/SaaS.');
+  });
+
+  it('asks for the biggest contradiction across the rooms as the risk, and for no plan step copied without why today', () => {
+    expect(MORNING_ASK).toContain('the biggest contradiction or risk across the rooms today');
+    expect(MORNING_ASK).toMatch(/word for word/);
+    expect(MORNING_ASK).toMatch(/why it is today's/);
+  });
+
+  it('refuses a note whose risk names no room, document or number, and takes one that does', async () => {
+    const prompt = async (): Promise<ModelMessage[]> => [{ role: 'system', content: 'You are Sam, Partner.' }];
+    const reply = (risk: string) => `Three moves for today:\n1. Call two sellers before the landing page.\n2. Email the replied leads.\n3. Log signups.\nRisk: ${risk}\nQuestion: q?`;
+    const from = await acrossRooms();
+    expect(await writeMorning({ sources: from, name: 'Sam', promptFor: prompt, ask: async () => reply('execution could slip') })).toBeNull();
+    for (const risk of ['The Evaluation verdict is WEAK while the plan builds the page first', 'Dev says runway is long, the Company document says otherwise', 'supply: 0 sellers signed']) {
+      expect(await writeMorning({ sources: from, name: 'Sam', promptFor: prompt, ask: async () => reply(risk) }), risk).not.toBeNull();
+    }
   });
 });
 
@@ -73,9 +136,9 @@ describe('one morning turn', () => {
     let heard: ModelMessage[] = [];
     const note = await writeMorning({
       sources: await sources(), name: 'Sam', promptFor: prompt,
-      ask: async (messages) => { heard = messages; return 'Three things that matter today:\n1. a\n2. b\n3. c\nRisk: r\nQuestion: q?'; },
+      ask: async (messages) => { heard = messages; return 'Three things that matter today:\n1. a\n2. b\n3. c\nRisk: Maya priced it at $9\nQuestion: q?'; },
     });
-    expect(note).toEqual({ things: ['a', 'b', 'c'], risk: 'r', question: 'q?', day: '2026-09-27', at: NINE, roomId: 'p1', who: 'Sam' });
+    expect(note).toEqual({ things: ['a', 'b', 'c'], risk: 'Maya priced it at $9', question: 'q?', day: '2026-09-27', at: NINE, roomId: 'p1', who: 'Sam' });
     expect(heard[0].content).toBe('You are Sam, Partner.');
     expect(heard[1].content.startsWith(MORNING_ASK)).toBe(true);
     expect(heard[1].content).toContain('Newsletter first');
@@ -83,9 +146,9 @@ describe('one morning turn', () => {
 
   it('refuses a note whose three moves only restate the Company document', async () => {
     const company = '# Company brief\n\n## Idea\n\nProduct focus: weekly curated list.\n\n## Numbers\n\nCurrent stage: pre-idea validation.\n\n## Open questions\n\n- Newsletter first or marketplace first?\n';
-    const restated = 'Three moves for today:\n1. Product focus: weekly curated list.\n2. **Current stage:** pre-idea validation\n3. Newsletter first or marketplace first?\nRisk: r\nQuestion: q?';
+    const restated = 'Three moves for today:\n1. Product focus: weekly curated list.\n2. **Current stage:** pre-idea validation\n3. Newsletter first or marketplace first?\nRisk: Maya priced it at $9\nQuestion: q?';
     expect(await writeMorning({ sources: { ...await sources(), company }, name: 'Sam', promptFor: prompt, ask: async () => restated })).toBeNull();
-    const moves = 'Three moves for today:\n1. Email the 5 replied leads before noon.\n2. Product focus: weekly curated list.\n3. Log signups.\nRisk: r\nQuestion: q?';
+    const moves = 'Three moves for today:\n1. Email the 5 replied leads before noon.\n2. Product focus: weekly curated list.\n3. Log signups.\nRisk: Maya priced it at $9\nQuestion: q?';
     expect(await writeMorning({ sources: { ...await sources(), company }, name: 'Sam', promptFor: prompt, ask: async () => moves })).not.toBeNull();
     expect(MORNING_ASK).toContain('three moves for today: what to do, and why');
   });
@@ -102,16 +165,16 @@ describe('one morning turn', () => {
   });
 
   it('runs the note through the truth net: an invented figure is flagged under it, and the note still goes out', async () => {
-    const note = await writeMorning({ sources: await sources(), name: 'Sam', promptFor: prompt, ask: async () => 'Three moves for today:\n1. Chase the $36,850 in pipeline.\n2. Email the replied leads.\n3. Log signups.\nRisk: r\nQuestion: q?' });
+    const note = await writeMorning({ sources: await sources(), name: 'Sam', promptFor: prompt, ask: async () => 'Three moves for today:\n1. Chase the $36,850 in pipeline.\n2. Email the replied leads.\n3. Log signups.\nRisk: Maya priced it at $9\nQuestion: q?' });
     expect(note?.flags).toEqual([expect.stringContaining('Unsourced figures: $36,850')]);
     expect(morningMessage(note!)).toMatch(/Question: q\?\n\nUnsourced figures: \$36,850/);
-    const clean = await writeMorning({ sources: await sources(), name: 'Sam', promptFor: prompt, ask: async () => 'Three moves for today:\n1. Price it at $9 as decided.\n2. b\n3. c\nRisk: r\nQuestion: q?' });
+    const clean = await writeMorning({ sources: await sources(), name: 'Sam', promptFor: prompt, ask: async () => 'Three moves for today:\n1. Price it at $9 as decided.\n2. b\n3. c\nRisk: Maya priced it at $9\nQuestion: q?' });
     expect(clean?.flags).toBeUndefined();
   });
 
   it('flags "$29/month" that neither the Company document nor the chats hold, and not a price the Company document gives', async () => {
     const withCompany = async (): Promise<ModelMessage[]> => [{ role: 'system', content: 'You are Sam, Partner.\n\n## Doc: Company brief\n\n## Numbers\n\nPrice: $19/month.' }];
-    const note = (price: string) => `Three moves for today:\n1. Set the price at ${price} on the landing page.\n2. Email the replied leads.\n3. Log signups.\nRisk: r\nQuestion: q?`;
+    const note = (price: string) => `Three moves for today:\n1. Set the price at ${price} on the landing page.\n2. Email the replied leads.\n3. Log signups.\nRisk: Maya priced it at $9\nQuestion: q?`;
     const invented = await writeMorning({ sources: await sources(), name: 'Sam', promptFor: withCompany, ask: async () => note('$29/month') });
     expect(invented?.flags).toEqual([expect.stringMatching(/^Unsourced figures: \$29/)]);
     expect(morningMessage(invented!)).toContain('Unsourced figures: $29');
@@ -120,7 +183,7 @@ describe('one morning turn', () => {
   });
 
   it('flags a figure again when yesterday\'s note was flagged for it and today\'s repeats it', async () => {
-    const note = (price: string) => `Three moves for today:\n1. Set the price at ${price} on the landing page.\n2. Email the replied leads.\n3. Log signups.\nRisk: r\nQuestion: q?`;
+    const note = (price: string) => `Three moves for today:\n1. Set the price at ${price} on the landing page.\n2. Email the replied leads.\n3. Log signups.\nRisk: Maya priced it at $9\nQuestion: q?`;
     const first = await writeMorning({ sources: await sources({ chat: async () => [] }), name: 'Sam', promptFor: prompt, ask: async () => note('$29/month') });
     expect(first?.flags).toEqual([expect.stringMatching(/^Unsourced figures: \$29/)]);
     const posted: ChatMessage = { id: 'n1', role: 'assistant', text: morningMessage(first!), at: at('2026-09-26T09:00') };
@@ -129,9 +192,41 @@ describe('one morning turn', () => {
   });
 
   it('checks the note as it is posted, not the words around it the reshaping drops', async () => {
-    const note = await writeMorning({ sources: await sources(), name: 'Sam', promptFor: prompt, ask: async () => 'Good morning! We are at $44,000 of runway.\nThree moves for today:\n1. Email the replied leads.\n2. b\n3. c\nRisk: r\nQuestion: q?\nMy call: sell $12,500 of ads.' });
+    const note = await writeMorning({ sources: await sources(), name: 'Sam', promptFor: prompt, ask: async () => 'Good morning! We are at $44,000 of runway.\nThree moves for today:\n1. Email the replied leads.\n2. b\n3. c\nRisk: Maya priced it at $9\nQuestion: q?\nMy call: sell $12,500 of ads.' });
     expect(note).not.toBeNull();
     expect(note?.flags).toBeUndefined();
+  });
+
+  it('keeps which model wrote the note, when the ask says', async () => {
+    const note = await writeMorning({ sources: await sources(), name: 'Sam', promptFor: async () => [{ role: 'system', content: 'You are Sam.' }],
+      ask: async () => ({ text: 'Three moves for today:\n1. a\n2. b\n3. c\nRisk: Maya priced it at $9\nQuestion: q?', provider: 'gemini', model: 'gemini-3.5-flash-lite' }) });
+    expect(note).toMatchObject({ things: ['a', 'b', 'c'], provider: 'gemini', model: 'gemini-3.5-flash-lite' });
+  });
+
+  // The review: a vague note used to burn a try and come back half an hour later to the same prompt, three times.
+  it('asks once more in the same try with the reason, and takes the second answer when it holds', async () => {
+    const heard: ModelMessage[][] = [];
+    const replies = ['Three moves for today:\n1. a\n2. b\n3. c\nRisk: execution could slip\nQuestion: q?', 'Three moves for today:\n1. a\n2. b\n3. c\nRisk: Maya priced it at $9\nQuestion: q?'];
+    const note = await writeMorning({ sources: await sources(), name: 'Sam', promptFor: async () => [{ role: 'system', content: 'You are Sam.' }], ask: async (messages) => { heard.push(messages); return replies[heard.length - 1]; } });
+    expect(heard).toHaveLength(2);
+    expect(heard[1].at(-1)?.content).toMatch(/^The risk names no room, document or number/);
+    expect(heard[1].at(-2)).toEqual({ role: 'assistant', content: replies[0] });
+    expect(note).toMatchObject({ risk: 'Maya priced it at $9' });
+    expect(note?.flags).toBeUndefined();
+  });
+
+  it('gives nothing when it is still at fault on an early try, and posts it with a line saying so on the last', async () => {
+    const vague = 'Three moves for today:\n1. a\n2. b\n3. c\nRisk: execution could slip\nQuestion: q?';
+    const prompt = async (): Promise<ModelMessage[]> => [{ role: 'system', content: 'You are Sam.' }];
+    let asked = 0;
+    expect(await writeMorning({ sources: await sources(), name: 'Sam', promptFor: prompt, ask: async () => { asked += 1; return vague; } })).toBeNull();
+    expect(asked).toBe(2);
+    const last = await writeMorning({ sources: await sources(), name: 'Sam', promptFor: prompt, last: true, ask: async () => vague });
+    expect(last?.risk).toBe('execution could slip');
+    expect(last?.flags).toEqual(['Note check: the risk names no room, document or number, even when asked again.']);
+    expect(morningMessage(last!)).toContain('Note check: the risk names no room');
+    // A reply with no shape at all has nothing to post, last try or not.
+    expect(await writeMorning({ sources: await sources(), name: 'Sam', promptFor: prompt, last: true, ask: async () => 'Good morning!' })).toBeNull();
   });
 
   it('gives back nothing when the reply lost the shape', async () => {

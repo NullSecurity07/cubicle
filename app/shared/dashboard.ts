@@ -9,8 +9,9 @@ export type DashNeed = {
   id: string; kind: AttentionKind; title: string; who?: string; at: number;
   roomId?: string; cardId?: string; taskId?: string; decisionId?: string;
 };
-// A task on a board: `at` is when it falls due (a repeat) or when its run started.
-export type DashTask = { id: string; title: string; cardId: string; at: number; who?: string; roomId?: string; missed?: true; state?: string };
+// A task on a board: `at` is when it falls due (a repeat) or when its run started. `day` is the date a plan's step
+// is due on, for a step that has a day and no time.
+export type DashTask = { id: string; title: string; cardId: string; at: number; who?: string; roomId?: string; missed?: true; state?: string; day?: string };
 export type DashWatch = { id: string; title: string; url: string; roomId: string; who?: string; at: number; diff?: string };
 export type DashDecision = { id: string; title: string; who?: string; at: number };
 // A conversation whose newest line is a person's reply the founder has not answered yet.

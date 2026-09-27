@@ -1,18 +1,18 @@
 import { isDay } from '../../shared/metrics.ts';
 import { newMessageId, type Attention, type Stage } from '../../shared/model.ts';
-import { bare, companyLine, isPlanDoc, SHARED_RECORD, parsePlan, PARTNER_CHANNEL, planTaskTitle, type Bet, type BetVerdict, type MorningNote, type PlanStep } from '../../shared/partner.ts';
+import { bare, companyLine, isPlanDoc, SHARED_RECORD, parsePlan, PARTNER_CHANNEL, planStepLine, type Bet, type BetVerdict, type MorningNote, type PlanStep } from '../../shared/partner.ts';
 import { localDay } from '../clock.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
 import { leadsFor } from '../leads/store.ts';
-import { betDue, betsAttention, betsBook, closedLine, metricChoices, missingMetric, readMetric, type BetsBook } from '../partner/bets.ts';
+import { askedInstead, betDue, betsAttention, betsBook, closedLine, metricChoices, missingMetric, readMetric, type BetsBook } from '../partner/bets.ts';
 import { companyDocOf, ensureCompany, syncDecisions, writeBets } from '../partner/company.ts';
 import { hub } from '../events.ts';
 import { saysSomething } from '../missions.ts';
-import { FAKE_MORNING, morningDue, morningInputs, morningMessage, writeMorning } from '../partner/morning.ts';
+import { FAKE_MORNING, MOST_TRIES, morningDue, morningInputs, morningMessage, writeMorning } from '../partner/morning.ts';
 import { addPlan, boardFor, boardForPlan, NO_BOARD, planAttention, stepsFrom } from '../partner/plans.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import type { ModelMessage } from '../prompt.ts';
-import { complete, promptSize } from '../providers.ts';
+import { complete, fakeClient, promptSize } from '../providers.ts';
 import { partnerRoute } from '../partner/route.ts';
 import { withSystem, type Handler } from '../seams.ts';
 import { newId, patchStageVia } from '../slice-kit.ts';
@@ -39,6 +39,7 @@ export function betTools(book: BetsBook, workspace: string, changed: () => Promi
       description: 'Put a bet on record for the founder to take: something the company does, what it should move, by how much and by when. '
         + 'It waits in Needs you; it is only on record once the founder takes it. Measure it by a number the app can read: '
         + 'a Metrics card number (its key or name), "leads", "leads:<stage>" such as "leads:replied", or "survey" (answers). '
+        + 'Name it after what the founder\'s ask counts: "50 newsletter signups" is measured by "signups" on a Metrics card, never by leads. '
         + 'When it says a card or a row is missing, tell the founder exactly which card and row to add.',
       parameters: { type: 'object', properties: {
         what: { type: 'string', description: 'What the company does, in a few words' },
@@ -55,6 +56,9 @@ export function betTools(book: BetsBook, workspace: string, changed: () => Promi
         const target = typeof args.target === 'string' ? Number(args.target.replace(/[,$€£%\s]/g, '')) : Number(args.target);
         if (!Number.isFinite(target)) throw new Error('"target" must be a number');
         const metric = text(args, 'metric', 80).trim();
+        // Held to what the founder's ask counts, before anything else is said about the pick.
+        const instead = await askedInstead(workspace, context.stage, metric, context.query ?? '', target);
+        if (instead) throw new Error(instead);
         const choices = await metricChoices(workspace, context.stage);
         if (!choices.some((one) => one.toLowerCase() === metric.toLowerCase()) && (await readMetric(workspace, context.stage, metric)).value === null) {
           throw new Error(missingMetric(context.stage, metric, choices));
@@ -98,12 +102,12 @@ export async function offerPlan(state: PartnerStateBook, input: { who: string; r
   return state.change((held) => {
     const docId = input.docId;
     const before = docId && Array.isArray(held.offered?.[docId]) ? new Set(held.offered![docId]) : new Set<string>();
-    const fresh = input.steps.filter((step) => !before.has(planTaskTitle(step)));
+    const fresh = input.steps.filter((step) => !before.has(planStepLine(step)));
     // A new plan is worth a question from two steps; a plan already answered, from one new step.
     if (!fresh.length || (!before.size && fresh.length < 2)) return false;
     const waiting = docId ? held.plans.find((one) => one.docId === docId) : undefined;
     held.plans = [...held.plans.filter((one) => one !== waiting), { id: newId('plan-'), at: now, ...input, steps: [...(waiting?.steps ?? []), ...fresh] }];
-    if (docId) held.offered = { ...held.offered, [docId]: [...before, ...fresh.map(planTaskTitle)] };
+    if (docId) held.offered = { ...held.offered, [docId]: [...before, ...fresh.map(planStepLine)] };
     return true;
   });
 }
@@ -129,7 +133,7 @@ export function planTools(state: PartnerStateBook, changed: () => Promise<void>,
 }
 
 // What a test hands in instead of the clock and the model.
-export type PartnerOptions = { now?: () => number; ask?: (messages: ModelMessage[]) => Promise<string> };
+export type PartnerOptions = { now?: () => number; ask?: (messages: ModelMessage[]) => Promise<string | { text: string; provider?: string; model?: string }> };
 
 export function createPartner(options: PartnerOptions = {}) {
   const now = options.now ?? Date.now;
@@ -196,11 +200,11 @@ export function createPartner(options: PartnerOptions = {}) {
 
     // ------------------------------------------------------------ the morning turn
 
-    const ask = options.ask ?? (deps.fake ? async () => FAKE_MORNING : async (messages: ModelMessage[]) => {
+    const ask = options.ask ?? (deps.fake ? async () => ({ text: FAKE_MORNING, provider: fakeClient.name, model: fakeClient.model }) : async (messages: ModelMessage[]) => {
       const { order } = partnerRoute(deps.clients, deps.usage, { promptChars: promptSize(messages), tools: false });
       const reply = await complete(messages, { onToken: () => {} }, order, ({ client, error }) => deps.usage.failed(client.name, error), (client) => deps.usage.admit(client.name));
       deps.usage.record(reply.client.name, reply.usage, reply.quota);
-      return reply.text;
+      return { text: reply.text, provider: reply.client.name, model: reply.client.model };
     });
 
     // Today's note, written now if it is due (or asked for), else the one already written, else null.
@@ -231,18 +235,19 @@ export function createPartner(options: PartnerOptions = {}) {
         const count = held.tries?.day === today ? held.tries.count : 0;
         await state.change((draft) => { draft.tries = { day: today, count: count + 1, last: at }; });
         const written = await writeMorning({
-          name: partner.name, ask,
+          // The founder's own ask, or the day's last try, gets a note even when it is still at fault.
+          name: partner.name, ask, last: asked || count + 1 >= MOST_TRIES,
           promptFor: (on, roomId) => deps.promptFor(on, roomId, [], true),
           sources: {
             workspace: deps.workspace, stage, partnerId: partner.id, now: at, bets, company: inputs.company,
             decisions: () => deps.decisions.list(), boards: (id) => deps.boards.list(id), leads: (id) => leadsFor(deps.workspace).list(id),
-            chat: (roomId) => deps.store.readChat(roomId),
+            chat: (roomId) => deps.store.readChat(roomId), doc: (id) => deps.store.readDoc(id),
           },
         }).catch((error: Error) => { console.error(`partner morning: ${error.message}`); return null; });
         if (!written) return null;
         const note = { ...written, inputs: inputs.key };
         await state.change((draft) => { draft.morning = note; if (draft.morningDone === today) delete draft.morningDone; });
-        await deps.store.appendChat(partner.id, { id: newMessageId(), role: 'assistant', text: morningMessage(note), at: note.at });
+        await deps.store.appendChat(partner.id, { id: newMessageId(), role: 'assistant', text: morningMessage(note), at: note.at, ...(note.provider ? { provider: note.provider } : {}), ...(note.model ? { model: note.model } : {}) });
         await deps.attention.refresh().catch(() => {});
         deps.notify?.(`Morning note from ${partner.name}`, note.things[0]);
         return note;
@@ -255,7 +260,9 @@ export function createPartner(options: PartnerOptions = {}) {
       const note = held.morning;
       const found: Attention[] = [];
       if (note && note.day === localDay(now()) && held.morningDone !== note.day) {
-        found.push({ id: `morning-note:${note.day}`, kind: 'morning-note', title: `Morning note: ${note.things[0]}`, detail: `Risk: ${note.risk} Question: ${note.question}`, at: note.at, who: note.who, roomId: note.roomId });
+        // The first move is the title; the other moves, the risk and the question follow in the row itself.
+        const rest = note.things.slice(1).map((thing, index) => `${index + 2}. ${thing}`).join(' ');
+        found.push({ id: `morning-note:${note.day}`, kind: 'morning-note', title: `Morning note: ${note.things[0]}`, detail: `${rest ? `${rest} ` : ''}Risk: ${note.risk} Question: ${note.question}`, at: note.at, who: note.who, roomId: note.roomId });
       }
       return [...found, ...planAttention(held.plans), ...await betsAttention(await book.list(), await deps.store.loadStage(), deps.workspace, localDay(now()))];
     });

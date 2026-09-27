@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { COMPANY_SECTIONS, companyTemplate, dueOf, findCompanyDoc, isCompanyTitle, isPlanDoc, morningText, parsePlan, planTaskTitle, readMorning } from './partner.ts';
+import { bare, COMPANY_SECTIONS, companyTemplate, dueOf, findCompanyDoc, isCompanyTitle, isPlanDoc, morningText, parsePlan, planStepLine, planTaskTitle, readMorning } from './partner.ts';
 
 // The shape the journey's 2-week plan came back in (Sam, 2026-09-26): a heading per week, a heading per day with
 // bullets under it, then KPIs and kill criteria that are not steps at all.
@@ -63,7 +63,8 @@ describe('a plan read as steps', () => {
       { day: 'Tue 29 Sep (Day 2)', text: 'Write valuation notes for the first 10' },
       { day: 'Day 3 – Wed 30 Sep', text: 'Post in r/SaaS and Indie Hackers' },
     ]);
-    expect(planTaskTitle(steps[0])).toBe('Mon 28 Sep (Day 1): Draft the landing page copy');
+    expect(planTaskTitle(steps[0])).toBe('Draft the landing page copy');
+    expect(planStepLine(steps[0])).toBe('Mon 28 Sep (Day 1): Draft the landing page copy');
   });
 
   it('reads a day written at the front of a bullet or a bold line, and a table with a day column', () => {
@@ -93,13 +94,13 @@ describe('a plan read as steps', () => {
   it('keeps a day range one label, never glues the week heading on, and dates each step', () => {
     const steps = parsePlan(JOURNEY_DOC);
     expect(steps.map(planTaskTitle)).toEqual([
-      'Mon\u2013Tue (28\u201329 Sep): Find and vet 5 real abandoned/struggling SaaS side-projects. Write a short valuation note for each',
-      'Wed (30 Sep): Set up a simple landing page (e.g., Carrd or Substack)',
-      'Sat\u2013Sun (10\u201311 Oct): Make the go/no-go call',
+      'Find and vet 5 real abandoned/struggling SaaS side-projects. Write a short\u2026',
+      'Set up a simple landing page (e.g., Carrd or Substack)',
+      'Make the go/no-go call',
     ]);
     expect(steps.map((step) => dueOf(step.day!, '2026-09-26'))).toEqual(['2026-09-28', '2026-09-30', '2026-10-10']);
     const handed = JOURNEY_STEPS.flatMap((line) => parsePlan(line));
-    expect(handed.map(planTaskTitle)).toEqual(['Mon 28 Sep \u2013 Tue 29 Sep: Find & vet 5 abandoned SaaS side\u2011projects; write valuation notes', 'Wed 30 Sep: Build landing page (Carrd/Substack) with pricing or guarantee']);
+    expect(handed.map(planTaskTitle)).toEqual(['Find & vet 5 abandoned SaaS side\u2011projects; write valuation notes', 'Build landing page (Carrd/Substack) with pricing or guarantee']);
     expect(handed.map((step) => dueOf(step.day!, '2026-09-26'))).toEqual(['2026-09-28', '2026-09-30']);
   });
 
@@ -110,11 +111,32 @@ describe('a plan read as steps', () => {
     expect(dueOf('Sep 28 – 2 Oct', '2026-09-26')).toBe('2026-09-28');
     expect(dueOf('Mon 4 Jan', '2026-12-28')).toBe('2027-01-04');
     expect(dueOf('2026-10-02', '2026-09-26')).toBe('2026-10-02');
-    expect(planTaskTitle({ day: 'Mon 28 Sep', text: 'Mon 28 Sep: call Ana' })).toBe('Mon 28 Sep: call Ana');
+    expect(planTaskTitle({ day: 'Mon 28 Sep', text: 'Mon 28 Sep: call Ana' })).toBe('call Ana');
+    expect(planStepLine({ day: 'Mon 28 Sep', text: 'Mon 28 Sep: call Ana' })).toBe('Mon 28 Sep: call Ana');
+  });
+
+  // Journey 3's board: "Sep 26: Set up ... under $5k for indie hacke". The due date is on the card, so the label
+  // goes; a label that names no calendar day ("Day 3", "Mon") stays, since nothing else on the card says it.
+  it('titles a task without a dated label and cuts a long one at a word, within eighty characters', () => {
+    const journey = { day: 'Sep 26', text: 'Set up a dead-simple, free static landing page listing 10 hand-picked abandoned SaaS projects under $5k for indie hackers' };
+    const title = planTaskTitle(journey);
+    expect(title.length).toBeLessThanOrEqual(80);
+    expect(title).toBe('Set up a dead-simple, free static landing page listing 10 hand-picked abandoned\u2026');
+    expect(title).not.toMatch(/Sep 26/);
+    expect(planTaskTitle({ day: 'Day 3', text: 'send it' })).toBe('Day 3: send it');
+    expect(planTaskTitle({ day: 'Mon', text: 'call Ana' })).toBe('Mon: call Ana');
+    expect(planTaskTitle({ text: 'x'.repeat(100) })).toHaveLength(80);
+    expect(planTaskTitle({ day: '2026-10-02', text: 'Ship it.' })).toBe('Ship it.');
   });
 
   it('finds nothing in a document that has no days in it', () => {
     expect(parsePlan('# Notes\n\n- one idea\n- another idea')).toEqual([]);
+  });
+});
+
+describe('a bet\'s words between full stops', () => {
+  it('drops whatever stop the writer ended on, an ellipsis too', () => {
+    for (const said of ['It gives us a head start.', 'It gives us a head start', 'It gives us a head start...', 'It gives us a head start\u2026', ' It gives us a head start. ']) expect(bare(said), said).toBe('It gives us a head start');
   });
 });
 

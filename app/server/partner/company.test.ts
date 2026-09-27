@@ -134,7 +134,7 @@ describe('the Company document', () => {
 
   it('never ends a bet\'s words on two full stops', () => {
     const bet: Bet = { id: 'b', made: '2026-09-26', what: 'Launch the product.', hypothesis: '', metric: 'signups', target: 50, checkDate: '2026-10-11', status: 'open', at: 1 };
-    expect(betsSection([bet])).toBe('- Open: Launch the product. signups to 50 by 2026-10-11 (made 2026-09-26)');
+    expect(betsSection([bet])).toBe('- Open: Launch the product. Measured by "signups" on the Metrics card: 50 by 2026-10-11 (made 2026-09-26)');
   });
 
   it('keeps the Bets section as the ledger says, open ones first', async () => {
@@ -145,7 +145,7 @@ describe('the Company document', () => {
       { id: 'b2', made: '2026-09-01', what: 'Price at $9', hypothesis: 'people pay', metric: 'leads:customer', target: 5, checkDate: '2026-09-20', status: 'closed', at: 1, result: { at: 2, verdict: 'did-not', value: 2, note: '', by: 'Founder' } },
       { id: 'b3', made: '2026-09-26', what: 'Not yet', hypothesis: '', metric: 'x', target: 1, checkDate: '2026-10-01', status: 'proposed', at: 1 },
     ];
-    expect(betsSection(bets)).toBe('- Open: Post in r/SaaS. signups to 20 by 2026-10-03 (made 2026-09-26)\n- Did not work: Price at $9. leads:customer was 2 against 5 (checked 2026-09-20)');
+    expect(betsSection(bets)).toBe('- Open: Post in r/SaaS. Measured by "signups" on the Metrics card: 20 by 2026-10-03 (made 2026-09-26)\n- Did not work: Price at $9. Measured by "leads:customer" on the Leads card: was 2 against 5 (checked 2026-09-20)');
     await writeBets(store, id, bets);
     await writeBets(store, id, bets);
     const text = await store.readDoc(id);

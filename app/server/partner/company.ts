@@ -3,6 +3,7 @@ import { bare, COMPANY_SECTIONS, companyTemplate, COMPANY_TITLE, findCompanyDoc,
 import { DOC_SIZE } from '../../shared/frameworks.ts';
 import { localDay } from '../clock.ts';
 import type { Store } from '../store.ts';
+import { cardOf } from './bets.ts';
 import { headingKey, headings, replaceSection } from '../tools/sections.ts';
 
 // The Company document: one pinned doc every person reads, which the app writes into as things are decided and bet
@@ -133,11 +134,13 @@ export function answerQuestions(text: string, decided: Decision[]): string {
 
 // The ledger as the Company document shows it: open bets first, then the ones that were checked, newest first.
 export function betsSection(bets: Bet[]): string {
-  const open = bets.filter((bet) => bet.status === 'open').map((bet) => `- Open: ${bare(bet.what)}. ${bet.metric} to ${bet.target} by ${bet.checkDate} (made ${bet.made})`);
+  // Each line names the metric and the card it is read from, so nobody who reads it later guesses "leads".
+  const measured = (bet: Bet) => `Measured by "${bet.metric}" on ${cardOf(bet.metric)}`;
+  const open = bets.filter((bet) => bet.status === 'open').map((bet) => `- Open: ${bare(bet.what)}. ${measured(bet)}: ${bet.target} by ${bet.checkDate} (made ${bet.made})`);
   const closed = bets.filter((bet) => bet.status === 'closed' && bet.result).sort((a, b) => b.checkDate.localeCompare(a.checkDate)).map((bet) => {
     const verdict = VERDICT_WORDS[bet.result!.verdict];
     const value = bet.result!.value === null ? 'could not be read' : `was ${bet.result!.value} against ${bet.target}`;
-    return `- ${verdict.charAt(0).toUpperCase()}${verdict.slice(1)}: ${bare(bet.what)}. ${bet.metric} ${value} (checked ${bet.checkDate})${bet.result!.note ? `. ${bare(bet.result!.note)}.` : ''}`;
+    return `- ${verdict.charAt(0).toUpperCase()}${verdict.slice(1)}: ${bare(bet.what)}. ${measured(bet)}: ${value} (checked ${bet.checkDate})${bet.result!.note ? `. ${bare(bet.result!.note)}.` : ''}`;
   });
   return [...open, ...closed].join('\n');
 }

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { LEAD_STAGES, STAGE_NAMES, type LeadStage } from '../../shared/leads.ts';
 import { findMetric, formatValue, isDay, type Metrics } from '../../shared/metrics.ts';
 import type { Attention, Stage } from '../../shared/model.ts';
-import { VERDICT_WORDS, type Bet, type BetVerdict } from '../../shared/partner.ts';
+import { bare, VERDICT_WORDS, type Bet, type BetVerdict } from '../../shared/partner.ts';
 import { localDay } from '../clock.ts';
 import { writeAtomic } from '../fsx.ts';
 import { leadsFor } from '../leads/store.ts';
@@ -119,6 +119,61 @@ export function missingMetric(stage: Stage, metric: string, choices: string[]): 
   return `${need}.${choices.length ? ` Or measure it by one of what is already there: ${choices.join(', ')}.` : ''} Tell the founder exactly which card and row to add.`;
 }
 
+// ---------------------------------------------------------------- the metric an ask names
+
+// What a founder's ask counts, as the metric that measures it: "50 newsletter signups by Oct 10" is the "signups"
+// row on a Metrics card, never "leads". A number with a plural noun after it, up to two words on ("20 paying
+// customers"); a sum of money, a percentage or a length of time names no metric.
+const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty'];
+const TENS: Record<string, number> = { thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90, hundred: 100 };
+const NUMBER = `\\d[\\d,]*(?:\\.\\d+)?\\s*k?|${[...WORDS, ...Object.keys(TENS)].join('|')}`;
+// "50 newsletter signups", "fifty signups": a number, up to two words, a plural noun. "signups: 50": the noun first.
+const COUNTED = new RegExp(`(?<![$€£\\d.,])\\b(${NUMBER})\\s+(?:[a-z][a-z'-]*\\s+){0,2}?([a-z][a-z-]*s)\\b|\\b([a-z][a-z-]*s)\\s*:\\s*(\\d[\\d,]*)\\b`, 'gi');
+const NOT_COUNTS = new Set(['minutes', 'hours', 'days', 'weeks', 'months', 'years', 'times', 'percents', 'dollars', 'euros', 'pounds', 'steps', 'things', 'ways', 'others']);
+const FROM_CARDS: Record<string, string> = { leads: 'leads', replies: 'leads:replied', meetings: 'leads:meeting', answers: 'survey', responses: 'survey' };
+const valueOf = (said: string) => {
+  const word = said.trim().toLowerCase();
+  if (WORDS.includes(word)) return WORDS.indexOf(word);
+  if (TENS[word]) return TENS[word];
+  return Number(word.replace(/[,\s]/g, '').replace(/k$/, '')) * (/k$/.test(word) ? 1000 : 1);
+};
+// Every number the ask counts, in the order said, each as the metric that would measure it.
+export function metricsAsked(ask: string): { metric: string; value: number }[] {
+  return [...ask.matchAll(COUNTED)].flatMap((found) => {
+    const noun = (found[2] ?? found[3]).toLowerCase();
+    return NOT_COUNTS.has(noun) ? [] : [{ metric: FROM_CARDS[noun] ?? noun, value: valueOf(found[1] ?? found[4]) }];
+  });
+}
+// The one the bet is about: the noun whose number is the target, else the first counted.
+export function metricAsked(ask: string, target?: number): string | undefined {
+  const all = metricsAsked(ask);
+  return (all.find((one) => one.value === target) ?? all[0])?.metric;
+}
+// Which card a metric is read from.
+const familyOf = (metric: string) => { const said = metric.trim().toLowerCase(); return said === 'leads' || said.startsWith('leads:') ? 'leads' : said === 'survey' ? 'survey' : 'metrics'; };
+export const CARD_NAMES = { leads: 'the Leads card', survey: 'the Survey card', metrics: 'the Metrics card' } as const;
+export const cardOf = (metric: string) => CARD_NAMES[familyOf(metric)];
+// Whether a pick measures what the ask counts: "Signups", "signup" and "newsletter_signups" all measure signups.
+export function metricFits(pick: string, asked: string): boolean {
+  const said = pick.trim().toLowerCase();
+  if (familyOf(asked) !== 'metrics') return said === asked;
+  const stem = (word: string) => word.replace(/s$/, '');
+  return familyOf(said) === 'metrics' && said.split(/[^a-z0-9]+/).some((word) => word && stem(word) === stem(asked));
+}
+// A pick is held to the ask when it is read off another card than the ask's number, or off none at all. A Metrics
+// row the founder already keeps under another name ("subs" for signups) stands.
+export async function askedInstead(workspace: string, stage: Stage, pick: string, ask: string, target?: number): Promise<string | null> {
+  const all = metricsAsked(ask);
+  const named = all.find((one) => one.value === target);
+  const asked = (named ?? all[0])?.metric;
+  // With no count at the target, a pick that fits any count the ask names stands.
+  if (!asked || metricFits(pick, asked) || (!named && all.some((one) => metricFits(pick, one.metric)))) return null;
+  if (familyOf(pick) === familyOf(asked) && (await readMetric(workspace, stage, pick)).value !== null) return null;
+  const there = (await readMetric(workspace, stage, asked)).value !== null;
+  const missing = there ? '' : ` ${missingMetric(stage, asked, [])}`.replace(/^ (\w)/, (_, first: string) => ` ${first.toUpperCase()}`);
+  return `The founder's ask counts ${asked.replace(/^leads:/, 'leads in ')}: propose it again measured by "${asked}".${missing}`;
+}
+
 // A bet's check is due from its check day on, while nobody has said how it went.
 export const betDue = (bet: Bet, today: string) => bet.status === 'open' && !bet.result && isDay(bet.checkDate) && bet.checkDate <= today;
 
@@ -129,7 +184,7 @@ export async function betsAttention(bets: Bet[], stage: Stage, workspace: string
   for (const bet of bets) {
     if (bet.status === 'proposed') {
       found.push({ id: `proposed-bet:${bet.id}`, kind: 'proposed-bet', title: bet.what, at: bet.at, ...(bet.proposedBy ? { who: bet.proposedBy } : {}), ...(bet.roomId ? { roomId: bet.roomId } : {}),
-        detail: `${bet.hypothesis ? `${bet.hypothesis}. ` : ''}Measured by ${bet.metric}: ${bet.target} by ${bet.checkDate}.` });
+        detail: `${bare(bet.hypothesis) ? `${bare(bet.hypothesis)}. ` : ''}Measured by "${bet.metric}" on ${cardOf(bet.metric)}: ${bet.target} by ${bet.checkDate}.` });
     } else if (betDue(bet, today)) {
       const reading = await readMetric(workspace, stage, bet.metric);
       found.push({ id: `bet-check:${bet.id}`, kind: 'bet-check', title: `Check the bet: ${bet.what}`, at: new Date(`${bet.checkDate}T00:00:00`).getTime(),
