@@ -255,8 +255,8 @@ describe('the free providers set up here', () => {
     const names = (env: Record<string, string>) => realClients(env as NodeJS.ProcessEnv).map((one) => one.name);
     expect(names({ CLOUDFLARE_API_TOKEN: 't' })).toEqual([]);
     expect(names({ CLOUDFLARE_ACCOUNT_ID: 'abc' })).toEqual([]);
-    const [cloudflare] = realClients({ CLOUDFLARE_API_TOKEN: 't', CLOUDFLARE_ACCOUNT_ID: 'abc' } as NodeJS.ProcessEnv);
-    expect(cloudflare.name).toBe('cloudflare');
+    const cloudflare = realClients({ CLOUDFLARE_API_TOKEN: 't', CLOUDFLARE_ACCOUNT_ID: 'abc' } as NodeJS.ProcessEnv).find((one) => one.name === 'cloudflare')!;
+    expect(cloudflare.model).toBe('@cf/meta/llama-4-scout-17b-16e-instruct');
     expect(cloudflare.openai!.baseURL).toBe('https://api.cloudflare.com/client/v4/accounts/abc/ai/v1');
     // Cerebras counts each model apart, so its key makes two clients with a day's worth each.
     expect(names({ CEREBRAS_API_KEY: 'c' })).toEqual(['cerebras', 'cerebras-qwen']);
@@ -400,5 +400,36 @@ describe('the last model that can take a turn', () => {
   it('names the models passed over because the prompt would not fit them', async () => {
     const result = await complete(messages, { onToken: () => {} }, [{ ...client('groq', ['x']), maxPromptChars: 1 }, client('gemini', ['here'])]);
     expect(result).toMatchObject({ client: { name: 'gemini' }, oversize: ['groq'] });
+  });
+});
+
+describe('the second hosted model on the Cloudflare key (round 5)', () => {
+  const env = { CLOUDFLARE_API_TOKEN: 't', CLOUDFLARE_ACCOUNT_ID: 'abc' } as NodeJS.ProcessEnv;
+
+  it('makes gpt-oss and Qwen from the one key, with Scout kept last', () => {
+    const clients = realClients(env);
+    expect(clients.map((one) => one.name)).toEqual(['cloudflare-gpt-oss', 'cloudflare-qwen', 'cloudflare']);
+    expect(clients[0]).toMatchObject({ model: '@cf/openai/gpt-oss-120b', maxPromptChars: 100_000, tools: true, limits: { rpd: 40 } });
+    expect(clients[1]).toMatchObject({ model: '@cf/qwen/qwen3.8-27b', maxPromptChars: 60_000, tools: true });
+    expect(clients[2].model).toBe('@cf/meta/llama-4-scout-17b-16e-instruct');
+  });
+
+  it('never sends a tool-call message with its content as null, which Cloudflare refuses with a 400', async () => {
+    const [oss] = realClients(env);
+    const sent: { messages: { role: string; content: unknown; tool_calls?: unknown[] }[] }[] = [];
+    async function* chunks() { yield { choices: [{ delta: { content: 'read it' } }] }; }
+    (oss.openai!.chat.completions as unknown as { create: unknown }).create = (body: (typeof sent)[number]) => {
+      sent.push(body);
+      return { withResponse: async () => ({ data: chunks(), response: { headers: new Headers() } }) };
+    };
+    const history = [
+      { role: 'user' as const, content: 'raise now?' },
+      { role: 'assistant' as const, content: null as unknown as string, tool_calls: [{ id: 'a', type: 'function' as const, function: { name: 'read_doc', arguments: '{}' } }] },
+      { role: 'tool' as const, tool_call_id: 'a', content: 'cash 9k' },
+    ];
+    const result = await complete(history, { onToken: () => {}, tools: [{ name: 'read_doc', description: '', parameters: {} }] }, [oss]);
+    expect(result.text).toBe('read it');
+    const call = sent[0].messages.find((message) => message.tool_calls);
+    expect(call!.content).toBe('');
   });
 });

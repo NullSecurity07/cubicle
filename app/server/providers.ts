@@ -59,7 +59,7 @@ export const callId = () => `call_${randomBytes(8).toString('hex')}`;
 export const promptSize = (messages: ModelMessage[]) => messages.reduce((sum, message) => {
   const calls = 'tool_calls' in message && message.tool_calls ? JSON.stringify(message.tool_calls).length : 0;
   const images = 'images' in message && message.images ? message.images.length * 1200 : 0;
-  return sum + message.content.length + calls + images;
+  return sum + (message.content ?? '').length + calls + images;
 }, 0);
 
 const MAX_WAIT = 8000;
@@ -276,6 +276,9 @@ export function portable(messages: ModelMessage[], signature?: string): ModelMes
     if (message.role !== 'assistant' || !message.tool_calls) return message;
     return {
       ...message,
+      // A call with no words beside it is sent with empty words: Cloudflare refuses a tool-call message whose content
+      // is null with a 400, and every other provider takes the empty string as well.
+      content: message.content ?? '',
       tool_calls: message.tool_calls.map(({ extra_content, ...call }) => (
         signature ? { ...call, extra_content: extra_content ?? { google: { thought_signature: signature } } } : call
       )),
@@ -305,7 +308,8 @@ export type Entry = (typeof models)[number] & { side?: boolean; vision?: boolean
 // same key. NVIDIA's terms are for prototyping, development and evaluation. Z.ai's flash model and Ollama's cloud take
 // one request at a time (`concurrency: 1`); Z.ai's 10 a minute is our own guess, it publishes none. Vercel gives $5 of
 // credit a month, and buying any ends the free part. Cloudflare gives 10,000 neurons a day (about 130k tokens out on
-// Scout) and needs the account id in its address. SambaNova is 20 requests a day: the last resort.
+// Scout) and needs the account id in its address; gpt-oss spends about 236 of them on a 25k-character turn and Qwen
+// about 394, so their `rpd` is the ~40 and ~25 turns that pool holds, shared with the pictures. SambaNova is 20 requests a day: the last resort.
 export const ENTRIES = models as Entry[];
 
 // Every name in the environment an entry needs: its key, then whatever its address carries as `${NAME}`.
