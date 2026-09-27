@@ -433,3 +433,18 @@ describe('the second hosted model on the Cloudflare key (round 5)', () => {
     expect(call!.content).toBe('');
   });
 });
+
+describe('Groq on a turn with tools that is over its cap (round 5)', () => {
+  const tools = [{ name: 'read_doc', description: '', parameters: {} }];
+  const long = [{ role: 'user' as const, content: 'old '.repeat(3000) }, { role: 'assistant' as const, content: 'ok' }, { role: 'user' as const, content: 'raise now?' }];
+
+  it('is passed over, not squeezed in with the history cut, while a model behind it holds the whole prompt', async () => {
+    const result = await complete(long, { onToken: () => {}, tools }, [client('groq', ['cut short'], 5000), client('cloudflare-gpt-oss', ['whole'])]);
+    expect(result).toMatchObject({ text: 'whole', client: { name: 'cloudflare-gpt-oss' }, oversize: ['groq'] });
+  });
+
+  it('still answers with the history cut when nobody else can, and on a turn without tools', async () => {
+    expect((await complete(long, { onToken: () => {}, tools }, [client('groq', ['cut short'], 5000)])).text).toBe('cut short');
+    expect((await complete(long, { onToken: () => {} }, [client('groq', ['words'], 5000), client('gemini', ['no'])])).text).toBe('words');
+  });
+});

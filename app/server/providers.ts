@@ -182,6 +182,12 @@ export async function complete(
   for (const [index, client] of clients.entries()) {
     if (options.tools?.length && !client.tools) { failures.push(`${client.name}: no tool support`); continue; }
     if (smallFor(client, options, clients)) { failures.push(`${client.name}: kept off turns with tools`); continue; }
+    // Groq's cap is its per-minute token wall: on a turn with tools it is not squeezed in with the history cut while
+    // a model behind it can hold the whole prompt.
+    if (options.tools?.length && walled(client) && promptSize(messages) + toolChars > client.maxPromptChars
+      && clients.slice(index + 1).some((other) => !walled(other) && other.tools && promptSize(messages) + toolChars <= other.maxPromptChars)) {
+      failures.push(`${client.name}: prompt too large`); oversize.push(client.name); continue;
+    }
     // A model that holds less gets the oldest history cut, not the whole turn refused.
     let sent = fitHistory(messages, client.maxPromptChars - toolChars);
     if (!sent) { failures.push(`${client.name}: prompt too large`); oversize.push(client.name); continue; }
@@ -326,6 +332,8 @@ export const unset = (entry: { keyEnv: string; baseURL: string }, env: NodeJS.Pr
 // The provider behind a client's name: `groq#2` is Groq's second key. Everything that counts what a key has spent
 // works on the name; everything the founder reads works on this.
 export const providerOf = (name: string) => name.split('#')[0];
+// Groq's free models, whose room is a per-minute token wall (7-8k) rather than what the model can read.
+export const walled = (client: Pick<ModelClient, 'name'>) => providerOf(client.name).startsWith('groq');
 
 // A provider may hold more than one free key: `GROQ_API_KEY`, then `GROQ_API_KEY_2`, `_3` and so on, in any order.
 // Each becomes a client of its own, so each has its own day's count and its own rest after a 429.
