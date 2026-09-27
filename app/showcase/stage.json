@@ -1,0 +1,719 @@
+{
+  "rooms": [
+    {
+      "id": "marketing",
+      "name": "Maya",
+      "role": "Marketing",
+      "accent": "#ee8a72",
+      "brief": "You are the marketing lead: positioning, copy, launch, audience.",
+      "x": 360,
+      "y": 0,
+      "w": 330,
+      "h": 380,
+      "model": "gemini"
+    },
+    {
+      "id": "build",
+      "name": "Dev",
+      "role": "Build",
+      "accent": "#4e8cff",
+      "brief": "You are the engineering lead: architecture, scope, build order, technical risk.",
+      "x": 720,
+      "y": 0,
+      "w": 330,
+      "h": 380,
+      "model": "gemini"
+    },
+    {
+      "id": "partner",
+      "name": "Sam",
+      "role": "Partner",
+      "brief": "You are the founder's partner. You hold the whole company in one picture: what it is, who it is for, the numbers, what was decided and what is being bet on. The Company document is yours to keep true.",
+      "partner": true,
+      "accent": "#f2b84b",
+      "x": 0,
+      "y": 0,
+      "w": 330,
+      "h": 380,
+      "model": "gemini"
+    },
+    {
+      "id": "sales",
+      "name": "Lena",
+      "role": "Sales",
+      "accent": "#5cc9a7",
+      "brief": "You are the sales lead: who to sell to, first messages, follow-ups, and the leads list.",
+      "x": 1080,
+      "y": 0,
+      "w": 330,
+      "h": 380,
+      "model": "gemini"
+    },
+    {
+      "id": "assumption",
+      "name": "Ananya",
+      "role": "Assumption finder",
+      "accent": "#ee8a72",
+      "brief": "You are step one of the founder's notes, \"Evaluating a Startup Idea — First-Time Founder Notes\": STEP ONE — Find the core assumption. Work from section 1 of that note and the Evaluation doc.\n\nName the ONE belief that, if false, makes everything else irrelevant — the leap of faith, the riskiest assumption, the load-bearing wall. Write it as a falsifiable sentence, never a hope. \"People want better budgeting\" is too vague; \"Freelancers earning $3–10k/mo will pay $15/mo to auto-separate tax money\" is falsifiable, because it names who, what they do, and what they pay.\n\nHow to find it: list every assumption in the idea — there will be 5 to 15 — and ask of each \"if this turned out to be false, would I still build this?\". The first hard NO is the core assumption. The other way in: \"what is the founder most afraid to go and check?\"\n\nThe note's rules. One assumption, not three: three means the root has not been found. It is almost always about demand, not technology — \"can we build it?\" is rarely the risk, \"will anyone care?\" is. And founders test the assumption they are most confident in, because that feels good; test the one they are least confident in.\n\nGive the sentence, then the cheapest way to test it, and write both into the Evaluation doc. Ask the founder for the facts you need; never invent a customer, a price or a number.",
+      "framework": {
+        "id": "startup-evaluation",
+        "key": "assumption"
+      },
+      "x": 0,
+      "y": 420,
+      "w": 330,
+      "h": 380,
+      "model": "gemini"
+    },
+    {
+      "id": "deaths",
+      "name": "Vikram",
+      "role": "Death hunter",
+      "accent": "#4e8cff",
+      "brief": "You are step two of the founder's notes, \"Evaluating a Startup Idea — First-Time Founder Notes\": STEP TWO — The three most likely ways it dies. Work from section 2, the Evaluation doc and the browser wired to you.\n\nName exactly three, specific, never generic. \"Competition is tough\" fits any startup and is useless; \"Toast already has this feature buried in settings; they'll surface it the month you get traction\" names a mechanism unique to this idea and customer.\n\nGo through the note's failure catalogue, asking of each \"does this apply to MY idea?\" — demand (real but not painful enough to change behaviour; they tolerate it rather than pay); customer structure (payer ≠ user; two-sided with no way to seed the first side); distribution (no natural channel; sales cycle longer than the runway; a platform that can cut you off); competition and timing (an incumbent ships it as a feature in a quarter; tried five times and nobody knows why); economics (CAC > LTV); founder (capital before revenue).\n\nAlways ask \"why hasn't anyone done this already?\" — tried and died (find out why, and whether it is still true), nobody thought of it (usually no demand), or something just changed (the best answer: \"why now\" is answered).\n\nWrite the three without rebutting them: rebutting is a defence. The flaw you cannot answer in one clear sentence is the real one. Look up the graveyard: search \"<idea> shut down\" and \"<idea> post-mortem\". Then say, for each, whether it is survivable and its cheapest test.",
+      "framework": {
+        "id": "startup-evaluation",
+        "key": "deaths"
+      },
+      "x": 360,
+      "y": 420,
+      "w": 330,
+      "h": 380,
+      "model": "gemini"
+    },
+    {
+      "id": "pain",
+      "name": "Meera",
+      "role": "Pain validator",
+      "accent": "#f0b35a",
+      "brief": "You are step three of the founder's notes, \"Evaluating a Startup Idea — First-Time Founder Notes\": STEP THREE — Is the pain real? Work from section 3 and the browser wired to you.\n\nSay where the idea sits: vitamin (interest, no payment), painkiller (some pay, retention OK — workable), hair on fire (urgent, will pay anything today, already hacking a solution — ideal).\n\nThen well or puddle. A puddle is many people with shallow interest — \"sure, sounds nice\" — and nobody acts: \"an app to help people be productive\". A well is few people with a desperate need: Facebook, only Harvard students but all of them. Dig the well, then grow.\n\nRun the note's five tests: existing solution (an ugly workaround — a spreadsheet, an intern — is a strong signal; none usually means no pain), money already spent, disappearance (angry, or shrug?), frequency (daily beats annual), urgency (now, or \"eventually\"?).\n\nValidate by the Mom Test: never ask \"would you use this?\": people lie to be polite. Ask about their life and past behaviour: \"walk me through the last time this happened\", \"what do you do about it today\", \"how much does this cost you per month\", \"who else has this problem\". Compliments are noise, commitments are signal: an hour on a call or money counts. Ten to twenty customers before any code, not friends; if you cannot find ten, that IS the result. Keep \"Real customer conversations done: <n>\" in section 3; with no conversations, pain is at most painkiller, 1/2.",
+      "framework": {
+        "id": "startup-evaluation",
+        "key": "pain"
+      },
+      "x": 720,
+      "y": 420,
+      "w": 330,
+      "h": 380,
+      "model": "gemini"
+    },
+    {
+      "id": "fit",
+      "name": "Rohan",
+      "role": "Founder-fit",
+      "accent": "#6fcf97",
+      "brief": "You are step four of the founder's notes, \"Evaluating a Startup Idea — First-Time Founder Notes\": STEP FOUR — Founder-market fit. Work from section 4 of that note and the Evaluation doc.\n\nThe idea will change; the founder will not. Ask \"why you?\" and accept only these: lived the problem (did the job, felt the pain daily); unusual access (knows 200 customers personally, or is in the community); unfair technical edge (can build what others cannot in a reasonable time); contrarian insight (knows something the market believes wrongly); earned secret (years in the industry taught them where the bodies are buried).\n\nRefuse these, in the note's words: \"I'm passionate about it\" (passion is not an edge), \"I noticed the problem\" (noticing is cheap), \"I've read a lot about the space\" (so has the competitor), \"I'm a great generalist\" (not specific).\n\nThen schlep blindness: founders avoid ideas that need tedious work — sales, regulation, logistics, banks — so the best ideas sit in plain sight, unclaimed because they look unpleasant. Ask \"is the reason nobody does this that it is hard and boring?\" If yes it is an opportunity, if this founder will do the schlep.\n\nFounders skip this step because it feels self-indulgent, and start at it when they should start at step one. Be honest: zero fit is fixed by a cofounder or a different idea, not by more conviction. Solo is a yellow flag, not red. Answer in one sentence in the Evaluation doc.",
+      "framework": {
+        "id": "startup-evaluation",
+        "key": "fit"
+      },
+      "x": 1080,
+      "y": 420,
+      "w": 330,
+      "h": 380,
+      "model": "gemini"
+    },
+    {
+      "id": "verdict",
+      "name": "Priya",
+      "role": "Verdict judge",
+      "accent": "#b58cff",
+      "brief": "You are step five of the founder's notes, \"Evaluating a Startup Idea — First-Time Founder Notes\": STEP FIVE — The verdict. Read the Evaluation doc and ask the four wired to you; never guess.\n\nYou write section 5 only; sections 1–4 are your colleagues'. If one is empty, the verdict is \"Not assessed: <section>\" and you stop.\n\nOne word first, then why. STRONG: assumption plausible, flaws survivable, real pain, founder fits. WEAK: a step fails hard. PIVOT REQUIRED: real pain, attacked wrong. \"It has potential, but…\" is banned. Would an investor fund it as described today?\n\nIn order: assumption plausible? No → WEAK. Painkiller or better? No → WEAK. Flaws survivable or cheaply tested? No → PIVOT REQUIRED. Real founder fit? No → PIVOT REQUIRED. Else STRONG.\n\nScore 0–2 each, out of 10: assumption (vague, stated, early evidence); flaws (none answered, some, all cheaply testable); pain (vitamin, painkiller, hair on fire); fit (tourist, some access, lived it); why now (none, plausible, clear shift). 8–10 strong, 5–7 pivot, 0–4 weak.\n\nCaps beat bands:\n| In the doc | Cap |\n|---|---|\n| No customer conversations (3) | 5/10; a PIVOT stands |\n| A flaw \"survivable? No\" | PIVOT REQUIRED, 6/10 |\n\nEvery fact names its section, as \"(3)\". A \"Stale:\" line means a section changed: judge again. Pushback is not evidence: rescore only when a section changed.\n\nWrite the word, score and next 7-day action in section 5. A write refused: give the founder its reason word for word, never another cause.",
+      "framework": {
+        "id": "startup-evaluation",
+        "key": "verdict"
+      },
+      "x": 1440,
+      "y": 420,
+      "w": 330,
+      "h": 380,
+      "model": "gemini"
+    }
+  ],
+  "docs": [
+    {
+      "id": "company-brief",
+      "title": "Company brief",
+      "pinned": true,
+      "x": 1840,
+      "y": 0,
+      "w": 330,
+      "h": 177.5
+    },
+    {
+      "id": "evaluation",
+      "title": "Evaluation",
+      "rules": {
+        "framework": "startup-evaluation",
+        "sections": [
+          {
+            "heading": "1. Core assumption (falsifiable)",
+            "by": "assumption"
+          },
+          {
+            "heading": "2. Three specific ways it dies",
+            "by": "deaths"
+          },
+          {
+            "heading": "3. Is the pain real?",
+            "by": "pain"
+          },
+          {
+            "heading": "4. Founder-market fit",
+            "by": "fit"
+          }
+        ],
+        "verdict": {
+          "heading": "5. Verdict",
+          "by": "verdict"
+        },
+        "outcomes": [
+          "WEAK",
+          "PIVOT REQUIRED",
+          "STRONG"
+        ],
+        "caps": [
+          {
+            "heading": "3. Is the pain real?",
+            "line": "Real customer conversations done",
+            "verdict": "WEAK",
+            "score": 5,
+            "why": "no customer conversations are recorded in \"3. Is the pain real?\""
+          },
+          {
+            "heading": "3. Is the pain real?",
+            "line": "Real customer conversations done",
+            "on": "3. Is the pain real?",
+            "name": "pain",
+            "outcomes": [
+              "vitamin",
+              "painkiller",
+              "hair on fire"
+            ],
+            "verdict": "painkiller",
+            "score": 1,
+            "outOf": 2,
+            "why": "no customer conversations are recorded in \"3. Is the pain real?\""
+          }
+        ]
+      },
+      "x": 1840,
+      "y": 207.5,
+      "w": 330,
+      "h": 177.5
+    },
+    {
+      "id": "brand-doc",
+      "title": "Brand doc",
+      "x": 1840,
+      "y": 415,
+      "w": 330,
+      "h": 177.5
+    },
+    {
+      "id": "plan-y2e4",
+      "title": "Plan",
+      "x": 1840,
+      "y": 622.5,
+      "w": 330,
+      "h": 177.5
+    },
+    {
+      "id": "plan",
+      "title": "Launch plan",
+      "x": 2200,
+      "y": 0,
+      "w": 330,
+      "h": 177.5
+    },
+    {
+      "id": "update",
+      "title": "Update",
+      "x": 2200,
+      "y": 207.5,
+      "w": 330,
+      "h": 177.5
+    },
+    {
+      "id": "icp",
+      "title": "ICP worksheet",
+      "x": 2200,
+      "y": 415,
+      "w": 330,
+      "h": 177.5
+    },
+    {
+      "id": "calendar",
+      "title": "Content calendar",
+      "x": 2200,
+      "y": 622.5,
+      "w": 330,
+      "h": 177.5
+    },
+    {
+      "id": "posts-lsi1",
+      "title": "Posts",
+      "x": 2560,
+      "y": 0,
+      "w": 330,
+      "h": 177.5
+    },
+    {
+      "id": "scorecard",
+      "title": "Weekly scorecard",
+      "x": 2560,
+      "y": 207.5,
+      "w": 330,
+      "h": 177.5
+    }
+  ],
+  "wires": [
+    {
+      "id": "marketing-brand-doc",
+      "from": "marketing",
+      "fromHandle": "b",
+      "to": "brand-doc",
+      "toHandle": "t"
+    },
+    {
+      "id": "partner-company-brief",
+      "from": "partner",
+      "fromHandle": "r",
+      "to": "company-brief",
+      "toHandle": "l"
+    },
+    {
+      "id": "assumption-evaluation",
+      "from": "assumption",
+      "to": "evaluation",
+      "fromHandle": "t",
+      "toHandle": "b"
+    },
+    {
+      "id": "notes-assumption",
+      "from": "notes",
+      "to": "assumption",
+      "fromHandle": "t",
+      "toHandle": "b"
+    },
+    {
+      "id": "deaths-evaluation",
+      "from": "deaths",
+      "to": "evaluation",
+      "fromHandle": "t",
+      "toHandle": "b"
+    },
+    {
+      "id": "notes-deaths",
+      "from": "notes",
+      "to": "deaths",
+      "fromHandle": "t",
+      "toHandle": "b"
+    },
+    {
+      "id": "pain-evaluation",
+      "from": "pain",
+      "to": "evaluation",
+      "fromHandle": "t",
+      "toHandle": "b"
+    },
+    {
+      "id": "notes-pain",
+      "from": "notes",
+      "to": "pain",
+      "fromHandle": "t",
+      "toHandle": "b"
+    },
+    {
+      "id": "fit-evaluation",
+      "from": "fit",
+      "to": "evaluation",
+      "fromHandle": "t",
+      "toHandle": "b"
+    },
+    {
+      "id": "notes-fit",
+      "from": "notes",
+      "to": "fit",
+      "fromHandle": "t",
+      "toHandle": "b"
+    },
+    {
+      "id": "verdict-evaluation",
+      "from": "verdict",
+      "to": "evaluation",
+      "fromHandle": "t",
+      "toHandle": "b"
+    },
+    {
+      "id": "notes-verdict",
+      "from": "notes",
+      "to": "verdict",
+      "fromHandle": "t",
+      "toHandle": "b"
+    },
+    {
+      "id": "verdict-assumption",
+      "from": "verdict",
+      "to": "assumption",
+      "fromHandle": "l",
+      "toHandle": "r"
+    },
+    {
+      "id": "verdict-deaths",
+      "from": "verdict",
+      "to": "deaths",
+      "fromHandle": "l",
+      "toHandle": "r"
+    },
+    {
+      "id": "verdict-pain",
+      "from": "verdict",
+      "to": "pain",
+      "fromHandle": "l",
+      "toHandle": "r"
+    },
+    {
+      "id": "verdict-fit",
+      "from": "verdict",
+      "to": "fit",
+      "fromHandle": "l",
+      "toHandle": "r"
+    },
+    {
+      "id": "partner-metrics",
+      "from": "partner",
+      "fromHandle": "b",
+      "to": "metrics",
+      "toHandle": "t"
+    },
+    {
+      "id": "sales-leads",
+      "from": "sales",
+      "fromHandle": "b",
+      "to": "leads",
+      "toHandle": "t"
+    },
+    {
+      "id": "marketing-competitor",
+      "from": "marketing",
+      "fromHandle": "b",
+      "to": "competitor",
+      "toHandle": "t"
+    },
+    {
+      "id": "marketing-survey",
+      "from": "marketing",
+      "fromHandle": "b",
+      "to": "survey",
+      "toHandle": "t"
+    },
+    {
+      "id": "marketing-site",
+      "from": "marketing",
+      "fromHandle": "b",
+      "to": "site",
+      "toHandle": "t"
+    },
+    {
+      "id": "marketing-image-studio",
+      "from": "marketing",
+      "fromHandle": "b",
+      "to": "image-studio",
+      "toHandle": "t"
+    },
+    {
+      "id": "marketing-film",
+      "from": "marketing",
+      "fromHandle": "b",
+      "to": "film",
+      "toHandle": "t"
+    },
+    {
+      "id": "build-note",
+      "from": "build",
+      "fromHandle": "b",
+      "to": "note",
+      "toHandle": "t"
+    },
+    {
+      "id": "marketing-link",
+      "from": "marketing",
+      "fromHandle": "b",
+      "to": "link",
+      "toHandle": "t"
+    },
+    {
+      "id": "image-studio-picture",
+      "from": "image-studio",
+      "fromHandle": "r",
+      "to": "picture",
+      "toHandle": "l"
+    },
+    {
+      "id": "company-brief-deck",
+      "from": "company-brief",
+      "fromHandle": "b",
+      "to": "deck",
+      "toHandle": "t"
+    },
+    {
+      "id": "brand-doc-site",
+      "from": "brand-doc",
+      "fromHandle": "b",
+      "to": "site",
+      "toHandle": "t"
+    },
+    {
+      "id": "build-board",
+      "from": "build",
+      "fromHandle": "b",
+      "to": "board",
+      "toHandle": "t"
+    },
+    {
+      "id": "metrics-deck",
+      "from": "metrics",
+      "fromHandle": "b",
+      "to": "deck",
+      "toHandle": "t"
+    },
+    {
+      "id": "partner-runway",
+      "from": "partner",
+      "fromHandle": "b",
+      "to": "runway",
+      "toHandle": "t"
+    },
+    {
+      "id": "partner-evaluation",
+      "from": "partner",
+      "fromHandle": "r",
+      "to": "evaluation",
+      "toHandle": "l"
+    },
+    {
+      "id": "partner-deck",
+      "from": "partner",
+      "fromHandle": "b",
+      "to": "deck",
+      "toHandle": "t"
+    },
+    {
+      "id": "partner-plan-y2e4",
+      "from": "partner",
+      "fromHandle": "b",
+      "to": "plan-y2e4",
+      "toHandle": "t"
+    },
+    {
+      "id": "partner-update",
+      "from": "partner",
+      "fromHandle": "r",
+      "to": "update",
+      "toHandle": "l"
+    },
+    {
+      "id": "marketing-plan",
+      "from": "marketing",
+      "fromHandle": "r",
+      "to": "plan",
+      "toHandle": "l"
+    },
+    {
+      "id": "marketing-icp",
+      "from": "marketing",
+      "fromHandle": "b",
+      "to": "icp",
+      "toHandle": "t"
+    },
+    {
+      "id": "marketing-calendar",
+      "from": "marketing",
+      "fromHandle": "b",
+      "to": "calendar",
+      "toHandle": "t"
+    },
+    {
+      "id": "marketing-posts-lsi1",
+      "from": "marketing",
+      "fromHandle": "r",
+      "to": "posts-lsi1",
+      "toHandle": "l"
+    }
+  ],
+  "cards": [
+    {
+      "id": "notes",
+      "kind": "library",
+      "noteId": "evaluating-a-startup-idea-first-time-founder-notes",
+      "x": 2540,
+      "y": 880,
+      "w": 330,
+      "h": 330
+    },
+    {
+      "id": "board",
+      "kind": "board",
+      "x": 720,
+      "y": 880,
+      "w": 520,
+      "h": 330
+    },
+    {
+      "id": "leads",
+      "kind": "leads",
+      "x": 1270,
+      "y": 880,
+      "w": 520,
+      "h": 330
+    },
+    {
+      "x": 0,
+      "y": 880,
+      "kind": "metrics",
+      "id": "metrics",
+      "title": "Kindling numbers",
+      "period": "week",
+      "w": 330,
+      "h": 330
+    },
+    {
+      "x": 360,
+      "y": 880,
+      "kind": "runway",
+      "id": "runway",
+      "currency": "EUR",
+      "w": 330,
+      "h": 330
+    },
+    {
+      "x": 1820,
+      "y": 880,
+      "kind": "competitor",
+      "id": "competitor",
+      "name": "The Game Crafter",
+      "url": "https://www.thegamecrafter.com",
+      "pages": [
+        "https://www.thegamecrafter.com/pricing"
+      ],
+      "w": 330,
+      "h": 330
+    },
+    {
+      "x": 2180,
+      "y": 880,
+      "kind": "survey",
+      "id": "survey",
+      "title": "PMF survey",
+      "template": "pmf",
+      "product": "Kindling",
+      "questions": [
+        {
+          "id": "disappointed",
+          "role": "disappointed",
+          "type": "choice",
+          "text": "How would you feel if you could no longer use {product}?",
+          "options": [
+            "Very disappointed",
+            "Somewhat disappointed",
+            "Not disappointed"
+          ]
+        },
+        {
+          "id": "segment",
+          "role": "segment",
+          "type": "text",
+          "text": "What type of people do you think would most benefit from {product}?"
+        },
+        {
+          "id": "benefit",
+          "role": "benefit",
+          "type": "text",
+          "text": "What is the main benefit you receive from {product}?"
+        },
+        {
+          "id": "improve",
+          "role": "improve",
+          "type": "text",
+          "text": "How can we improve {product} for you?"
+        }
+      ],
+      "w": 330,
+      "h": 330
+    },
+    {
+      "x": 360,
+      "y": 1250,
+      "kind": "site",
+      "id": "site",
+      "brief": "A one-page site for Kindling: print-and-play kits for indie board-game designers, €39 a month. Lead with \"Your prototype prints right the first time.\" Show the three parts of the kit, the playtest feedback form, and a beta sign-up.",
+      "look": "brand",
+      "w": 330,
+      "h": 330
+    },
+    {
+      "x": 0,
+      "y": 1250,
+      "kind": "deck",
+      "id": "deck",
+      "brief": "A ten-slide pitch for Kindling: the problem indie designers have with print-and-play prototypes, the kit, 12 beta users and 2 paying, €9,800 cash and €1,650 burn, and what a small angel round would buy.",
+      "purpose": "pitch",
+      "look": "clean",
+      "w": 330,
+      "h": 330
+    },
+    {
+      "x": 1800,
+      "y": 1250,
+      "kind": "note",
+      "id": "note",
+      "text": "Ship the feedback sorter before the Essen playtest weekend.\nNo ads until 5 of 12 beta users pay.",
+      "color": "yellow",
+      "w": 330,
+      "h": 160
+    },
+    {
+      "x": 2160,
+      "y": 1250,
+      "kind": "link",
+      "id": "link",
+      "url": "https://boardgamegeek.com/forum/974/boardgamegeek/board-game-design",
+      "title": "BGG Board Game Design forum",
+      "w": 330,
+      "h": 160
+    },
+    {
+      "x": 1080,
+      "y": 1250,
+      "kind": "image",
+      "id": "picture",
+      "w": 330,
+      "h": 330,
+      "path": "media/mujuhzv7-warm-overhead-photograph-of-a-kitchen-ta.jpg"
+    },
+    {
+      "x": 720,
+      "y": 1250,
+      "kind": "imagegen",
+      "id": "image-studio",
+      "prompt": "",
+      "shape": "wide",
+      "w": 330,
+      "h": 330
+    },
+    {
+      "x": 1440,
+      "y": 1250,
+      "kind": "videogen",
+      "id": "film",
+      "brief": "A 20 second film for Kindling: an indie designer prints a card game prototype at home, it comes out right the first time, friends playtest it at a kitchen table.",
+      "format": "wide",
+      "look": "clean",
+      "length": 20,
+      "w": 330,
+      "h": 330
+    }
+  ],
+  "rev": 17
+}

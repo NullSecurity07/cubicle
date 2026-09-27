@@ -1,0 +1,31 @@
+[
+  {
+    "id": "m-mujvd4s3-tovalz",
+    "role": "user",
+    "text": "Read the PMF survey on your card and tell me in three lines what it says about who loves Kindling.",
+    "at": 1790516618355
+  },
+  {
+    "id": "m-mujvd4s4-ow45yz",
+    "role": "assistant",
+    "text": "- Solo and pre-Kickstarter designers who dread fight-with-margins print setup and scattered playtest notes love it most.\n- Those who say they'd be \"very disappointed\" without it specifically praise true-to-size home printing and automated thematic feedback sorting.\n- With only 11 responses so far, the signal points to indie creators rushing toward playtests or crowdfunding.",
+    "at": 1790516633248,
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "usage": {
+      "input": 23722,
+      "output": 98
+    },
+    "tools": [
+      {
+        "id": "call_2266417",
+        "name": "read_survey",
+        "args": {
+          "survey": "PMF survey"
+        },
+        "ok": true,
+        "result": "- PMF survey \"PMF survey\": 11 answers, 45% very disappointed (at or above 40%). Top reason: 'Feedback sorted by theme'.\n  Under 30 answers: too few to trust. Raw answers with read_survey. Newest answer 2026-09-27.\nQuestions:\n1. [disappointed] How would you feel if you could no longer use Kindling?\n2. [segment] What type of people do you think would most benefit from Kindling?\n3. [benefit] What is the main benefit you receive from Kindling?\n4. [improve] How can we improve Kindling for you?\n\n11 answers:\n- 2026-09-27 · disappointed: Very disappointed · segment: Designers heading to a Kickstarter · benefit: Cards print at the right size the first time · improve: Token sheets\n- 2026-09-27 · disappointed: Very disappointed · segment: Solo designers · benefit: All my playtest notes in one place · improve: Per-project price\n- 2026-09-27 · disappointed: Somewhat disappointed · segment: Hobby designers · benefit: Rules sheet layout · improve: More board sizes\n- 2026-09-27 · disappointed: Very disappointed · segment: Anyone running playtests · benefit: The feedback form sorts itself · improve: Export to PDF\n- 2026-09-27 · disappointed: Somewhat disappointed · segment: Game jam teams · benefit: Saves an evening per prototype · improve: Cheaper\n- 2026-09-27 · disappointed: Not disappointed · segment: Publishers · benefit: Templates · improve: Cheaper\n- 2026-09-27 · disappointed: Very disappointed · segment: Pre-Kickstarter designers · benefit: Prints true on my home printer · improve: Card backs\n- 2026-09-27 · disappointed: Somewhat disappointed · segment: Designers at conventions · benefit: Playtest form · improve: Offline mode\n- 2026-09-27 · disappointed: Not disappointed · segment: Teachers · benefit: Templates · improve: A one-off price\n- 2026-09-27 · disappointed: Very disappointed · segment: Solo designers · benefit: Feedback sorted by theme · improve: Team seats\n- 2026-09-27 · disappointed: Somewhat disappointed · segment: Hobby designers · benefit: Less fighting with margins · improve: Per-project price"
+      }
+    ]
+  }
+]

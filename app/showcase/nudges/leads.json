@@ -1,0 +1,39 @@
+{
+  "seen": {
+    "leads:lead-mujugo6ba19u": {
+      "stage": "meeting",
+      "since": 1790515103930
+    },
+    "leads:lead-mujugo6fsuqy": {
+      "stage": "replied",
+      "since": 1790515103936
+    },
+    "leads:lead-mujugo6p1poh": {
+      "stage": "contacted",
+      "since": 1790515103943
+    },
+    "leads:lead-mujugo6xsfnj": {
+      "stage": "contacted",
+      "since": 1790515103952
+    },
+    "leads:lead-mujugo7c4ans": {
+      "stage": "fit",
+      "since": 1790515103954
+    },
+    "leads:lead-mujugo7mqsja": {
+      "stage": "replied",
+      "since": 1790515103955
+    },
+    "leads:lead-mujugo7vwncq": {
+      "stage": "new",
+      "since": 1790515103957
+    },
+    "leads:lead-mujugo8btseu": {
+      "stage": "new",
+      "since": 1790515103915
+    }
+  },
+  "moves": [],
+  "raised": {},
+  "done": []
+}

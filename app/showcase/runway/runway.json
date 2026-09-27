@@ -1,0 +1,49 @@
+{
+  "cash": {
+    "amount": 9800,
+    "asOf": "2026-09-21"
+  },
+  "flows": [
+    {
+      "id": "founder",
+      "label": "Founder pay",
+      "monthly": -1200,
+      "from": "2026-09",
+      "category": "people"
+    },
+    {
+      "id": "tools",
+      "label": "Hosting and tools",
+      "monthly": -150,
+      "from": "2026-09",
+      "category": "tools"
+    },
+    {
+      "id": "prints",
+      "label": "Test prints and postage",
+      "monthly": -300,
+      "from": "2026-09",
+      "category": "other"
+    },
+    {
+      "id": "mrr",
+      "label": "Subscriptions",
+      "monthly": 78,
+      "from": "2026-09",
+      "grows": 8,
+      "category": "revenue"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "angel",
+      "name": "Small angel round",
+      "changes": [
+        {
+          "cash": 40000,
+          "at": "2026-12"
+        }
+      ]
+    }
+  ]
+}

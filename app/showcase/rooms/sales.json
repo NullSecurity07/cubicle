@@ -1,0 +1,29 @@
+[
+  {
+    "id": "m-mujvdmpl-ftxkca",
+    "role": "user",
+    "text": "Which two leads should I write to first, and what should the first line say?",
+    "at": 1790516641594
+  },
+  {
+    "id": "m-mujvdmpm-d4gwee",
+    "role": "assistant",
+    "text": "Here are the two leads to write to first, based on who is closest to paying and warm:\n\n1. **Hannah Cole at Cardboard Kite** *(Fit / Beta User)*\n   * **Why first:** She is already a beta user printing weekly, so she knows the product well and is primed to convert.\n   * **First line:** *\"Hi Hannah, saw you're still printing weekly for Cardboard Kite—how did last weekend's playtest go?\"*\n\n2. **Tomas Berg at Northwind Games** *(Replied)*\n   * **Why second:** He already replied, has a Kickstarter planned for spring, and is currently wrestling with hand-made prototypes.\n   * **First line:** *\"Hi Tomas, saw your spring Kickstarter timeline—saving you those late-night print margin headaches before launch sounds useful.\"*",
+    "at": 1790516645860,
+    "provider": "gemini",
+    "model": "gemini-3.5-flash-lite",
+    "usage": {
+      "input": 15230,
+      "output": 184
+    },
+    "tools": [
+      {
+        "id": "call_622",
+        "name": "list_leads",
+        "args": {},
+        "ok": true,
+        "result": "- [meeting] Priya Nair at Hearthstone Tabletop · added 27 Sept 2026 · last note 27 Sept 2026: Two card games on itch.io; asked in the BGG forum how to print bleed right\n- [replied] Tomas Berg at Northwind Games · added 27 Sept 2026 · last note 27 Sept 2026: Kickstarter planned for spring; prototypes by hand today\n- [contacted] Aiko Tanaka at Paper Lantern Play · added 27 Sept 2026 · last note 27 Sept 2026: Runs a monthly playtest night in Leeds, 20 designers\n- [contacted] Marco Ruiz at Solo designer · added 27 Sept 2026 · last note 27 Sept 2026: Posted a playtest feedback spreadsheet on Reddit\n- [fit] Hannah Cole at Cardboard Kite · added 27 Sept 2026 · last note 27 Sept 2026: Beta user, prints weekly, not paying yet\n- [replied] Deji Okafor at Meeple Forge · added 27 Sept 2026 · last note 27 Sept 2026: Wants per-project pricing, said so on the beta call\n- [new] Sofia Lind at Unpub Stockholm · added 27 Sept 2026 · last note 27 Sept 2026: Organises protospiel events, could bring a group\n- [new] Ben Archer at Two Rivers Games · added 27 Sept 2026 · last note 27 Sept 2026: Paying beta user, asked for token sheets"
+      }
+    ]
+  }
+]

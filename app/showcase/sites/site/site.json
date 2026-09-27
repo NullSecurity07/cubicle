@@ -1,0 +1,142 @@
+{
+ "state": "idle",
+ "log": [
+  "starting…",
+  "reading what is wired to the site…",
+  "using Brand doc, Company brief",
+  "no Metrics card is wired, so the page makes no usage claims",
+  "writing the page plan…",
+  "the critic passed all 7 sections",
+  "writing version 1…",
+  "checked: 5 of 5 rules hold · 57 KB",
+  "done · version 1, 7 sections, 57 KB"
+ ],
+ "versions": [
+  {
+   "version": 1,
+   "at": 1790515137136,
+   "title": "Kindling",
+   "sections": [
+    {
+     "id": "x1",
+     "kind": "hero",
+     "headline": "Your prototype prints right the first time.",
+     "lines": [
+      "Print‑and‑play kits for indie board‑game designers.",
+      "All templates, rules layout, and feedback sorter in one place."
+     ],
+     "picture": "designer at table printing game components",
+     "button": "Get Started"
+    },
+    {
+     "id": "x2",
+     "kind": "problem",
+     "headline": "Print margins and scattered notes steal your evenings.",
+     "lines": [
+      "Home printers mis‑align cards, boards, and tokens.",
+      "Playtest comments end up in emails, notes, and spreadsheets.",
+      "You waste time fixing prints instead of designing."
+     ],
+     "picture": "messy desk with printed game parts and scattered notes"
+    },
+    {
+     "id": "x3",
+     "kind": "how",
+     "headline": "Three simple steps to a ready prototype.",
+     "lines": [
+      "1️⃣ Pick the card, board, and token templates you need.",
+      "2️⃣ Print them on any home printer – they line up perfectly.",
+      "3️⃣ Use the built‑in feedback form to gather and sort playtest notes."
+     ],
+     "picture": "three step diagram with templates, printer, feedback form"
+    },
+    {
+     "id": "x4",
+     "kind": "proof",
+     "headline": "Trusted by early adopters.",
+     "lines": [
+      "12 beta users have tried the kit.",
+      "40 playtest sessions have run through the system."
+     ],
+     "figure": {
+      "value": "40",
+      "label": "playtest sessions run"
+     },
+     "picture": "happy designers holding printed prototypes",
+     "source": "Company brief"
+    },
+    {
+     "id": "x5",
+     "kind": "pricing",
+     "headline": "€39 per month",
+     "lines": [
+      "All templates, rules‑sheet layout, and feedback sorter included.",
+      "No hidden fees, cancel anytime."
+     ],
+     "picture": "price tag on cream paper background",
+     "source": "your brief"
+    },
+    {
+     "id": "x6",
+     "kind": "faq",
+     "headline": "Frequently asked questions",
+     "lines": [
+      "What formats are the templates? PDF files ready for home printers.",
+      "Can I cancel anytime? Yes, just stop the subscription.",
+      "Do I get updates? New template packs are added monthly.",
+      "Is there a free trial? Beta sign‑up gives early access at the same price."
+     ],
+     "picture": "question mark icon on ember orange"
+    },
+    {
+     "id": "x7",
+     "kind": "cta",
+     "headline": "Start printing your prototype today.",
+     "lines": [
+      "Join the beta and get instant access."
+     ],
+     "picture": "hand clicking a button on a laptop screen",
+     "button": "Get Started"
+    }
+   ],
+   "look": "brand",
+   "brief": "A one-page site for Kindling: print-and-play kits for indie board-game designers, €39 a month. Lead with \"Your prototype prints right the first time.\" Show the three parts of the kit, the playtest feedback form, and a beta sign-up.",
+   "said": [
+    "the buttons go to the closing section until the brief names a link or an email for them"
+   ],
+   "checks": [
+    {
+     "rule": "one-h1",
+     "ok": true,
+     "said": "one H1, the hero headline"
+    },
+    {
+     "rule": "cta-fold",
+     "ok": true,
+     "said": "the button ends at 434 px of 700 on a 390 px phone"
+    },
+    {
+     "rule": "contrast",
+     "ok": true,
+     "said": "the lowest text contrast is 6.91:1"
+    },
+    {
+     "rule": "weight",
+     "ok": true,
+     "said": "57 KB in 3 files"
+    },
+    {
+     "rule": "claims",
+     "ok": true,
+     "said": "every number and claim is traced to what is wired"
+    }
+   ],
+   "bytes": 58375,
+   "files": [
+    "index.html",
+    "media/sans.woff2",
+    "style.css"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,274 @@
+{
+  "metrics": [
+    {
+      "key": "beta-users",
+      "label": "Beta users",
+      "better": "up",
+      "points": [
+        {
+          "at": "2026-07-06",
+          "value": 2,
+          "from": "kindling-12-weeks.csv, row 2"
+        },
+        {
+          "at": "2026-07-13",
+          "value": 3,
+          "from": "kindling-12-weeks.csv, row 3"
+        },
+        {
+          "at": "2026-07-20",
+          "value": 4,
+          "from": "kindling-12-weeks.csv, row 4"
+        },
+        {
+          "at": "2026-07-27",
+          "value": 5,
+          "from": "kindling-12-weeks.csv, row 5"
+        },
+        {
+          "at": "2026-08-03",
+          "value": 6,
+          "from": "kindling-12-weeks.csv, row 6"
+        },
+        {
+          "at": "2026-08-10",
+          "value": 7,
+          "from": "kindling-12-weeks.csv, row 7"
+        },
+        {
+          "at": "2026-08-17",
+          "value": 8,
+          "from": "kindling-12-weeks.csv, row 8"
+        },
+        {
+          "at": "2026-08-24",
+          "value": 9,
+          "from": "kindling-12-weeks.csv, row 9"
+        },
+        {
+          "at": "2026-08-31",
+          "value": 10,
+          "from": "kindling-12-weeks.csv, row 10"
+        },
+        {
+          "at": "2026-09-07",
+          "value": 11,
+          "from": "kindling-12-weeks.csv, row 11"
+        },
+        {
+          "at": "2026-09-14",
+          "value": 11,
+          "from": "kindling-12-weeks.csv, row 12"
+        },
+        {
+          "at": "2026-09-21",
+          "value": 12,
+          "from": "kindling-12-weeks.csv, row 13"
+        }
+      ],
+      "northStar": true
+    },
+    {
+      "key": "paying-customers",
+      "label": "Paying customers",
+      "better": "up",
+      "points": [
+        {
+          "at": "2026-07-06",
+          "value": 0,
+          "from": "kindling-12-weeks.csv, row 2"
+        },
+        {
+          "at": "2026-07-13",
+          "value": 0,
+          "from": "kindling-12-weeks.csv, row 3"
+        },
+        {
+          "at": "2026-07-20",
+          "value": 0,
+          "from": "kindling-12-weeks.csv, row 4"
+        },
+        {
+          "at": "2026-07-27",
+          "value": 0,
+          "from": "kindling-12-weeks.csv, row 5"
+        },
+        {
+          "at": "2026-08-03",
+          "value": 0,
+          "from": "kindling-12-weeks.csv, row 6"
+        },
+        {
+          "at": "2026-08-10",
+          "value": 1,
+          "from": "kindling-12-weeks.csv, row 7"
+        },
+        {
+          "at": "2026-08-17",
+          "value": 1,
+          "from": "kindling-12-weeks.csv, row 8"
+        },
+        {
+          "at": "2026-08-24",
+          "value": 1,
+          "from": "kindling-12-weeks.csv, row 9"
+        },
+        {
+          "at": "2026-08-31",
+          "value": 1,
+          "from": "kindling-12-weeks.csv, row 10"
+        },
+        {
+          "at": "2026-09-07",
+          "value": 2,
+          "from": "kindling-12-weeks.csv, row 11"
+        },
+        {
+          "at": "2026-09-14",
+          "value": 2,
+          "from": "kindling-12-weeks.csv, row 12"
+        },
+        {
+          "at": "2026-09-21",
+          "value": 2,
+          "from": "kindling-12-weeks.csv, row 13"
+        }
+      ]
+    },
+    {
+      "key": "mrr-eur",
+      "label": "MRR (EUR)",
+      "better": "up",
+      "points": [
+        {
+          "at": "2026-07-06",
+          "value": 0,
+          "from": "kindling-12-weeks.csv, row 2"
+        },
+        {
+          "at": "2026-07-13",
+          "value": 0,
+          "from": "kindling-12-weeks.csv, row 3"
+        },
+        {
+          "at": "2026-07-20",
+          "value": 0,
+          "from": "kindling-12-weeks.csv, row 4"
+        },
+        {
+          "at": "2026-07-27",
+          "value": 0,
+          "from": "kindling-12-weeks.csv, row 5"
+        },
+        {
+          "at": "2026-08-03",
+          "value": 0,
+          "from": "kindling-12-weeks.csv, row 6"
+        },
+        {
+          "at": "2026-08-10",
+          "value": 39,
+          "from": "kindling-12-weeks.csv, row 7"
+        },
+        {
+          "at": "2026-08-17",
+          "value": 39,
+          "from": "kindling-12-weeks.csv, row 8"
+        },
+        {
+          "at": "2026-08-24",
+          "value": 39,
+          "from": "kindling-12-weeks.csv, row 9"
+        },
+        {
+          "at": "2026-08-31",
+          "value": 39,
+          "from": "kindling-12-weeks.csv, row 10"
+        },
+        {
+          "at": "2026-09-07",
+          "value": 78,
+          "from": "kindling-12-weeks.csv, row 11"
+        },
+        {
+          "at": "2026-09-14",
+          "value": 78,
+          "from": "kindling-12-weeks.csv, row 12"
+        },
+        {
+          "at": "2026-09-21",
+          "value": 78,
+          "from": "kindling-12-weeks.csv, row 13"
+        }
+      ]
+    },
+    {
+      "key": "playtest-sessions",
+      "label": "Playtest sessions",
+      "better": "up",
+      "points": [
+        {
+          "at": "2026-07-06",
+          "value": 1,
+          "from": "kindling-12-weeks.csv, row 2"
+        },
+        {
+          "at": "2026-07-13",
+          "value": 2,
+          "from": "kindling-12-weeks.csv, row 3"
+        },
+        {
+          "at": "2026-07-20",
+          "value": 4,
+          "from": "kindling-12-weeks.csv, row 4"
+        },
+        {
+          "at": "2026-07-27",
+          "value": 7,
+          "from": "kindling-12-weeks.csv, row 5"
+        },
+        {
+          "at": "2026-08-03",
+          "value": 10,
+          "from": "kindling-12-weeks.csv, row 6"
+        },
+        {
+          "at": "2026-08-10",
+          "value": 14,
+          "from": "kindling-12-weeks.csv, row 7"
+        },
+        {
+          "at": "2026-08-17",
+          "value": 18,
+          "from": "kindling-12-weeks.csv, row 8"
+        },
+        {
+          "at": "2026-08-24",
+          "value": 22,
+          "from": "kindling-12-weeks.csv, row 9"
+        },
+        {
+          "at": "2026-08-31",
+          "value": 27,
+          "from": "kindling-12-weeks.csv, row 10"
+        },
+        {
+          "at": "2026-09-07",
+          "value": 31,
+          "from": "kindling-12-weeks.csv, row 11"
+        },
+        {
+          "at": "2026-09-14",
+          "value": 36,
+          "from": "kindling-12-weeks.csv, row 12"
+        },
+        {
+          "at": "2026-09-21",
+          "value": 40,
+          "from": "kindling-12-weeks.csv, row 13"
+        }
+      ]
+    }
+  ],
+  "updatedAt": 1790515103798
+}

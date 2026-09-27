@@ -1,0 +1,50 @@
+{
+  "bets": [
+    {
+      "id": "bet-mujv01xu-44mz",
+      "made": "2026-09-27",
+      "status": "open",
+      "at": 1790516008146,
+      "what": "Build and ship the playtest feedback sorter",
+      "hypothesis": "The sorter removes the feedback-overload pain, converting free beta users: Paying customers rise from 2 to 4 — it also tests the 'non-survivable flaw' the Evaluation flags.",
+      "metric": "Paying customers",
+      "target": 4,
+      "checkDate": "2026-10-25",
+      "proposedBy": "Sam",
+      "roomId": "partner"
+    },
+    {
+      "id": "bet-mujv01yf-0tm7",
+      "made": "2026-09-27",
+      "status": "open",
+      "at": 1790516008167,
+      "what": "Post in the BGG design forum twice a week",
+      "hypothesis": "Consistent presence where indie designers gather drives signups: Beta users grow from 12 to 20.",
+      "metric": "Beta users",
+      "target": 20,
+      "checkDate": "2026-10-18",
+      "proposedBy": "Sam",
+      "roomId": "partner"
+    },
+    {
+      "id": "bet-mujv8t8x-akpn",
+      "made": "2026-09-27",
+      "status": "closed",
+      "at": 1790516416785,
+      "what": "Run a free trial week for the ten unpaid beta users",
+      "hypothesis": "Giving unpaid beta users a free trial week of the full kit convinces at least one to convert, moving Paying customers from 2 to 3.",
+      "metric": "Paying customers",
+      "target": 3,
+      "checkDate": "2026-09-28",
+      "proposedBy": "Sam",
+      "roomId": "partner",
+      "result": {
+        "at": 1790516510549,
+        "verdict": "did-not",
+        "value": 2,
+        "note": "Nobody new paid. Three of the ten used the trial and all three said the same: they print one prototype and stop, so a month feels wrong. Price per project next.",
+        "by": "Founder"
+      }
+    }
+  ]
+}

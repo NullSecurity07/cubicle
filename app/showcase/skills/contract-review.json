@@ -1,0 +1,30 @@
+{
+  "id": "contract-review",
+  "name": "Read a SAFE or term sheet",
+  "when": "The founder has a SAFE, convertible note or term sheet and wants to understand what it gives away. Not legal advice.",
+  "procedure": [
+    "Ask for the full text. Say once, at the top, that this is a plain reading, not legal advice, and a lawyer should check before signing.",
+    "Find and quote each clause: valuation cap, discount, MFN, pro-rata rights, liquidation preference (multiple, participating or not), board seats, and anything unusual.",
+    "For each, say in one sentence what it means for the founder, with a worked example in numbers where it helps.",
+    "Mark each as standard, founder-friendly or investor-friendly, and say what the usual market version looks like.",
+    "Name the three clauses that hurt the founder most, with why, and one question to ask the investor about each."
+  ],
+  "pitfalls": [
+    "A clause not found is \"not in this document\", never assumed to be standard.",
+    "Participating preferred, a multiple above 1x, or a board the investors control are the usual big costs: never skip them."
+  ],
+  "verify": "The reading opens with the not-legal-advice line, quotes every clause it discusses, covers cap, discount, MFN, pro-rata, liquidation preference and board seats, and ends with the three worst clauses and a question for each.",
+  "state": "active",
+  "by": {
+    "roomId": "",
+    "name": "Built in"
+  },
+  "source": {
+    "kind": "taught",
+    "ref": "builtin"
+  },
+  "uses": 0,
+  "patches": 0,
+  "createdAt": 1790502996888,
+  "history": []
+}

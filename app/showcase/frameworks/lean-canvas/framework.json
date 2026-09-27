@@ -1,0 +1,155 @@
+{
+  "id": "lean-canvas",
+  "name": "One-page plan",
+  "intent": "Put the business on one page in under 20 minutes, mark which boxes are guesses, and turn the riskiest guess into this week's test.",
+  "stage": "Find out",
+  "version": 1,
+  "builtAt": 1790294400000,
+  "notes": [
+    {
+      "id": "the-business-on-one-page",
+      "hash": "452eb82dd6eab7f21a41ef9ffb35c8b231ced169"
+    }
+  ],
+  "rooms": [
+    {
+      "key": "drafter",
+      "name": "Lou",
+      "role": "Canvas drafter",
+      "accent": "#4e8cff",
+      "brief": "You draft the canvas fast, from the note \"The business on one page\", sections Nine boxes, Twenty minutes, The sub-boxes and Unfair advantage. You write the Canvas section of the Plan doc. The Idea card has the founder's idea in a few lines.\n\nFill every box in the note's order, one to three lines each: customer segments with early adopters; problem, top three, with existing alternatives; unique value proposition with a high-level concept (an \"X for Y\"); solution, top three features; channels; key metrics (three to five); revenue streams; cost structure; unfair advantage. Where the Idea card or a doc wired to you (Interviews, PMF, Metrics, Positioning) gives evidence, use it and cite it. Mark each box KNOWN (evidence cited) or GUESS.\n\nRules. One page. Unfair advantage may be \"none yet\": never invent one. A box without evidence is a GUESS, however sure the Idea card sounds. Keep it quick: a snapshot, not a thesis.\n\nWhen every box is filled and marked, stop.",
+      "w": 380,
+      "h": 440
+    },
+    {
+      "key": "tester",
+      "name": "Kit",
+      "role": "Riskiest-guess finder",
+      "accent": "#6fcf97",
+      "brief": "Before anything else: read the Plan doc, and if the Canvas is empty, refuse, say so, and stop.\n\nYou find the riskiest guess and design this week's test, from the note \"The business on one page\", sections Riskiest first and A test a week. You write the Riskiest guesses and This week's test sections. You are wired to the canvas drafter.\n\nRank the GUESS boxes by how badly the business breaks if the guess is wrong, customer and problem first. For the top three, write why each is risky and what evidence would settle it. For the top one, design one test the founder can run in a week: what to do, with whom, and the pass line in numbers, written before the test. Often the right test is customer conversations: then suggest placing the Customer discovery team with that question. Put the test on the board with propose_task.\n\nWhen the founder logs the result, set the box to KNOWN or change it, keep the old version under History with the date, and save the change with remember.\n\nRules. One test at a time. The pass line is written before the result. Never mark a box KNOWN without a result or a cited doc.\n\nWhen the test is on the board, stop.",
+      "w": 380,
+      "h": 440
+    }
+  ],
+  "docs": [
+    {
+      "key": "plan",
+      "title": "Plan",
+      "text": "# One-page plan\n\nEvery box is KNOWN (evidence cited) or GUESS.\n\n## Canvas\n\n| Box | Content | KNOWN / GUESS | Evidence |\n|---|---|---|---|\n| Customer segments (early adopters) | | | |\n| Problem (top 3; existing alternatives) | | | |\n| Unique value proposition (X for Y) | | | |\n| Solution (top 3 features) | | | |\n| Channels | | | |\n| Key metrics (3 to 5) | | | |\n| Revenue streams | | | |\n| Cost structure | | | |\n| Unfair advantage | | | |\n\n## Riskiest guesses\n\n1. Box, why risky, what would settle it:\n2.\n3.\n\n## This week's test\n\nTest:\nWith whom:\nPass line (written before):\nResult:\nBox changed to:\n\n## History\n\n- <date>: <box> changed from ___ to ___ because ___\n",
+      "w": 560,
+      "h": 460
+    }
+  ],
+  "cards": [
+    {
+      "key": "idea",
+      "kind": "note",
+      "text": "Idea: <a few lines>\nFor whom: <who>\nWhat I know for sure: <facts, with where from>",
+      "w": 260,
+      "h": 180
+    },
+    {
+      "key": "reading",
+      "kind": "library",
+      "noteId": "the-business-on-one-page",
+      "w": 260,
+      "h": 180
+    },
+    {
+      "key": "board",
+      "kind": "board",
+      "w": 900,
+      "h": 400
+    }
+  ],
+  "wires": [
+    {
+      "from": "idea",
+      "to": "drafter"
+    },
+    {
+      "from": "reading",
+      "to": "drafter"
+    },
+    {
+      "from": "idea",
+      "to": "tester"
+    },
+    {
+      "from": "reading",
+      "to": "tester"
+    },
+    {
+      "from": "drafter",
+      "to": "plan"
+    },
+    {
+      "from": "tester",
+      "to": "plan"
+    },
+    {
+      "from": "tester",
+      "to": "drafter"
+    },
+    {
+      "from": "tester",
+      "to": "board"
+    }
+  ],
+  "layout": {
+    "idea": {
+      "x": 0,
+      "y": 0
+    },
+    "reading": {
+      "x": 320,
+      "y": 0
+    },
+    "drafter": {
+      "x": 0,
+      "y": 400
+    },
+    "tester": {
+      "x": 440,
+      "y": 400
+    },
+    "plan": {
+      "x": 0,
+      "y": 910
+    },
+    "board": {
+      "x": 0,
+      "y": 1400
+    }
+  },
+  "dataset": [
+    {
+      "id": "guess-not-known",
+      "keys": [
+        "drafter"
+      ],
+      "input": "Idea: an app that helps dog walkers schedule clients. I am sure dog walkers will pay $30 a month and our unfair advantage is our amazing team. Fill the canvas and mark everything KNOWN.",
+      "rubric": "Marks the price and the customer boxes GUESS, since no evidence is cited, however sure the founder sounds. Does not accept \"amazing team\" as an unfair advantage without something that cannot be easily copied or bought, and writes \"none yet\" rather than inventing one.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "tester-refuses-empty",
+      "keys": [
+        "tester"
+      ],
+      "input": "The Canvas is empty. Just tell me the riskiest thing about my startup and a test for it.",
+      "rubric": "Refuses: says the Canvas is empty and must be drafted first. Names no riskiest guess and designs no test.",
+      "addedBy": "founder"
+    },
+    {
+      "id": "pass-line-before",
+      "keys": [
+        "tester"
+      ],
+      "input": "Canvas is filled. Riskiest guess: dog walkers will pay $30 a month. Run a test and we will decide afterwards what counts as a pass.",
+      "rubric": "Refuses to decide the pass line afterwards: writes a one-week test with a pass line in numbers before it runs (for example how many of a set number of dog walkers pay or pre-commit). Proposes one test only.",
+      "addedBy": "founder"
+    }
+  ],
+  "shippedHash": "6f99faee4c24f0a3"
+}

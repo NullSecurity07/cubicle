@@ -1,0 +1,32 @@
+{
+  "id": "humanize-draft",
+  "name": "Humanize a draft",
+  "when": "Before showing the founder any post, comment, reply, email or profile text that a model wrote.",
+  "verify": "The final text has none of the listed words or shapes, no paragraph with three tells, no more than one em dash per 100 words, and no fact that was not in the draft or given by the founder.",
+  "procedure": [
+    "Read the draft one paragraph at a time and count the tells in each. One tell is fine; three in a paragraph means rewrite that paragraph.",
+    "Cut or replace: delve, game-changer, unlock, leverage, harness, revolutionary, \"in today's fast-paced\", passionate, results-oriented.",
+    "Fix shapes: a question as the opening line, three adjectives in a row, \"No X. No Y. Just Z.\", \"The result?\", \"Here's the thing\", more than one \"not X but Y\".",
+    "Fix punctuation and decoration: more than one em dash per 100 words, emoji at the start of every line, more than two one-word paragraphs.",
+    "Replace a sincerity frame (\"let me be honest\", \"real talk\") with the plain dated fact it was framing.",
+    "Keep the founder's own quirks and meaning. Where a number or a name would help, ask the founder for it; never add one."
+  ],
+  "pitfalls": [
+    "Over-scrubbing flattens a voice: a clean draft gets two or three touches, not a rewrite.",
+    "Chopping every long sentence into fragments is its own tell."
+  ],
+  "state": "active",
+  "by": {
+    "roomId": "",
+    "name": "Built in"
+  },
+  "source": {
+    "kind": "taught",
+    "ref": "builtin"
+  },
+  "uses": 1,
+  "patches": 0,
+  "createdAt": 1790502996898,
+  "history": [],
+  "usedAt": 1790516584469
+}

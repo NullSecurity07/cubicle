@@ -1,0 +1,234 @@
+{
+ "state": "idle",
+ "log": [
+  "starting…",
+  "reading what is wired to the deck…",
+  "using Company brief",
+  "no Metrics card is wired, so traction says \"No numbers yet.\"",
+  "writing the storyboard…",
+  "the critic found 1 thing to fix",
+  "asking again with what the critic found…",
+  "the critic passed all 10 slides",
+  "printing 10 slides to PDF…",
+  "done · version 1, 10 slides"
+ ],
+ "slides": [
+  {
+   "id": "s11",
+   "shape": "title",
+   "headline": "Kindling: Print‑and‑Play for Indie Designers",
+   "lines": [
+    "Turning prototype chaos into a streamlined workflow."
+   ],
+   "notes": "Introduce the company and its core mission."
+  },
+  {
+   "id": "s12",
+   "shape": "problem",
+   "headline": "Prototyping eats designers’ evenings",
+   "lines": [
+    "Manual layout leads to mis‑aligned cards and boards.",
+    "Playtest notes are scattered across emails and PDFs."
+   ],
+   "notes": "Highlight the pain points indie creators face."
+  },
+  {
+   "id": "s13",
+   "shape": "solution",
+   "headline": "A ready‑to‑print kit and feedback sorter",
+   "lines": [
+    "Templates print perfectly on any home printer.",
+    "Digital form auto‑categorises tester comments."
+   ],
+   "notes": "Explain how Kindling solves the outlined problems."
+  },
+  {
+   "id": "s14",
+   "shape": "market",
+   "headline": "Thousands of solo board‑game creators worldwide",
+   "lines": [
+    "Growing indie game scene fuels demand for low‑cost prototyping.",
+    "Kickstarter launches show a steady rise in first‑time designers."
+   ],
+   "notes": "Set the context for market opportunity."
+  },
+  {
+   "id": "s15",
+   "shape": "traction",
+   "headline": "Early interest but no hard metrics yet",
+   "lines": [
+    "No numbers yet."
+   ],
+   "notes": "State the current lack of formal traction data."
+  },
+  {
+   "id": "s16",
+   "shape": "team",
+   "headline": "Founder runs design and development",
+   "lines": [
+    "One‑person team combines board‑game design with software skills.",
+    "Directly understands user workflow and pain."
+   ],
+   "notes": "Introduce the solo founder and relevant expertise."
+  },
+  {
+   "id": "s17",
+   "shape": "ask",
+   "headline": "Seeking a small angel round",
+   "lines": [
+    "Funding will accelerate feedback‑sorter development and expand template library."
+   ],
+   "notes": "Describe the purpose of the raise without specifying amount."
+  },
+  {
+   "id": "s18",
+   "shape": "chart",
+   "headline": "Current financial snapshot",
+   "lines": [
+    "Cash: €9,800"
+   ],
+   "figure": {
+    "value": "€9,800",
+    "label": "Cash on hand"
+   },
+   "notes": "Show available capital to sustain operations.",
+   "source": "your brief"
+  },
+  {
+   "id": "s19",
+   "shape": "quote",
+   "headline": "\"Kindling lets me print a playable prototype fast.\"",
+   "lines": [
+    "— Beta user, indie designer"
+   ],
+   "notes": "Provide a real user voice to validate the solution."
+  },
+  {
+   "id": "s20",
+   "shape": "list",
+   "headline": "Next milestones for the next 6 months",
+   "lines": [
+    "Launch feedback sorter to all beta users.",
+    "Add five new template packs.",
+    "Reach five paying customers."
+   ],
+   "notes": "Outline concrete goals to assure investors of progress."
+  }
+ ],
+ "versions": [
+  {
+   "version": 1,
+   "at": 1790515140239,
+   "title": "Kindling Seed Pitch Deck",
+   "slides": [
+    {
+     "id": "s11",
+     "shape": "title",
+     "headline": "Kindling: Print‑and‑Play for Indie Designers",
+     "lines": [
+      "Turning prototype chaos into a streamlined workflow."
+     ],
+     "notes": "Introduce the company and its core mission."
+    },
+    {
+     "id": "s12",
+     "shape": "problem",
+     "headline": "Prototyping eats designers’ evenings",
+     "lines": [
+      "Manual layout leads to mis‑aligned cards and boards.",
+      "Playtest notes are scattered across emails and PDFs."
+     ],
+     "notes": "Highlight the pain points indie creators face."
+    },
+    {
+     "id": "s13",
+     "shape": "solution",
+     "headline": "A ready‑to‑print kit and feedback sorter",
+     "lines": [
+      "Templates print perfectly on any home printer.",
+      "Digital form auto‑categorises tester comments."
+     ],
+     "notes": "Explain how Kindling solves the outlined problems."
+    },
+    {
+     "id": "s14",
+     "shape": "market",
+     "headline": "Thousands of solo board‑game creators worldwide",
+     "lines": [
+      "Growing indie game scene fuels demand for low‑cost prototyping.",
+      "Kickstarter launches show a steady rise in first‑time designers."
+     ],
+     "notes": "Set the context for market opportunity."
+    },
+    {
+     "id": "s15",
+     "shape": "traction",
+     "headline": "Early interest but no hard metrics yet",
+     "lines": [
+      "No numbers yet."
+     ],
+     "notes": "State the current lack of formal traction data."
+    },
+    {
+     "id": "s16",
+     "shape": "team",
+     "headline": "Founder runs design and development",
+     "lines": [
+      "One‑person team combines board‑game design with software skills.",
+      "Directly understands user workflow and pain."
+     ],
+     "notes": "Introduce the solo founder and relevant expertise."
+    },
+    {
+     "id": "s17",
+     "shape": "ask",
+     "headline": "Seeking a small angel round",
+     "lines": [
+      "Funding will accelerate feedback‑sorter development and expand template library."
+     ],
+     "notes": "Describe the purpose of the raise without specifying amount."
+    },
+    {
+     "id": "s18",
+     "shape": "chart",
+     "headline": "Current financial snapshot",
+     "lines": [
+      "Cash: €9,800"
+     ],
+     "figure": {
+      "value": "€9,800",
+      "label": "Cash on hand"
+     },
+     "notes": "Show available capital to sustain operations.",
+     "source": "your brief"
+    },
+    {
+     "id": "s19",
+     "shape": "quote",
+     "headline": "\"Kindling lets me print a playable prototype fast.\"",
+     "lines": [
+      "— Beta user, indie designer"
+     ],
+     "notes": "Provide a real user voice to validate the solution."
+    },
+    {
+     "id": "s20",
+     "shape": "list",
+     "headline": "Next milestones for the next 6 months",
+     "lines": [
+      "Launch feedback sorter to all beta users.",
+      "Add five new template packs.",
+      "Reach five paying customers."
+     ],
+     "notes": "Outline concrete goals to assure investors of progress."
+    }
+   ],
+   "html": "decks/kindling-seed-pitch-deck-deck-v1.html",
+   "pdf": "decks/kindling-seed-pitch-deck-deck-v1.pdf",
+   "pptx": "decks/kindling-seed-pitch-deck-deck-v1.pptx",
+   "brief": "A ten-slide pitch for Kindling: the problem indie designers have with print-and-play prototypes, the kit, 12 beta users and 2 paying, €9,800 cash and €1,650 burn, and what a small angel round would buy.",
+   "look": "clean",
+   "purpose": "pitch"
+  }
+ ]
+}
