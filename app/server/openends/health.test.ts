@@ -226,3 +226,12 @@ describe('the rows for keys and for slices', () => {
     expect(healthRows).toBeInstanceOf(Map);
   });
 });
+
+describe('a model whose free turns for the day are used (round 5)', () => {
+  it('says so in one line, and says nothing while every model has turns left', async () => {
+    const used = row(await setup({ spent: () => ['cloudflare-gpt-oss'] }), 'Free turns today');
+    expect(used).toMatchObject({ ok: true, detail: 'cloudflare-gpt-oss: daily free turns used, back at midnight UTC' });
+    expect(row(await setup({ spent: () => [] }), 'Free turns today')).toBeUndefined();
+    expect(row(await setup(), 'Free turns today')).toBeUndefined();
+  });
+});

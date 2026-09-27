@@ -448,3 +448,10 @@ describe('Groq on a turn with tools that is over its cap (round 5)', () => {
     expect((await complete(long, { onToken: () => {} }, [client('groq', ['words'], 5000), client('gemini', ['no'])])).text).toBe('words');
   });
 });
+
+describe('the Cloudflare models on the day\'s neuron pool', () => {
+  it('marks gpt-oss and Qwen as sharing the pool with the pictures, and Scout not', () => {
+    const clients = realClients({ CLOUDFLARE_API_TOKEN: 't', CLOUDFLARE_ACCOUNT_ID: 'abc' } as NodeJS.ProcessEnv);
+    expect(clients.map((one) => [one.name, !!one.sharedPool])).toEqual([['cloudflare-gpt-oss', true], ['cloudflare-qwen', true], ['cloudflare', false]]);
+  });
+});

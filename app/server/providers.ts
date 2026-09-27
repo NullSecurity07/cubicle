@@ -37,6 +37,9 @@ export type ModelClient = {
   // take one at a time), and whether that many are out now. A busy client is passed over, never queued behind.
   concurrency?: number;
   busy?: () => boolean;
+  // Its daily allowance is a pool shared with something else the founder uses (Cloudflare's neurons also draw the
+  // pictures): once its own `rpd` is used it is left out for the rest of the day, not kept at the back as a net.
+  sharedPool?: boolean;
   // The OpenAI-compatible handle behind this client, when there is one. Nothing in a turn uses it — a turn goes
   // through `step`, which streams and counts — but a library that speaks the OpenAI API for us (the eval scorers)
   // needs the very same key and base URL rather than a second one the founder would have to go and get.
@@ -307,7 +310,7 @@ export function collectCalls(calls: ToolCall[], parts: CallPart[]) {
   }
 }
 
-export type Entry = (typeof models)[number] & { side?: boolean; vision?: boolean; streamUsage?: boolean; callSignature?: string; concurrency?: number; extra?: Record<string, unknown>; limits?: Limits };
+export type Entry = (typeof models)[number] & { side?: boolean; sharedPool?: boolean; vision?: boolean; streamUsage?: boolean; callSignature?: string; concurrency?: number; extra?: Record<string, unknown>; limits?: Limits };
 
 // What the free providers give, as their own pages said on 2026-09-24. A line with only `rpm` has no published daily
 // cap. Groq and Cerebras count each model apart, so `groq-qwen` and `cerebras-qwen` are a second day's worth on the
@@ -343,7 +346,7 @@ function keysOf(env: NodeJS.ProcessEnv, keyEnv: string): { key: string; at: numb
   return [...(env[keyEnv] ? [{ key: env[keyEnv]!, at: 1 }] : []), ...spare.sort((one, other) => one.at - other.at)];
 }
 
-type Shape = { model: string; maxPromptChars: number; maxTokens: number; tools: boolean; side?: boolean; vision?: boolean; streamUsage?: boolean; callSignature?: string; concurrency?: number; extra?: Record<string, unknown>; limits?: Limits; local?: boolean };
+type Shape = { model: string; maxPromptChars: number; maxTokens: number; tools: boolean; side?: boolean; sharedPool?: boolean; vision?: boolean; streamUsage?: boolean; callSignature?: string; concurrency?: number; extra?: Record<string, unknown>; limits?: Limits; local?: boolean };
 
 // How long a hosted model may keep silent before its first word: a hanging Gemini costs this, not the whole 45 s
 // request timeout, and the next model is asked. Once anything streams, the model has all the time the request has.
@@ -364,6 +367,7 @@ function clientOf(name: string, entry: Shape, api: OpenAI, firstWordMs?: number)
     limits: entry.limits ?? {},
     ...(entry.local ? { local: true } : {}),
     ...(entry.side ? { side: true } : {}),
+    ...(entry.sharedPool ? { sharedPool: true } : {}),
     ...(entry.concurrency ? { concurrency: entry.concurrency, busy } : {}),
     openai: api,
     async step(history, options) {

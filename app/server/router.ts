@@ -49,7 +49,11 @@ function rank(clients: ModelClient[], usage: UsageBook, want: Want) {
   const able = clients.filter((client) => client.maxPromptChars >= want.promptChars && (!want.tools || client.tools));
   // A turn with a picture in it goes to a model that can see, when one is set up.
   const seeing = want.vision ? able.filter((client) => client.vision) : [];
-  const pool = seeing.length ? [...seeing, ...able.filter((client) => !client.vision)] : able.length ? able : clients;
+  const found = seeing.length ? [...seeing, ...able.filter((client) => !client.vision)] : able.length ? able : clients;
+  // A model whose day is a pool it shares with the pictures is left out once its own daily turns are used, unless it
+  // is all there is: asking it more would spend the neurons the founder's pictures need.
+  const open = found.filter((client) => !(client.sharedPool && usage.spent?.(client)));
+  const pool = open.length ? open : found;
   // A pinned provider means every key it has here, the roomiest first: one key resting on a 429 is not the founder
   // asking for another provider.
   const pinned = want.pinned && want.pinned !== 'auto' ? pool.filter((client) => providerOf(client.name) === want.pinned) : [];

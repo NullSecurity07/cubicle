@@ -130,3 +130,25 @@ describe('route', () => {
     expect(names(route(clients, usage, { pinned: 'groq', promptChars: 10, tools: true }))).toEqual(['groq#3', 'groq', 'groq#2', 'gemini']);
   });
 });
+
+describe('a model on a daily pool shared with the pictures (round 5)', () => {
+  const oss = client('cloudflare-gpt-oss', { limits: { rpd: 3 }, sharedPool: true });
+
+  it('is skipped for the rest of the day once its own daily turns are used, and is back the next day', () => {
+    let now = Date.parse('2026-09-27T10:00:00Z');
+    const usage = createUsage(null, () => now);
+    for (let i = 0; i < 3; i += 1) usage.record('cloudflare-gpt-oss', { input: 1, output: 1 });
+    expect(usage.spent(oss)).toBe(true);
+    expect(names(route([oss, client('gemini')], usage, { promptChars: 10, tools: true }))).toEqual(['gemini']);
+    now = Date.parse('2026-09-28T00:01:00Z');
+    expect(usage.spent(oss)).toBe(false);
+    expect(names(route([oss, client('gemini')], usage, { promptChars: 10, tools: true }))).toEqual(['cloudflare-gpt-oss', 'gemini']);
+  });
+
+  it('is still asked when it is the only model there is, and a model not on a shared pool only moves to the back', () => {
+    const usage = createUsage(null);
+    for (let i = 0; i < 3; i += 1) { usage.record('cloudflare-gpt-oss'); usage.record('groq'); }
+    expect(names(route([oss], usage, { promptChars: 10, tools: true }))).toEqual(['cloudflare-gpt-oss']);
+    expect(names(route([client('groq', { limits: { rpd: 3 } }), client('gemini')], usage, { promptChars: 10, tools: true }))).toEqual(['gemini', 'groq']);
+  });
+});

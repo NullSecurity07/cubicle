@@ -92,6 +92,8 @@ export type HealthDeps = {
   // Which Graphify is here, or null, and how the coder would start its tool server (null: it cannot).
   graphify?: () => Promise<string | null>;
   graphServer?: () => string[] | null;
+  // The keys that have made today's published number of requests, by name.
+  spent?: () => string[];
   // The rows slices add about themselves. The app's own registry when left out.
   rows?: Map<string, () => Promise<Check | null> | Check | null>;
 };
@@ -173,6 +175,9 @@ export async function checkAll(deps: HealthDeps): Promise<Check[]> {
   });
 
   checks.push(freeProviders(env));
+  // A model that has used its free turns for the day is left out until midnight UTC; the founder hears which, once.
+  const spent = deps.spent?.() ?? [];
+  if (spent.length) checks.push({ name: 'Free turns today', ok: true, detail: spent.map((name) => `${name}: daily free turns used, back at midnight UTC`).join('; '), fix: 'Nothing to do: the other models answer until then.' });
 
   const scratch = join(workspace, '.index', 'health-write-test');
   const writable = await mkdir(join(workspace, '.index'), { recursive: true }).then(() => writeFile(scratch, 'ok')).then(() => rm(scratch, { force: true })).then(() => true, () => false);

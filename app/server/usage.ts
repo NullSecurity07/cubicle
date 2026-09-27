@@ -133,6 +133,8 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     // Today's counts by what the call was for, by tool and by cache, for the insights to put together.
     today() { roll(); return { kinds: { ...state.kinds }, tools: { ...state.tools }, cache: { ...state.cache } }; },
     left,
+    // True once this key has made as many requests today as its published daily allowance: the day's free turns are used.
+    spent(client: ModelClient) { roll(); return !!client.limits.rpd && count(client.name).requests >= client.limits.rpd; },
     // True when one more request of this size would likely hit the per-minute wall.
     // A key that takes one request at a time and has one out counts as out of room until it is back.
     hot(client: ModelClient, promptChars: number) {
