@@ -15,7 +15,7 @@ import { fakeClient, type ModelClient } from '../providers.ts';
 import { createSkills } from '../skills.ts';
 import { createStore } from '../store.ts';
 import { createUsage } from '../usage.ts';
-import slice, { fileCache, localDay, readTeams } from './dashboard.ts';
+import slice, { fileCache, localDay, readTeams, readTokens } from './dashboard.ts';
 
 const root = resolve(import.meta.dirname, '../../..');
 const NOW = Date.now();
@@ -263,5 +263,20 @@ describe('readTeams', () => {
     const read = fileCache();
     const [team] = await readTeams(workspace, root, stage, read);
     expect(team).toMatchObject({ id: 'pitch-team', name: 'Pitch team', builtIn: false, placed: true, placedRoomId: 'r1', lastEval: { mean: 0.8, at: 2, of: 1 } });
+  });
+});
+
+describe('the dashboard\'s model rows (round 5)', () => {
+  it('say a model\'s daily free turns are used once its own count reaches the day\'s allowance', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'dash-spent-'));
+    const usage = createUsage(null);
+    const oss: ModelClient = { ...fakeClient, name: 'cloudflare-gpt-oss', model: '@cf/openai/gpt-oss-120b', limits: { rpd: 2 }, sharedPool: true };
+    const clients = [oss, { ...fakeClient, name: 'gemini', model: 'flash', limits: { rpd: 1000 } }];
+    const rows = async () => (await readTokens({ workspace, usage, clients }, seedStage, fileCache(), Date.now())).byProvider;
+    expect((await rows()).find((one) => one.name === 'cloudflare-gpt-oss')!.window).toBe('resets at midnight UTC');
+    usage.record('cloudflare-gpt-oss');
+    usage.record('cloudflare-gpt-oss');
+    expect((await rows()).find((one) => one.name === 'cloudflare-gpt-oss')!.window).toBe('daily free turns used; resets at midnight UTC');
+    expect((await rows()).find((one) => one.name === 'gemini')!.window).toBe('resets at midnight UTC');
   });
 });

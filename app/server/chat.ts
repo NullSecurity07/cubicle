@@ -52,7 +52,7 @@ export function createChat(deps: Deps) {
       : route(clients, usage, { pinned: target.model, promptChars: promptSize(messages), tools: false });
     // The same road a turn takes: a key that is resting is passed over, and a key that fails is rested.
     // Nothing is shown while a colleague answers, so a stream that breaks part way can go straight to the next model.
-    const ask = (these: ModelMessage[]) => complete(these, { onToken: () => {}, onRestart: () => {}, signal }, order, ({ client, error }) => usage.failed(client.name, error), (client) => usage.admit(client.name));
+    const ask = (these: ModelMessage[]) => complete(these, { onToken: () => {}, onRestart: () => {}, signal }, order, ({ client, error }) => usage.failed(client.name, error), (client) => usage.admit(client.name), (client) => usage.resting(client.name));
     let reply = await ask(messages);
     // A broken reply every model failed on was counted as a failure; it is not also a good answer.
     if (!reply.reported) usage.record(reply.client.name, reply.usage, reply.quota);

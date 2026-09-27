@@ -171,6 +171,9 @@ export async function readTokens(deps: Pick<Deps, 'workspace' | 'usage' | 'clien
       ...(client.limits.tpd ? { tpd: (was.tpd ?? 0) + client.limits.tpd } : {}),
     });
   }
+  // A provider whose keys have all made today's published number of requests.
+  const spent = new Set([...new Set(deps.clients.map((client) => providerOf(client.name)))]
+    .filter((name) => deps.clients.filter((client) => providerOf(client.name) === name).every((client) => deps.usage.spent(client))));
   const byProvider = deps.usage.info(deps.clients).map((info) => {
     const limit = limits.get(info.name) ?? {};
     const capped = limit.rpd || limit.tpd;
@@ -178,7 +181,7 @@ export async function readTokens(deps: Pick<Deps, 'workspace' | 'usage' | 'clien
       name: info.name, model: info.model, usedToday: { requests: info.requests, tokens: info.tokens }, limits: limit,
       leftPct: Math.round(info.left * 100),
       // The usage book starts each provider's day on the UTC date, whatever the founder's clock says.
-      window: capped ? 'resets at midnight UTC' : 'no daily limit',
+      window: !capped ? 'no daily limit' : spent.has(info.name) ? 'daily free turns used; resets at midnight UTC' : 'resets at midnight UTC',
     };
   });
 
@@ -284,7 +287,7 @@ export default {
       if (checking || Date.now() - health.at < HEALTH_FOR) return;
       const dir = dirOf();
       void listBackups(dir).then((held) => { sawBackup = { dir, at: held[0]?.at ?? null }; });
-      checking = checkAll({ workspace: deps.workspace, root: deps.root, backupDir: dir, backups: () => listBackups(dir), outside: () => outsideHealth.now(), coder: () => coderHealth.now() })
+      checking = checkAll({ workspace: deps.workspace, root: deps.root, backupDir: dir, backups: () => listBackups(dir), outside: () => outsideHealth.now(), coder: () => coderHealth.now(), spent: () => deps.clients.filter((client) => deps.usage.spent(client)).map((client) => client.name) })
         .then((checks) => {
           const fresh = checks.map(({ name, ok, detail }) => ({ name, ok, detail }));
           const moved = JSON.stringify(fresh) !== JSON.stringify(health.checks);

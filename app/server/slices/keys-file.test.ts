@@ -52,6 +52,13 @@ describe('the keys file', () => {
     expect(await row('PEXELS_API_KEY')).toMatchObject({ state: 'missing', pending: false });
   });
 
+  it('carries the line naming the free keys that would add a fallback, until they are set', async () => {
+    const { call } = await setup('NVIDIA_API_KEY=nvapi-set-here-1234\n');
+    const view = (await call('/api/keys-file'))!.body as KeysView;
+    expect(view.fallback).toMatch(/^Keys that would add a fallback, each a free sign-up: Mistral at console\.mistral\.ai/);
+    expect(view.fallback).not.toContain('NVIDIA');
+  });
+
   it('writes only from the app\'s own page, and only names the app reads', async () => {
     const { call } = await setup();
     expect((await call('/api/keys-file/HF_TOKEN', 'PUT', { value: 'hf_x' }, { 'x-stage-token': 't' }))!.status).toBe(403);

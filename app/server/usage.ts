@@ -3,10 +3,11 @@ import { dirname } from 'node:path';
 import type { ModelInfo, Usage } from '../shared/model.ts';
 import { createBreaker, refused } from './breaker.ts';
 import { fromCache, onCache } from './cache.ts';
-import { providerOf, type ModelClient, type Quota } from './providers.ts';
+import { neuronPoolOf, poolOf, providerOf, type ModelClient, type Quota } from './providers.ts';
 import { writeAtomic } from './fsx.ts';
 
-type Count = { requests: number; input: number; output: number };
+// `neurons`: what Cloudflare said this key's answers cost from its free daily pool.
+type Count = { requests: number; input: number; output: number; neurons?: number };
 // What a call was for. A turn is a person answering; the rest are the calls around it.
 type CallKind = 'turn' | 'side' | 'eval' | 'retain' | 'reflect' | 'compaction';
 // Per tool: how many results went into a prompt, and how many characters they came to before and after shrinking.
@@ -19,6 +20,8 @@ type Seen = { at: number; tokens: number };
 export type UsageBook = ReturnType<typeof createUsage>;
 
 const WINDOW = 60_000;
+// Of Cloudflare's 10,000 free neurons a day, what the turns may spend; the rest is the pictures'.
+export const NEURONS_FOR_TURNS = 9000;
 const today = (now: number) => new Date(now).toISOString().slice(0, 10);
 const share = (used: number, limit?: number) => (limit ? Math.max(0, 1 - used / limit) : 1);
 
@@ -47,13 +50,19 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     }).catch(() => {});
   };
 
+  // Today's requests against the daily allowance this key shares with the other models on its account.
+  const pooled = (name: string) => {
+    const pool = poolOf(name);
+    return Object.entries(state.providers).reduce((sum, [one, used]) => sum + (one === name || poolOf(one) === pool ? used.requests : 0), 0);
+  };
+
   function left(client: ModelClient) {
     roll();
     const used = count(client.name);
     const header = quotas[client.name];
     const fromHeader = header && today(header.at) === state.day && header.quota.limitRequests && header.quota.remainingRequests !== undefined
       ? header.quota.remainingRequests / header.quota.limitRequests : 1;
-    return Math.min(share(used.requests, client.limits.rpd), share(used.input + used.output, client.limits.tpd), fromHeader);
+    return Math.min(share(pooled(client.name), client.limits.rpd), share(used.input + used.output, client.limits.tpd), fromHeader);
   }
 
   // The cache's hits and misses for this workspace, counted into the day like everything else.
@@ -94,6 +103,7 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
       used.requests += 1;
       used.input += usage?.input ?? 0;
       used.output += usage?.output ?? 0;
+      if (usage?.neurons) used.neurons = (used.neurons ?? 0) + usage.neurons;
       window(name).push({ at: now(), tokens: (usage?.input ?? 0) + (usage?.output ?? 0) });
       if (quota) quotas[name] = { at: now(), quota };
       save();
@@ -133,6 +143,19 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     // Today's counts by what the call was for, by tool and by cache, for the insights to put together.
     today() { roll(); return { kinds: { ...state.kinds }, tools: { ...state.tools }, cache: { ...state.cache } }; },
     left,
+    // True once this key has made as many requests today as its published daily allowance: the day's free turns are used.
+    // A key on Cloudflare's neuron pool is also spent once the answers on that pool have cost 9,000 neurons today,
+    // whichever model asked: the rest of the 10,000 stays with the pictures.
+    spent(client: ModelClient) {
+      roll();
+      if (client.limits.rpd && pooled(client.name) >= client.limits.rpd) return true;
+      const pool = client.sharedPool ? neuronPoolOf(client.name) ?? providerOf(client.name) : undefined;
+      if (!pool) return false;
+      const neurons = Object.entries(state.providers).reduce((sum, [one, used]) => sum + ((neuronPoolOf(one) ?? one) === pool ? used.neurons ?? 0 : 0), 0);
+      return neurons >= NEURONS_FOR_TURNS;
+    },
+    // True while this key rests after a 429, an open breaker or a refused key. Only looks.
+    resting: (name: string) => breaker.resting(name),
     // True when one more request of this size would likely hit the per-minute wall.
     // A key that takes one request at a time and has one out counts as out of room until it is back.
     hot(client: ModelClient, promptChars: number) {

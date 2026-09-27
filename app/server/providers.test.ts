@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { fitHistory, plainBreak, plainFailure, scrubProvider, wireTools, collectCalls, complete, expand, portable, readQuota, realClients, unset, type ModelClient, type ToolCall } from './providers.ts';
 
 const client = (name: string, tokens: string[] | Error, maxPromptChars = Infinity): ModelClient => ({
@@ -255,8 +255,8 @@ describe('the free providers set up here', () => {
     const names = (env: Record<string, string>) => realClients(env as NodeJS.ProcessEnv).map((one) => one.name);
     expect(names({ CLOUDFLARE_API_TOKEN: 't' })).toEqual([]);
     expect(names({ CLOUDFLARE_ACCOUNT_ID: 'abc' })).toEqual([]);
-    const [cloudflare] = realClients({ CLOUDFLARE_API_TOKEN: 't', CLOUDFLARE_ACCOUNT_ID: 'abc' } as NodeJS.ProcessEnv);
-    expect(cloudflare.name).toBe('cloudflare');
+    const cloudflare = realClients({ CLOUDFLARE_API_TOKEN: 't', CLOUDFLARE_ACCOUNT_ID: 'abc' } as NodeJS.ProcessEnv).find((one) => one.name === 'cloudflare')!;
+    expect(cloudflare.model).toBe('@cf/meta/llama-4-scout-17b-16e-instruct');
     expect(cloudflare.openai!.baseURL).toBe('https://api.cloudflare.com/client/v4/accounts/abc/ai/v1');
     // Cerebras counts each model apart, so its key makes two clients with a day's worth each.
     expect(names({ CEREBRAS_API_KEY: 'c' })).toEqual(['cerebras', 'cerebras-qwen']);
@@ -400,5 +400,114 @@ describe('the last model that can take a turn', () => {
   it('names the models passed over because the prompt would not fit them', async () => {
     const result = await complete(messages, { onToken: () => {} }, [{ ...client('groq', ['x']), maxPromptChars: 1 }, client('gemini', ['here'])]);
     expect(result).toMatchObject({ client: { name: 'gemini' }, oversize: ['groq'] });
+  });
+});
+
+describe('the second hosted model on the Cloudflare key (round 5)', () => {
+  const env = { CLOUDFLARE_API_TOKEN: 't', CLOUDFLARE_ACCOUNT_ID: 'abc' } as NodeJS.ProcessEnv;
+
+  it('makes gpt-oss and Qwen from the one key, with Scout kept last', () => {
+    const clients = realClients(env);
+    expect(clients.map((one) => one.name)).toEqual(['cloudflare-gpt-oss', 'cloudflare-qwen', 'cloudflare']);
+    expect(clients[0]).toMatchObject({ model: '@cf/openai/gpt-oss-120b', maxPromptChars: 100_000, tools: true, limits: { rpd: 25 } });
+    expect(clients[1]).toMatchObject({ model: '@cf/qwen/qwen3.8-27b', maxPromptChars: 60_000, tools: true });
+    expect(clients[2].model).toBe('@cf/meta/llama-4-scout-17b-16e-instruct');
+  });
+
+  it('never sends a tool-call message with its content as null, which Cloudflare refuses with a 400', async () => {
+    const [oss] = realClients(env);
+    const sent: { messages: { role: string; content: unknown; tool_calls?: unknown[] }[] }[] = [];
+    async function* chunks() { yield { choices: [{ delta: { content: 'read it' } }] }; }
+    (oss.openai!.chat.completions as unknown as { create: unknown }).create = (body: (typeof sent)[number]) => {
+      sent.push(body);
+      return { withResponse: async () => ({ data: chunks(), response: { headers: new Headers() } }) };
+    };
+    const history = [
+      { role: 'user' as const, content: 'raise now?' },
+      { role: 'assistant' as const, content: null as unknown as string, tool_calls: [{ id: 'a', type: 'function' as const, function: { name: 'read_doc', arguments: '{}' } }] },
+      { role: 'tool' as const, tool_call_id: 'a', content: 'cash 9k' },
+    ];
+    const result = await complete(history, { onToken: () => {}, tools: [{ name: 'read_doc', description: '', parameters: {} }] }, [oss]);
+    expect(result.text).toBe('read it');
+    const call = sent[0].messages.find((message) => message.tool_calls);
+    expect(call!.content).toBe('');
+  });
+});
+
+describe('Groq on a turn with tools that is over its cap (round 5)', () => {
+  const tools = [{ name: 'read_doc', description: '', parameters: {} }];
+  const long = [{ role: 'user' as const, content: 'old '.repeat(3000) }, { role: 'assistant' as const, content: 'ok' }, { role: 'user' as const, content: 'raise now?' }];
+
+  it('is passed over, not squeezed in with the history cut, while a model behind it holds the whole prompt', async () => {
+    const result = await complete(long, { onToken: () => {}, tools }, [client('groq', ['cut short'], 5000), client('cloudflare-gpt-oss', ['whole'])]);
+    expect(result).toMatchObject({ text: 'whole', client: { name: 'cloudflare-gpt-oss' }, oversize: ['groq'] });
+  });
+
+  it('still answers with the history cut when nobody else can, and on a turn without tools', async () => {
+    expect((await complete(long, { onToken: () => {}, tools }, [client('groq', ['cut short'], 5000)])).text).toBe('cut short');
+    expect((await complete(long, { onToken: () => {} }, [client('groq', ['words'], 5000), client('gemini', ['no'])])).text).toBe('words');
+  });
+});
+
+describe('the Cloudflare models on the day\'s neuron pool', () => {
+  it('marks gpt-oss, Qwen and Scout as sharing the pool with the pictures', () => {
+    const clients = realClients({ CLOUDFLARE_API_TOKEN: 't', CLOUDFLARE_ACCOUNT_ID: 'abc' } as NodeJS.ProcessEnv);
+    expect(clients.map((one) => [one.name, !!one.sharedPool])).toEqual([['cloudflare-gpt-oss', true], ['cloudflare-qwen', true], ['cloudflare', true]]);
+  });
+});
+
+describe('the long clock, said (round 5)', () => {
+  it('adds how long the last model able was waited for to "said nothing for too long"', async () => {
+    vi.useFakeTimers();
+    try {
+      const [gemini] = realClients({ GEMINI_API_KEY: 'g', STAGE_FIRST_TOKEN_MS: '40' } as NodeJS.ProcessEnv);
+      (gemini.openai!.chat.completions as unknown as { create: unknown }).create = (_body: unknown, { signal }: { signal: AbortSignal }) => ({
+        withResponse: () => new Promise((_done, fail) => signal.addEventListener('abort', () => fail(new Error('Request was aborted.')), { once: true })),
+      });
+      const failed = complete(messages, { onToken: () => {} }, [gemini]).catch((error: Error) => error);
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(plainFailure((await failed as Error).message)).toBe('gemini said nothing for too long (waited 90 s: last model able)');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('keeps the short line when the usual clock cut it', () => {
+    expect(plainFailure('no provider answered — gemini: no first word within 20 s (timed out); cloudflare: 503')).toBe('gemini said nothing for too long, cloudflare down');
+  });
+});
+
+describe('Groq over its cap, when the models behind it cannot answer after all (review 5)', () => {
+  const tools = [{ name: 'read_doc', description: '', parameters: {} }];
+  const long = [{ role: 'user' as const, content: 'old '.repeat(3000) }, { role: 'assistant' as const, content: 'ok' }, { role: 'user' as const, content: 'raise now?' }];
+
+  it('cuts its history and answers when the one behind it is a local model kept off tool turns', async () => {
+    const local: ModelClient = { ...client('ollama', ['never']), local: true };
+    expect((await complete(long, { onToken: () => {}, tools }, [client('groq', ['cut short'], 5000), local])).text).toBe('cut short');
+  });
+
+  it('cuts its history and answers when the one behind it is busy', async () => {
+    const busy: ModelClient = { ...client('cloudflare-gpt-oss', ['never']), busy: () => true };
+    expect((await complete(long, { onToken: () => {}, tools }, [client('groq', ['cut short'], 5000), busy])).text).toBe('cut short');
+  });
+
+  it('cuts its history and answers when the one behind it is resting', async () => {
+    const resting = (one: ModelClient) => one.name === 'cloudflare-gpt-oss';
+    expect((await complete(long, { onToken: () => {}, tools }, [client('groq', ['cut short'], 5000), client('cloudflare-gpt-oss', ['never'])], () => {}, () => true, resting)).text).toBe('cut short');
+  });
+});
+
+describe('Cloudflare\'s neurons, read from the answer (review 5)', () => {
+  it('keeps the neurons a Cloudflare answer says it spent', async () => {
+    const [oss] = realClients({ CLOUDFLARE_API_TOKEN: 't', CLOUDFLARE_ACCOUNT_ID: 'abc' } as NodeJS.ProcessEnv);
+    async function* chunks() {
+      yield { choices: [{ delta: { content: 'fine' } }] };
+      yield { choices: [], usage: { prompt_tokens: 6400, completion_tokens: 300, neurons: 236.4 } };
+    }
+    (oss.openai!.chat.completions as unknown as { create: unknown }).create = () => ({ withResponse: async () => ({ data: chunks(), response: { headers: new Headers() } }) });
+    expect((await oss.step(messages, { onToken: () => {} })).usage).toEqual({ input: 6400, output: 300, neurons: 236.4 });
+  });
+
+  it('caps each Cloudflare model so the three together leave the pictures room, and puts all three on the pool', () => {
+    const clients = realClients({ CLOUDFLARE_API_TOKEN: 't', CLOUDFLARE_ACCOUNT_ID: 'abc' } as NodeJS.ProcessEnv);
+    expect(clients.map((one) => [one.name, one.limits.rpd, !!one.sharedPool])).toEqual([['cloudflare-gpt-oss', 25, true], ['cloudflare-qwen', 5, true], ['cloudflare', 10, true]]);
   });
 });

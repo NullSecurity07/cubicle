@@ -37,6 +37,9 @@ export type ModelClient = {
   // take one at a time), and whether that many are out now. A busy client is passed over, never queued behind.
   concurrency?: number;
   busy?: () => boolean;
+  // Its daily allowance is a pool shared with something else the founder uses (Cloudflare's neurons also draw the
+  // pictures): once its own `rpd` is used it is left out for the rest of the day, not kept at the back as a net.
+  sharedPool?: boolean;
   // The OpenAI-compatible handle behind this client, when there is one. Nothing in a turn uses it — a turn goes
   // through `step`, which streams and counts — but a library that speaks the OpenAI API for us (the eval scorers)
   // needs the very same key and base URL rather than a second one the founder would have to go and get.
@@ -59,7 +62,7 @@ export const callId = () => `call_${randomBytes(8).toString('hex')}`;
 export const promptSize = (messages: ModelMessage[]) => messages.reduce((sum, message) => {
   const calls = 'tool_calls' in message && message.tool_calls ? JSON.stringify(message.tool_calls).length : 0;
   const images = 'images' in message && message.images ? message.images.length * 1200 : 0;
-  return sum + message.content.length + calls + images;
+  return sum + (message.content ?? '').length + calls + images;
 }, 0);
 
 const MAX_WAIT = 8000;
@@ -110,6 +113,9 @@ export function plainBreak(message: string, provider?: string): string {
 // What one model's failure was, in a few plain words: never the provider's own text, which means nothing to a founder.
 function failureWords(message: string): string {
   if (MALFORMED_CALL.test(message)) return 'tool call came out malformed';
+  // The long clock is said as such, so the founder knows why the answer took a minute and a half to fail.
+  const waited = /no first word within ([\d.]+) s, the last model able/i.exec(message);
+  if (waited) return `said nothing for too long (waited ${waited[1]} s: last model able)`;
   if (/no first word/i.test(message)) return 'said nothing for too long';
   if (TOO_LARGE.test(message)) return 'prompt too large';
   if (REJECTED.test(message)) return 'rejected the request';
@@ -168,6 +174,8 @@ export async function complete(
   messages: ModelMessage[], options: StepOptions, clients: ModelClient[], onFailure: (failure: Failure) => void = () => {},
   // Asked right before a client is tried: a key whose breaker is open is passed over, as one too small would be.
   admit: (client: ModelClient) => boolean = () => true,
+  // Whether a client is resting (a 429's wait, an open breaker, a refused key) without asking to be let in: only looks.
+  resting: (client: ModelClient) => boolean = () => false,
 ): Promise<Completion> {
   // The tool definitions go to the model too, and count against what it can hold.
   const toolChars = options.tools?.length ? JSON.stringify(wireTools(options.tools)).length : 0;
@@ -182,6 +190,13 @@ export async function complete(
   for (const [index, client] of clients.entries()) {
     if (options.tools?.length && !client.tools) { failures.push(`${client.name}: no tool support`); continue; }
     if (smallFor(client, options, clients)) { failures.push(`${client.name}: kept off turns with tools`); continue; }
+    // Groq's cap is its per-minute token wall: on a turn with tools it is not squeezed in with the history cut while
+    // a model behind it can hold the whole prompt.
+    // Only a model that would really be asked counts: not one kept off tool turns, busy, or resting after failing.
+    if (options.tools?.length && walled(client) && promptSize(messages) + toolChars > client.maxPromptChars
+      && clients.slice(index + 1).some((other) => able(other) && !walled(other) && !resting(other) && promptSize(messages) + toolChars <= other.maxPromptChars)) {
+      failures.push(`${client.name}: prompt too large`); oversize.push(client.name); continue;
+    }
     // A model that holds less gets the oldest history cut, not the whole turn refused.
     let sent = fitHistory(messages, client.maxPromptChars - toolChars);
     if (!sent) { failures.push(`${client.name}: prompt too large`); oversize.push(client.name); continue; }
@@ -276,6 +291,9 @@ export function portable(messages: ModelMessage[], signature?: string): ModelMes
     if (message.role !== 'assistant' || !message.tool_calls) return message;
     return {
       ...message,
+      // A call with no words beside it is sent with empty words: Cloudflare refuses a tool-call message whose content
+      // is null with a 400, and every other provider takes the empty string as well.
+      content: message.content ?? '',
       tool_calls: message.tool_calls.map(({ extra_content, ...call }) => (
         signature ? { ...call, extra_content: extra_content ?? { google: { thought_signature: signature } } } : call
       )),
@@ -298,14 +316,16 @@ export function collectCalls(calls: ToolCall[], parts: CallPart[]) {
   }
 }
 
-export type Entry = (typeof models)[number] & { side?: boolean; vision?: boolean; streamUsage?: boolean; callSignature?: string; concurrency?: number; extra?: Record<string, unknown>; limits?: Limits };
+export type Entry = (typeof models)[number] & { side?: boolean; sharedPool?: boolean; pool?: string; vision?: boolean; streamUsage?: boolean; callSignature?: string; concurrency?: number; extra?: Record<string, unknown>; limits?: Limits };
 
 // What the free providers give, as their own pages said on 2026-09-24. A line with only `rpm` has no published daily
 // cap. Groq and Cerebras count each model apart, so `groq-qwen` and `cerebras-qwen` are a second day's worth on the
 // same key. NVIDIA's terms are for prototyping, development and evaluation. Z.ai's flash model and Ollama's cloud take
 // one request at a time (`concurrency: 1`); Z.ai's 10 a minute is our own guess, it publishes none. Vercel gives $5 of
 // credit a month, and buying any ends the free part. Cloudflare gives 10,000 neurons a day (about 130k tokens out on
-// Scout) and needs the account id in its address. SambaNova is 20 requests a day: the last resort.
+// Scout) and needs the account id in its address; gpt-oss spends about 236 of them on a 25k-character request, Qwen
+// about 394 and Scout 166. Their `rpd` (25, 5, 10 requests, a tool turn being two or three) come to about 9,500 at
+// most, and the turns stop at 9,000 neurons counted from the answers, so the pictures keep the rest of the pool. SambaNova is 20 requests a day: the last resort.
 export const ENTRIES = models as Entry[];
 
 // Every name in the environment an entry needs: its key, then whatever its address carries as `${NAME}`.
@@ -322,6 +342,22 @@ export const unset = (entry: { keyEnv: string; baseURL: string }, env: NodeJS.Pr
 // The provider behind a client's name: `groq#2` is Groq's second key. Everything that counts what a key has spent
 // works on the name; everything the founder reads works on this.
 export const providerOf = (name: string) => name.split('#')[0];
+// The account a key's daily requests count against. OpenRouter's 50 free requests a day are the account's, whichever
+// free model asks, so `openrouter` and `openrouter-qwen` share one count; a second key (`#2`) is a second account.
+export function poolOf(name: string): string {
+  const [base, at] = name.split('#');
+  const pool = ENTRIES.find((entry) => entry.name === base)?.pool;
+  return pool ? (at ? `${pool}#${at}` : pool) : name;
+}
+// The free daily pool a key's answers draw from when it shares one with the pictures: Cloudflare's neurons, one pool
+// per token (the models on it share it; `#2` is another account). Undefined for a key that has no such pool.
+export function neuronPoolOf(name: string): string | undefined {
+  const [base, at] = name.split('#');
+  const entry = ENTRIES.find((one) => one.name === base);
+  return entry?.sharedPool ? (at ? `${entry.keyEnv}#${at}` : entry.keyEnv) : undefined;
+}
+// Groq's free models, whose room is a per-minute token wall (7-8k) rather than what the model can read.
+export const walled = (client: Pick<ModelClient, 'name'>) => providerOf(client.name).startsWith('groq');
 
 // A provider may hold more than one free key: `GROQ_API_KEY`, then `GROQ_API_KEY_2`, `_3` and so on, in any order.
 // Each becomes a client of its own, so each has its own day's count and its own rest after a 429.
@@ -331,7 +367,7 @@ function keysOf(env: NodeJS.ProcessEnv, keyEnv: string): { key: string; at: numb
   return [...(env[keyEnv] ? [{ key: env[keyEnv]!, at: 1 }] : []), ...spare.sort((one, other) => one.at - other.at)];
 }
 
-type Shape = { model: string; maxPromptChars: number; maxTokens: number; tools: boolean; side?: boolean; vision?: boolean; streamUsage?: boolean; callSignature?: string; concurrency?: number; extra?: Record<string, unknown>; limits?: Limits; local?: boolean };
+type Shape = { model: string; maxPromptChars: number; maxTokens: number; tools: boolean; side?: boolean; sharedPool?: boolean; vision?: boolean; streamUsage?: boolean; callSignature?: string; concurrency?: number; extra?: Record<string, unknown>; limits?: Limits; local?: boolean };
 
 // How long a hosted model may keep silent before its first word: a hanging Gemini costs this, not the whole 45 s
 // request timeout, and the next model is asked. Once anything streams, the model has all the time the request has.
@@ -352,6 +388,7 @@ function clientOf(name: string, entry: Shape, api: OpenAI, firstWordMs?: number)
     limits: entry.limits ?? {},
     ...(entry.local ? { local: true } : {}),
     ...(entry.side ? { side: true } : {}),
+    ...(entry.sharedPool ? { sharedPool: true } : {}),
     ...(entry.concurrency ? { concurrency: entry.concurrency, busy } : {}),
     openai: api,
     async step(history, options) {
@@ -383,7 +420,10 @@ function clientOf(name: string, entry: Shape, api: OpenAI, firstWordMs?: number)
       let cut = false;
       for await (const chunk of stream) {
         clearTimeout(timer);
-        if (chunk.usage) usage = { input: chunk.usage.prompt_tokens ?? 0, output: chunk.usage.completion_tokens ?? 0 };
+        if (chunk.usage) {
+          const neurons = (chunk.usage as { neurons?: number }).neurons;
+          usage = { input: chunk.usage.prompt_tokens ?? 0, output: chunk.usage.completion_tokens ?? 0, ...(typeof neurons === 'number' ? { neurons } : {}) };
+        }
         const delta = chunk.choices[0]?.delta;
         if (chunk.choices[0]?.finish_reason === 'length') cut = true;
         if (delta?.content) onToken(delta.content);
@@ -391,7 +431,7 @@ function clientOf(name: string, entry: Shape, api: OpenAI, firstWordMs?: number)
       }
       return { text: '', calls: calls.filter(Boolean).map((call, index) => ({ ...call, id: call.id || callId() })), usage, quota: readQuota(response.headers), ...(cut ? { cut } : {}) };
     } catch (error) {
-      if (silent?.signal.aborted && !signal?.aborted) throw new Error(`no first word within ${Math.round(wait! / 100) / 10} s (timed out)`);
+      if (silent?.signal.aborted && !signal?.aborted) throw new Error(`no first word within ${Math.round(wait! / 100) / 10} s${patient ? ', the last model able' : ''} (timed out)`);
       throw error;
     } finally {
       clearTimeout(timer);

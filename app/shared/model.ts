@@ -221,7 +221,8 @@ export type Wire = { id: string; from: string; fromHandle: string; to: string; t
 export type Stage = { rooms: Room[]; docs: Doc[]; wires: Wire[]; cards?: Card[]; rev?: number };
 // The feed channel every window hears the stage on, as saved, after every save.
 export const STAGE_CHANNEL = 'stage';
-export type Usage = { input: number; output: number };
+// `neurons`: what Cloudflare says an answer cost from its free daily pool, when it says.
+export type Usage = { input: number; output: number; neurons?: number };
 // A note a person kept after a conversation without being asked to carries this mark, so the founder can tell those
 // lines from the ones they asked for and throw a wrong one out. `MEMORY_CHANNEL` says a room's memory changed when no
 // tool call was there to carry the news.

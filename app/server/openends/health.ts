@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Check } from '../../shared/openends.ts';
+import { fallbackList } from '../keys-file/catalogue.ts';
 import { ENTRIES, unset, type ModelClient } from '../providers.ts';
 import type { EngineHealth } from '../opencode/server.ts';
 import { graphifyVersion, INSTALL, mcpCommand, PIN } from '../slices/graph.ts';
@@ -92,6 +93,8 @@ export type HealthDeps = {
   // Which Graphify is here, or null, and how the coder would start its tool server (null: it cannot).
   graphify?: () => Promise<string | null>;
   graphServer?: () => string[] | null;
+  // The keys that have made today's published number of requests, by name.
+  spent?: () => string[];
   // The rows slices add about themselves. The app's own registry when left out.
   rows?: Map<string, () => Promise<Check | null> | Check | null>;
 };
@@ -173,6 +176,11 @@ export async function checkAll(deps: HealthDeps): Promise<Check[]> {
   });
 
   checks.push(freeProviders(env));
+  const fallback = fallbackList((name) => !!env[name]?.trim());
+  if (fallback) checks.push({ name: 'Keys that would add a fallback', ok: true, detail: fallback, fix: 'Each is a free sign-up. Paste the key in Keys from the command bar and start the app again; the partner then has another model to ask when Gemini cannot answer.' });
+  // A model that has used its free turns for the day is left out until midnight UTC; the founder hears which, once.
+  const spent = deps.spent?.() ?? [];
+  if (spent.length) checks.push({ name: 'Free turns today', ok: true, detail: spent.map((name) => `${name}: daily free turns used, back at midnight UTC`).join('; '), fix: 'Nothing to do: the other models answer until then.' });
 
   const scratch = join(workspace, '.index', 'health-write-test');
   const writable = await mkdir(join(workspace, '.index'), { recursive: true }).then(() => writeFile(scratch, 'ok')).then(() => rm(scratch, { force: true })).then(() => true, () => false);

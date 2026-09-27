@@ -14,7 +14,8 @@ export type KeyRow = {
   // Why the last check with this key failed.
   problem?: string;
 };
-export type KeysView = { file: string; rows: KeyRow[]; checkedAt: number | null };
+// `fallback`: one line naming the free keys not set here that would each add a model behind the first, or absent.
+export type KeysView = { file: string; rows: KeyRow[]; checkedAt: number | null; fallback?: string };
 
 // Where backups could go: the folder they go to now, the one they go to when nothing is chosen, and the drives and
 // synced folders this machine has that a founder would most likely pick.
