@@ -93,7 +93,7 @@ export async function removeService(where: Where = {}): Promise<{ path: string; 
 // choice, not a fault; a service that is switched on and not running is one.
 export function serviceRow(state: ServiceState): Check {
   const name = 'Runs while closed';
-  const waits = 'the morning note, bet checks, watches and backups wait until you open the app again';
+  const waits = 'the morning note, bet checks, page watches and the daily copy of your work wait until you open the app again';
   const install = 'In app/, run pnpm service:install, then the command it prints. It is off until you run that.';
   if (!state.systemd) return { name, ok: true, detail: `no: this machine has no systemd user services, so ${waits}`, fix: 'Nothing to do: the app works while its window is open.' };
   if (!state.installed) return { name, ok: true, detail: `no: ${waits}. pnpm service:install in app/ keeps it running`, fix: install };

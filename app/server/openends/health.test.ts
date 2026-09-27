@@ -11,7 +11,7 @@ const setup = async (extra: Partial<Parameters<typeof checkAll>[0]> = {}) => {
   const workspace = await mkdtemp(join(tmpdir(), 'health-'));
   // The workspace and the backups on two disks, unless a test says otherwise: tmp is one disk on most machines.
   const stat = async (path: string) => ({ dev: path === workspace ? 1 : 2 });
-  return checkAll({ workspace, root: '/nowhere', env: {}, now: () => at, backupDir: '/tmp/backups', backups: async () => [], outside: () => [], stat, ...extra });
+  return checkAll({ workspace, root: '/nowhere', env: {}, now: () => at, backupDir: '/tmp/backups', backups: async () => [], outside: () => [], stat, service: async () => ({ systemd: true, installed: false, enabled: false, active: 'inactive', path: '/x' }), ...extra });
 };
 const row = (checks: Awaited<ReturnType<typeof checkAll>>, name: string) => checks.find((one) => one.name === name)!;
 
@@ -241,5 +241,19 @@ describe('the keys that would add a fallback, in Health (round 5)', () => {
     expect(row(await setup(), 'Keys that would add a fallback')).toMatchObject({ ok: true, detail: expect.stringMatching(/^NVIDIA at build\.nvidia\.com \(kimi-k2\.6\); Mistral/) });
     const all = { NVIDIA_API_KEY: 'n', MISTRAL_API_KEY: 'm', CEREBRAS_API_KEY: 'c', OPENROUTER_API_KEY: 'o' };
     expect(row(await setup({ env: all }), 'Keys that would add a fallback')).toBeUndefined();
+  });
+});
+
+describe('running while closed', () => {
+  it('says yes when the app runs as a service that starts at login, and no otherwise', async () => {
+    const yes = row(await setup({ service: async () => ({ systemd: true, installed: true, enabled: true, active: 'active', path: '/x' }) }), 'Runs while closed');
+    expect(yes.ok).toBe(true);
+    expect(yes.detail).toMatch(/^yes/);
+    const no = row(await setup(), 'Runs while closed');
+    expect(no.ok).toBe(true);
+    expect(no.detail).toMatch(/^no/);
+    expect(no.fix).toContain('pnpm service:install');
+    const fallen = row(await setup({ service: async () => ({ systemd: true, installed: true, enabled: true, active: 'failed', path: '/x' }) }), 'Runs while closed');
+    expect(fallen.ok).toBe(false);
   });
 });
