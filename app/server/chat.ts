@@ -5,8 +5,9 @@ import type { AttentionBook } from './attention.ts';
 import { json } from './http.ts';
 import { holdPartner, PRECONDITION_NUDGE } from './partner/pushback.ts';
 import { partnerRoute } from './partner/route.ts';
+import { SYNTHESIS_HEAD } from './partner/synthesis.ts';
 import { teamVerdict } from './partner/standing.ts';
-import { runTurn } from './loop.ts';
+import { runTurn, type TurnResult } from './loop.ts';
 import type { createMemory } from './memory.ts';
 import type { Offered } from './playbook.ts';
 import { complete, plainFailure, promptSize, type ModelClient } from './providers.ts';
@@ -127,36 +128,46 @@ export function createChat(deps: Deps) {
         },
       });
       let reply = await turnOn(messages);
+      // A second look: the person answers once more in words only, with their first answer and the nudge in front of
+      // them, so nothing they did is done again. Said first, then the bubble emptied, so no window shows the new answer
+      // running on from the old one. The partner's checks below take it, and so may a slice on the reply seam.
+      let lookedAgain = false;
+      const lookAgain = (first: TurnResult, nudge: string) => {
+        lookedAgain = true;
+        const why = nudge === PRECONDITION_NUDGE ? 'checking the preconditions' : nudge.startsWith(SYNTHESIS_HEAD) ? 'tying it to the standing facts' : 'weighing the team\'s verdict';
+        send({ notice: `${room.name} is taking another look: ${why}.` });
+        send({ restart: true });
+        roomFeed.tell({ roomId, turn, restart: true });
+        kept.text = '';
+        return turnOn([...messages, { role: 'assistant', content: first.text }, { role: 'user', content: nudge }], [])
+          .catch((error: Error) => {
+            // No model could take the second look: the first answer stands, back in every window, and is labelled
+            // as unchecked below. Its tools and usage are already counted once.
+            if (stop.signal.aborted) throw error;
+            send({ notice: `${room.name} could not take another look (${plainFailure(error.message)}), so the first answer stands.` });
+            send({ restart: true });
+            roomFeed.tell({ roomId, turn, restart: true });
+            kept.text = first.text;
+            send({ token: first.text });
+            roomFeed.tell({ roomId, turn, token: first.text });
+            return { ...first, tools: [], usage: { input: 0, output: 0 } };
+          });
+      };
       // The partner is held to the precondition check on a raise, hire, spend or pivot plan, and says "My call" once.
       if (room.partner) {
         // The weakest team verdict on the stage, which a call to build has to weigh.
         const verdict = await teamVerdict(stage, (id) => store.readDoc(id)).catch(() => null);
-        reply = await holdPartner(text, reply, (first, nudge = PRECONDITION_NUDGE) => {
-          // Said first, then the bubble emptied, so no window shows the new answer running on from the old one.
-          send({ notice: `${room.name} is taking another look: ${nudge === PRECONDITION_NUDGE ? 'checking the preconditions' : 'weighing the team\'s verdict'}.` });
-          send({ restart: true });
-          roomFeed.tell({ roomId, turn, restart: true });
-          kept.text = '';
-          // Words only this time, with the first answer and the nudge in front of it: nothing it did is done again.
-          return turnOn([...messages, { role: 'assistant', content: first.text }, { role: 'user', content: nudge }], [])
-            .catch((error: Error) => {
-              // No model could take the second look: the first answer stands, back in every window, and is labelled
-              // as unchecked below. Its tools and usage are already counted once.
-              if (stop.signal.aborted) throw error;
-              send({ notice: `${room.name} could not take another look (${plainFailure(error.message)}), so the first answer stands.` });
-              send({ restart: true });
-              roomFeed.tell({ roomId, turn, restart: true });
-              kept.text = first.text;
-              send({ token: first.text });
-              roomFeed.tell({ roomId, turn, token: first.text });
-              return { ...first, tools: [], usage: { input: 0, output: 0 } };
-            });
-        }, verdict);
+        reply = await holdPartner(text, reply, (first, nudge = PRECONDITION_NUDGE) => lookAgain(first, nudge), verdict);
       }
       // The last look before it is kept: whatever a slice adds under the reply is shown in every window too.
       const said = reply.text;
-      reply = (await seams.run('turn:reply', { roomId, query: text, reply })).reply;
-      if (reply.text !== said && reply.text.startsWith(said)) {
+      const before = lookedAgain;
+      reply = (await seams.run('turn:reply', { roomId, query: text, reply, again: lookAgain, lookedAgain: before })).reply;
+      // A second look the seam took streamed its own answer; only words added after it are still to be shown.
+      if (lookedAgain && !before) {
+        const more = reply.text.startsWith(kept.text) ? reply.text.slice(kept.text.length) : '';
+        if (more) { kept.text += more; send({ token: more }); roomFeed.tell({ roomId, turn, token: more }); }
+      } else if (reply.text !== said && reply.text.startsWith(said)) {
         const more = reply.text.slice(said.length);
         kept.text += more;
         send({ token: more });

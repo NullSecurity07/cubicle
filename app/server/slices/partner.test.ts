@@ -493,6 +493,38 @@ describe('the partner slice: standing facts in every partner turn', () => {
   });
 });
 
+// Program 6: "what do I do now?" was answered from one room; the reply is held to the standing facts in code.
+describe('the partner slice: "what now" held to the standing facts', () => {
+  it('asks the partner once more with the facts quoted when the reply names fewer than two, and labels a second miss', async () => {
+    const { deps, part, workspace } = await installed({}, { now: () => new Date('2026-09-27T10:00').getTime(), ask: async () => SHAPED });
+    await mkdir(join(workspace, 'metrics'), { recursive: true });
+    const stage = await deps.store.loadStage();
+    await deps.store.saveStage({ ...stage, rooms: [...stage.rooms, room('p1', 'Sam', { partner: true })],
+      docs: [...stage.docs, { id: 'eval', title: 'Evaluation', x: 0, y: 0, w: 1, h: 1, rules: { framework: 'startup-evaluation', sections: [], verdict: { heading: '6. Verdict', by: 'judge' }, outcomes: ['PIVOT REQUIRED', 'WEAK', 'STRONG'] } }] } as Stage);
+    await deps.store.writeDoc('eval', '# Evaluation\n\n## 6. Verdict\n\nVerdict: PIVOT REQUIRED\nScore: 6/10\nInterview 10 more consultants before writing further code.\n');
+    const company = companyDocOf(await deps.store.loadStage())!;
+    await deps.store.writeDoc(company.id, `${await deps.store.readDoc(company.id)}`.replace('## Numbers', '## Numbers\n\n- Cash: €4,200\n- Monthly burn: €1,100'));
+    await part.tick!();
+    const base = { tools: [], provider: 'p', model: 'm', usage: { input: 1, output: 1 }, stopped: false };
+    const nudges: string[] = [];
+    const reply = async (query: string, first: string, second: string, lookedAgain = false) => (await deps.seams.run('turn:reply', {
+      roomId: 'p1', query, reply: { ...base, text: first }, lookedAgain,
+      again: async (_first, nudge) => { nudges.push(nudge); return { ...base, text: second }; },
+    })).reply.text;
+    const GOOD = 'The PIVOT REQUIRED verdict comes first, and €4,200 cash buys under four months.\n\nMy call: book five interviews today.';
+    expect(await reply('so what do I do right now?', 'My call: build the PDF invoicing today.', GOOD)).toBe(GOOD);
+    expect(nudges).toHaveLength(1);
+    expect(nudges[0]).toContain('Take another look before this goes to the founder: they asked what to do next.');
+    expect(nudges[0]).toMatch(/- Evaluation, 6\. Verdict: PIVOT REQUIRED, score 6\/10/);
+    expect(nudges[0]).toContain('- Cash: €4,200');
+    expect(await reply('what\'s next?', 'My call: build it.', 'My call: build it now.')).toBe('My call: build it now.\n\n*Not tied to the standing facts.*');
+    expect(await reply('what\'s next?', 'My call: build it.', GOOD, true)).toBe('My call: build it.\n\n*Not tied to the standing facts.*');
+    expect(await reply('Write the beta update', 'Hi all.', GOOD)).toBe('Hi all.');
+    expect(nudges).toHaveLength(2);
+    await part.close!();
+  });
+});
+
 // Journey 5: after a week, Idea, Customer and Numbers were still empty, so a new person knew neither the name nor the cash.
 describe('the partner slice: the founder\'s facts kept in the Company document', () => {
   const DAY_ONE = "I'm building Ledgerly: $29/month bookkeeping for EU solo consultants that drafts VAT returns from bank feeds. "

@@ -10,6 +10,7 @@ import { hub } from '../events.ts';
 import { saysSomething } from '../missions.ts';
 import { FAKE_MORNING, MOST_TRIES, morningDue, morningInputs, morningMessage, writeMorning, type MorningSources } from '../partner/morning.ts';
 import { addPlan, boardFor, boardForPlan, NO_BOARD, planAttention, stepsFrom } from '../partner/plans.ts';
+import { asksWhatNext, holdSynthesis, standingFacts } from '../partner/synthesis.ts';
 import { chaseLine, keptPromiseLine, promiseLine, promisesAttention, promisesBook, promisesIn } from '../partner/promises.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import { staleNeeds, standingBlock, standingParts, teamVerdict, type StandingParts } from '../partner/standing.ts';
@@ -230,7 +231,7 @@ export function createPartner(options: PartnerOptions = {}) {
     // The standing facts, gathered once and kept until the next tick or until something they read changes (a bet, a
     // decision, a write by a tool). What waits in Needs you is read fresh every turn.
     let standing: Promise<StandingParts> | null = null;
-    async function standingFor(stage: Stage, partnerId: string) {
+    async function partsFor(stage: Stage, partnerId: string): Promise<StandingParts> {
       if (!standing) {
         const doc = await companyNow(stage);
         const gathering = standingParts(sourcesFor(stage, partnerId, doc ? await deps.store.readDoc(doc.id).catch(() => '') : ''));
@@ -238,8 +239,12 @@ export function createPartner(options: PartnerOptions = {}) {
         gathering.catch(() => { if (standing === gathering) standing = null; });
       }
       // The founder's open promises are read fresh too: one closed a moment ago is gone from the next turn.
-      const [parts, waiting, promised] = await Promise.all([standing, deps.attention.list().catch(() => []), promises.list().catch(() => [])]);
-      return standingBlock({ ...parts, promised: promised.filter((one) => one.status === 'open').map(promiseLine) }, waiting);
+      const [parts, promised] = await Promise.all([standing, promises.list().catch(() => [])]);
+      return { ...parts, promised: promised.filter((one) => one.status === 'open').map(promiseLine) };
+    }
+    async function standingFor(stage: Stage, partnerId: string) {
+      const [parts, waiting] = await Promise.all([partsFor(stage, partnerId), deps.attention.list().catch(() => [])]);
+      return standingBlock(parts, waiting);
     }
 
     // What the note is read from, as it stands now.
@@ -346,6 +351,13 @@ export function createPartner(options: PartnerOptions = {}) {
       const stage = await deps.store.loadStage();
       const me = stage.rooms.find((one) => one.id === payload.roomId && one.partner);
       if (!me || payload.reply.stopped || !payload.reply.text.trim()) return next(payload);
+      // "What now" is answered across the rooms: held to the standing facts in code, asked once more if it names too
+      // few of them (server/partner/synthesis.ts).
+      if (asksWhatNext(payload.query)) {
+        const facts = standingFacts(await partsFor(stage, me.id).catch(() => null) ?? { verdicts: [], numbers: '', open: [], planned: [], flagCounts: [], decided: [], learned: [] });
+        const held = await holdSynthesis(payload.query, payload.reply, payload.again, facts, payload.lookedAgain);
+        if (held !== payload.reply) payload = { ...payload, reply: held, lookedAgain: payload.lookedAgain || held.text !== payload.reply.text };
+      }
       const facts = companyFacts(payload.query);
       let text = payload.reply.text;
       let receipt = '';

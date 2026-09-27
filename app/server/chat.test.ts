@@ -413,3 +413,41 @@ describe('a verdict the doc does not hold, in a turn', () => {
     expect(kept).toBe('PIVOT REQUIRED, 5/10.');
   });
 });
+
+// Program 6: the partner slice may ask a finished reply once more (a "what now" that names no standing facts); the
+// turn hands it the same road the other second looks take, and says so.
+describe('a second look asked for by a slice', () => {
+  it('hands the reply seam a way to ask again in words only, and keeps the second answer', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'chat-'));
+    const store = createStore(dir);
+    const stage = await store.loadStage();
+    await store.saveStage({ ...stage, rooms: [...stage.rooms, { id: 'sam', name: 'Sam', role: 'Partner', accent: '#fff', brief: '', partner: true, x: 0, y: 0, w: 1, h: 1 }] });
+    const replies = ['My call: build it.', 'The verdict and the cash say interviews first.'];
+    const steps: { messages: ModelMessage[]; tools: unknown }[] = [];
+    let at = 0;
+    const client: ModelClient = { name: 'gemini', model: 'm', maxPromptChars: Infinity, tools: true, limits: { rpd: 1000 }, async step(messages, options) { steps.push({ messages, tools: options.tools }); options.onToken(replies[at++] ?? 'done'); return { text: '', calls: [] }; } };
+    const seams = createSeams();
+    const seen: boolean[] = [];
+    seams.on('turn:reply', async (payload, next) => {
+      seen.push(!!payload.lookedAgain);
+      const second = await payload.again!(payload.reply, 'Take another look before this goes to the founder: they asked what to do next.');
+      return next({ ...payload, reply: second });
+    });
+    const { chat } = createChat({
+      store, roomFeed: createRoomFeed(), busy: new Set(), clients: [client], usage: createUsage(null), seams,
+      attention: createAttention(dir), approvals: createApprovals(), memory: { fold: async () => false },
+      promptFor: async () => [{ role: 'system', content: 'You are Sam, Partner.' }, { role: 'user', content: 'q' }], toolsFor: () => [],
+    });
+    const out = new PassThrough();
+    const events: Record<string, unknown>[] = [];
+    out.on('data', (chunk: Buffer) => { for (const line of chunk.toString().split('\n')) if (line.startsWith('data: ')) events.push(JSON.parse(line.slice(6))); });
+    const res = Object.assign(out, { writeHead: () => res }) as unknown as ServerResponse;
+    await chat('sam', 'what now?', res);
+    expect(seen).toEqual([false]);
+    expect(steps).toHaveLength(2);
+    expect(steps[1].tools ?? []).toEqual([]);
+    expect(String(steps[1].messages.at(-1)!.content)).toBe('Take another look before this goes to the founder: they asked what to do next.');
+    expect(events).toContainEqual({ notice: 'Sam is taking another look: tying it to the standing facts.' });
+    expect((await store.readChat('sam')).at(-1)!.text).toBe(replies[1]);
+  });
+});
