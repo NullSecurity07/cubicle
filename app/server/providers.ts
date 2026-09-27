@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import OpenAI from 'openai';
 import type { Usage } from '../shared/model.ts';
 import models from './models.json' with { type: 'json' };
@@ -301,6 +301,22 @@ export function portable(messages: ModelMessage[], signature?: string): ModelMes
   });
 }
 
+// Mistral refuses a tool call, and the result that answers it, unless its name is exactly nine letters and digits, so
+// a call Gemini or anyone else made earlier in the turn is renamed on the way out, the same way every time so the call
+// and its result still match. Only the wire copy changes: the conversation kept here keeps the names it had.
+const SHORT_ID = /^[A-Za-z0-9]{9}$/;
+const shortId = (id: string) => (SHORT_ID.test(id) ? id : createHash('sha256').update(id).digest('hex').slice(0, 9));
+export function shortCallIds(messages: ModelMessage[]): ModelMessage[] {
+  return messages.map((message) => {
+    if (message.role === 'tool') return { ...message, tool_call_id: shortId(message.tool_call_id) };
+    if (message.role !== 'assistant' || !message.tool_calls) return message;
+    return { ...message, tool_calls: message.tool_calls.map((call) => ({ ...call, id: shortId(call.id) })) };
+  });
+}
+// Kimi on NVIDIA names each call by its tool and its place in the turn ("read_doc:0"), so the same name comes back on
+// every turn; such a name, like a missing one, is replaced with one of our own (see `callId`).
+const PER_TURN_ID = /^(?:functions\.)?[\w-]+:\d+$/;
+
 type CallPart = { index?: number; id?: string; function?: { name?: string; arguments?: string }; extra_content?: unknown };
 
 // Folds streamed pieces of tool calls into whole calls. Most providers number the pieces; Gemini sends each call
@@ -316,11 +332,13 @@ export function collectCalls(calls: ToolCall[], parts: CallPart[]) {
   }
 }
 
-export type Entry = (typeof models)[number] & { side?: boolean; sharedPool?: boolean; pool?: string; vision?: boolean; streamUsage?: boolean; callSignature?: string; concurrency?: number; extra?: Record<string, unknown>; limits?: Limits };
+export type Entry = (typeof models)[number] & { side?: boolean; sharedPool?: boolean; pool?: string; vision?: boolean; streamUsage?: boolean; callSignature?: string; shortCallIds?: boolean; concurrency?: number; extra?: Record<string, unknown>; limits?: Limits };
 
 // What the free providers give, as their own pages said on 2026-09-24. A line with only `rpm` has no published daily
 // cap. Groq and Cerebras count each model apart, so `groq-qwen` and `cerebras-qwen` are a second day's worth on the
-// same key. NVIDIA's terms are for prototyping, development and evaluation. Z.ai's flash model and Ollama's cloud take
+// same key. NVIDIA's terms are for prototyping, development and evaluation; kimi-k2.6 is listed there but a free account
+// is refused it (404), so it is kimi-k3, which held a 25k room prompt with a tool call on 2026-09-27. Mistral's free
+// plan is one request a second (`concurrency: 1`), 500k tokens a minute and a billion a month. Z.ai's flash model and Ollama's cloud take
 // one request at a time (`concurrency: 1`); Z.ai's 10 a minute is our own guess, it publishes none. Vercel gives $5 of
 // credit a month, and buying any ends the free part. Cloudflare gives 10,000 neurons a day (about 130k tokens out on
 // Scout) and needs the account id in its address; gpt-oss spends about 236 of them on a 25k-character request, Qwen
@@ -367,7 +385,7 @@ function keysOf(env: NodeJS.ProcessEnv, keyEnv: string): { key: string; at: numb
   return [...(env[keyEnv] ? [{ key: env[keyEnv]!, at: 1 }] : []), ...spare.sort((one, other) => one.at - other.at)];
 }
 
-type Shape = { model: string; maxPromptChars: number; maxTokens: number; tools: boolean; side?: boolean; sharedPool?: boolean; vision?: boolean; streamUsage?: boolean; callSignature?: string; concurrency?: number; extra?: Record<string, unknown>; limits?: Limits; local?: boolean };
+type Shape = { model: string; maxPromptChars: number; maxTokens: number; tools: boolean; side?: boolean; sharedPool?: boolean; vision?: boolean; streamUsage?: boolean; callSignature?: string; shortCallIds?: boolean; concurrency?: number; extra?: Record<string, unknown>; limits?: Limits; local?: boolean };
 
 // How long a hosted model may keep silent before its first word: a hanging Gemini costs this, not the whole 45 s
 // request timeout, and the next model is asked. Once anything streams, the model has all the time the request has.
@@ -399,7 +417,8 @@ function clientOf(name: string, entry: Shape, api: OpenAI, firstWordMs?: number)
   };
 
   async function ask(history: ModelMessage[], { tools, signal, onToken, patient }: StepOptions): Promise<ModelTurn> {
-    const messages = withImages(portable(history, entry.callSignature), !!entry.vision);
+    const carried = portable(history, entry.callSignature);
+    const messages = withImages(entry.shortCallIds ? shortCallIds(carried) : carried, !!entry.vision);
     // The founder's Stop and the first-word clock both end the request; only the clock's is this model's failure.
     // The last model that can take a turn gets four times as long, and never less than a minute and a half: Gemini
     // took 58.8 s to its first word on a verdict, and cutting it left the founder with no answer at all.
@@ -429,7 +448,7 @@ function clientOf(name: string, entry: Shape, api: OpenAI, firstWordMs?: number)
         if (delta?.content) onToken(delta.content);
         collectCalls(calls, delta?.tool_calls ?? []);
       }
-      return { text: '', calls: calls.filter(Boolean).map((call, index) => ({ ...call, id: call.id || callId() })), usage, quota: readQuota(response.headers), ...(cut ? { cut } : {}) };
+      return { text: '', calls: calls.filter(Boolean).map((call) => ({ ...call, id: call.id && !PER_TURN_ID.test(call.id) ? call.id : callId() })), usage, quota: readQuota(response.headers), ...(cut ? { cut } : {}) };
     } catch (error) {
       if (silent?.signal.aborted && !signal?.aborted) throw new Error(`no first word within ${Math.round(wait! / 100) / 10} s${patient ? ', the last model able' : ''} (timed out)`);
       throw error;
