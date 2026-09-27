@@ -7,7 +7,9 @@ import { addToSection, sectionText } from './company.ts';
 // are read here, in code, out of what the founder said: a price, the cash, the burn, a count of users or customers,
 // and the one line of what the company does. They go into the matching section with a receipt under the reply.
 
-export type CompanyFact = { label: string; value: string };
+// `sure`: a count said as a plain statement of where the company stands ("we have 3 paying users"), which may take the
+// place of a count already in the document; one said in passing may only fill an empty place.
+export type CompanyFact = { label: string; value: string; sure?: boolean };
 export type CompanyFacts = { numbers: CompanyFact[]; idea?: string; customer?: string };
 
 const MONEY = /([$€£])\s?(\d[\d,]*(?:\.\d+)?)(?:\s?(k|m)\b)?((?:\s?\/\s?(?:month|mo|year|yr))|\s(?:per|a|an)\s(?:month|year|user|seat))?/gi;
@@ -58,6 +60,9 @@ const isIdea = (sentence: string) => BUILDING.test(sentence) || (WE_DO.test(sent
 // Who it is for is a group of people, never a length of time.
 const TIME = /\d|\b(?:years?|months?|weeks?|days?|time|now|while|future|long)\b/i;
 
+const TARGET_BEFORE = /\b(?:until|till|once|when|target\w*|goal|aim\w*|reach\w*|hits?|get(?:s|ting)? to|at|by|of|than|over|under)\s+(?:[\w']+\s+){0,2}$/i;
+// "We have 3", "we now have 4", "there are 12", or the count opening its sentence ("120 customers so far").
+const PLAIN_COUNT = /(?:\b(?:we|i)\s+(?:now\s+|still\s+|already\s+)?(?:have|'ve got|'ve|got|serve)\s+(?:\w+\s+){0,2}|\bthere\s+are\s+(?:now\s+)?|^\s*(?:(?:and|now|so far|today),?\s+)?)$/i;
 const sentences = (said: string) => said.split(/\n+/).flatMap((line) => line.replace(/\s+/g, ' ').split(/(?<=[.!?])\s+/)).map((one) => one.trim()).filter(Boolean);
 const capital = (text: string) => `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
 
@@ -66,8 +71,13 @@ export function companyFacts(said: string): CompanyFacts {
   const put = (label: string, value: string) => { if (!numbers.some((one) => one.label === label)) numbers.push({ label, value }); };
   let idea: string | undefined;
   let named: string | undefined;
+  let question = false;
   for (const sentence of sentences(said)) {
     const plain = sentence.replace(/[.!]+$/, '');
+    // A sentence right after a question answers it or lays out choices ("should I build now? Maybe at 20 users."):
+    // its counts are not where the company stands unless it says so plainly.
+    const afterQuestion = question;
+    question = sentence.endsWith('?');
     if (!idea && !sentence.endsWith('?') && !ASKING.test(plain) && isIdea(plain)) idea = plain.slice(0, 200);
     if (!named && !sentence.endsWith('?') && NAMED.test(plain)) named = plain.slice(0, 200);
     if (NOT_NOW.test(plain) || sentence.endsWith('?')) continue;
@@ -82,14 +92,20 @@ export function companyFacts(said: string): CompanyFacts {
       else if (MRR.test(before) || MRR.test(after)) put('MRR', value);
       else if (ours(plain, match.index, match[0].length)) put('Price', value);
     }
+    // A choice ("Options: build it now, or wait until 10 paying users") names no count the company has.
+    const choice = /\boptions?\b|\s\bor\b\s/i.test(plain);
     for (const match of plain.matchAll(COUNT)) {
-      // "an update for our 3 beta users" names who a thing is for, not how many there are now.
-      if (/\b(?:to|for|with)\s+(?:(?:our|my|the|all|your)\s+)?$/i.test(plain.slice(0, match.index))) continue;
+      const lead = plain.slice(0, match.index);
+      // "an update for our 3 beta users" names who a thing is for, not how many there are now; "until 10 paying
+      // users", "once we reach 50", "our goal is 100", "at 20 users", "two of the 5 users" name a target or a part.
+      if (/\b(?:to|for|with)\s+(?:(?:our|my|the|all|your)\s+)?$/i.test(lead) || TARGET_BEFORE.test(lead)) continue;
+      const sure = PLAIN_COUNT.test(lead);
+      if (choice || (afterQuestion && !sure)) continue;
       const count = WORD_COUNTS.includes(match[1].toLowerCase()) ? String(WORD_COUNTS.indexOf(match[1].toLowerCase())) : match[1];
       const label = capital(`${match[2].toLowerCase()}${match[3].toLowerCase()}`);
       // "3 paying beta users … two of the three users": one count, kept the first way it was said.
       if (numbers.some((one) => countFamily(one.label) === countFamily(label))) continue;
-      put(label, count);
+      if (!numbers.some((one) => one.label === label)) numbers.push({ label, value: count, ...(sure ? { sure } : {}) });
     }
   }
   idea ??= named;
@@ -99,6 +115,8 @@ export function companyFacts(said: string): CompanyFacts {
 
 // Where a Numbers line for one label is: "- Cash: €4,200 (founder, 2026-09-27)".
 const lineOf = (label: string) => new RegExp(`^\\s*[-*]\\s+${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:\\s*(.+?)(?:\\s+\\(founder, [\\d-]+\\))?\\s*$`, 'i');
+
+const MONEY_ROWS: Record<string, RegExp> = { Burn: /\bburn/i, Cash: /\b(?:cash|bank)\b/i, MRR: /\b(?:mrr|revenue)\b/i, Price: /\bpric(?:e|ing)\b/i };
 
 // A Numbers row that counts people: "- Paying users: 3", "- 3 paying beta users", "- Customers: 3".
 const COUNT_ROW = /^\s*[-*]\s+(?:[\w -]*?\b(?:users|customers|subscribers|clients)\s*:|(?:\d[\d,]*|\w+)\s+(?:[\w-]+\s+){0,2}(?:users|customers|subscribers|clients)\b)/i;
@@ -126,13 +144,19 @@ export function keepFacts(text: string, facts: CompanyFacts, day: string): { tex
         if (changed.some((one) => countFamily(one.label) === family)) continue;
         const counts = rows.map((row, index) => ({ row, index })).filter(({ row }) => COUNT_ROW.test(row) && countFamily(row) === family);
         if (counts.length === 1 && Number(/(\d[\d,]*)/.exec(counts[0].row.replace(/\(founder, [\d-]+\)/, ''))?.[1].replace(/,/g, '')) === Number(fact.value.replace(/,/g, ''))) continue;
+        // A count said in passing never takes the place of one already there.
+        if (counts.length && !fact.sure) continue;
         const line = `- ${fact.label}: ${fact.value}${stamp}`;
         if (counts.length) { rows[counts[0].index] = line; for (const extra of counts.slice(1).reverse()) rows.splice(extra.index, 1); } else added.push(line);
         changed.push(fact);
         continue;
       }
-      const at = rows.findIndex((row) => lineOf(fact.label).test(row));
-      if (at >= 0 && lineOf(fact.label).exec(rows[at])![1].trim() === fact.value) continue;
+      // The row for this figure, however it is labelled ("- Monthly burn: €1,100" is the Burn row): the same amount
+      // leaves it as it is, a new one takes its place.
+      const key = MONEY_ROWS[fact.label];
+      const at = rows.findIndex((row) => lineOf(fact.label).test(row) || (!!key && key.test(/^\s*[-*]\s+([^:]{1,40}):/.exec(row)?.[1] ?? '')));
+      const was = at >= 0 ? (/^\s*[-*]\s+[^:]{1,40}:\s*(.+?)(?:\s+\(founder, [\d-]+\))?\s*$/.exec(rows[at])?.[1] ?? '') : '';
+      if (at >= 0 && (was.trim() === fact.value || (amount(was) === amount(fact.value) && was.trim()[0] === fact.value[0]))) continue;
       // A Price line the founder typed into the document is theirs: it is never written over from chat.
       if (at >= 0 && fact.label === 'Price' && !/\(founder, [\d-]+\)\s*$/.test(rows[at])) continue;
       const line = `- ${fact.label}: ${fact.value}${stamp}`;
@@ -148,6 +172,8 @@ export function keepFacts(text: string, facts: CompanyFacts, day: string): { tex
   }
   for (const [heading, line] of [['Idea', facts.idea], ['Customer', facts.customer]] as const) {
     if (!line || filled(sectionBody(next, heading)).length) continue;
+    // The idea already in the document anywhere (the partner may have written it elsewhere): never a second copy.
+    if (heading === 'Idea' && next.toLowerCase().includes(line.slice(0, 40).toLowerCase())) continue;
     next = addToSection(next, heading, [`- ${line}${stamp}`]);
     kept.push(heading);
   }
