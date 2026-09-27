@@ -28,6 +28,15 @@ const stands = (body: string | null) => filled(body).some((line) => !NO_VERDICT.
 // Whether it says "Not assessed" and nothing more.
 const unassessed = (body: string | null) => !stands(body) && (body ?? '').split('\n').some((line) => NOT_ASSESSED.test(line.trim()));
 
+// What a verdict section says when no verdict stands in it, in its own words and lower case, or null when one stands:
+// "not written yet" when it is blank, else its "Not assessed" lines ("not assessed: 4. Founder-market fit (Rohan has
+// not written it yet)"). The morning note said "not written yet" over a doc that said why it waited, and on whom.
+export function verdictState(body: string | null): string | null {
+  if (stands(body)) return null;
+  const lines = (body ?? '').split('\n').map((line) => bare(line).replace(/\.$/, '')).filter((line) => NOT_ASSESSED.test(line));
+  return lines.length ? lines.map((line) => line.replace(/^Not assessed/i, 'not assessed')).join('; ') : 'not written yet';
+}
+
 // Where each copy of a heading's section starts and ends, as line numbers: the heading line, and the line after the
 // section's last. A doc is meant to hold one of each, but one written before the doc tools refused a second copy may
 // hold two, and every check reads them all: a verdict under the second copy is still a verdict.
@@ -81,8 +90,10 @@ const ownerOf = (stage: Stage, rules: DocRules, by: string, docId: string): Room
 
 // A score line with the section markers the judge's brief ("every fact names its section, as (3)") leaves on it taken
 // off: "Assumption: 1/2 (1)" reads as "Assumption: 1/2", "Pain: 1/2 (3 - only 3 beta users)" as "Pain: 1/2 (only 3
-// beta users)". A line of reasons keeps its "(3)", which says where a fact came from.
-const unmarkScore = (line: string) => (/\d\s*\/\s*\d/.test(line) || /^score\b/i.test(bare(line))
+// beta users)". A score line is the Score or Total line, or a short label with its part right after it ("Fit 2/2");
+// a line of reasons keeps its "(3)", which says where a fact came from, fraction or not ("3/12 said it hurts (3)").
+const SCORE_LINE = /^(?:score|total)\b|^[\p{L}][\p{L}'-]*(?:\s+[\p{L}][\p{L}'-]*){0,2}\s*[:=–—-]?\s*\d+(?:\.\d+)?\s*(?:\/|out of|of)\s*\d+\b\s*(?:$|[(,;])/iu;
+const unmarkScore = (line: string) => (SCORE_LINE.test(bare(line))
   ? line.replace(/\s*\([1-9]\)/g, '').replace(/\([1-9]\s*[-–—:]\s*(?=\p{L})/gu, '(')
   : line);
 
@@ -138,7 +149,7 @@ export function verdictOf(written: string, outcomes: string[], outOf = 10): { wo
 
 // A score its breakdown in brackets does not reach: "5/10 (Assumption: 1, Flaws: 3, Pain: 1, Fit: 8, Why Now: 2)" is
 // 15 of 50, which is 3 of 10, and a live judge wrote it with nothing to catch it. Each part is a label and one number,
-// or "a/b" out of its own b; anything else in the brackets, or brackets that name sections, ("see sections 1, 2 and 4") is no breakdown. A cap's words
+// or "a/b", "a of b" or "a out of b" out of its own b; anything else in the brackets, or brackets that name sections, ("see sections 1, 2 and 4") is no breakdown. A cap's words
 // and a stated sum ("capped from 7: ...", "= 7") are not parts. Parts with no maximum of their own are read as out of
 // the total together (when they add up to it at most) or out of the total each, and the score passes when either
 // reading reaches it. Only a score above its parts is refused: one below them is a cap the evidence set, or parts
@@ -155,7 +166,7 @@ export function breakdownMismatch(written: string, outOf = 10): string | null {
     const inner = group[1].replace(/\bcapped\s+(?:from|at)\s+\d+(?:\.\d+)?\s*[:;,]?/gi, '').replace(/=\s*\d+(?:\.\d+)?\s*$/, '').replace(/^\s*parts?\b\s*:?/i, '');
     // A label before each number, with a colon, a dash or only a space after it: "Fit: 2", "fit 2", "Why-now - 2".
     if (/\bsections?\b/i.test(inner)) continue;
-    const parts = inner.split(/[,;+]/).map((part) => /^(?:[\p{L}][\p{L}\s'-]*?(?:\s*[:=–—-]\s*|\s+))?(\d+(?:\.\d+)?)(?:\s*\/\s*(\d+(?:\.\d+)?))?$/u.exec(part.trim()));
+    const parts = inner.split(/[,;+]/).map((part) => /^(?:[\p{L}][\p{L}\s'-]*?(?:\s*[:=–—-]\s*|\s+))?(\d+(?:\.\d+)?)(?:\s*(?:\/|out of|of)\s*(\d+(?:\.\d+)?))?$/u.exec(part.trim()));
     if (parts.length < 2 || parts.some((part) => !part)) continue;
     const values = parts.map((part) => Number(part![1]));
     const sum = values.reduce((a, b) => a + b, 0);
@@ -194,7 +205,11 @@ function countOf(said: string): number {
 // How many customer conversations a section records, or null when it records none at all. The template's line comes
 // first, read past bold and bullets; a section written as prose is read for a number next to the conversations
 // ("talked to 12 founders", "14 customer interviews"). No count anywhere is no evidence, and the cap holds.
+// A plan in place of a count. A goal or a target is one only where the count would stand, or on a line that is not the
+// label's own: "done: 12 (goal was 20)" is twelve held, "done: target 10" is none.
+const PLANNED = /\b(planned|plan|booked|scheduled|will|next)\b/i;
 const TO_COME = /\b(planned|plan|booked|scheduled|will|next|target|goal|aim)\b/i;
+const AIMED = /^\W*(?:our\s+|the\s+)?(?:target|goal|aim)/i;
 export function conversations(text: string, label: string): number | null {
   // A struck-out count is a count taken back: "~~12~~ 0" is none.
   const section = unmarked(text).replace(/~~[^~]*~~/g, ' ');
@@ -216,7 +231,7 @@ export function conversations(text: string, label: string): number | null {
   for (const value of values) {
     if (/^\W*(none|no\b|nil)/i.test(value)) return 0;
     // "12 (planned)", "12 booked for next week", "target 10": talks still to come are none held yet.
-    if (TO_COME.test(value)) return null;
+    if (PLANNED.test(value) || AIMED.test(value)) return null;
     const count = new RegExp(`\\b${NUMBER}`, 'i').exec(value);
     if (count) return countOf(count[1]);
   }
