@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
-// Where the dock sits: on the right edge by default, the left edge or along the bottom if the founder says so. The
+// Where the dock sits: floating along the bottom by default, on the right or left edge if the founder says so. The
 // choice lives in this browser (localStorage `dock`), so it survives a reload. A narrow window has no room for a
 // column beside the cards, so under 880px the dock always sits along the bottom, whatever was chosen; the choice comes
 // back when the window is wide again.
@@ -11,9 +11,9 @@ export const NARROW = '(max-width: 880px)';
 
 export const isDockPlace = (value: unknown): value is DockPlace => PLACES.includes(value as DockPlace);
 // The whole rule in one line, so the tests can read it without a browser.
-export const placeFrom = (stored: unknown, narrow: boolean): DockPlace => (narrow ? 'bottom' : isDockPlace(stored) ? stored : 'right');
+export const placeFrom = (stored: unknown, narrow: boolean): DockPlace => (narrow ? 'bottom' : isDockPlace(stored) ? stored : 'bottom');
 
-// Storage may be missing (tests, a locked-down browser) or throw (private windows): either way the dock is on the right.
+// Storage may be missing (tests, a locked-down browser) or throw (private windows): either way the dock is along the bottom.
 function stored(): unknown {
   try { return globalThis.localStorage?.getItem(KEY); } catch { return null; }
 }
@@ -49,4 +49,4 @@ function subscribe(watcher: () => void) {
   };
 }
 
-export const useDockPlace = () => useSyncExternalStore(subscribe, dockPlace, (): DockPlace => 'right');
+export const useDockPlace = () => useSyncExternalStore(subscribe, dockPlace, (): DockPlace => 'bottom');

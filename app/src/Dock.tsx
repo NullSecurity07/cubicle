@@ -1,4 +1,4 @@
-import { Panel } from '@xyflow/react';
+import { Panel, useStore } from '@xyflow/react';
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { preset, type AppKey } from '../shared/apps';
 import { useAttention } from './overlay/attention';
@@ -10,6 +10,8 @@ import { openLibrary } from './library';
 import { BlocksIcon } from './nodes/FrameworksPanel';
 import { keyHint, pressed } from './keys';
 import { useModels } from './models';
+import { setMissionsOpen, useMissions } from './Missions';
+import { SLICES, sliceCommands } from './slices';
 
 // The name beside a button, and its key when it has one. It shows after a short hover or on keyboard focus (theme.css),
 // in place of the browser's own tooltip, which is slow, plain and always below the pointer. The button keeps its
@@ -27,7 +29,7 @@ function useInView<T extends HTMLElement>(open: boolean, key: unknown) {
     if (!open || !menu) return;
     const fit = () => {
       menu.style.setProperty('--shift', '0px');
-      if (!menu.closest('.dock--vertical')) return;
+      if (!menu.closest('.bar--vertical')) return;
       // Measured without transforms: the menu may still be growing in when this runs.
       const room = 12;
       const top = (menu.offsetParent?.getBoundingClientRect().top ?? 0) + menu.offsetTop;
@@ -138,19 +140,96 @@ function Needs({ open }: { open: boolean }) {
 }
 
 // A panel view the dock opens: its button is lit while that view is open, so the founder sees where they are.
-function View({ name, label, keys, open, children }: { name: string; label: string; keys?: string; open: boolean; children: ReactNode }) {
+function View({ name, label, keys, open, className, children }: { name: string; label: string; keys?: string; open: boolean; className?: string; children: ReactNode }) {
   return (
-    <button type="button" className={open ? 'is-open' : undefined} aria-label={label} onClick={() => overlay.open({ kind: 'panel', name })}>
+    <button type="button" className={[className, open && 'is-open'].filter(Boolean).join(' ') || undefined} aria-label={label} onClick={() => overlay.open({ kind: 'panel', name })}>
       {children}
       <Label name={label} keys={keys} />
     </button>
   );
 }
 
+// The partner is added by the partner slice's own words, the ones "add partner" in the command bar runs, so the dock
+// needs nothing of the slice but that command. Once a partner is on the stage the same button opens them.
+const addPartner = () => sliceCommands().find((one) => one.when?.('add partner'))?.action;
+function Partner() {
+  const partner = useStore((flow) => flow.nodes.find((node) => node.type === 'room' && (node.data as { partner?: boolean }).partner)?.id ?? null);
+  const action = addPartner();
+  if (!action || action.do !== 'run') return null;
+  const label = partner ? 'Your partner' : 'Add partner';
+  return (
+    <button type="button" aria-label={label} onClick={() => (partner ? overlay.open({ kind: 'focus', id: partner }) : action.run())}>
+      <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="7.300" cy="7.200" r="2.700" /><path d="M2.300 16.500c.5-3 2.400-4.600 5-4.600s4.500 1.600 5 4.600" /><path d="M11.800 4.800a2.700 2.700 0 1 1 .9 5.100M14.300 11.900c1.700.5 2.900 2 3.300 4.600" /></svg>
+      <Label name={label} />
+    </button>
+  );
+}
+
+// The first-run list's progress as a ring, and the way back to the list once its corner card is closed. Gone for good
+// once the founder has sent the list away.
+function Started() {
+  const { state, open } = useMissions();
+  if (!state || state.dismissed) return null;
+  const done = state.missions.filter((one) => one.done).length;
+  const all = state.missions.length;
+  const label = done === all ? 'You know your way around' : 'Getting started';
+  return (
+    <button type="button" className={`dock__started${open ? ' is-open' : ''}`} aria-label={label} aria-pressed={open} onClick={() => setMissionsOpen(!open)}>
+      <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6.600" className="ring__track" /><circle cx="10" cy="10" r="6.600" pathLength={100} strokeDasharray={`${Math.round((done / all) * 100)} 100`} transform="rotate(-90 10 10)" /></svg>
+      <Label name={`${label} · ${done} of ${all}`} />
+    </button>
+  );
+}
+
+// What comes to the founder: what waits for them, the conversations and choices, the ledger of bets, and how the
+// machine is doing. A slice's view gets its button only when that slice is there to open it.
+const hasPanel = (name: string) => SLICES.some((slice) => !!slice.panels?.[name]);
+function Incoming({ place, open }: { place: string; open: Set<string> }) {
+  return (
+    <>
+      <div className="dock__set" role="group" aria-label="For you">
+        <Needs open={open.has('needs')} />
+        <View name="messages" label="Messages" keys={keyHint('messages')} open={open.has('messages')}>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.500 5.200c0-.9.700-1.700 1.700-1.700h9.600c1 0 1.700.8 1.700 1.700v6.600c0 .9-.7 1.700-1.700 1.700H9l-3.700 3v-3h-.1c-1 0-1.700-.8-1.700-1.700z" /></svg>
+        </View>
+        <View name="decisions" label="Decisions" keys={keyHint('decisions')} open={open.has('decisions')}>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3.500v13M5.500 16.500h9M4 6.500h12M4 6.500l-2 5a2.300 2.300 0 0 0 4 0zM16 6.500l-2 5a2.300 2.300 0 0 0 4 0z" /></svg>
+        </View>
+        {hasPanel('bets') && (
+          <View name="bets" label="Bets" open={open.has('bets')}>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6.800" /><circle cx="10" cy="10" r="3.600" /><circle cx="10" cy="10" r="0.700" /></svg>
+          </View>
+        )}
+      </div>
+      <span className="dock__gap" aria-hidden="true" />
+      <div className="dock__set" role="group" aria-label="How it is going">
+        <View name="dashboard" label="Dashboard" keys={keyHint('dashboard')} open={open.has('dashboard')}>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3.500" y="3.500" width="5.500" height="7" rx="1.500" /><rect x="11" y="3.500" width="5.500" height="4" rx="1.500" /><rect x="11" y="9.500" width="5.500" height="7" rx="1.500" /><rect x="3.500" y="12.500" width="5.500" height="4" rx="1.500" /></svg>
+        </View>
+        {hasPanel('health') && (
+          <View name="health" label="Health" open={open.has('health')}>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.500 10.500h3.300l1.900-4.300 3.100 8 2-5.200 1 1.500h3.700" /></svg>
+          </View>
+        )}
+        {hasPanel('apikeys') && (
+          <View name="apikeys" label="Keys" open={open.has('apikeys')}>
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="6.800" cy="13.200" r="3.300" /><path d="M9.200 10.800l6.300-6.300M13.300 6.700l2 2M11.600 8.400l1.500 1.500" /></svg>
+          </View>
+        )}
+        <Quota place={place} />
+        <View name="keys" label="Keyboard shortcuts" keys={keyHint('cheatsheet')} open={open.has('keys')}>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.400 7.600a2.700 2.700 0 1 1 3.900 2.400c-.8.400-1.300 1-1.300 1.900v.6" /><circle cx="10" cy="15.300" r="0.500" /></svg>
+        </View>
+      </div>
+    </>
+  );
+}
+
 const POSITION = { right: 'center-right', left: 'center-left', bottom: 'bottom-center' } as const;
 
-// The only chrome on the stage, in three groups: make something, see something, and what is happening now. It stands
-// in a column on the right edge unless the founder moved it (dockPlace.ts). New cards land at the centre of the view.
+// The only chrome on the stage. The dock floats at the foot of the window with what the founder does: the command
+// bar, a person, a card, a team, the partner, and the first-run list. It can stand on either edge instead
+// (dockPlace.ts). New cards land at the centre of the view.
 export function Dock() {
   const addCard = useAddCard();
   const place = useDockPlace();
@@ -166,14 +245,20 @@ export function Dock() {
   const addApp = (key: AppKey, name?: string, home?: string) => { const app = preset(key, name, home); close(); addCard('browser', { app }); };
 
   return (
-    <Panel position={POSITION[place]} className={`dock dock--${place}${place === 'bottom' ? '' : ' dock--vertical'}`}>
+    <Panel position={POSITION[place]} className={`dock bar bar--${place} dock--${place}${place === 'bottom' ? '' : ' bar--vertical dock--vertical'}`}>
+      <div className="dock__set" role="group" aria-label="Ask">
+        <View name="command" label="Command bar" keys={keyHint('command-bar')} open={open.has('command')} className="dock__ask">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.200" /><path d="M13 13l3.800 3.800" /></svg>
+        </View>
+      </div>
+      <span className="dock__gap" aria-hidden="true" />
       <div className="dock__set" role="group" aria-label="Make">
         <button type="button" aria-label="Add person" onClick={() => add('room')}>
-          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="7" r="3.2" /><path d="M3.8 17c.6-3.4 3-5.2 6.2-5.2s5.6 1.8 6.2 5.2" /></svg>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="7" r="3.2" /><path d="M3.8 17c.6-3.4 3-5.200 6.200-5.200s5.600 1.800 6.200 5.200" /></svg>
           <Label name="Add person" />
         </button>
         <button type="button" aria-label="Add doc" onClick={() => add('doc')}>
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.5 2.5h6L15 6v11.5H5.5zM11.5 2.5V6H15M8 10h4.5M8 13h4.5" /></svg>
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.500 2.500h6L15 6v11.500H5.500zM11.500 2.500V6H15M8 10h4.500M8 13h4.500" /></svg>
           <Label name="Add doc" />
         </button>
         <div className="dock__more" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) close(); }} onKeyDown={(event) => { if (pressed(event, 'cancel')) close(); }}>
@@ -203,27 +288,14 @@ export function Dock() {
           <BlocksIcon />
           <Label name="Frameworks" />
         </button>
+        <Partner />
       </div>
       <span className="dock__gap" aria-hidden="true" />
-      <div className="dock__set" role="group" aria-label="See">
-        <View name="dashboard" label="Dashboard" keys={keyHint('dashboard')} open={open.has('dashboard')}>
-          <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3.500" y="3.500" width="5.500" height="7" rx="1.500" /><rect x="11" y="3.500" width="5.500" height="4" rx="1.500" /><rect x="11" y="9.500" width="5.500" height="7" rx="1.500" /><rect x="3.500" y="12.500" width="5.500" height="4" rx="1.500" /></svg>
-        </View>
-        <View name="command" label="Command bar" keys={keyHint('command-bar')} open={open.has('command')}>
-          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5.200" /><path d="M13 13l3.800 3.800" /></svg>
-        </View>
-        <View name="messages" label="Messages" keys={keyHint('messages')} open={open.has('messages')}>
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.500 5.200c0-.9.700-1.700 1.700-1.700h9.600c1 0 1.700.8 1.700 1.700v6.600c0 .9-.7 1.700-1.700 1.700H9l-3.700 3v-3h-.1c-1 0-1.700-.8-1.700-1.700z" /></svg>
-        </View>
-        <View name="decisions" label="Decisions" keys={keyHint('decisions')} open={open.has('decisions')}>
-          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3.500v13M5.500 16.500h9M4 6.500h12M4 6.500l-2 5a2.300 2.300 0 0 0 4 0zM16 6.500l-2 5a2.300 2.300 0 0 0 4 0z" /></svg>
-        </View>
+      <div className="dock__set" role="group" aria-label="Learn">
+        <Started />
       </div>
       <span className="dock__gap" aria-hidden="true" />
-      <div className="dock__set" role="group" aria-label="Now">
-        <Needs open={open.has('needs')} />
-        <Quota place={place} />
-      </div>
+      <Incoming place={place} open={open} />
     </Panel>
   );
 }

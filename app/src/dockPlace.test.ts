@@ -15,28 +15,28 @@ const fresh = async () => { vi.resetModules(); return import('./dockPlace'); };
 describe('dock place', () => {
   afterEach(() => { vi.unstubAllGlobals(); });
 
-  it('is on the right when nothing was chosen, and when there is no storage at all', async () => {
+  it('floats along the bottom when nothing was chosen, and when there is no storage at all', async () => {
     browser();
-    expect((await fresh()).dockPlace()).toBe('right');
+    expect((await fresh()).dockPlace()).toBe('bottom');
     vi.unstubAllGlobals();
-    expect((await fresh()).dockPlace()).toBe('right');
+    expect((await fresh()).dockPlace()).toBe('bottom');
   });
 
   it('keeps the founder\'s choice in storage, so a reload finds it', async () => {
     const items = browser();
     const first = await fresh();
-    first.setDockPlace('bottom');
-    expect(first.dockPlace()).toBe('bottom');
-    expect(items.get('dock')).toBe('bottom');
-    expect((await fresh()).dockPlace()).toBe('bottom');
+    first.setDockPlace('left');
+    expect(first.dockPlace()).toBe('left');
+    expect(items.get('dock')).toBe('left');
+    expect((await fresh()).dockPlace()).toBe('left');
   });
 
-  it('falls back to the right on a stored value it does not know, or storage that throws', async () => {
+  it('falls back to the bottom on a stored value it does not know, or storage that throws', async () => {
     browser({ saved: 'top' });
-    expect((await fresh()).dockPlace()).toBe('right');
+    expect((await fresh()).dockPlace()).toBe('bottom');
     browser({ saved: 'left', broken: true });
     const place = await fresh();
-    expect(place.dockPlace()).toBe('right');
+    expect(place.dockPlace()).toBe('bottom');
     expect(() => place.setDockPlace('left')).not.toThrow();
     expect(place.dockPlace()).toBe('left');
   });
@@ -47,6 +47,7 @@ describe('dock place', () => {
     expect(dockPlace()).toBe('bottom');
     expect(placeFrom('left', true)).toBe('bottom');
     expect(placeFrom('left', false)).toBe('left');
-    expect(placeFrom(null, false)).toBe('right');
+    expect(placeFrom(null, false)).toBe('bottom');
+    expect(placeFrom('right', false)).toBe('right');
   });
 });
