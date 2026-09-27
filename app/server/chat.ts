@@ -149,7 +149,7 @@ export function createChat(deps: Deps) {
       let lookedAgain = false;
       const lookAgain = (first: TurnResult, nudge: string) => {
         lookedAgain = true;
-        const why = nudge === PRECONDITION_NUDGE ? 'checking the preconditions' : nudge.startsWith(SYNTHESIS_HEAD) ? 'tying it to the standing facts' : 'weighing the team\'s verdict';
+        const why = nudge.startsWith(PRECONDITION_NUDGE) ? 'checking the preconditions' : nudge.startsWith(SYNTHESIS_HEAD) ? 'tying it to the standing facts' : 'weighing the team\'s verdict';
         send({ notice: `${room.name} is taking another look: ${why}.` });
         send({ restart: true });
         roomFeed.tell({ roomId, turn, restart: true });

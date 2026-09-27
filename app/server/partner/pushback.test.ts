@@ -142,11 +142,35 @@ describe('the partner held to a weak team verdict', () => {
     expect(held.text).toBe(email);
   });
 
-  it('takes one second look per turn: a raise answer asked again that still builds against the verdict is only labelled', async () => {
+  it('takes one second look per turn, and labels only a second miss of the verdict', async () => {
+    // The raise answer was asked again for its preconditions only: its first miss of the verdict is not labelled.
     let asked = 0;
-    const held = await holdPartner(JOURNEY, turn('Phase 1: SAFE.\n\nMy call: go.'), async () => { asked += 1; return turn('Not yet: no users. My call: build the product first.'); }, PIVOT);
+    const once = await holdPartner(JOURNEY, turn('Phase 1: SAFE.\n\nMy call: go.'), async () => { asked += 1; return turn('Not yet: no users. My call: build the product first.'); }, PIVOT);
     expect(asked).toBe(1);
-    expect(held.text).toBe(`Not yet: no users. My call: build the product first.\n\n${UNWEIGHED}`);
+    expect(once.text).toBe('Not yet: no users. My call: build the product first.');
+    // A first answer that misses both is asked once with both nudges, and a second miss of the verdict is labelled.
+    const nudges: string[] = [];
+    const twice = await holdPartner(JOURNEY, turn('Phase 1: SAFE.\n\nMy call: build the product.'), async (_first, nudge) => { nudges.push(nudge ?? ''); return turn('Not yet: no users. My call: build the product first.'); }, PIVOT);
+    expect(nudges).toHaveLength(1);
+    expect(nudges[0]).toContain(PRECONDITION_NUDGE);
+    expect(nudges[0]).toContain('The team\'s verdict is PIVOT REQUIRED 6/10 (Evaluation).');
+    expect(twice.text).toBe(`Not yet: no users. My call: build the product first.\n\n${UNWEIGHED}`);
+  });
+
+  // Journey 9: the runway answer ran code, so its first miss was labelled at once, "Team verdict not weighed."
+  it('asks once more in words about the verdict even after a first answer that did something, and labels only a second miss', async () => {
+    const ran = turn('Runway is 5.9 months.\n\nMy call: build the €19 tier now.', [{ id: 'c1', name: 'run_code', args: {}, ok: true }]);
+    let asked = 0;
+    const weighed = await holdPartner('how many months of runway do we have?', ran, async () => { asked += 1; return turn('The PIVOT REQUIRED verdict comes first. My call: run 5 interviews.'); }, PIVOT);
+    expect(asked).toBe(1);
+    expect(weighed.text).toBe('The PIVOT REQUIRED verdict comes first. My call: run 5 interviews.');
+    expect(weighed.tools.map((one) => one.id)).toEqual(['c1']);
+    const missed = await holdPartner('how many months of runway do we have?', ran, async () => turn('My call: build the tier.'), PIVOT);
+    expect(missed.text).toBe(`My call: build the tier.\n\n${UNWEIGHED}`);
+    // Every turn starts over: the next turn's first miss is asked again, not labelled.
+    let next = 0;
+    await holdPartner('and now?', turn('My call: build it.'), async () => { next += 1; return turn('Given the verdict, my call: pause.'); }, PIVOT);
+    expect(next).toBe(1);
   });
 });
 

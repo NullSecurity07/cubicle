@@ -150,29 +150,36 @@ export function stripStance(text: string): string {
 // The partner's finished reply, held to the check. `again` answers once more in words only, with the first answer and
 // the nudge in front of it. A first answer that already did something (wrote a doc, proposed a decision) is not asked
 // again, so nothing is done twice; it is only labelled when it skipped the check.
-// With a weak team verdict on the stage, the reply is held to it too; at most one second look per turn, so a reply
-// asked again for its preconditions that still builds against the verdict is only labelled.
+// With a weak team verdict on the stage, the reply is held to it too; at most one second look per turn. The verdict
+// label goes only under a second miss: journey 9 stamped it on a runway answer's first miss because that answer had
+// run code. A second look is in words only, so one about the verdict is taken after an answer that did something too;
+// one that misses both is asked once with both nudges; and one asked again only for its preconditions that then
+// builds against the verdict has missed it once, and is not labelled.
 export async function holdPartner(asked: string, first: TurnResult, again: (first: TurnResult, nudge?: string) => Promise<TurnResult>, verdict?: TeamVerdict | null): Promise<TurnResult> {
   let reply = first;
   let lookedAgain = false;
+  let verdictAsked = false;
   const label = (turn: TurnResult, line: string) => ({ ...turn, text: `${turn.text.replace(/\s+$/, '')}\n\n${line}` });
   const joined = (one: TurnResult, two: TurnResult) => ({ ...two, tools: [...one.tools, ...two.tools], usage: { input: one.usage.input + two.usage.input, output: one.usage.output + two.usage.output } });
+  // Never on something written for customers: the verdict is the company's own, not theirs to read.
+  const held = verdict && isWeak(verdict) && !forCustomers(asked) ? verdict : null;
+  const misses = (turn: TurnResult) => !!held && !turn.stopped && buildsAgainst(turn.text, held);
   if (!first.stopped && asksCommitment(asked) && !checksPreconditions(first.text)) {
     if (didSomething(first)) reply = label(first, UNCHECKED);
     else {
-      const second = await again(first, PRECONDITION_NUDGE);
+      verdictAsked = misses(first);
+      const second = await again(first, verdictAsked ? `${PRECONDITION_NUDGE} ${verdictNudge(held!)}` : PRECONDITION_NUDGE);
       lookedAgain = true;
       reply = joined(first, second);
       if (!second.stopped && !checksPreconditions(second.text)) reply = label(reply, UNCHECKED);
     }
   }
-  // Never on something written for customers: the verdict is the company's own, not theirs to read.
-  if (verdict && isWeak(verdict) && !reply.stopped && !forCustomers(asked) && buildsAgainst(reply.text, verdict)) {
-    if (lookedAgain || didSomething(reply)) reply = label(reply, UNWEIGHED);
-    else {
-      const second = await again(reply, verdictNudge(verdict));
+  if (misses(reply)) {
+    if (verdictAsked) reply = label(reply, UNWEIGHED);
+    else if (!lookedAgain) {
+      const second = await again(reply, verdictNudge(held!));
       reply = joined(reply, second);
-      if (!second.stopped && buildsAgainst(second.text, verdict)) reply = label(reply, UNWEIGHED);
+      if (misses(second)) reply = label(reply, UNWEIGHED);
     }
   }
   return { ...reply, text: oneCall(stripStance(reply.text)) };
