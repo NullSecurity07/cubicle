@@ -361,3 +361,58 @@ describe('a partner\'s turn against the team\'s verdict', () => {
     expect((await store.readChat('sam')).at(-1)!.text).toBe(replies[1]);
   });
 });
+
+describe('a turn when the only model able cannot hold the room prompt (round 6)', () => {
+  const check: Tool = { name: 'check', description: 'Checks.', parameters: { type: 'object', properties: {} }, run: async () => ({ text: 'checked' }) };
+  const holding = (name: string, maxPromptChars: number, sizes: number[] = []): ModelClient => ({
+    name, model: `${name}-1`, maxPromptChars, tools: true, limits: { rpd: 1000 },
+    async step(messages, { onToken }) { sizes.push(messages.reduce((sum, one) => sum + (one.content ?? '').length, 0)); onToken(`${name} answers.`); return { text: '', calls: [] }; },
+  });
+  async function groqTurn(clients: ModelClient[], before?: (usage: ReturnType<typeof createUsage>) => void) {
+    const dir = await mkdtemp(join(tmpdir(), 'chat-'));
+    const store = createStore(dir);
+    const usage = createUsage(null);
+    before?.(usage);
+    const asked: boolean[] = [];
+    const payloads: unknown[] = [];
+    const seams = createSeams();
+    seams.on('turn:before', async (payload, next) => { payloads.push(payload); return next(payload); });
+    const { chat } = createChat({
+      store, roomFeed: createRoomFeed(), busy: new Set(), clients, usage, seams,
+      attention: createAttention(dir), approvals: createApprovals(), memory: { fold: async () => false },
+      promptFor: async (_stage, roomId, _names, _fresh, slim) => {
+        asked.push(!!slim);
+        return [{ role: 'system', content: slim ? `You are ${roomId}. Numbers: cash 9k.` : `You are ${roomId}. ${'Numbers in full. '.repeat(2000)}` }, { role: 'user', content: 'Raise now?' }];
+      },
+      toolsFor: () => [check],
+    });
+    const out = new PassThrough();
+    const events: Record<string, unknown>[] = [];
+    out.on('data', (chunk: Buffer) => { for (const line of chunk.toString().split('\n')) if (line.startsWith('data: ')) events.push(JSON.parse(line.slice(6))); });
+    const res = Object.assign(out, { writeHead: () => res }) as unknown as ServerResponse;
+    await chat('marketing', 'Raise now?', res);
+    return { store, asked, payloads, notices: events.flatMap((one) => ('notice' in one ? [one.notice] : [])) };
+  }
+
+  it('builds the short prompt, says so, and Groq answers', async () => {
+    const sizes: number[] = [];
+    const { store, asked, payloads, notices } = await groqTurn([holding('groq', 18_000, sizes)]);
+    expect(asked).toEqual([false, true]);
+    expect(notices).toContain('Groq answers with a short prompt: the documents\' titles and openings only, no playbook, and only the latest talk.');
+    expect(payloads).toEqual([expect.objectContaining({ slim: true })]);
+    expect(sizes[0]).toBeLessThan(18_000);
+    expect((await store.readChat('marketing')).at(-1)).toMatchObject({ text: 'groq answers.', provider: 'groq' });
+  });
+
+  it('keeps the whole prompt while a model that holds it is set up', async () => {
+    const { asked, payloads, notices } = await groqTurn([holding('groq', 18_000), holding('gemini', 400_000)]);
+    expect(asked).toEqual([false]);
+    expect(notices.join(' ')).not.toMatch(/short prompt/);
+    expect(payloads).toEqual([expect.not.objectContaining({ slim: true })]);
+  });
+
+  it('builds the short prompt when the model that would hold it had its key refused', async () => {
+    const { asked } = await groqTurn([holding('gemini', 400_000), holding('groq', 18_000)], (usage) => { usage.failed('gemini', Object.assign(new Error('401 invalid key'), { status: 401 })); });
+    expect(asked).toEqual([false, true]);
+  });
+});

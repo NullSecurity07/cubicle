@@ -3,6 +3,7 @@ import { preset } from '../shared/apps.ts';
 import { PARTNER_PRECONDITIONS, PARTNER_STANCE, STANCE, seedStage, type ChatMessage, type Stage } from '../shared/model.ts';
 import { COMPANY_LINE } from '../shared/partner.ts';
 import { buildMessages, colleagueIds, readableDocIds, todayBlock, wiredDocIds } from './prompt.ts';
+import { promptSize } from './providers.ts';
 
 const docs = { 'brand-doc': 'We sell calm.', other: 'SECRET' };
 // A fixed clock, so nothing here depends on the day it is run: Sunday 20 September 2026, at noon where the machine is.
@@ -313,5 +314,26 @@ describe('source websites', () => {
     const staff = buildMessages(withPartner, 'build', {}, [])[0].content as string;
     expect(staff).toContain(STANCE);
     expect(staff).not.toContain(PARTNER_STANCE);
+  });
+});
+
+describe('the short prompt, for when no model set up can hold the whole one (round 6)', () => {
+  it('gives each document its title and opening, leaves out what colleagues said lately, and keeps only the latest talk', () => {
+    const team: Stage = { ...stage, wires: [...stage.wires, { id: 't', from: 'build', fromHandle: 'l', to: 'marketing', toHandle: 'l' }] };
+    const long = { 'brand-doc': `We sell calm. ${'Calm is the product. '.repeat(1000)}`, other: 'SECRET' };
+    const theirs = [{ id: '1', role: 'user' as const, text: 'What is the build order?', at: NOON }];
+    const history = Array.from({ length: 60 }, (_, i) => ({ id: `m${i}`, role: 'user' as const, text: `message ${i} ${'x'.repeat(480)}`, at: NOON }));
+    const tools = ['read_doc', 'ask_person'];
+    const full = buildMessages(team, 'marketing', long, history, tools, { build: theirs }, undefined, undefined, undefined, undefined, undefined, NOON);
+    const slim = buildMessages(team, 'marketing', long, history, tools, { build: theirs }, undefined, undefined, undefined, undefined, undefined, NOON, true);
+    expect(full[0].content).toContain('Calm is the product. '.repeat(100));
+    expect(slim[0].content).toContain('## Doc: Brand doc\nWe sell calm. Calm is the product.');
+    expect(slim[0].content).not.toContain('Calm is the product. '.repeat(20));
+    expect(slim[0].content).toContain('read the rest with read_doc');
+    expect(slim[0].content).toContain('- Dev, Build.');
+    expect(slim[0].content).not.toContain('Lately in');
+    expect(slim.length).toBeLessThan(full.length);
+    expect(slim.at(-1)!.content).toContain('message 59');
+    expect(promptSize(slim)).toBeLessThan(8000);
   });
 });

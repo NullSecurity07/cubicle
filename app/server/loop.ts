@@ -69,6 +69,8 @@ export async function runTurn(input: {
   approve?: (event: ToolEvent, signal?: AbortSignal) => Promise<Answer>;
   // Where the extras plug in, and what set this turn off. Without seams the turn runs exactly as it always did.
   seams?: Seams; source?: Source; query?: string;
+  // The prompt is the short one, cut to fit the one model able to answer: the extras keep it short.
+  slim?: boolean;
 }): Promise<TurnResult> {
   const { tools, context, usage, events, signal, seams } = input;
   const { roomId } = context;
@@ -113,7 +115,7 @@ export async function runTurn(input: {
   };
 
   // What this turn offers rides along for the playbook, which leaves out procedures that need anything else.
-  const before: Payloads['turn:before'] & Offered = { roomId, source, query, messages, offered: tools.map((tool) => tool.name) };
+  const before: Payloads['turn:before'] & Offered = { roomId, source, query, messages, offered: tools.map((tool) => tool.name), ...(input.slim ? { slim: true } : {}) };
   if (seams) messages = (await seams.run('turn:before', before)).messages;
   const inputs = messages;
 

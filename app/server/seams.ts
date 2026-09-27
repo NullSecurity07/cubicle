@@ -8,7 +8,9 @@ export type Source = 'chat' | 'run';
 // `step:error` is the one that can answer back: a handler that shortened the prompt sets `retry`, and the step is
 // asked once more with what it left. Nobody setting it means the failure stands.
 export type Payloads = {
-  'turn:before': { roomId: string; source: Source; query: string; messages: ModelMessage[] };
+  // `slim`: the prompt was cut down to fit the one model able to answer (see slim.ts); a block that would add
+  // pages to it, the playbook's, is left out.
+  'turn:before': { roomId: string; source: Source; query: string; messages: ModelMessage[]; slim?: boolean };
   'step:before': { roomId: string; step: number; messages: ModelMessage[] };
   'step:error': { roomId: string; step: number; messages: ModelMessage[]; error: string; retry?: boolean };
   // `approved`: the founder already said yes to calls that reach exactly this far, so this one is not put to them

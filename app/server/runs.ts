@@ -14,6 +14,7 @@ import type { Seams } from './seams.ts';
 import type { Store } from './store.ts';
 import type { Tool } from './tools/registry.ts';
 import type { UsageBook } from './usage.ts';
+import { needsSlim } from './slim.ts';
 
 export type Notify = (title: string, body: string) => void;
 
@@ -43,7 +44,7 @@ const STARTED: Record<StartedBy, string> = {
 
 export function createRuns(deps: {
   boards: Boards; store: Store; tools: Tool[]; clients: ModelClient[]; usage: UsageBook; approvals: ReturnType<typeof createApprovals>; attention?: AttentionBook;
-  promptFor: (stage: Stage, roomId: string, toolNames: string[], fresh?: boolean) => Promise<ModelMessage[]>; busy: Set<string>; notify: Notify; seams?: Seams;
+  promptFor: (stage: Stage, roomId: string, toolNames: string[], fresh?: boolean, slim?: boolean) => Promise<ModelMessage[]>; busy: Set<string>; notify: Notify; seams?: Seams;
   toolsFor?: (stage: Stage, roomId: string) => Tool[];
 }) {
   const { boards, store, tools, clients, usage, approvals, attention, promptFor, busy, notify, seams } = deps;
@@ -87,7 +88,10 @@ export function createRuns(deps: {
         const before = plan ? await plan.opening(boardId, task) : '';
         // The names in the prompt are the narrowed list too: a person is never told about a tool they are not offered.
         const mine = toolsFor(stage, room.id);
-        const messages = await promptFor(stage, room.id, mine.map((tool) => tool.name), true);
+        let messages = await promptFor(stage, room.id, mine.map((tool) => tool.name), true);
+        // Nobody able holds the whole prompt (only Groq is set up, say): the task is worked from the short one.
+        const slim = needsSlim(clients, usage, messages, mine);
+        if (slim) messages = await promptFor(stage, room.id, mine.map((tool) => tool.name), true, true);
         // Today's date is already in their instructions, so only the far end of the stretch is said here.
         const again = task.repeat && last?.startedAt
           ? `This task repeats; it last ran on ${fullDay(last.startedAt)}${last.finishedAt ? ` and finished at ${clockTime(last.finishedAt)}` : ''}. Anything asked of you "since last time" starts there.\n\n`
@@ -95,7 +99,7 @@ export function createRuns(deps: {
         messages.push({ role: 'user', content: `${STARTED[by]} Do it now with your tools, then report the result in a few lines.\n\n${again}${before}Task: ${asked}` });
         const { order } = route(clients, usage, { pinned: room.model, promptChars: promptSize(messages), tools: true });
         const reply = await runTurn({
-          messages, tools: mine, clients: order, usage, signal: stop.signal, seams, source: 'run', query: asked,
+          messages, tools: mine, clients: order, usage, signal: stop.signal, seams, source: 'run', query: asked, slim,
           context: { stage, roomId: room.id, store, granted: new Map() },
           events: {
             token: (token) => { result += token; },

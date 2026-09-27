@@ -68,6 +68,8 @@ const followable = (skill: Skill, all: Set<string>, offered?: string[]) => {
 export function createPlaybook(deps: { skills: Skills; recall: Recall; tools?: () => string[] }) {
   return {
     before: (async (payload, next) => {
+      // A short prompt holds only what the model cannot do without; the playbook is not that.
+      if (payload.slim) return next(payload);
       const offered = (payload as Offered).offered;
       const all = new Set(deps.tools?.() ?? []);
       const [system, ...rest] = payload.messages;
