@@ -74,7 +74,7 @@ const shippedTeam = (id: string) => {
   return shipped.get(id)!;
 };
 
-async function rulesOf(stage: Stage, id: string): Promise<DocRules | undefined> {
+export async function rulesOf(stage: Stage, id: string): Promise<DocRules | undefined> {
   const doc = stage.docs.find((one) => one.id === id);
   if (!doc || doc.rules) return doc?.rules;
   const teams = new Set(stage.rooms.filter((room) => room.framework && wiredDocIds(stage, room.id).includes(id)).map((room) => room.framework!.id));
@@ -132,7 +132,16 @@ function asksAbout(question: string, heading: string): boolean {
 }
 
 const HEDGE = /\b(not sure|unsure|don'?t know|do not know|haven'?t|have not|no idea|no clue|unclear|unknown|hard to say|need to ask|ask (?:the )?founder|tbd|n\/a|pending|not yet|can'?t say)\b/i;
-const hedges = (answer: string) => /\?\s*$/.test(answer.trim()) || HEDGE.test(answer.replace(/[’‘]/g, "'"));
+// An answer that is itself a question for the founder: a live colleague asked for his section wrote back "please answer
+// the question below so I can complete Section 4" and a list of choices, and it went in as the section.
+// "Could you tell me" and "what is your" count only as a sentence of their own that ends in a question mark: an answer
+// that quotes "what is your edge?" inside itself is still an answer.
+// A pick-one menu that ends "Please provide the applicable reason(s) so I can complete Section 4." is one too.
+const ASKS = /\b(?:ask (?:the )?founder|please answer|answer the question|ask_founder|please provide|please tell me|pick one|which of these|which of the following|let me know (?:which|what|how|whether)|so I can complete)\b/i;
+const QUESTION = /^(?:could you tell me|what is your)\b.*\?$/i;
+const asksBack = (answer: string) => ASKS.test(answer.replace(/[*_`]/g, '').replace(/[\u00a0\u202f]/g, ' '))
+  || answer.split(/\n|(?<=[.!?])\s+/).some((sentence) => QUESTION.test(sentence.replace(/^[\s>*_#-]+/, '').trim()));
+const hedges = (answer: string) => /\?\s*$/.test(answer.trim()) || HEDGE.test(answer.replace(/[’‘]/g, "'")) || asksBack(answer);
 
 // The words an answer says beyond its section's name: three letters or more, and not a bare yes or no. None left
 // ("No." to "have you written section 4 yet?", or "Founder-market fit.") says nothing that could be the section.

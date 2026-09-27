@@ -48,6 +48,7 @@ export default {
       backups: () => listBackups(dirOf()),
       outside,
       coder: () => coderHealth.now(),
+      spent: () => deps.clients.filter((client) => deps.usage.spent(client)).map((client) => client.name),
     });
 
     return {

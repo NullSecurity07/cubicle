@@ -1,6 +1,6 @@
 import type { DocRules, Room, Stage } from '../../shared/model.ts';
 import { shortDay } from '../clock.ts';
-import { VERDICT_WRITTEN, verdictRefused } from '../truth.ts';
+import { VERDICT_WRITTEN, verdictRefused, verdictStanding } from '../truth.ts';
 
 // What a refused verdict write tells the judge to say, and not say: after one, a live judge still led her chat reply
 // with "**PIVOT REQUIRED**" as the verdict it would be once the section was written.
@@ -20,6 +20,13 @@ import { headingKey, headings } from './sections.ts';
 
 const STALE = /^Stale: .* changed after this verdict on .*\.$/;
 const NOT_ASSESSED = /^not assessed\b/i;
+// The closing line of a "Not assessed" verdict, which is no verdict either.
+const NO_VERDICT = /^No verdict and no score until\b/;
+
+// Whether a verdict section holds a verdict: something written beyond a "Not assessed" line and its closing line.
+const stands = (body: string | null) => filled(body).some((line) => !NO_VERDICT.test(line));
+// Whether it says "Not assessed" and nothing more.
+const unassessed = (body: string | null) => !stands(body) && (body ?? '').split('\n').some((line) => NOT_ASSESSED.test(line.trim()));
 
 // Where each copy of a heading's section starts and ends, as line numbers: the heading line, and the line after the
 // section's last. A doc is meant to hold one of each, but one written before the doc tools refused a second copy may
@@ -71,6 +78,34 @@ const titleOf = (text: string, heading: string) => headings(text).find((one) => 
 // owns the sections of the doc their own team was placed with, never the other copy's.
 const ownerOf = (stage: Stage, rules: DocRules, by: string, docId: string): Room | undefined =>
   stage.rooms.find((room) => room.framework?.id === rules.framework && room.framework.key === by && wiredDocIds(stage, room.id).includes(docId));
+
+// A score line with the section markers the judge's brief ("every fact names its section, as (3)") leaves on it taken
+// off: "Assumption: 1/2 (1)" reads as "Assumption: 1/2", "Pain: 1/2 (3 - only 3 beta users)" as "Pain: 1/2 (only 3
+// beta users)". A line of reasons keeps its "(3)", which says where a fact came from.
+const unmarkScore = (line: string) => (/\d\s*\/\s*\d/.test(line) || /^score\b/i.test(bare(line))
+  ? line.replace(/\s*\([1-9]\)/g, '').replace(/\([1-9]\s*[-–—:]\s*(?=\p{L})/gu, '(')
+  : line);
+
+// Each section the verdict rests on that is empty, with the person placed to write it: the truth, said so the judge
+// repeats it ("Rohan has not written "4. Founder-market fit" yet").
+function waiting(stage: Stage, rules: DocRules, docId: string, text: string) {
+  const empty = rules.sections.filter(({ heading }) => sectionBody(text, heading) !== null && !filled(sectionBody(text, heading)).length);
+  const names = empty.map(({ heading }) => titleOf(text, heading));
+  const owners = empty.map(({ by }) => ownerOf(stage, rules, by, docId)?.name);
+  const missing = names.map((name, at) => (owners[at] ? `${owners[at]} has not written "${name}" yet` : `"${name}" is empty and nobody on the stage is placed to write it`));
+  return { names, owners, missing };
+}
+
+// The line the judge's prompt carries on every turn while her verdict says "Not assessed", or null: the refusal's
+// words bind only the turn of the refused write, and the next turn she read her own earlier reply and said it again.
+// Not only once it says so: a live judge gave "PIVOT REQUIRED ... 6/10" in chat with a section empty and the verdict
+// never written, so the line holds while any section it rests on is empty or no verdict is written yet.
+export function standingVerdict(stage: Stage, roomId: string, docId: string, rules: DocRules, text: string): string | null {
+  if (ownerOf(stage, rules, rules.verdict.by, docId)?.id !== roomId) return null;
+  const { missing } = waiting(stage, rules, docId, text);
+  if (!missing.length && stands(sectionBody(text, rules.verdict.heading))) return null;
+  return verdictStanding(missing.length ? missing.join(', and ') : `every section is written, and "${titleOf(text, rules.verdict.heading)}" waits for you to write it`, rules.outcomes ?? []);
+}
 
 // A line with its markdown taken off: list marks, quote marks, emphasis. "- **Score:** 4/10" reads as "Score: 4/10".
 const bare = (line: string) => line.replace(/^\s*(?:[-*+>]|\d+[.)])\s+/, '').replace(/[*_`]/g, '').trim();
@@ -159,16 +194,29 @@ function countOf(said: string): number {
 // How many customer conversations a section records, or null when it records none at all. The template's line comes
 // first, read past bold and bullets; a section written as prose is read for a number next to the conversations
 // ("talked to 12 founders", "14 customer interviews"). No count anywhere is no evidence, and the cap holds.
+const TO_COME = /\b(planned|plan|booked|scheduled|will|next|target|goal|aim)\b/i;
 export function conversations(text: string, label: string): number | null {
   // A struck-out count is a count taken back: "~~12~~ 0" is none.
   const section = unmarked(text).replace(/~~[^~]*~~/g, ' ');
-  const line = section.split('\n').map(bare).find((one) => one.toLowerCase().startsWith(label.toLowerCase()));
-  if (line) {
-    // What follows the label, past the template's own "(of ten to twenty)" and whatever separates the two.
-    const value = line.slice(label.length).replace(/^\s*\([^)]*\)/, '').replace(/^[\s:=\-–—]+/, '');
+  const lines = section.split('\n').map(bare);
+  // What follows the label, past the template's own "(of ten to twenty)" and whatever separates the two.
+  const after = (line: string) => line.slice(line.toLowerCase().indexOf(label.toLowerCase()) + label.length).replace(/^\s*\([^)]*\)/, '').replace(/^[\s:=\-–—]+/, '');
+  const at = lines.findIndex((one) => one.toLowerCase().startsWith(label.toLowerCase()));
+  // The template's label line, then the line under it when the label's own is empty (the count written below it),
+  // then the label quoted inside a line ("3 paying beta users (Real customer conversations done: 3)").
+  // A line under the label or quoting it may be something else: the next template question with its own answer
+  // ("Payer = user? If not, who pays: yes, 12 pay"), or a target ("Note: target is ... done: 10"). Neither is a count.
+  const other = (line: string) => /^[^:]{0,80}\?[^:]*:/.test(line.trim()) || /:$/.test(line.trim()) || TO_COME.test(line);
+  const next = at >= 0 && !after(lines[at]).trim() ? lines.slice(at + 1).find((one) => one.trim()) : undefined;
+  const values = [
+    ...(at >= 0 ? [after(lines[at])] : []),
+    ...(next !== undefined && !other(next) ? [next] : []),
+    ...lines.filter((one, index) => index !== at && one.toLowerCase().includes(label.toLowerCase()) && !other(one.slice(0, one.toLowerCase().indexOf(label.toLowerCase())))).map(after),
+  ].filter((value) => value.trim());
+  for (const value of values) {
     if (/^\W*(none|no\b|nil)/i.test(value)) return 0;
-    // "12 (planned)", "12 booked for next week": talks still to come are none held yet.
-    if (/\b(planned|plan|booked|scheduled|will|next)\b/i.test(value)) return null;
+    // "12 (planned)", "12 booked for next week", "target 10": talks still to come are none held yet.
+    if (TO_COME.test(value)) return null;
     const count = new RegExp(`\\b${NUMBER}`, 'i').exec(value);
     if (count) return countOf(count[1]);
   }
@@ -275,13 +323,9 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
   // The verdict's own checks, on the verdict as it would stand: "not assessed" while a section it rests on is empty,
   // and the caps. Returns what to save instead, or throws.
   const judged = (text: string, verdict: string, byJudge: boolean): Guarded | null => {
-    const empty = rules.sections.filter(({ heading }) => sectionBody(text, heading) !== null && !filled(sectionBody(text, heading)).length);
-    if (empty.length) {
-      const names = empty.map(({ heading }) => titleOf(text, heading));
-      const owners = empty.map(({ by }) => ownerOf(stage, rules, by, docId)?.name);
+    const { names, owners, missing } = waiting(stage, rules, docId, text);
+    if (names.length) {
       const who = [...new Set(owners.filter((name): name is string => !!name))];
-      // Each empty section with the person who has not written it: the truth, said so the judge repeats it.
-      const missing = names.map((name, at) => (owners[at] ? `${owners[at]} has not written "${name}" yet` : `"${name}" is empty and nobody on the stage is placed to write it`));
       const body = `${names.map((name, at) => `Not assessed: ${name}${owners[at] ? ` (${owners[at]} has not written it yet)` : ''}`).join('\n')}\n\nNo verdict and no score until ${names.length > 1 ? 'these sections are' : 'this section is'} written.`;
       return {
         text: withBody(text, verdictAt, body),
@@ -300,11 +344,17 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
     for (const cap of (rules.caps ?? []).filter((one) => !one.on)) {
       if (conversations(sectionBody(text, cap.heading) ?? '', cap.line)) continue;
       const order = rules.outcomes ?? [];
-      const over = (word && order.indexOf(word) > order.indexOf(cap.verdict)) || (score !== undefined && score > cap.score);
-      if (over) {
-        const why = `${cap.why}, so the verdict is at most ${cap.verdict} and the score at most ${cap.score} of 10`;
+      // The cap bounds the score. A PIVOT or a KILL always stands under it: told "at most WEAK" over "PIVOT REQUIRED,
+      // 6 of 10", a live judge softened a flaw that could not be survived to WEAK. Only a better word is out.
+      const stand = order.filter((one) => /\b(?:PIVOT|KILL)\b/i.test(one));
+      const out = order.filter((one) => !stand.includes(one) && order.indexOf(one) > order.indexOf(cap.verdict));
+      const wordOver = !!word && out.includes(word);
+      const scoreOver = score !== undefined && score > cap.score;
+      if (wordOver || scoreOver) {
+        const allowed = order.filter((one) => !out.includes(one));
+        const why = `${cap.why}, so the score is at most ${cap.score}/10${out.length ? ` and the verdict is not ${out.join(' or ')}` : ''}${allowed.length ? `; ${allowed.join(' or ')} ${allowed.length > 1 ? 'stand' : 'stands'}` : ''}`;
         throw new Error(`not written: ${why}. `
-          + `This one says ${[word, score !== undefined ? `${score} of 10` : ''].filter(Boolean).join(', ')}. ${countRead(sectionBody(text, cap.heading) ?? '', cap.line)}`
+          + `This one says ${[wordOver ? word : '', scoreOver ? `${score} of 10` : ''].filter(Boolean).join(', ')}. ${countRead(sectionBody(text, cap.heading) ?? '', cap.line)}`
           + `${payers(sectionBody(text, cap.heading) ?? '', cap.line)} Write it again within the cap, and say which section each fact comes from. ${refusedVerdict(why, rules.outcomes ?? [])}`);
       }
     }
@@ -317,9 +367,13 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
     // standing beside it would say STRONG 10/10 under a new WEAK.
     const was = new Set(bodies(before, verdictAt));
     const written = bodies(after, verdictAt).filter((one) => !was.has(one));
-    const fresh = (written.length ? written.join('\n\n') : sectionBody(after, verdictAt) ?? '').split('\n').filter((line) => !STALE.test(line.trim())).join('\n').trim();
+    let fresh = (written.length ? written.join('\n\n') : sectionBody(after, verdictAt) ?? '').split('\n').filter((line) => !STALE.test(line.trim())).join('\n').trim();
+    // A verdict written over a "Not assessed" one, its lines copied along, keeps none of them: any section still
+    // empty puts its own back below.
+    if (stands(fresh)) fresh = fresh.split('\n').filter((line) => !NOT_ASSESSED.test(line.trim()) && !NO_VERDICT.test(line.trim())).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+    fresh = fresh.split('\n').map(unmarkScore).join('\n');
     after = withBody(after, verdictAt, fresh);
-    if (!filled(fresh).length) return { text: after };
+    if (!stands(fresh)) return { text: after };
     // A verdict that stands says so, for the truth net: a refusal earlier in the turn no longer holds.
     return judged(after, fresh, true) ?? { text: after, note: VERDICT_WRITTEN };
   }
@@ -327,17 +381,27 @@ export function guardWrite(input: { rules: DocRules; stage: Stage; docId: string
   // A verdict written again word for word, or kept by a write of the whole doc, is checked as if new: a live judge
   // asked to rewrite hers over a section the founder had emptied wrote the same text, and "Fit: 8" stood over nothing.
   const touched = input.touches === WHOLE || (!!input.touches && headingKey(input.touches) === headingKey(verdictAt));
-  if (touched && verdictBefore && filled(verdictBefore).length) {
+  if (touched && stands(verdictBefore)) {
     const byJudge = !judge || writerId === judge.id;
     const standing = judged(after, sectionBody(after, verdictAt) ?? '', byJudge);
     if (standing) return standing;
     if (byJudge && !rules.sections.some(({ heading }) => changed(heading))) return { text: after, note: VERDICT_WRITTEN };
   }
 
-  // A section the verdict rests on changed under a verdict that stands: the verdict says so, once per section.
-  if (!verdictBefore || !filled(verdictBefore).length) return { text: after };
   const moved = rules.sections.filter(({ heading }) => changed(heading)).map(({ heading }) => titleOf(after, heading));
-  if (!moved.length) return { text: after };
+  // A section written under a "Not assessed" verdict: the verdict says again what it still waits on, never that it is
+  // stale. A live one kept "Rohan has not written it yet" beside a stale mark after Rohan's section was in.
+  if (moved.length && unassessed(verdictBefore)) {
+    const still = judged(after, '', false);
+    if (still) return still;
+    const who = judge?.name;
+    return {
+      text: withBody(after, verdictAt, `Not assessed yet: every section is written${who ? `; ${who} writes the verdict next` : ''}.`),
+      note: `Every section is written now, so the verdict waits on ${who ?? 'its judge'}.`,
+    };
+  }
+  // A section the verdict rests on changed under a verdict that stands: the verdict says so, once per section.
+  if (!stands(verdictBefore) || !moved.length) return { text: after };
   const kept = (sectionBody(after, verdictAt) ?? '').split('\n').filter((line) => !moved.some((name) => line.trim().startsWith(`Stale: ${name} changed`)));
   const marks = moved.map((name) => `Stale: ${name} changed after this verdict on ${shortDay(now)}.`);
   return {

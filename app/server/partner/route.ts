@@ -1,4 +1,4 @@
-import { providerOf, type ModelClient } from '../providers.ts';
+import { providerOf, walled, type ModelClient } from '../providers.ts';
 import { FLOOR, route } from '../router.ts';
 import type { UsageBook } from '../usage.ts';
 
@@ -6,14 +6,21 @@ import type { UsageBook } from '../usage.ts';
 // models the app has, in this order, and never to the small side model. Gemini held its ground in the live runs;
 // gpt-oss at low reasoning effort (Groq, Cerebras) drafted a raise plan for a company with no users, so it stands last
 // and answers only while every stronger one is resting.
-export const STRONG = ['gemini', 'nvidia', 'sambanova', 'mistral'];
+// gpt-oss on Cloudflare held a 25-40k room prompt with a tool call in the round-5 probes and gave the best answer of
+// them ("don't raise"), so it is strong and not held to a stand-in's limits. It stands last of the strong ones: its
+// day is the neuron pool the pictures draw from, so a Gemini miss goes to a key without that cost first.
+export const STRONG = ['gemini', 'nvidia', 'mistral', 'sambanova', 'cloudflare-gpt-oss'];
+// Behind them, the Qwens that also held a room prompt: OpenRouter's (only there when its key is set), then
+// Cloudflare's, which invented one claim. Everything else follows in the router's own order.
+export const SECOND = ['openrouter-qwen', 'cloudflare-qwen'];
 export const LOW_EFFORT = ['groq', 'cerebras'];
 const title = (name: string) => name[0].toUpperCase() + name.slice(1);
 
 const tier = (client: ModelClient) => {
   const name = providerOf(client.name);
-  const strong = STRONG.indexOf(name);
-  return strong >= 0 ? strong : LOW_EFFORT.includes(name) ? STRONG.length + 1 : STRONG.length;
+  const at = [...STRONG, ...SECOND].indexOf(name);
+  const rest = STRONG.length + SECOND.length;
+  return at >= 0 ? at : LOW_EFFORT.includes(name) ? rest + 1 : rest;
 };
 
 export function partnerRoute(clients: ModelClient[], usage: UsageBook, want: { promptChars: number; tools: boolean; vision?: boolean }) {
@@ -25,7 +32,10 @@ export function partnerRoute(clients: ModelClient[], usage: UsageBook, want: { p
   // A small model on this machine never answers the partner while a hosted one is set up: the calls that matter are
   // exactly the ones a local 7B gets wrong, and one that took over made six tool calls under one id and broke the room.
   const hosted = order.some((client) => !client.local && !client.side);
-  const sorted = [...order].filter((client) => !hosted || (!client.local && !client.side)).sort(compare);
+  // Groq's free tier is walled at 7-8k tokens a minute: a room prompt fits once a minute at best, and its gpt-oss told
+  // a founder with no users to raise. It never answers the partner while any other hosted model is set up.
+  const others = order.some((client) => !client.local && !client.side && !walled(client));
+  const sorted = [...order].filter((client) => (!hosted || (!client.local && !client.side)) && (!others || !walled(client))).sort(compare);
   const first = sorted[0];
   const notice = first && !STRONG.includes(providerOf(first.name)) && clients.some((one) => STRONG.includes(providerOf(one.name)))
     ? `Your partner's stronger models are resting, so ${title(providerOf(first.name))} answers for now.` : undefined;

@@ -7,6 +7,8 @@ import { typeOf } from './http.ts';
 import { recent, type createMemory } from './memory.ts';
 import { buildMessages, colleagueIds, readableDocIds, wiredCards, type Attached } from './prompt.ts';
 import type { Store } from './store.ts';
+import { rulesOf } from './tools/docs.ts';
+import { standingVerdict } from './tools/verdict.ts';
 
 const IMAGE_FILE = /\.(png|jpe?g|webp|gif)$/i;
 // A picture rides along with the question only while it is small enough for a model to be sent it.
@@ -65,6 +67,14 @@ export function createPromptFor(deps: Deps) {
     // What the founder has decided lately, each line with the day it was decided: everyone works from it, wired or not.
     const decided = decidedLines(await decisions.list());
     const messages = buildMessages(stage, roomId, docs, talk, toolNames, colleagues, await memory.read(roomId), fresh ? undefined : await attachedTo(store, talk), pages, decided, await founder.read());
+    // A judge whose team doc says "Not assessed" is told so on every turn, at the end where it lands hardest.
+    const standing: string[] = [];
+    for (const id of readableDocIds(stage, roomId)) {
+      const rules = await rulesOf(stage, id);
+      const line = rules && standingVerdict(stage, roomId, id, rules, docs[id] ?? '');
+      if (line) standing.push(line);
+    }
+    if (standing.length && messages[0]?.role === 'system') messages[0] = { ...messages[0], content: `${messages[0].content}\n\n${standing.join('\n')}` };
     // Image cards wired to this person ride along with the latest question, for a model that can see. An image studio
     // sends the last picture it made the same way, so a person can look at their own work.
     const pictures: { name: string; url: string }[] = [];

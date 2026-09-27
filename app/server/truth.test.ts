@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PARTNER_STANCE, STANCE } from '../shared/model.ts';
-import { checkReply, figureCheck, proseToolCall, stripFlagged, turnSources, unreceiptedClaims, unsourcedFigures, verdictRefused, VERDICT_WRITTEN } from './truth.ts';
+import { checkReply, figureCheck, proseToolCall, stripFlagged, turnSources, unreceiptedClaims, unsourcedFigures, verdictRefused, verdictStanding, VERDICT_WRITTEN } from './truth.ts';
 
 const wrote = { name: 'write_doc', ok: true };
 const failedWrite = { name: 'write_doc', ok: false };
@@ -246,6 +246,19 @@ describe('the truth net on ordinary founder replies', () => {
 
 // The review's probes: with a few figures in the sources, one step of arithmetic on any two of them matched almost
 // any invented number. Arithmetic now counts only when a figure it starts from sits near it in the reply.
+describe('all or none of someone\'s time', () => {
+  it('is advice, not a figure', () => {
+    // The partner's "100% of your time" came back as "Unsourced figures: 100%".
+    for (const said of ['Spend 100% of your time on sales this week.', 'Put 0% of the effort into invoicing.', 'Give it 100% of your focus.']) {
+      expect(figureCheck(said, []).unsourced, said).toEqual([]);
+    }
+    expect(figureCheck('100% of customers churned.', []).unsourced).toEqual(['100%']);
+    // "Of the time" is how often, a claim.
+    expect(figureCheck('It fails 100% of the time.', []).unsourced).toEqual(['100%']);
+    expect(figureCheck('Spend 40% of your time on sales.', []).unsourced).toEqual(['40%']);
+  });
+});
+
 describe('arithmetic the reply does not show', () => {
   const founder = 'We sent 30 emails and got 1 reply. The budget is $2,000 and the team of 4 is part time.';
   const metrics = '## Doc: Metrics\nMRR $4,210. 87 customers. Churn 3.1%. CAC $180. LTV $1,350. Trials 212, 46 converted. NPS 42. '
@@ -397,6 +410,18 @@ describe('a verdict stated without a written one', () => {
     const stood = { name: 'replace_section', ok: true, result: `Replaced the section "5. Verdict". ${VERDICT_WRITTEN}` };
     expect(checkReply({ reply: 'WEAK. Score: 3/10.', receipts: [refused, stood], sources: [] })).toEqual([]);
     expect(checkReply({ reply: 'WEAK. Score: 3/10.', receipts: [], sources: [] })).toEqual([]);
+  });
+
+  it('gets a line on any turn whose prompt says the verdict is not written, not only after a refused write', () => {
+    // A live judge refused on one turn gave "**WEAK** (5/10)" on the next, reading her own earlier reply.
+    const standing = verdictStanding('Rohan has not written "4. Founder-market fit" yet', OUTCOMES);
+    expect(standing).toBe('Your verdict is not written: Rohan has not written "4. Founder-market fit" yet. Name no verdict word (WEAK, PIVOT REQUIRED, STRONG) or score in chat until it is.');
+    const system = turnSources([{ role: 'system', content: `You are Priya, the judge. Judge it.\n\n${standing}` }]);
+    expect(checkReply({ reply: '**WEAK** (5/10) because the pain is unproven.', receipts: [], sources: system })).toContain(LINE);
+    expect(checkReply({ reply: 'No verdict yet: Rohan has not written "4. Founder-market fit".', receipts: [], sources: system })).not.toContain(LINE);
+    // A write that stands this turn answers it.
+    const stood = { name: 'replace_section', ok: true, result: `Replaced the section "5. Verdict". ${VERDICT_WRITTEN}` };
+    expect(checkReply({ reply: 'WEAK. Score: 4/10.', receipts: [stood], sources: system })).toEqual([]);
   });
 
   it('leaves a figure a doc marked "(unsourced)" out of the sources', () => {

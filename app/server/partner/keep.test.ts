@@ -13,7 +13,7 @@ describe('company facts in what the founder says', () => {
     expect(companyFacts(DAY_ONE)).toEqual({
       numbers: [
         { label: 'Price', value: '$29/month' },
-        { label: 'Paying beta users', value: '3' },
+        { label: 'Paying beta users', value: '3', sure: true },
         { label: 'Cash', value: '€4,200' },
         { label: 'Burn', value: '€1,100/month' },
       ],
@@ -24,7 +24,7 @@ describe('company facts in what the founder says', () => {
 
   it('reads other ways of saying them, and nothing from a question with no facts', () => {
     expect(companyFacts('We charge €49 a month. Cash: $80k. Our total spend is $6,500 per month. 120 customers so far.').numbers).toEqual([
-      { label: 'Price', value: '€49 a month' }, { label: 'Cash', value: '$80k' }, { label: 'Burn', value: '$6,500 per month' }, { label: 'Customers', value: '120' },
+      { label: 'Price', value: '€49 a month' }, { label: 'Cash', value: '$80k' }, { label: 'Burn', value: '$6,500 per month' }, { label: 'Customers', value: '120', sure: true },
     ]);
     expect(companyFacts('should we raise the price? Give me a number.')).toEqual({ numbers: [] });
     expect(companyFacts('What do I do right now?')).toEqual({ numbers: [] });
@@ -112,13 +112,53 @@ describe('one users row from one message', () => {
   const J7 = "I'm building Ledgerly: $29/month bookkeeping and VAT return drafting for solo consultants in the EU. We have 3 paying beta users, "
     + 'and two of the three users asked for invoicing. I have €4,200 in the bank and burn €1,100/month. Tear it apart.';
   it('reads the count once, the first way it was said, and writes one row into the seeded brief', () => {
-    expect(companyFacts(J7).numbers.filter((one) => /users/i.test(one.label))).toEqual([{ label: 'Paying beta users', value: '3' }]);
+    expect(companyFacts(J7).numbers.filter((one) => /users/i.test(one.label))).toEqual([{ label: 'Paying beta users', value: '3', sure: true }]);
     const seeded = withSections(seedDocs['company-brief']);
     const { text, kept } = keepFacts(seeded, companyFacts(J7), '2026-09-27');
     expect(text.match(/^- .*users.*$/gim)).toEqual(['- Paying beta users: 3 (founder, 2026-09-27)']);
     expect(kept[0]).toBe('Numbers (Price $29/month, Paying beta users 3, Cash €4,200, Burn €1,100/month)');
     // Two counts of one kind in the same message never make two rows, even when the words differ.
     expect(keepFacts(seeded, { numbers: [{ label: 'Paying users', value: '3' }, { label: 'Users', value: '3' }] }, '2026-09-27').text.match(/^- .*users.*$/gim)).toHaveLength(1);
+  });
+});
+
+// Journey 8: a target in a choice ("or wait until 10 paying users") replaced the real count of 3; the burn was written
+// twice beside the partner's own row; the idea was written again at the foot of the document.
+describe('only where the company stands now', () => {
+  const BRIEF = '# Company brief\n\n## Idea\n\n- I\'m building Ledgerly: $29/month bookkeeping (founder, 2026-09-27)\n\n## Customer\n\n## Numbers\n\n- Paying beta users: 3 (founder, 2026-09-27)\n- Monthly burn: €1,100\n\n## Open questions\n';
+  it('takes no count from a target, a condition, a choice or an answer to a question', () => {
+    for (const said of ['Put a decision in my list: should I build invoicing this week? Options: build it now, or wait until 10 paying users. Then tell me what to do today.',
+      'wait until 10 paying users', 'Raise once we reach 50 paying users.', 'Our goal is 100 customers.', 'Should we launch? Maybe at 20 users.', 'Build it now or at 10 paying users.'])
+      expect(companyFacts(said).numbers, said).toEqual([]);
+    const { text, kept } = keepFacts(BRIEF, companyFacts('Put a decision in my list: should I build invoicing this week? Options: build it now, or wait until 10 paying users. Then tell me what to do today.'), '2026-09-28');
+    expect([text, kept]).toEqual([BRIEF, []]);
+  });
+
+  it('updates the count from a plain statement', () => {
+    const { text } = keepFacts(BRIEF, companyFacts('we now have 4 paying users'), '2026-09-28');
+    expect(text).toContain('- Paying users: 4 (founder, 2026-09-28)');
+    expect(text).not.toContain('Paying beta users: 3');
+  });
+
+  it('never writes over a count row with a count said in passing', () => {
+    expect(keepFacts(BRIEF, companyFacts('Two of the 5 paying users asked for invoicing.'), '2026-09-28').text).toBe(BRIEF);
+  });
+
+  it('never takes a target or a loan row for the figure now', () => {
+    const doc = '# Company\n\n## Numbers\n\n- Revenue target: €10k\n- Bank loan: €5,000\n';
+    const { text } = keepFacts(doc, companyFacts('MRR is €300 a month now. We have €2,000 in the bank.'), '2026-09-28');
+    expect(text).toContain('- Revenue target: €10k\n- Bank loan: €5,000\n- MRR: €300 a month (founder, 2026-09-28)\n- Cash: €2,000 (founder, 2026-09-28)');
+  });
+
+  it('keeps one Burn row beside the partner\'s own, and never writes the idea twice', () => {
+    const { text } = keepFacts(BRIEF, companyFacts("I'm building Ledgerly: $29/month bookkeeping. I burn €1,100/month."), '2026-09-28');
+    expect(text.match(/burn/gi)).toHaveLength(1);
+    expect(text.match(/Ledgerly/g)).toHaveLength(1);
+    const moved = BRIEF.replace('## Idea\n\n- I\'m building Ledgerly: $29/month bookkeeping (founder, 2026-09-27)\n\n', '## Idea\n\n') + '\nI\'m building Ledgerly: $29/month bookkeeping\n';
+    expect(keepFacts(moved, companyFacts("I'm building Ledgerly: $29/month bookkeeping."), '2026-09-28').text.match(/Ledgerly/g)).toHaveLength(1);
+    const burnMoved = keepFacts(BRIEF, companyFacts('I burn €1,300/month now.'), '2026-09-28').text;
+    expect(burnMoved.match(/burn/gi)).toHaveLength(1);
+    expect(burnMoved).toContain('- Burn: €1,300/month (founder, 2026-09-28)');
   });
 });
 

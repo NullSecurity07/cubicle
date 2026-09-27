@@ -246,6 +246,8 @@ function otherFrom(a: Known, b: Known): number[] {
 }
 
 // `drifted`: money the reply gives in another currency than the sources hold it in ("€87" from "$29 × 3").
+// Whose time it is has to be said: "of the time" is how often, a claim ("it fails 100% of the time").
+const ALL_OR_NONE = /^\s*of\s+(?:(?:your|my|our|their|his|her)\s+(?:time|effort|focus|attention|energy)|the\s+(?:effort|focus|attention|energy))\b/i;
 export function figureCheck(reply: string, sources: string[]): { unsourced: string[]; proposals: string[]; drifted?: { label: string; source: string }[] } {
   const known: Known[] = [];
   for (const source of sources) {
@@ -305,8 +307,12 @@ export function figureCheck(reply: string, sources: string[]): { unsourced: stri
     let value: number;
     let kind: Kind = 'other';
     if (match[1] !== undefined) { value = valueOf(match[1], match[2], match[3]); kind = 'money'; }
-    else if (match[4] !== undefined) { value = valueOf(match[4], match[5]); kind = 'share'; }
-    else if (match[7] !== undefined) {
+    else if (match[4] !== undefined) {
+      value = valueOf(match[4], match[5]);
+      kind = 'share';
+      // "100% of your time", "0% of the effort": all or none of someone's time is advice, not a figure about the world.
+      if ((value === 100 || value === 0) && ALL_OR_NONE.test(reply.slice(match.index + match[0].length))) continue;
+    } else if (match[7] !== undefined) {
       const times = !!match[9] && /x|×/i.test(match[9]);
       value = valueOf(match[7], match[8], match[9] && !times ? match[9] : undefined);
       if (value <= 10) continue;
@@ -412,9 +418,17 @@ export const verdictRefused = (reason: string, outcomes: string[]) =>
   `Tell the founder the verdict was not written because ${reason}. Give no verdict word (${outcomes.join(', ')}) and no score in chat until it is written.`;
 export const VERDICT_WRITTEN = 'The verdict is written.';
 const REFUSED = /the verdict was not written because (.+?)\. Give no verdict word \(([^)]*)\) and no score in chat/;
-// After a refused write, any verdict word in the reply reads as the verdict, with or without a score ("it leans WEAK").
-export function verdictUnwritten(reply: string, receipts: Receipt[]): string | null {
+// The judge's standing line while her team doc's verdict says "Not assessed", put in her prompt on every turn: a live
+// judge refused on one turn gave "**WEAK** (5/10)" on the next, reading her own earlier reply back. The net reads it
+// from the turn's sources, so a verdict word on any such turn is flagged, not only on the turn of the refused write.
+export const verdictStanding = (reason: string, outcomes: string[]) =>
+  `Your verdict is not written: ${reason}. Name no verdict word (${outcomes.join(', ')}) or score in chat until it is.`;
+const STANDING = /Your verdict is not written: (.+?)\. Name no verdict word \(([^)]*)\) or score in chat until it is\./;
+// After a refused write, or on a turn whose prompt says the verdict is not written, any verdict word in the reply
+// reads as the verdict, with or without a score ("it leans WEAK"). A write that stands this turn answers both.
+export function verdictUnwritten(reply: string, receipts: Receipt[], sources: string[] = []): string | null {
   let last: RegExpExecArray | null = null;
+  for (const source of sources) last = STANDING.exec(source) ?? last;
   for (const receipt of receipts) {
     const refused = REFUSED.exec(receipt.result ?? '');
     if (refused) last = refused;
@@ -431,7 +445,7 @@ export function checkReply(input: { reply: string; receipts: Receipt[]; sources:
   const lines: string[] = [];
   const claims = unreceiptedClaims(input.reply, input.receipts);
   if (claims.length) lines.push(`Unconfirmed: this reply claims an action no tool confirmed (${claims.join(', ')}).`);
-  const verdict = verdictUnwritten(input.reply, input.receipts);
+  const verdict = verdictUnwritten(input.reply, input.receipts, input.sources);
   if (verdict) lines.push(verdict);
   const { unsourced: figures, drifted = [] } = figureCheck(input.reply, input.sources);
   if (figures.length) lines.push(`Unsourced figures: ${figures.slice(0, 8).join(', ')} (not found in anything this turn read).`);

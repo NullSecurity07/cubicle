@@ -17,7 +17,7 @@ import type { Payloads, Seams } from './seams.ts';
 import type { Store } from './store.ts';
 import type { Consult } from './tools/team.ts';
 import type { Tool } from './tools/registry.ts';
-import { ANSWER_IN_WORDS, HELD_BACK, proseToolCall } from './truth.ts';
+import { ANSWER_IN_WORDS, HELD_BACK, proseToolCall, turnSources, verdictUnwritten } from './truth.ts';
 import type { PromptFor } from './turn-prompt.ts';
 import type { UsageBook } from './usage.ts';
 
@@ -52,7 +52,7 @@ export function createChat(deps: Deps) {
       : route(clients, usage, { pinned: target.model, promptChars: promptSize(messages), tools: false });
     // The same road a turn takes: a key that is resting is passed over, and a key that fails is rested.
     // Nothing is shown while a colleague answers, so a stream that breaks part way can go straight to the next model.
-    const ask = (these: ModelMessage[]) => complete(these, { onToken: () => {}, onRestart: () => {}, signal }, order, ({ client, error }) => usage.failed(client.name, error), (client) => usage.admit(client.name));
+    const ask = (these: ModelMessage[]) => complete(these, { onToken: () => {}, onRestart: () => {}, signal }, order, ({ client, error }) => usage.failed(client.name, error), (client) => usage.admit(client.name), (client) => usage.resting(client.name));
     let reply = await ask(messages);
     // A broken reply every model failed on was counted as a failure; it is not also a good answer.
     if (!reply.reported) usage.record(reply.client.name, reply.usage, reply.quota);
@@ -62,6 +62,10 @@ export function createChat(deps: Deps) {
       if (!reply.reported) usage.record(reply.client.name, reply.usage, reply.quota);
       if (proseToolCall(reply.text)) reply = { ...reply, text: HELD_BACK };
     }
+    // A judge whose doc says "Not assessed" is held to it here too: an answer to a colleague naming a verdict gets the
+    // truth net's line, or the asker relays "PIVOT REQUIRED" as if it were written.
+    const unwritten = reply.text === HELD_BACK ? null : verdictUnwritten(reply.text, [], turnSources(messages));
+    if (unwritten) reply = { ...reply, text: `${reply.text.trimEnd()}\n\n${unwritten}` };
     await store.appendChat(toRoomId, { id: newMessageId(), role: 'assistant', text: reply.text, at: Date.now(), provider: reply.client.name, model: reply.client.model, usage: reply.usage });
     return reply.text;
   };
