@@ -84,7 +84,7 @@ async function acrossRooms(): Promise<MorningSources> {
   const docs: Record<string, string> = { eval: EVALUATION, 'empty-eval': '# Second evaluation\n\n## 5. Verdict\n\n' };
   const dev: ChatMessage[] = [
     { id: 'd1', role: 'user', text: 'What is our runway?', at: at('2026-09-26T16:00') },
-    { id: 'd2', role: 'assistant', text: 'Runway is $48,000.\n\nUnsourced figures: $48,000 (not found in anything this turn read).', at: at('2026-09-26T16:01') },
+    { id: 'd2', role: 'assistant', text: 'Runway is $48,000. WEAK, Score: 5/10.\n\nUnsourced figures: $48,000 (not found in anything this turn read).\n\nUnconfirmed: the verdict was not written; Rohan has not written "4. Founder-market fit" yet.', at: at('2026-09-26T16:01') },
     { id: 'd0', role: 'assistant', text: 'Old.\n\nUnsourced figures: $1 (not found in anything this turn read).', at: at('2026-09-20T16:01') },
   ];
   return {
@@ -107,6 +107,8 @@ describe('the morning thinks across the rooms', () => {
     expect(text).toContain('Company Numbers:\nPrice: $9/month.\nRunway: $8,000.');
     expect(text).toContain('Flagged by the truth net since 2026-09-26 (figures nothing backed):\nDev (Build):\nUnsourced figures: $48,000');
     expect(text).not.toContain('Unsourced figures: $1 ');
+    // Every flag the truth net writes is read as one, from the net's own list.
+    expect(text).toContain('Unconfirmed: the verdict was not written; Rohan has not written "4. Founder-market fit" yet.');
     expect(text).toContain('On the board for today:\n- Set up the landing page');
     expect(text).not.toContain('- Source 3 abandoned projects');
     expect(text).toContain('- Open: Post in r/SaaS.');

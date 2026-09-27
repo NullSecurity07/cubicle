@@ -163,7 +163,10 @@ export function substance(answer: string, heading: string): string {
   const names = (line: string) => /\b(?:section|doc|document)\b/i.test(line) || plain(line).toLowerCase().includes(heading.replace(/^\d+[.)]\s*/, '').toLowerCase().replace(/-/g, ' ').slice(0, 12));
   const first = lines[0] ?? '';
   if (/^#{1,6}\s/.test(first.trim())) lines.shift();
-  else if (STATUS.test(plain(first)) && names(plain(first).replace(/[‐‑–—-]/g, ' '))) {
+  // A status line only: one that ends in a colon, opens with a mark or bold, or says the section is done after naming it.
+  // "Lived it: I filed VAT by hand, all done in a spreadsheet doc." is the answer itself.
+  else if (STATUS.test(plain(first)) && names(plain(first).replace(/[‐‑–—-]/g, ' '))
+    && (/:\s*$/.test(first.trim()) || /^(?:[^\p{L}\p{N}\s]|\*\*)/u.test(first.trim()) || /\bsection\b[^:]*\b(?:is|are)\s+(?:now\s+)?(?:completed?|done|written|filled|finished|ready)\b/i.test(first))) {
     const colon = first.search(new RegExp(`${STATUS.source}[^:]*:`, 'i'));
     const rest = colon >= 0 ? first.slice(first.indexOf(':', colon) + 1).trim() : '';
     if (colon >= 0 || /[:.!]\s*$/.test(first.trim())) { if (rest) lines[0] = rest; else lines.shift(); }

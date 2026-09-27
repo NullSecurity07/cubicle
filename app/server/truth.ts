@@ -90,7 +90,8 @@ const halfUnit = (value: number) => (value === 0 ? 0.5 : 0.5 * 10 ** (Math.floor
 // named as unsourced, so an invented figure does not become "sourced" by having been said once already. Anything that
 // squeezes a past message into one line (the morning note's talk, a colleague's excerpt) runs it through here first,
 // while the flag line still starts a line of its own.
-const FLAG_LINE = /^(?:Unconfirmed: this reply claims|Unconfirmed: the verdict was not written|Unsourced figures: ).*$/gm;
+// Every line the truth net writes under a reply; a reader of past replies (the morning note) finds them with this.
+export const FLAG_LINE = /^(?:Unconfirmed: this reply claims|Unconfirmed: the verdict was not written|Unsourced figures: ).*$/gm;
 export function stripFlagged(source: string): string {
   const named = [...source.matchAll(/^Unsourced figures: (.+?) \(not found/gm)].flatMap((match) => match[1].split(', '));
   // Taken out whole only: a flagged "2%" must not eat the end of a real "32%".
@@ -352,8 +353,8 @@ export const verdictRefused = (reason: string, outcomes: string[]) =>
   `Tell the founder the verdict was not written because ${reason}. Give no verdict word (${outcomes.join(', ')}) and no score in chat until it is written.`;
 export const VERDICT_WRITTEN = 'The verdict is written.';
 const REFUSED = /the verdict was not written because (.+?)\. Give no verdict word \(([^)]*)\) and no score in chat/;
-// A score as a verdict gives one: "Score: 5", "5/10", "8 out of 10".
-const SCORE = /\bscore\b\W{0,4}\d|\b\d+(?:\.\d+)?\s*(?:\/|out of)\s*\d+\b/i;
+// A score as a verdict gives one: "Score: 5", "5/10", "8 out of 10"; "0 out of 20 interviews" is a count.
+const SCORE = /\bscore\b\W{0,4}\d|\b\d+(?:\.\d+)?\s*(?:\/|out of)\s*10\b/i;
 export function verdictUnwritten(reply: string, receipts: Receipt[]): string | null {
   let last: RegExpExecArray | null = null;
   for (const receipt of receipts) {

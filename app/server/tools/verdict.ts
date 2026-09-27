@@ -96,33 +96,36 @@ export function verdictOf(written: string, outcomes: string[], outOf = 10): { wo
   return { word: found[0]?.word, score: out ? Number(out[1]) : undefined };
 }
 
-// A score whose breakdown in brackets does not add up to it: "5/10 (Assumption: 1, Flaws: 3, Pain: 1, Fit: 8, Why
-// Now: 2)" is 15 of 50, which is 3 of 10, and a live judge wrote it with nothing to catch it. Each part is its last
-// number, or "a/b" out of its own b. Parts with no maximum of their own are out of an equal share of the total (the
-// template's five parts of ten are two each), or, when one is over that, each out of the whole total. Returns the
-// reason to refuse, or null when it adds up to the score rounded, or the line has no such breakdown.
+// A score its breakdown in brackets does not reach: "5/10 (Assumption: 1, Flaws: 3, Pain: 1, Fit: 8, Why Now: 2)" is
+// 15 of 50, which is 3 of 10, and a live judge wrote it with nothing to catch it. Each part is a label and one number,
+// or "a/b" out of its own b; anything else in the brackets ("see sections 1, 2 and 4") is no breakdown. A cap's words
+// and a stated sum ("capped from 7: ...", "= 7") are not parts. Parts with no maximum of their own are read as out of
+// the total together (when they add up to it at most) or out of the total each, and the score passes when either
+// reading reaches it. Only a score above its parts is refused: one below them is a cap the evidence set, or parts
+// out of more than it seems.
+// Returns the reason to refuse, or null.
 export function breakdownMismatch(written: string, outOf = 10): string | null {
+  const plain = (value: number) => String(Number(value.toFixed(1)));
   for (const line of filled(unmarked(written)).map(bare)) {
     const group = /\(([^)]*)\)/.exec(line);
     if (!group) continue;
     const head = line.slice(0, group.index);
     const stated = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(?:\\/|out of|of)\\s*${outOf}\\b`, 'i').exec(head) ?? (/^score\b/i.test(head) ? /:\s*(\d+(?:\.\d+)?)\s*$/.exec(head.trim()) : null);
     if (!stated) continue;
-    const parts = group[1].split(/[,;+]/).map((part) => /(\d+(?:\.\d+)?)(?:\s*\/\s*(\d+(?:\.\d+)?))?\s*$/.exec(part.trim()));
+    const inner = group[1].replace(/\bcapped\s+(?:from|at)\s+\d+(?:\.\d+)?\s*[:;,]?/gi, '').replace(/=\s*\d+(?:\.\d+)?\s*$/, '').replace(/^\s*parts?\b\s*:?/i, '');
+    const parts = inner.split(/[,;+]/).map((part) => /^(?:[\p{L}][\p{L}\s'-]*:\s*)?(\d+(?:\.\d+)?)(?:\s*\/\s*(\d+(?:\.\d+)?))?$/u.exec(part.trim()));
     if (parts.length < 2 || parts.some((part) => !part)) continue;
     const values = parts.map((part) => Number(part![1]));
     const sum = values.reduce((a, b) => a + b, 0);
-    const share = outOf / values.length;
-    const total = parts.every((part) => part![2]) ? parts.reduce((all, part) => all + Number(part![2]), 0)
-      : values.every((value) => value <= share) ? outOf : values.every((value) => value <= outOf) ? outOf * values.length : 0;
-    if (!total) continue;
-    const worked = (sum * outOf) / total;
+    const totals = parts.every((part) => part![2]) ? [parts.reduce((all, part) => all + Number(part![2]), 0)]
+      : [outOf, outOf * values.length].filter((total) => sum <= total && values.every((value) => value <= outOf));
+    if (!totals.length) continue;
+    const reach = Math.max(...totals.map((total) => (sum * outOf) / total));
     const score = Number(stated[1]);
-    if (Math.abs(worked - score) <= 0.5) continue;
-    const round = Math.round(worked * 10) / 10;
-    const plain = (value: number) => String(Number(value.toFixed(1)));
+    if (score <= reach + 0.5) continue;
+    const total = totals.find((one) => (sum * outOf) / one === reach)!;
     return `the score says ${plain(score)} of ${outOf}, but its parts (${values.map(plain).join(', ')}) add up to ${plain(sum)} of ${plain(total)}`
-      + `${total === outOf ? '' : `, which is ${plain(round)} of ${outOf}`}. Write the score as ${plain(Math.round(worked))}/${outOf}, or change the parts.`;
+      + `${total === outOf ? '' : `, which is ${plain(reach)} of ${outOf}`}. Write the score as ${plain(Math.round(reach))}/${outOf}, or change the parts.`;
   }
   return null;
 }

@@ -470,8 +470,23 @@ describe('a score with its breakdown in brackets', () => {
   it('lets a score through that its parts add up to, rounded, or out of their own stated maximum', async () => {
     for (const text of ['WEAK\n\nScore: 3/10 (Assumption: 1, Flaws: 3, Pain: 1, Fit: 8, Why Now: 2)', 'WEAK\n\nScore: 4/10 (1, 1, 1, 1, 0)',
       'WEAK\n\nScore: 3/10 (2, 3, 1, 8, 3)', 'WEAK\n\nScore: 5/10 (1/2, 2/2, 1/2, 1/2, 0/2)', 'WEAK\n\nScore out of 10 — assumption, flaws, pain, fit, why now:\n\n4/10 (1, 1, 1, 1, 0)',
-      'WEAK because of (3).\n\nScore: 4/10']) {
+      'WEAK because of (3).\n\nScore: 4/10', 'WEAK\n\nScore: 7/10 (1, 1, 1, 1, 1, 2)', 'WEAK\n\nScore: 6/10 (see sections 1, 2 and 4)',
+      // Under the parts is not over them: a score the evidence caps, or parts out of ten each.
+      'WEAK\n\nScore: 2/10 (2, 2, 2, 2, 2)']) {
       expect((await write(text)).out.ok, text).toBe(true);
+    }
+  });
+});
+
+describe('a capped score with its breakdown', () => {
+  it('is written, where the cap once sent the judge round between the sum and the cap', async () => {
+    for (const text of ['WEAK\n\nScore: 5/10 (capped from 7: 2, 1, 2, 1, 1)', 'WEAK\n\nScore: 5/10 (capped at 5; parts 2, 1, 2, 1, 1 = 7)']) {
+      const all = await setup();
+      await all.fill();
+      await all.as('pain')('replace_section', { heading: '3. Is the pain real?', text: 'painkiller\n\nReal customer conversations done (of ten to twenty): 0' });
+      const out = await all.as('verdict')('replace_section', { heading: '5. Verdict', text });
+      expect(out.ok, text).toBe(true);
+      expect(sectionBody(await all.doc(), '5. Verdict'), text).toContain('Score: 5/10');
     }
   });
 });
@@ -705,6 +720,9 @@ describe('the judge asking a colleague about their empty section', () => {
     const chatty = '✅ **Section 4 – Founder‑market fit** in the Evaluation doc is now completed:\n\n'
       + '- **Lived it / technical edge:** The founder filed EU VAT returns by hand for their own studio for three years and builds the product.\n'
       + '- **In one sentence:** They have lived the pain and can build the fix.\n\nYou can now proceed to write the verdict.';
+    // A first line of real content that happens to say "done" and "doc" stays.
+    const real = await run('What goes in section 4?', 'Lived it: I filed VAT by hand for six years, all done in a spreadsheet doc.\nIn one sentence: lived the pain.');
+    expect(sectionBody(real.text, '4. Founder-market fit')).toMatch(/^Lived it: I filed VAT by hand for six years/);
     const { text } = await run('What goes in section 4, the founder-market fit?', chatty);
     const fit = sectionBody(text, '4. Founder-market fit')!;
     expect(fit).toMatch(/^- \*\*Lived it \/ technical edge:\*\* The founder filed EU VAT returns.*\n- \*\*In one sentence:\*\* They have lived the pain and can build the fix\.\n\n\(From chat:/);

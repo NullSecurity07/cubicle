@@ -342,6 +342,7 @@ describe('a verdict stated without a written one', () => {
   it('says nothing when the reply relays the reason, gives no score, or a later write stood', () => {
     expect(checkReply({ reply: 'No verdict yet: Rohan has not written "4. Founder-market fit". I asked him.', receipts: [refused], sources: [] })).not.toContain(LINE);
     expect(checkReply({ reply: 'It leans WEAK, but I cannot score it until Rohan writes his section.', receipts: [refused], sources: [] })).not.toContain(LINE);
+    expect(checkReply({ reply: 'No verdict. The earlier draft said WEAK; ignore it. 0 out of 20 interviews logged.', receipts: [refused], sources: ['0 out of 20'] })).toEqual([]);
     const stood = { name: 'replace_section', ok: true, result: `Replaced the section "5. Verdict". ${VERDICT_WRITTEN}` };
     expect(checkReply({ reply: 'WEAK. Score: 3/10.', receipts: [refused, stood], sources: [] })).toEqual([]);
     expect(checkReply({ reply: 'WEAK. Score: 3/10.', receipts: [], sources: [] })).toEqual([]);
