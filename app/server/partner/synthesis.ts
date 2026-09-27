@@ -9,7 +9,9 @@ import type { StandingParts } from './standing.ts';
 // a task due, a promise, a decision), from two kinds when the stage has two. A miss is asked for once more with the
 // facts quoted, and a second miss is labelled.
 
-export const asksWhatNext = (said: string) => /\bwhat(?:'s| is)? next\b(?!\s+to\b)|\bwhat (?:do|should|shall|can) (?:i|we) do\b|\bwhat now\b|\bplan (?:the|my|our|this|next) week\b|\bwhere (?:do|should) (?:i|we) start\b|\bnext steps?\b|\bwhat should (?:i|we) (?:focus on|work on|do)\b|\bwhat(?:'s| is) (?:the|my|our) (?:priority|plan) for (?:today|this week)\b/i.test(said);
+// "What should I do about the logo?" and "what do I do with this CSV?" ask about one thing, and "here are the next
+// steps from the call" asks nothing: only an open question about the company's next move counts.
+export const asksWhatNext = (said: string) => /\bwhat(?:'s| is)? next\b(?!\s+to\b)|\bwhat (?:do|should|shall|can) (?:i|we) do\b(?!\s+(?:about|with|for|if|on)\b)|\bwhat now\b|\bplan (?:the|my|our|this|next) week\b|\bwhere (?:do|should) (?:i|we) start\b|\bnext steps?\b(?=[^.!\n]*\?)|\bwhat should (?:i|we) (?:focus on|work on|do\b(?!\s+(?:about|with|for|if|on)\b))|\bwhat(?:'s| is) (?:the|my|our) (?:priority|plan) for (?:today|this week)\b/i.test(said);
 
 export type FactKind = 'verdict' | 'numbers' | 'bets' | 'learned' | 'due' | 'promise' | 'decided';
 // One standing fact: its line as the standing block has it, and the ways a reply can name it.
@@ -53,11 +55,12 @@ export function standingFacts(parts: StandingParts): Fact[] {
     const fact = numberFact(line);
     if (fact) facts.push(fact);
   }
-  // A bet by its metric as the card keeps it, by its words whole, or by being called a bet.
-  for (const bet of parts.open) facts.push({ kind: 'bets', line: `- Open bet: ${bet.what} ("${bet.metric}" to ${bet.target} by ${bet.checkDate})`, names: [/\bbets?\b/i, phrase(bet.what), ...(/[_:]/.test(bet.metric) ? [phrase(bet.metric)] : [])] });
+  // A bet by its metric as the card keeps it, by its words whole, or called the bet on record ("our bet", "the open
+  // bet"): "my bet is invoicing" is an opinion, not the ledger.
+  for (const bet of parts.open) facts.push({ kind: 'bets', line: `- Open bet: ${bet.what} ("${bet.metric}" to ${bet.target} by ${bet.checkDate})`, names: [/\b(?:the|our|your|open|this|that) bets?\b/i, phrase(bet.what), ...(/[_:]/.test(bet.metric) ? [phrase(bet.metric)] : [])] });
   for (const line of parts.learned ?? []) {
     const what = /^-\s*\S+:\s*(.+?)\s+(?:worked|did not work);/.exec(line)?.[1] ?? '';
-    facts.push({ kind: 'learned', line, names: [/\b(?:we )?learned\b/i, ...(what ? [phrase(what)] : [])], words: wordsOf(what) });
+    facts.push({ kind: 'learned', line, names: [/\bwe(?:'ve| have)? learned\b/i, ...(what ? [phrase(what)] : [])], words: wordsOf(what) });
   }
   for (const line of parts.planned) {
     const title = line.replace(/^\s*-\s*(?:left from \S+:\s*)?/, '');

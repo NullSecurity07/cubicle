@@ -79,7 +79,11 @@ const I_DO = /^\s*(?:I\s+(?!(?:am|was|have|had|think|guess|hope|wonder|feel|know
 const DOING = /^\s*([A-Z][a-z]+ing)\b/;
 const NOT_DOING = /^(?:nothing|something|everything|anything|morning|evening|during|pricing|funding|marketing|onboarding|spending|thing|king|bring)$/i;
 // Not a promise: a thought, a state, a word to the app, a refusal.
-const NOT_A_PROMISE = /^(?:not|never|probably|maybe|likely|be|have|need|see|think|consider|let\s+you|let's|paste|upload|share|attach|tell\s+you|answer|explain|get\s+back|wait|leave|keep\s+(?:you|it)|\w+\s+you\b)/i;
+// A choice made in chat is a decision, not a promise: "go with option B", "take the $9 price", "pick option 2".
+const NOT_A_PROMISE = /^(?:not|never|probably|maybe|likely|be|have|need|see|think|consider|let\s+you|let's|paste|upload|share|attach|tell\s+you|answer|explain|get\s+back|wait|leave|keep|go\s+with|take|pick|choose|use|do\s+(?:that|it|this|so)|look\s+into|give\s+it|admit|try|\w+\s+you\b)\b/i;
+// With no day said, only a thing done to something is a promise: "call the bank", "talk to the users". "Do it" and
+// "ship it" said in passing are not held to a date.
+const ACTION = /^(?:call|send|ship|write|talk\s+to|speak\s+to|email|e-mail|finish|publish|post|launch|book|meet|interview|draft|build|fix|message|contact|reach\s+out\s+to|file|submit|sign|update|test|record|survey|visit|pay)\s+(?!(?:it|that|this|them|one|so)\b)\S/i;
 // A condition or a what-if before the words: "if it rains I'll", "maybe I'll", "what I'll do".
 const HEDGED = /\b(?:if|whether|what|how|unless|in case|maybe|perhaps|might|wonder)\b/i;
 // Said for right now, to the app: "I'll paste it now".
@@ -110,6 +114,7 @@ export function promisesIn(message: string, now: number): Said[] {
     if (!what) continue;
     what = clean(what);
     if (NOT_A_PROMISE.test(what) || RIGHT_NOW.test(what) || what.split(' ').length < 2) continue;
+    if (!due && !ACTION.test(what)) continue;
     found.push({ what: what.slice(0, 140), due: due ?? plus(now, 7) });
   }
   return found;

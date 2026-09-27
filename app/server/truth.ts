@@ -447,9 +447,9 @@ export function verdictUnwritten(reply: string, receipts: Receipt[], sources: st
 
 // What the founder reads in place of a verdict word or a score the doc does not hold.
 export const NOT_WRITTEN = '[not written]';
-// A score out of ten, however it is put: "5/10", "6 / 10", "6 of 10", "8 out of 10". A part's "1/2" is not the
-// verdict, and "3 of 10 interviews" is a count.
-const SCORE = /\b\d{1,2}(?:\.\d)?\s*(?:\/\s*10|(?:out\s+)?of\s+10)\b(?!\s+[a-z])/g;
+// A score out of ten, however it is put: "5/10", "6 / 10", "6 of 10", "8 out of 10", whatever words follow it. A
+// part's "1/2" is not the verdict, and "3 of 10 interviews" is a count: "of 10" before a plural noun stays.
+const SCORE = /\b\d{1,2}(?:\.\d)?\s*\/\s*10\b|\b\d{1,2}(?:\.\d)?\s+(?:out\s+)?of\s+10\b(?!\s+(?!(?:is|was|has|as|this|thus|us|yes|plus)\b)[a-z-]{2,}s\b)/g;
 // "[not written] ([not written])", "[not written], [not written]": said once.
 const TWICE = /\[not written\]((?:\*\*|__)?)(?:[\s,;:\u2013\u2014-]*|\s*\()\[not written\]\)?/g;
 // A line consult answers carry up to a colleague when the judge's verdict was not written: the relay is held too.

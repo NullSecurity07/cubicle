@@ -467,6 +467,15 @@ describe('a verdict word held out of a reply', () => {
     expect(holdVerdict('WEAK. Score: 3/10.', [])).toBe('WEAK. Score: 3/10.');
   });
 
+  it('replaces every score out of ten, whatever follows it, and leaves only a count of ten alone', () => {
+    const W = NOT_WRITTEN;
+    expect(holdVerdict('PIVOT REQUIRED, 6/10 overall.', [refused])).toBe(`${W} overall.\n\n${LINE}`);
+    expect(holdVerdict('Score 6/10 because the pain is unproven.', [refused])).toBe(`Score ${W} because the pain is unproven.\n\n${LINE}`);
+    expect(holdVerdict('I scored it 5/10 and stand by it.', [refused])).toBe(`I scored it ${W} and stand by it.\n\n${LINE}`);
+    expect(holdVerdict('It is 7 out of 10 for me.', [refused])).toBe(`It is ${W} for me.\n\n${LINE}`);
+    expect(holdVerdict('Run 3 of 10 interviews first.', [refused])).toBe('Run 3 of 10 interviews first.');
+  });
+
   it('holds on any turn whose prompt says the verdict is not written', () => {
     const system = turnSources([{ role: 'system', content: `You are Priya, the judge.\n\n${verdictStanding('Rohan has not written "4. Founder-market fit" yet', OUTCOMES)}` }]);
     expect(holdVerdict('**PIVOT REQUIRED** (6/10) once section 4 is in.', [], system)).toBe(`**${NOT_WRITTEN}** once section 4 is in.\n\n${LINE}`);

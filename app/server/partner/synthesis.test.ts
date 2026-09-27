@@ -18,9 +18,11 @@ const turn = (text: string, extra: Partial<TurnResult> = {}): TurnResult => ({ t
 
 describe('an ask for what to do next', () => {
   it('is "what do I do now", "what\'s next", "plan the week" and their kin, and not an ordinary question', () => {
-    for (const said of ['so what do I do right now?', 'What\'s next?', 'what now', 'Plan the week for me', 'plan my week', 'What should we focus on this week?', 'next steps?', 'Where do I start?'])
+    for (const said of ['so what do I do right now?', 'What\'s next?', 'what now', 'Plan the week for me', 'plan my week', 'What should we focus on this week?', 'next steps?', 'What are the next steps?', 'Where do I start?', 'what do I do now about it?'])
       expect(asksWhatNext(said), said).toBe(true);
-    for (const said of ['What is our runway?', 'Write the beta-user update', 'What is next to the logo?']) expect(asksWhatNext(said), said).toBe(false);
+    for (const said of ['What is our runway?', 'Write the beta-user update', 'What is next to the logo?', 'what should I do about the logo colour?',
+      'what do I do with this CSV?', 'What should we do for the launch post?', 'what do I do if they say no?', 'what do I do on the pricing page?',
+      'Here are the next steps from the call.']) expect(asksWhatNext(said), said).toBe(false);
   });
 });
 
@@ -39,6 +41,10 @@ describe('the standing facts a reply names', () => {
     expect(named('your cash lasts; the burn is fine')).toEqual(['- Cash: €4,200', '- Monthly burn: €1,100']);
     expect(named('Keep your 3 paying users happy.')).toEqual(['- Paying beta users: 3 (founder, 2026-09-27)']);
     expect(named('Talk to users today.')).toEqual([]);
+    expect(named('Our bet checks on Oct 11.')).toEqual([expect.stringContaining('Ship PDF invoicing')]);
+    expect(named('My bet is invoicing.')).toEqual([]);
+    expect(named('I learned nothing.')).toEqual([]);
+    expect(named('As we learned, cold outreach is slow.')).toEqual([facts[5].line]);
     expect(named('Your bet on paying_users checks on Oct 11.')).toEqual([expect.stringContaining('Ship PDF invoicing')]);
     expect(named('Cold email did not work last time: 1 reply against 5.')).toEqual([facts[5].line]);
     expect(named('Finish the VAT export format first.')).toEqual([facts[6].line]);
@@ -50,6 +56,9 @@ describe('the standing facts a reply names', () => {
     expect(synthesises('My call: dive straight into building the PDF invoicing feature.', facts)).toBe(false);
     expect(synthesises('With €4,200 cash and €1,100 burn, move fast.', facts)).toBe(false);
     expect(synthesises('The PIVOT REQUIRED verdict and €4,200 in cash say: interviews before code.', facts)).toBe(true);
+    // A bare "bet" and "learned" name nothing.
+    expect(synthesises('Ignore the verdict; my bet is invoicing. Build it.', facts)).toBe(false);
+    expect(synthesises('The verdict says interviews first, and the open bet on paying_users checks Oct 11.', facts)).toBe(true);
     // One kind on the stage: two of it will do; one fact alone asks nothing.
     const numbersOnly = standingFacts(parts({ verdicts: [], open: [], planned: [], decided: [], learned: [], promised: [] }));
     expect(synthesises('With €4,200 cash and €1,100 burn, move fast.', numbersOnly)).toBe(true);

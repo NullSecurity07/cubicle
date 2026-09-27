@@ -14,8 +14,12 @@ describe('a promise in the founder\'s words', () => {
     expect(promisesIn('I\'m going to rewrite the landing page this week!', MONDAY)).toEqual([{ what: 'rewrite the landing page this week', due: '2026-10-02' }]);
     // Said for the company, with a day on it.
     expect(promisesIn('We\'ll send the survey by 2026-10-05.', MONDAY)).toEqual([{ what: 'send the survey by 2026-10-05', due: '2026-10-05' }]);
-    // No day said: a week from today.
+    // No day said: a week from today, only for an action with something it is done to.
     expect(promisesIn('I\'ll email the accountant about VAT.', MONDAY)).toEqual([{ what: 'email the accountant about VAT', due: '2026-10-05' }]);
+    expect(promisesIn('I\'ll talk to the three beta users.', MONDAY)).toEqual([{ what: 'talk to the three beta users', due: '2026-10-05' }]);
+    expect(promisesIn('I\'ll finish the pricing page.', MONDAY)).toEqual([{ what: 'finish the pricing page', due: '2026-10-05' }]);
+    // With a day, the day makes it a promise whatever the verb.
+    expect(promisesIn('I\'ll sort the invoices by Friday.', MONDAY)).toEqual([{ what: 'sort the invoices by Friday', due: '2026-10-02' }]);
   });
 
   it('takes a day said with no "I will" when the founder is the one doing it', () => {
@@ -28,6 +32,9 @@ describe('a promise in the founder\'s words', () => {
       'Should I call them by Friday?', 'What will I need this week?', 'If it rains I\'ll call them tomorrow.', 'I\'ll think about it.',
       'I\'ll paste the CSV now.', 'I\'ll let you know.', 'I will not raise this year.', 'I\'ll be at the conference this week.',
       'We\'ll see.', 'We will grow.', 'Maybe I\'ll call them tomorrow.', 'What is due this week?', 'Revenue grew this week.', 'I\'ll send you the deck.',
+      'I\'ll go with option B.', 'I\'ll take the $9 price.', 'Sure I\'ll pick option 2.', 'Thanks, I\'ll do that.', 'I\'ll look into it.',
+      'I\'ll give it a go.', 'I\'ll keep that in mind.', 'I\'ll choose the second one.', 'I\'ll use Stripe.', 'I\'ll admit it is slow.', 'I\'ll try to be faster.',
+      'I\'ll do it.', 'I\'ll ship it.',
       '/tool generate_voice {"text":"I\'ll ship it this week."}',
     ]) expect(promisesIn(said, MONDAY), said).toEqual([]);
   });
