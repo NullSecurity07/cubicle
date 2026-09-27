@@ -642,6 +642,9 @@ div.msg--user { position: relative; white-space: pre-wrap; }
 .missions li p { margin: 0 6px 6px 30px; font-size: 12px; line-height: 1.5; color: var(--muted); }
 .missions__dismiss { margin: 2px 6px 0; border: 0; padding: 4px 0; background: transparent; color: var(--muted); font: inherit; font-size: 11.5px; cursor: pointer; }
 .missions__dismiss:hover { color: var(--text); }
+/* Clear of the card the founder is on: down to its head, or out of the way while even that would cover the card. */
+.missions.is-away { opacity: 0; visibility: hidden; transition: opacity 0.16s ease, visibility 0s linear 0.16s; }
+@media (prefers-reduced-motion: reduce) { .missions.is-away { transition: none; } }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 /* The command bar: one input near the top, answers under it. */

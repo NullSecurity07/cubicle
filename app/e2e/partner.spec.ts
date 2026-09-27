@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 
 // The partner, in fake mode. "add a partner called Sam" puts Sam on the stage wired to the stage's own Company brief,
-// which is adopted as the company's one document: its text kept, its six sections added, no second doc. "morning note" has Sam write today's note: it is said at the foot of the
+// which is adopted as the company's one document: its text kept, its six sections added, no second doc. "morning note" has Sam write today's note: it is said at the top of the
 // window, it is first in Today's five, and Needs you lets the founder say it is read. Everything is taken away after.
 const WORKSPACE = process.env.STAGE_WORKSPACE!;
 type Stage = { rooms: { id: string; name: string; partner?: boolean }[]; docs: { id: string; title: string; pinned?: boolean }[]; wires: { id: string; from: string; to: string }[] };
@@ -23,6 +23,8 @@ test.beforeEach(async ({ page }) => {
   test.setTimeout(90_000);
   broke.length = 0;
   page.on('pageerror', (error) => broke.push(error.message));
+  // The Getting started list is in its corner, as on a first run, whatever an earlier check did with it.
+  await rm(join(WORKSPACE, 'missions.json'), { force: true });
   await page.goto('/');
   await expect(page.locator('.react-flow__node[data-id="marketing"]')).toBeVisible({ timeout: 30_000 });
   brief = ((await (await page.request.get('/api/docs/company-brief')).json()) as { text: string }).text;
@@ -57,6 +59,27 @@ test('the founder adds a partner who keeps the Company document and leaves a mor
     }).toBe(true);
   }
   await expect(notice).toBeHidden({ timeout: 7_000 });
+
+  // The stage moves Sam into the corner where the Getting started list sits (as a new card elsewhere does, gliding the
+  // view to it): the list keeps clear of Sam's ask box, tucked to its head or out of the way until Sam moves on.
+  const missions = page.locator('.missions');
+  const ask = page.locator(`.react-flow__node[data-id="${sam.id}"] .ask`);
+  await expect(missions).toBeVisible();
+  const [list, desk] = [(await missions.boundingBox())!, (await ask.boundingBox())!];
+  const spot = await page.evaluate(() => {
+    for (let y = 60; y < 400; y += 20) for (let x = 400; x < 1500; x += 20) if (document.elementFromPoint(x, y)?.classList.contains('react-flow__pane')) return { x, y };
+    return null;
+  });
+  const [dx, dy] = [list.x + 120 - (desk.x + desk.width / 2), list.y + list.height - 24 - (desk.y + desk.height / 2)];
+  await page.mouse.move(spot!.x, spot!.y);
+  await page.mouse.down();
+  for (let step = 1; step <= 10; step += 1) await page.mouse.move(spot!.x + (dx * step) / 10, spot!.y + (dy * step) / 10);
+  await page.mouse.up();
+  const clear = async () => {
+    const [shown, over] = [await missions.isVisible() ? (await missions.boundingBox())! : null, (await ask.boundingBox())!];
+    return !shown || shown.x >= over.x + over.width || over.x >= shown.x + shown.width || shown.y >= over.y + over.height || over.y >= shown.y + shown.height ? 'clear' : 'over the ask box';
+  };
+  await expect.poll(clear).toBe('clear');
   expect(sam.partner).toBe(true);
   expect(company.pinned).toBe(true);
   expect(stage.docs.filter((doc) => doc.pinned)).toHaveLength(1);
