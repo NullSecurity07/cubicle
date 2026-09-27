@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -23,6 +23,16 @@ describe('a file written whole', () => {
     const path = join(dir, 'stage.json');
     await writeAtomic(path, '{"rooms":[]}');
     expect(await readFile(path, 'utf8')).toBe('{"rooms":[]}');
-    expect(synced).toEqual([`${path}.tmp`, dir]);
+    expect(synced).toHaveLength(2);
+    expect(synced[0].startsWith(`${path}.`) && synced[0].endsWith('.tmp')).toBe(true);
+    expect(synced[1]).toBe(dir);
+  });
+
+  it('lets two writes to one path at once both land, each through its own side file', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fsx-sync-'));
+    const path = join(dir, 'stage.json');
+    await Promise.all([writeAtomic(path, '{"a":1}'), writeAtomic(path, '{"b":2}')]);
+    expect(['{"a":1}', '{"b":2}']).toContain(await readFile(path, 'utf8'));
+    expect((await readdir(dir)).filter((name) => name.endsWith('.tmp'))).toEqual([]);
   });
 });
