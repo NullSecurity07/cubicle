@@ -369,6 +369,40 @@ describe('the partner slice: the bets ledger', () => {
     await part.close!();
   });
 
+  // Journey 9: "there is no Metrics card with a 'paying users' row", while the brief held "Paying users: 2". The founder
+  // had to add a card, paste a CSV and drag a wire before the partner could bet.
+  it('offers a bet on a number only the Company brief holds, and taking it adds a Metrics card from the brief, wired to the partner', async () => {
+    const answers: [number, unknown][] = [];
+    const { deps, part, workspace } = await installed({ json: (_res, status, body) => { answers.push([status, body]); } }, { now: () => new Date('2026-09-27T10:00').getTime(), ask: async () => SHAPED });
+    const stage = await deps.store.loadStage();
+    await deps.store.saveStage({ ...stage, rooms: [...stage.rooms, room('p1', 'Sam', { partner: true })] });
+    const company = companyDocOf(await deps.store.loadStage())!;
+    const brief = await deps.store.readDoc(company.id);
+    await deps.store.writeDoc(company.id, brief.replace('## Numbers', '## Numbers\n\n- Cash: €9,800 (founder, 2026-09-27)\n- Beta users: 12 (founder, 2026-09-27)\n- Paying users: 2 (founder, 2026-09-27)'));
+    const propose = async (metric: string, target: number, query = 'Take a bet: 2 to 6 paying users by 11 October') => part.tools!.find((one) => one.name === 'propose_bet')!.run({ what: 'Email the 12 beta users a €19 offer', hypothesis: 'hobby hosts convert at the lower tier', metric, target, check_date: '2026-10-11' }, { stage: await deps.store.loadStage(), roomId: 'p1', store: deps.store, granted: new Map(), query } as never);
+    // Still held to a target that can lose, read from the brief.
+    await expect(propose('paying users', 2)).rejects.toThrow('"paying users" is 2 now, read from the Company brief: a target of 2 cannot lose');
+    // A number the brief does not hold either is still the founder's to add.
+    await expect(propose('signups', 6, 'Take a bet: 6 signups by 11 October')).rejects.toThrow('there is no Metrics card with a "signups" row');
+    const said = await propose('paying users', 6);
+    expect(said.text).toContain('No Metrics card holds "paying users" yet: taking the bet adds one from the Company brief (Paying users 2), wired to Sam.');
+    const row = (await deps.attention.list()).find((one) => one.kind === 'proposed-bet')!;
+    expect(row.detail).toContain('Add a Metrics card from the brief and take the bet: taking it adds a Metrics card with Paying users at 2, wired to Sam.');
+
+    deps.body = async () => ({ accept: true });
+    await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/bets/${row.id.split(':')[1]}`);
+    const after = await deps.store.loadStage();
+    const card = (after.cards ?? []).find((one) => one.kind === 'metrics')!;
+    expect(card).toMatchObject({ kind: 'metrics', title: 'Numbers' });
+    expect(after.wires.filter((wire) => wire.from === 'p1' && wire.to === card.id)).toHaveLength(1);
+    const data = JSON.parse(await readFile(join(workspace, 'metrics', `${card.id}.json`), 'utf8'));
+    expect(data.metrics).toEqual([{ key: 'paying-users', label: 'Paying users', better: 'up', points: [{ at: '2026-09-27', value: 2, from: 'the Company brief' }] }]);
+    expect(await deps.store.readDoc(company.id)).toContain('- Open: Email the 12 beta users a €19 offer. Measured by "paying users" on the Metrics card: 6 by 2026-10-11');
+    // Taken once: a second yes adds no second card.
+    expect((await part.tools!.find((one) => one.name === 'propose_bet')!.run({ what: 'Second', hypothesis: 'h', metric: 'paying users', target: 7, check_date: '2026-10-11' }, { stage: await deps.store.loadStage(), roomId: 'p1', store: deps.store, granted: new Map(), query: 'bet on 7 paying users' } as never)).text).not.toContain('No Metrics card');
+    await part.close!();
+  });
+
   // Journey 5: with paying users at 3, the partner proposed a bet with target 3, one that could not lose.
   it('refuses a bet whose target does not beat the number as it stands, the right way for that number', async () => {
     const { deps, part, workspace } = await installed({}, { now: () => new Date('2026-09-27T10:00').getTime(), ask: async () => SHAPED });

@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { LEAD_STAGES, STAGE_NAMES, type LeadStage } from '../../shared/leads.ts';
-import { findMetric, formatValue, guessBetter, isDay, type Metrics } from '../../shared/metrics.ts';
+import { findMetric, formatValue, guessBetter, isDay, keyOf, UNITS, type Metrics, type Unit } from '../../shared/metrics.ts';
 import type { Attention, Stage } from '../../shared/model.ts';
 import { bare, VERDICT_WORDS, type Bet, type BetVerdict } from '../../shared/partner.ts';
 import { localDay } from '../clock.ts';
@@ -39,7 +39,7 @@ export function betsBook(workspace: string, now: () => number = Date.now) {
   return {
     list,
     settled: () => queue,
-    propose: (input: Pick<Bet, 'what' | 'hypothesis' | 'metric' | 'target' | 'checkDate'> & { proposedBy?: string; roomId?: string }) => change((bets) => {
+    propose: (input: Pick<Bet, 'what' | 'hypothesis' | 'metric' | 'target' | 'checkDate'> & { proposedBy?: string; roomId?: string; brief?: Bet['brief'] }) => change((bets) => {
       const bet: Bet = { id: newId('bet-'), made: localDay(now()), status: 'proposed', at: now(), ...input };
       bets.push(bet);
       return bet;
@@ -123,6 +123,35 @@ export function missingMetric(stage: Stage, metric: string, choices: string[]): 
   return `${need}.${choices.length ? ` Or measure it by one of what is already there: ${choices.join(', ')}.` : ''} Tell the founder exactly which card and row to add.`;
 }
 
+// ---------------------------------------------------------------- a number only the brief holds
+
+// Journey 9: a bet on paying users failed with "no Metrics card", while the Company brief held "Paying users: 2", and
+// the founder had to add a card, paste a CSV and drag a wire. The brief's Numbers row the metric names, when exactly
+// one row fits it: "paying users", "paying_users" and "paying" all find "Paying users"; "users" alone, beside "Beta
+// users", finds none.
+export type BriefRow = { label: string; value: number; unit?: Unit };
+const stems = (text: string) => text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).map((word) => word.replace(/s$/, ''));
+export function briefRow(numbers: string, metric: string): BriefRow | null {
+  const asked = stems(metric);
+  if (!asked.length) return null;
+  const rows = numbers.split('\n').flatMap((line): BriefRow[] => {
+    const found = /^\s*[-*]\s+([^:]{1,40}):\s*([$€£])?\s?(\d[\d,]*(?:\.\d+)?)(\s?%)?/.exec(line);
+    if (!found) return [];
+    const label = found[1].trim();
+    const words = stems(label);
+    if (!asked.every((word) => words.includes(word)) && !words.every((word) => asked.includes(word))) return [];
+    const unit = (found[2] ?? (found[4] ? '%' : '')) as Unit;
+    return [{ label, value: Number(found[3].replace(/,/g, '')), ...(unit && UNITS.includes(unit) ? { unit } : {}) }];
+  });
+  return rows.length === 1 ? rows[0] : null;
+}
+export const briefReading = (row: BriefRow): Reading => ({ value: row.value, said: `${row.label} is ${formatValue(row.value, row.unit)}, read from the Company brief`, better: guessBetter(row.label) });
+// The Metrics card a taken bet adds: one row, today's reading from the brief.
+export const briefMetrics = (row: BriefRow, today: string, at: number): Metrics => ({ updatedAt: at, metrics: [{
+  key: keyOf(row.label), label: row.label, better: guessBetter(row.label), ...(row.unit ? { unit: row.unit } : {}), points: [{ at: today, value: row.value, from: 'the Company brief' }],
+}] });
+export const BRIEF_CARD = 'Add a Metrics card from the brief and take the bet';
+
 // ---------------------------------------------------------------- the metric an ask names
 
 // What a founder's ask counts, as the metric that measures it: "50 newsletter signups by Oct 10" is the "signups"
@@ -195,7 +224,7 @@ export function cannotLose(metric: string, target: number, reading: Reading, ask
   const lower = (reading.better ?? guessBetter(metric)) === 'down';
   if (lower ? target < reading.value : target > reading.value) return null;
   if (target === reading.value && holds(ask, metric, target)) return null;
-  const where = /read from (the \w+ card)/.exec(reading.said)?.[1] ?? 'its card';
+  const where = /read from (the \w+ (?:card|brief))/.exec(reading.said)?.[1] ?? 'its card';
   const way = lower ? `${metric.charAt(0).toUpperCase()}${metric.slice(1)} is better lower: propose a target below ${reading.value}` : `Propose a target above ${reading.value}`;
   return `"${metric}" is ${reading.value} now, read from ${where}: a target of ${target} cannot lose. ${way}, one this bet could miss, and tell the founder the number it starts from.`;
 }
@@ -212,8 +241,12 @@ export async function betsAttention(bets: Bet[], stage: Stage, workspace: string
   for (const bet of bets) {
     if (bet.status === 'proposed') {
       const against = verdict && isWeak(verdict) && BUILDS.test(`${bet.what} ${bet.hypothesis}`) ? ` The team's verdict is ${verdictName(verdict)}: this bet builds before it.` : '';
+      // Only the brief holds its number: taking it adds the card, so the founder adds nothing by hand.
+      const partner = stage.rooms.find((room) => room.partner)?.name ?? 'your partner';
+      const brief = bet.brief && (await readMetric(workspace, stage, bet.metric)).value === null
+        ? ` ${BRIEF_CARD}: taking it adds a Metrics card with ${bet.brief.label} at ${formatValue(bet.brief.value, bet.brief.unit as Unit | undefined)}, wired to ${partner}.` : '';
       found.push({ id: `proposed-bet:${bet.id}`, kind: 'proposed-bet', title: bet.what, at: bet.at, ...(bet.proposedBy ? { who: bet.proposedBy } : {}), ...(bet.roomId ? { roomId: bet.roomId } : {}),
-        detail: `${bare(bet.hypothesis) ? `${bare(bet.hypothesis)}. ` : ''}Measured by "${bet.metric}" on ${cardOf(bet.metric)}: ${bet.target} by ${bet.checkDate}.${against}` });
+        detail: `${bare(bet.hypothesis) ? `${bare(bet.hypothesis)}. ` : ''}Measured by "${bet.metric}" on ${cardOf(bet.metric)}: ${bet.target} by ${bet.checkDate}.${brief}${against}` });
     } else if (betDue(bet, today)) {
       const reading = await readMetric(workspace, stage, bet.metric);
       found.push({ id: `bet-check:${bet.id}`, kind: 'bet-check', title: `Check the bet: ${bet.what}`, at: new Date(`${bet.checkDate}T00:00:00`).getTime(),
