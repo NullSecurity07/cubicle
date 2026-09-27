@@ -246,6 +246,22 @@ describe('a turn when models fail', () => {
     expect(saved.text).not.toMatch(/failed_generation/);
   });
 
+  it('does not count a consult every model broke off part way as a good answer', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'chat-'));
+    const store = createStore(dir);
+    const usage = createUsage(null);
+    const recorded: string[] = [];
+    const record = usage.record.bind(usage);
+    usage.record = (name, ...rest) => { recorded.push(name); return record(name, ...rest); };
+    const { consult } = createChat({
+      store, roomFeed: createRoomFeed(), busy: new Set(), clients: [breaking], usage, seams: createSeams(),
+      attention: createAttention(dir), approvals: createApprovals(), memory: { fold: async () => false },
+      promptFor: async () => [{ role: 'system', content: 'You are build.' }, { role: 'user', content: 'q' }], toolsFor: () => [],
+    });
+    expect(await consult({ fromRoomId: 'marketing', toRoomId: 'build', question: 'How long?' })).toBe('Let me ground');
+    expect(recorded).toEqual([]);
+  });
+
   it('lets a consult fail over when the colleague\'s stream breaks part way', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'chat-'));
     const store = createStore(dir);

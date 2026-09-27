@@ -53,11 +53,12 @@ export function createChat(deps: Deps) {
     // Nothing is shown while a colleague answers, so a stream that breaks part way can go straight to the next model.
     const ask = (these: ModelMessage[]) => complete(these, { onToken: () => {}, onRestart: () => {}, signal }, order, ({ client, error }) => usage.failed(client.name, error), (client) => usage.admit(client.name));
     let reply = await ask(messages);
-    usage.record(reply.client.name, reply.usage, reply.quota);
+    // A broken reply every model failed on was counted as a failure; it is not also a good answer.
+    if (!reply.reported) usage.record(reply.client.name, reply.usage, reply.quota);
     // A tool call written as text would land in the asker's reasoning as if it were the answer: asked once more, then held back.
     if (proseToolCall(reply.text)) {
       reply = await ask([...messages, { role: 'assistant', content: reply.text }, { role: 'user', content: ANSWER_IN_WORDS }]);
-      usage.record(reply.client.name, reply.usage, reply.quota);
+      if (!reply.reported) usage.record(reply.client.name, reply.usage, reply.quota);
       if (proseToolCall(reply.text)) reply = { ...reply, text: HELD_BACK };
     }
     await store.appendChat(toRoomId, { id: newMessageId(), role: 'assistant', text: reply.text, at: Date.now(), provider: reply.client.name, model: reply.client.model, usage: reply.usage });

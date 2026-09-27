@@ -32,7 +32,8 @@ export const gatherPieces = (store: Store, decisions: Decisions, readMemory: (ro
   if (want('chat') || want('memory')) for (const room of stage.rooms) {
     const chat = want('chat') ? await store.readChat(room.id).catch(() => []) : [];
     const said = (message: ChatMessage) => `${message.role === 'assistant' ? room.name : message.from ? `${message.from} (colleague)` : 'Founder'}: ${message.text.trim()}`;
-    for (const day of byDay(chat.filter((message) => message.text.trim()))) {
+    // A turn that failed is not something anybody said, so recall never brings it back.
+    for (const day of byDay(chat.filter((message) => message.text.trim() && !message.failed))) {
       pieces.push({ kind: 'chat', id: room.id, roomId: room.id, title: `Conversation with ${room.name}`, text: day.map(said).join('\n\n'), at: day.at(-1)!.at });
     }
     if (!want('memory')) continue;

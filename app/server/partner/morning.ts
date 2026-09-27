@@ -5,7 +5,7 @@ import { bare, morningText, readMorning, type Bet, type Morning, type MorningNot
 import { localDay, weekDay } from '../clock.ts';
 import type { ModelMessage } from '../prompt.ts';
 import { sectionBody, filled, verdictOf } from '../tools/verdict.ts';
-import { checkReply, stripFlagged } from '../truth.ts';
+import { checkReply, stripFlagged, turnSources } from '../truth.ts';
 import { gatherMonth } from '../slices/month.ts';
 import { cardOf } from './bets.ts';
 import type { PartnerState } from './state.ts';
@@ -52,7 +52,8 @@ export const MORNING_ASK = 'Nobody asked you for this. It is your own daily look
 // person said last in each room. The partner's own messages are left out, since the note itself is one of them.
 export function morningInputs(input: { stage: Stage; partnerId: string; decisions: Decision[]; bets: Bet[]; company: string; chats: Record<string, ChatMessage[]> }): string {
   const talk = input.stage.rooms.map((room) => {
-    const said = (input.chats[room.id] ?? []).filter((message) => message.role === 'user' || room.id !== input.partnerId);
+    // A turn that failed changes nothing the note reads.
+    const said = (input.chats[room.id] ?? []).filter((message) => !message.failed && (message.role === 'user' || room.id !== input.partnerId));
     return `${room.id}:${said.at(-1)?.at ?? 0}`;
   });
   const text = JSON.stringify([input.decisions.map((one) => [one.id, one.status, one.decidedAt ?? 0]), input.bets.map((one) => [one.id, one.status, one.result?.at ?? 0]), input.company, talk]);
@@ -105,7 +106,7 @@ export async function gatherMorning(from: MorningSources): Promise<string> {
 
   const talk: string[] = [];
   for (const room of from.stage.rooms) {
-    const said = (await from.chat(room.id).catch(() => [] as ChatMessage[])).filter((message) => message.at >= start && message.text.trim()).slice(-CHAT_LINES);
+    const said = (await from.chat(room.id).catch(() => [] as ChatMessage[])).filter((message) => !message.failed && message.at >= start && message.text.trim()).slice(-CHAT_LINES);
     if (!said.length) continue;
     talk.push(`${room.name} (${room.role}):`, ...said.map((message) => `  ${message.role === 'assistant' ? room.name : message.from ?? 'Founder'}: ${stripFlagged(message.text).replace(/\s+/g, ' ').trim().slice(0, CHAT_CHARS)}`));
   }
@@ -190,7 +191,9 @@ export async function writeMorning(input: {
   // The truth net, as every turn has it: a figure in the note that nothing it was given holds is flagged under it,
   // and the note is posted all the same, so the founder sees both.
   // Checked as posted: the reshaped note, not the raw reply, so the flags name only what the founder reads.
-  const flags = checkReply({ reply: morningText(read), receipts: [], sources: messages.map((message) => (typeof message.content === 'string' ? message.content : '')) });
+  // Read like a turn's reply: the partner's own brief, stance and rules are not facts, only the documents, the facts
+  // below and what was said.
+  const flags = checkReply({ reply: morningText(read), receipts: [], sources: turnSources(messages) });
   if (fault) flags.push(`Note check: ${fault.split(':')[0].replace(/^The /, 'the ')}, even when asked again.`);
   return { ...read, day: localDay(sources.now), at: sources.now, roomId: sources.partnerId, who: input.name, ...(flags.length ? { flags } : {}), ...(provider ? { provider } : {}), ...(model ? { model } : {}) };
 }

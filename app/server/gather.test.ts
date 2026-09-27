@@ -36,6 +36,14 @@ describe('gatherPieces', () => {
     expect([...kinds].sort()).toEqual(['chat', 'decision', 'doc', 'file', 'memory', 'skill']);
   });
 
+  it('leaves a failed turn out of the conversations it gathers', async () => {
+    const { store, gather } = await setup();
+    await store.appendChat('marketing', { id: 'm2', role: 'assistant', text: 'No model could answer this time (gemini down). Ask again in a minute.', at: Date.now(), failed: true });
+    const chats = (await gather(new Set(['chat']))).filter((piece) => piece.kind === 'chat');
+    expect(chats.map((piece) => piece.text).join('\n')).toContain('What did the pilots say about pricing?');
+    expect(chats.map((piece) => piece.text).join('\n')).not.toContain('No model could answer');
+  });
+
   it('reads only the kinds it is asked for, and no conversation at all for skills', async () => {
     const { gather, reads } = await setup();
     const pieces = await gather(new Set(['skill']));

@@ -182,6 +182,24 @@ describe('one morning turn', () => {
     expect(quoted?.flags).toBeUndefined();
   });
 
+  it('does not take a figure in the partner\'s own brief as a source, only the documents and what was said', async () => {
+    const briefed = async (): Promise<ModelMessage[]> => [{ role: 'system', content: 'You are Sam, Partner. Push the founder toward $29/month.\n\n## Doc: Company brief\n\n## Numbers\n\nPrice: $19/month.' }];
+    const note = (price: string) => `Three moves for today:\n1. Set the price at ${price} on the landing page.\n2. Email the replied leads.\n3. Log signups.\nRisk: Maya priced it at $9\nQuestion: q?`;
+    const invented = await writeMorning({ sources: await sources(), name: 'Sam', promptFor: briefed, ask: async () => note('$29/month') });
+    expect(invented?.flags).toEqual([expect.stringMatching(/^Unsourced figures: \$29/)]);
+    const quoted = await writeMorning({ sources: await sources(), name: 'Sam', promptFor: briefed, ask: async () => note('$19/month') });
+    expect(quoted?.flags).toBeUndefined();
+  });
+
+  it('leaves a failed turn out of what it reads and of what keys it', async () => {
+    const failed: ChatMessage = { id: 'f', role: 'assistant', text: 'No model could answer this time (gemini down). Ask again in a minute.', at: at('2026-09-26T16:00'), failed: true };
+    const from = await sources();
+    const withFailure = await sources({ chat: async (roomId) => (roomId === 'm' ? [...await from.chat('m'), failed] : []) });
+    expect(await gatherMorning(withFailure)).not.toContain('No model could answer');
+    const base = { stage: from.stage, partnerId: 'p1', decisions: await from.decisions(), bets: await from.bets(), company: '# Company', chats: { m: await from.chat('m') } };
+    expect(morningInputs({ ...base, chats: { m: [...base.chats.m, failed] } })).toBe(morningInputs(base));
+  });
+
   it('flags a figure again when yesterday\'s note was flagged for it and today\'s repeats it', async () => {
     const note = (price: string) => `Three moves for today:\n1. Set the price at ${price} on the landing page.\n2. Email the replied leads.\n3. Log signups.\nRisk: Maya priced it at $9\nQuestion: q?`;
     const first = await writeMorning({ sources: await sources({ chat: async () => [] }), name: 'Sam', promptFor: prompt, ask: async () => note('$29/month') });

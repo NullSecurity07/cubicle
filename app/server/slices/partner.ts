@@ -202,8 +202,9 @@ export function createPartner(options: PartnerOptions = {}) {
 
     const ask = options.ask ?? (deps.fake ? async () => ({ text: FAKE_MORNING, provider: fakeClient.name, model: fakeClient.model }) : async (messages: ModelMessage[]) => {
       const { order } = partnerRoute(deps.clients, deps.usage, { promptChars: promptSize(messages), tools: false });
-      const reply = await complete(messages, { onToken: () => {} }, order, ({ client, error }) => deps.usage.failed(client.name, error), (client) => deps.usage.admit(client.name));
-      deps.usage.record(reply.client.name, reply.usage, reply.quota);
+      // Nothing is shown while the note is written, so a stream that breaks part way goes straight to the next model.
+      const reply = await complete(messages, { onToken: () => {}, onRestart: () => {} }, order, ({ client, error }) => deps.usage.failed(client.name, error), (client) => deps.usage.admit(client.name));
+      if (!reply.reported) deps.usage.record(reply.client.name, reply.usage, reply.quota);
       return { text: reply.text, provider: reply.client.name, model: reply.client.model };
     });
 

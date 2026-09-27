@@ -224,6 +224,20 @@ describe('the partner slice: the morning note', () => {
     await part.close!();
   });
 
+  it('writes the morning note on the next model when the first breaks off part way, and leaves no broken words in it', async () => {
+    const broken = { name: 'broken', model: 'broken-1', maxPromptChars: Infinity, tools: true, limits: {},
+      async step(_messages: unknown, { onToken }: { onToken: (token: string) => void }) { onToken('Three moves for'); throw Object.assign(new Error("400 Failed to call a function. See 'failed_generation'."), { status: 400 }); } };
+    const good = { name: 'good', model: 'good-1', maxPromptChars: Infinity, tools: true, limits: {},
+      async step(_messages: unknown, { onToken }: { onToken: (token: string) => void }) { onToken(SHAPED); return { text: '', calls: [] }; } };
+    let clock = NINE;
+    const { deps, part } = await installed({ clients: [broken, good] as Deps['clients'] }, { now: () => clock });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    clock -= 86_400_000; await part.tick!(); clock += 86_400_000;
+    await part.tick!();
+    expect((await deps.store.readChat('p1')).at(-1)).toMatchObject({ provider: 'good', model: 'good-1' });
+    await part.close!();
+  });
+
   it('waits half an hour after a model call that throws, and stops after three in a day', async () => {
     let clock = NINE;
     let asked = 0;

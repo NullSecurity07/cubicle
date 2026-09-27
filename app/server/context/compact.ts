@@ -73,7 +73,7 @@ async function noteOf(middle: ModelMessage[], deps: Shrinking): Promise<string> 
   const messages: ModelMessage[] = [{ role: 'system', content: ASK }, { role: 'user', content: material }];
   const { order } = route(deps.clients, deps.usage, { promptChars: promptSize(messages), tools: false, kind: 'side' });
   const reply = await complete(messages, { onToken: () => {}, onRestart: () => {} }, order);
-  deps.usage.record(reply.client.name, reply.usage, reply.quota, 'compaction');
+  if (!reply.reported) deps.usage.record(reply.client.name, reply.usage, reply.quota, 'compaction');
   return reply.text.trim().slice(0, SUMMARY_CHARS);
 }
 
