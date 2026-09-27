@@ -14,7 +14,7 @@ import { createRoomFeed } from './rooms-feed.ts';
 import { createSeams } from './seams.ts';
 import { createStore } from './store.ts';
 import type { Tool } from './tools/registry.ts';
-import { HELD_BACK, verdictStanding } from './truth.ts';
+import { HELD_BACK, NOT_WRITTEN, verdictStanding } from './truth.ts';
 import { createUsage } from './usage.ts';
 
 type Step = ModelClient['step'];
@@ -60,7 +60,8 @@ describe('a consult', () => {
     const LINE = 'Unconfirmed: the verdict was not written; Rohan has not written "4. Founder-market fit" yet.';
     const said = await setup(async (_messages, { onToken }) => { onToken('PIVOT REQUIRED, 6/10.'); return { text: '', calls: [] }; }, [], standing);
     const answer = await said.consult({ fromRoomId: 'marketing', toRoomId: 'build', question: 'What is the verdict?' });
-    expect(answer).toBe(`PIVOT REQUIRED, 6/10.\n\n${LINE}`);
+    // The asker never reads the word the doc refused: it is taken out before the answer is kept or relayed.
+    expect(answer).toBe(`${NOT_WRITTEN}.\n\n${LINE}`);
     expect((await said.store.readChat('build')).at(-1)?.text).toBe(answer);
     const relayed = await setup(async (_messages, { onToken }) => { onToken('No verdict yet: Rohan has not written section 4.'); return { text: '', calls: [] }; }, [], standing);
     expect(await relayed.consult({ fromRoomId: 'marketing', toRoomId: 'build', question: 'What is the verdict?' })).toBe('No verdict yet: Rohan has not written section 4.');
@@ -359,5 +360,56 @@ describe('a partner\'s turn against the team\'s verdict', () => {
     expect(String(steps[1].at(-1)!.content)).toBe('The team\'s verdict is PIVOT REQUIRED 6/10 (Evaluation); answer in its light or say why you overrule it. Name the verdict in your reply.');
     expect(events).toContainEqual({ notice: 'Sam is taking another look: weighing the team\'s verdict.' });
     expect((await store.readChat('sam')).at(-1)!.text).toBe(replies[1]);
+  });
+});
+
+// Journeys 6-8: a judge whose doc refused the verdict still said "PIVOT REQUIRED ... 5/10" in chat, and a colleague
+// relayed it. The words the founder keeps say "[not written]" in its place.
+describe('a verdict the doc does not hold, in a turn', () => {
+  const OUTCOMES = ['WEAK', 'PIVOT REQUIRED', 'STRONG'];
+  const LINE = 'Unconfirmed: the verdict was not written; Rohan has not written "4. Founder-market fit" yet.';
+  async function turn(roomId: string, said: string, system: string, tools: Tool[] = [], calls: { id: string; name: string; args: string }[] = []) {
+    const dir = await mkdtemp(join(tmpdir(), 'chat-'));
+    const store = createStore(dir);
+    const stage = await store.loadStage();
+    const rules = { framework: 'startup-evaluation', sections: [], verdict: { heading: '5. Verdict', by: 'judge' }, outcomes: OUTCOMES };
+    const person = (id: string, name: string) => ({ id, name, role: name, accent: '#fff', brief: '', x: 0, y: 0, w: 1, h: 1 });
+    await store.saveStage({ ...stage, rooms: [...stage.rooms, person('priya', 'Priya'), person('meera', 'Meera')], docs: [...stage.docs, { id: 'eval', title: 'Evaluation', x: 0, y: 0, w: 1, h: 1, rules }] });
+    let step = 0;
+    const client: ModelClient = {
+      name: 'gemini', model: 'm', maxPromptChars: Infinity, tools: true, limits: { rpd: 1000 },
+      async step(_messages, { onToken }) { step += 1; if (step === 1 && calls.length) return { text: '', calls }; onToken(said); return { text: said, calls: [] }; },
+    };
+    const { chat } = createChat({
+      store, roomFeed: createRoomFeed(), busy: new Set(), clients: [client], usage: createUsage(null), seams: createSeams(),
+      attention: createAttention(dir), approvals: createApprovals(), memory: { fold: async () => false },
+      promptFor: async () => [{ role: 'system', content: system }, { role: 'user', content: 'q' }], toolsFor: () => tools,
+    });
+    const out = new PassThrough();
+    const events: Record<string, unknown>[] = [];
+    out.on('data', (chunk: Buffer) => { for (const line of chunk.toString().split('\n')) if (line.startsWith('data: ')) events.push(JSON.parse(line.slice(6))); });
+    const res = Object.assign(out, { writeHead: () => res }) as unknown as ServerResponse;
+    await chat(roomId, 'What is the verdict?', res);
+    const done = events.find((one) => 'done' in one) as { message: ChatMessage } | undefined;
+    return { kept: (await store.readChat(roomId)).at(-1)!.text, shown: done?.message.text };
+  }
+
+  it('keeps the judge\'s reply with the verdict word and score replaced, and the Unconfirmed line once', async () => {
+    const system = `You are Priya, the judge.\n\n${verdictStanding('Rohan has not written "4. Founder-market fit" yet', OUTCOMES)}`;
+    const { kept, shown } = await turn('priya', '**PIVOT REQUIRED**\n\n**Score:** 5/10 (Fit: 1/2)', system);
+    expect(kept).toBe(`**${NOT_WRITTEN}**\n\n**Score:** ${NOT_WRITTEN} (Fit: 1/2)\n\n${LINE}`);
+    expect(shown).toBe(kept);
+    expect(kept.match(/Unconfirmed/g)).toHaveLength(1);
+  });
+
+  it('holds a colleague who relays what an unwritten judge said', async () => {
+    const ask: Tool = { name: 'ask_person', description: 'Asks.', parameters: { type: 'object', properties: {} }, run: async () => ({ text: `Priya: ${NOT_WRITTEN}.\n\n${LINE}` }) };
+    const { kept } = await turn('meera', 'Priya said PIVOT REQUIRED, 6/10.', 'You are Meera.', [ask], [{ id: 'c1', name: 'ask_person', args: '{}' }]);
+    expect(kept).toBe(`Priya said ${NOT_WRITTEN}.\n\n${LINE}`);
+  });
+
+  it('leaves a reply alone when no verdict is held back', async () => {
+    const { kept } = await turn('priya', 'PIVOT REQUIRED, 5/10.', 'You are Priya, the judge.');
+    expect(kept).toBe('PIVOT REQUIRED, 5/10.');
   });
 });

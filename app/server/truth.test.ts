@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PARTNER_STANCE, STANCE } from '../shared/model.ts';
-import { checkReply, figureCheck, proseToolCall, stripFlagged, turnSources, unreceiptedClaims, unsourcedFigures, verdictRefused, verdictStanding, VERDICT_WRITTEN } from './truth.ts';
+import { checkReply, figureCheck, holdVerdict, NOT_WRITTEN, proseToolCall, stripFlagged, turnSources, unreceiptedClaims, unsourcedFigures, verdictRefused, verdictStanding, VERDICT_WRITTEN } from './truth.ts';
 
 const wrote = { name: 'write_doc', ok: true };
 const failedWrite = { name: 'write_doc', ok: false };
@@ -441,5 +441,47 @@ describe('money in another currency than its source', () => {
     expect(lines).toContain('Currency changed: €29 (source $), €87 (source $).');
     expect(lines).toContain('Unsourced figures: $95 (not found in anything this turn read).');
     expect(checkReply({ reply: 'Revenue $29 × 3 = $87 a month.', receipts: [], sources })).toEqual([]);
+  });
+});
+
+// Journeys 6-8: after a refused or unwritten verdict the judge still said "PIVOT REQUIRED ... 5/10" and only a line
+// under it said the doc refused it. The founder read the verdict first. It is taken out of the words before they are kept.
+describe('a verdict word held out of a reply', () => {
+  const OUTCOMES = ['WEAK', 'PIVOT REQUIRED', 'STRONG'];
+  const refused = { name: 'replace_section', ok: true, result: `Not written: the verdict waits. ${verdictRefused('Rohan has not written "4. Founder-market fit" yet', OUTCOMES)}` };
+  const LINE = 'Unconfirmed: the verdict was not written; Rohan has not written "4. Founder-market fit" yet.';
+
+  it('replaces the verdict word and the score after a refused write, and keeps one Unconfirmed line', () => {
+    const reply = `**PIVOT REQUIRED**\n\n**Score:** 5/10 (Assumption: 1/2, Fit: 1/2)\nTotal: 6 out of 10 (WEAK).\n\n${LINE}`;
+    expect(holdVerdict(reply, [refused])).toBe(`**${NOT_WRITTEN}**\n\n**Score:** ${NOT_WRITTEN} (Assumption: 1/2, Fit: 1/2)\nTotal: ${NOT_WRITTEN}.\n\n${LINE}`);
+    expect(NOT_WRITTEN).toBe('[not written]');
+  });
+
+  it('adds the Unconfirmed line when the reply has none, and leaves a clean reply alone', () => {
+    expect(holdVerdict('It leans WEAK.', [refused])).toBe(`It leans ${NOT_WRITTEN}.\n\n${LINE}`);
+    expect(holdVerdict('Run 3 of 10 interviews first; it leans WEAK.', [refused])).toBe(`Run 3 of 10 interviews first; it leans ${NOT_WRITTEN}.\n\n${LINE}`);
+    expect(holdVerdict('No verdict yet: Rohan has not written section 4.', [refused])).toBe('No verdict yet: Rohan has not written section 4.');
+    // A written verdict is the judge's to say.
+    const stood = { name: 'replace_section', ok: true, result: `Replaced the section "5. Verdict". ${VERDICT_WRITTEN}` };
+    expect(holdVerdict('WEAK. Score: 3/10.', [refused, stood])).toBe('WEAK. Score: 3/10.');
+    expect(holdVerdict('WEAK. Score: 3/10.', [])).toBe('WEAK. Score: 3/10.');
+  });
+
+  it('holds on any turn whose prompt says the verdict is not written', () => {
+    const system = turnSources([{ role: 'system', content: `You are Priya, the judge.\n\n${verdictStanding('Rohan has not written "4. Founder-market fit" yet', OUTCOMES)}` }]);
+    expect(holdVerdict('**PIVOT REQUIRED** (6/10) once section 4 is in.', [], system)).toBe(`**${NOT_WRITTEN}** once section 4 is in.\n\n${LINE}`);
+  });
+
+  it('never touches the truth net\'s own lines, which may name the cap', () => {
+    const capped = { name: 'write_doc', ok: false, result: `Failed: ${verdictRefused('the score is at most 5/10 and the verdict is not STRONG', OUTCOMES)}` };
+    const line = 'Unconfirmed: the verdict was not written; the score is at most 5/10 and the verdict is not STRONG.';
+    expect(holdVerdict(`STRONG 9/10.\n\n${line}`, [capped])).toBe(`${NOT_WRITTEN}.\n\n${line}`);
+  });
+
+  it('holds a colleague who relays an unwritten verdict a consult brought back, with the stage\'s verdict words', () => {
+    const relayed = { name: 'ask_person', ok: true, result: `Priya: PIVOT REQUIRED, 6/10.\n\n${LINE}` };
+    expect(holdVerdict('Priya says PIVOT REQUIRED, 6/10.', [relayed], [], OUTCOMES)).toBe(`Priya says ${NOT_WRITTEN}.\n\n${LINE}`);
+    // Without the stage's words there is nothing to hold it to.
+    expect(holdVerdict('Priya says PIVOT REQUIRED.', [relayed])).toBe('Priya says PIVOT REQUIRED.');
   });
 });

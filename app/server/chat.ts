@@ -17,7 +17,7 @@ import type { Payloads, Seams } from './seams.ts';
 import type { Store } from './store.ts';
 import type { Consult } from './tools/team.ts';
 import type { Tool } from './tools/registry.ts';
-import { ANSWER_IN_WORDS, HELD_BACK, proseToolCall, turnSources, verdictUnwritten } from './truth.ts';
+import { ANSWER_IN_WORDS, HELD_BACK, holdVerdict, proseToolCall, turnSources } from './truth.ts';
 import type { PromptFor } from './turn-prompt.ts';
 import type { UsageBook } from './usage.ts';
 
@@ -62,10 +62,10 @@ export function createChat(deps: Deps) {
       if (!reply.reported) usage.record(reply.client.name, reply.usage, reply.quota);
       if (proseToolCall(reply.text)) reply = { ...reply, text: HELD_BACK };
     }
-    // A judge whose doc says "Not assessed" is held to it here too: an answer to a colleague naming a verdict gets the
-    // truth net's line, or the asker relays "PIVOT REQUIRED" as if it were written.
-    const unwritten = reply.text === HELD_BACK ? null : verdictUnwritten(reply.text, [], turnSources(messages));
-    if (unwritten) reply = { ...reply, text: `${reply.text.trimEnd()}\n\n${unwritten}` };
+    // A judge whose doc says "Not assessed" is held to it here too: an answer to a colleague naming a verdict has the
+    // word and the score taken out and the truth net's line put under it, or the asker relays "PIVOT REQUIRED" as if
+    // it were written.
+    if (reply.text !== HELD_BACK) reply = { ...reply, text: holdVerdict(reply.text, [], turnSources(messages)) };
     await store.appendChat(toRoomId, { id: newMessageId(), role: 'assistant', text: reply.text, at: Date.now(), provider: reply.client.name, model: reply.client.model, usage: reply.usage });
     return reply.text;
   };
@@ -162,6 +162,11 @@ export function createChat(deps: Deps) {
         send({ token: more });
         roomFeed.tell({ roomId, turn, token: more });
       }
+      // A verdict the doc refused or does not hold yet is never kept in the words: the judge's own, or a colleague's
+      // who relays what a consult brought back. The founder reads "[not written]" where "PIVOT REQUIRED 6/10" was.
+      const outcomes = [...new Set(stage.docs.flatMap((doc) => doc.rules?.outcomes ?? []))];
+      const held = holdVerdict(reply.text, reply.tools, turnSources(messages), outcomes);
+      if (held !== reply.text) reply = { ...reply, text: held };
       const message = {
         id: replyId, role: 'assistant' as const, text: reply.text, at: Date.now(), provider: reply.provider, model: reply.model,
         usage: reply.usage, ...(reply.tools.length ? { tools: reply.tools } : {}), ...(reply.stopped ? { stopped: true } : {}),
