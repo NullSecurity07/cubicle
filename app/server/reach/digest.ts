@@ -75,3 +75,14 @@ export function dueAt(at: string, now: number): number {
   when.setHours(Math.min(hour, 23), Math.min(minute, 59), 0, 0);
   return when.getTime();
 }
+
+// What goes out on this tick. The partner's morning note rides in the digest's own message at the founder's time: one
+// message a morning, never two. A note written after the digest went, or on a day the digest is off, goes on its own
+// once it is that time. Yesterday's note never goes.
+export function dailyDue(input: { at: number; due: number; digestOn: boolean; lastDigest: number; today: string; noteDay?: string; noteSent?: string }): { digest: boolean; note: boolean } {
+  const time = input.at >= input.due;
+  return {
+    digest: input.digestOn && time && input.lastDigest < input.due,
+    note: time && !!input.noteDay && input.noteDay === input.today && input.noteSent !== input.today,
+  };
+}

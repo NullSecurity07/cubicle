@@ -46,6 +46,8 @@ beforeAll(async () => {
   // The partner has been here since long ago, so today's note is due; one bet's check day has long come.
   writeFileSync(join(workspace, 'partner.json'), JSON.stringify({ decided: [], plans: [], partnerSince: '2000-01-01' }));
   writeFileSync(join(workspace, 'bets.json'), JSON.stringify({ bets: [{ id: 'b1', made: '2000-01-01', what: 'Cold emails to 50 dentists', hypothesis: 'they book demos', metric: 'demos', target: 5, checkDate: '2000-01-08', status: 'open', at: 1 }] }));
+  // A phone paired and switched on (Telegram is the fake one, under the fake model), its daily note due since midnight.
+  writeFileSync(join(workspace, 'reach.json'), JSON.stringify({ on: true, token: 'fake-token', paired: [{ chatId: 1, name: 'Founder', at: 1 }], updates: { on: true, finished: true, stuck: true, digest: true, at: '00:00' } }));
   port = await free();
   server = spawn(process.execPath, ['server/index.ts'], {
     cwd: resolve(import.meta.dirname, '..'),
@@ -63,7 +65,10 @@ beforeAll(async () => {
 }, 40_000);
 afterAll(() => { server?.kill('SIGTERM'); });
 
-const ask = async (path: string) => (await fetch(`http://127.0.0.1:${port}${path}`, { headers: { 'x-stage-token': TOKEN } })).json();
+const ask = async (path: string, body?: unknown) => (await fetch(`http://127.0.0.1:${port}${path}`, {
+  method: body ? 'POST' : 'GET', headers: { 'x-stage-token': TOKEN, 'content-type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}),
+})).json();
+type Posted = { chatId: number; text: string; messageId: number };
 
 describe('the server with no window open', () => {
   it('writes the partner\'s morning note by itself', async () => {
@@ -79,5 +84,15 @@ describe('the server with no window open', () => {
   it('has the bet that is due waiting in Needs you, and the morning note beside it', async () => {
     const list = await until(async () => await ask('/api/attention') as { kind: string }[], (items) => items.some((one) => one.kind === 'morning-note'), 'the morning note in Needs you');
     expect(list.map((one) => one.kind)).toContain('bet-check');
+  }, 45_000);
+
+  it('sends the morning note to the phone as one message, and a reply to it reaches the partner', async () => {
+    const posted = await until(async () => (await ask('/api/reach/telegram') as { posted: Posted[] }).posted, (list) => list.some((one) => one.text.includes('Morning')), 'the morning note on the phone');
+    const notes = posted.filter((one) => one.text.includes('Morning'));
+    expect(notes).toHaveLength(1);
+    expect(notes[0].text).toContain('Pat');
+    await ask('/api/reach/telegram', { chatId: 1, text: 'Which move first?', extra: { reply_to_message: { message_id: notes[0].messageId, chat: { id: 1 }, text: 'x' } } });
+    const chat = await until(() => read<{ role: string; text: string }[] | { messages?: { role: string; text: string }[] }>(join(dir, 'workspace', 'rooms', 'pat.json'), []), (held) => JSON.stringify(held).includes('Which move first?'), 'the reply in the partner\'s room');
+    expect(JSON.stringify(chat)).toContain('Which move first?');
   }, 45_000);
 });

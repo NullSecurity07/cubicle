@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { Attention, Stage, Task } from '../../shared/model.ts';
 import type { Boards } from '../boards.ts';
 import type { Skills } from '../skills.ts';
-import { createDigest, digestText, dueAt } from './digest.ts';
+import { createDigest, dailyDue, digestText, dueAt } from './digest.ts';
 
 const NOON = new Date(2026, 8, 20, 12, 0, 0).getTime();
 const stage: Stage = {
@@ -77,5 +77,28 @@ describe('when the morning note is due', () => {
 
   it('falls back to nine in the morning for anything it cannot read', () => {
     expect(new Date(dueAt('not a time', NOON)).getHours()).toBe(9);
+  });
+});
+
+describe('what goes out each day', () => {
+  const due = dueAt('09:00', NOON);
+  const base = { at: NOON, due, digestOn: true, lastDigest: 0, today: '2026-09-20' };
+
+  it('sends the partner\'s morning note in the same message as the digest, at the time the founder chose', () => {
+    expect(dailyDue({ ...base, noteDay: '2026-09-20' })).toEqual({ digest: true, note: true });
+  });
+
+  it('holds a note written early until that time, so the founder gets one message and not two', () => {
+    expect(dailyDue({ ...base, at: due - 60_000, noteDay: '2026-09-20' })).toEqual({ digest: false, note: false });
+  });
+
+  it('sends a note written after the digest went on its own, once', () => {
+    expect(dailyDue({ ...base, lastDigest: due + 1, noteDay: '2026-09-20' })).toEqual({ digest: false, note: true });
+    expect(dailyDue({ ...base, lastDigest: due + 1, noteDay: '2026-09-20', noteSent: '2026-09-20' })).toEqual({ digest: false, note: false });
+  });
+
+  it('sends the note alone when the founder switched the digest off, and never yesterday\'s note', () => {
+    expect(dailyDue({ ...base, digestOn: false, noteDay: '2026-09-20' })).toEqual({ digest: false, note: true });
+    expect(dailyDue({ ...base, noteDay: '2026-09-19' })).toEqual({ digest: true, note: false });
   });
 });

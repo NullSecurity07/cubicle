@@ -9,12 +9,15 @@ import { DEFAULT_VOICE, fakeVoices, isVoice, kokoroVoices, VOICES } from '../med
 import type { Source } from '../seams.ts';
 import { healthRows } from '../openends/health.ts';
 import { createBridge } from '../reach/bridge.ts';
-import { createDigest, dueAt } from '../reach/digest.ts';
+import { createDigest, dailyDue, dueAt } from '../reach/digest.ts';
+import { localDay } from '../clock.ts';
+import { morningMessage } from '../partner/morning.ts';
+import { partnerState } from '../partner/state.ts';
 import { todayFive, todayLine } from '../today/rank.ts';
 import { fakeTelegram } from '../reach/fake.ts';
 import { createHooks, newSecret, rawBody } from '../reach/hooks.ts';
 import { createOutbox } from '../reach/outbox.ts';
-import { createPhone } from '../reach/phone.ts';
+import { createPhone, headed } from '../reach/phone.ts';
 import { createReach } from '../reach/settings.ts';
 import { fakeEars, groqWhisper, localWhisper } from '../reach/speech.ts';
 import { createBook } from '../reach/state.ts';
@@ -369,8 +372,9 @@ export default {
         return false;
       },
       // Every half minute: the `/` menu and the group's topics are brought back in step with the stage, anything
-      // written for the phone and not yet sent goes out, the boards are looked at, and the morning note goes if it
-      // is due. Everything here is cheap when nothing has changed — none of it reaches Telegram to find that out.
+      // written for the phone and not yet sent goes out, the boards are looked at, and the daily digest goes if it is
+      // due, with the partner's morning note in the same message. Everything here is cheap when nothing has changed —
+      // none of it reaches Telegram to find that out.
       async tick() {
         const now = await reach.read();
         if (!now.on || !(now.paired.length || now.group)) return;
@@ -382,13 +386,25 @@ export default {
         }
         await phone.flush().catch(() => {});
         await updates.look().catch(() => {});
+        if (!now.updates.on) return;
         const at = Date.now();
+        const today = localDay(at);
         const due = dueAt(now.updates.at, at);
-        const last = (await book.read()).digestAt;
-        if (now.updates.on && now.updates.digest && at >= due && last < due) {
-          await book.set((one) => { one.digestAt = at; });
-          await phone.tell(await digest(last || at - DAY)).catch(() => {});
-        }
+        const kept = await book.read();
+        const last = kept.digestAt;
+        // The partner's note for today, read where the partner slice keeps it: written fresh each tick, so read fresh.
+        const written = (await partnerState(deps.workspace).read().catch(() => null))?.morning;
+        const partner = written && stage.rooms.find((room) => room.id === written.roomId);
+        const going = dailyDue({ at, due, digestOn: now.updates.digest, lastDigest: last, today, noteDay: partner ? written!.day : undefined, noteSent: kept.morning });
+        if (!going.digest && !going.note) return;
+        // Marked before it is sent: a note that fails to go is not sent twice, the way the digest never was.
+        await book.set((one) => { if (going.digest) one.digestAt = at; if (going.note) one.morning = today; });
+        const parts = [
+          ...(going.note && partner ? [headed(partner, morningMessage(written!))] : []),
+          ...(going.digest ? [await digest(last || at - DAY)] : []),
+        ];
+        // Said as the partner when the note is in it, so replying to it on the phone reaches them.
+        await phone.tell(parts.join('\n\n'), false, going.note && partner ? partner.id : undefined).catch(() => {});
       },
       async close() {
         await poller.close();
