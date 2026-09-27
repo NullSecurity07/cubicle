@@ -22,6 +22,7 @@ export const WHAT: Record<Attention['kind'], string> = {
   'runway-low': 'Runway is short', 'proposed-runway': 'suggests a change to the runway',
   'lead-stale': 'A lead to follow up',
   'key-rejected': 'A model key was refused',
+  'file-damaged': 'A file could not be read',
   'morning-note': 'left you the morning note', 'bet-check': 'A bet to check', 'proposed-bet': 'suggests a bet', 'proposed-plan': 'suggests tasks from a plan',
 };
 export const ago = (at: number, now = Date.now()) => {
