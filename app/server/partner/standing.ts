@@ -100,7 +100,8 @@ export async function teamVerdict(stage: Stage, readDoc: (id: string) => Promise
 
 // Journey 6: "Approve the task board: check your Needs you list" with nothing waiting there. A reply that sends the
 // founder to Needs you while nothing waits gets a line saying so.
-const SENDS_TO_NEEDS = /\b(?:approve|accept|check|review|answer|take|decide)\b[^.\n]{0,80}\bneeds you\b|\bwaiting\b[^.\n]{0,30}\bneeds you\b|\bneeds you\b[^.\n]{0,30}\b(?:waiting|list)\b/i;
+// Journey 7 widened it: "check your decisions list and approve" is the same advice without the words "Needs you".
+const SENDS_TO_NEEDS = /\b(?:approve|accept|decline|check|review|answer|take|decide)\b[^.\n]{0,80}\b(?:needs you|decisions?|tasks?|bets?|proposals?|your (?:\w+\s+)?list)\b|\bwaiting\b[^.\n]{0,30}\bneeds you\b|\bneeds you\b[^.\n]{0,30}\b(?:waiting|list)\b/i;
 export const NOTHING_WAITING = '(Nothing is waiting in Needs you.)';
 export function staleNeeds(reply: string, waiting: Attention[]): string {
   if (!SENDS_TO_NEEDS.test(reply) || waiting.some((item) => item.kind !== 'morning-note')) return reply;

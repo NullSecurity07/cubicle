@@ -144,6 +144,11 @@ describe('the partner\'s rules are not said back', () => {
   it('takes out a sentence that is a near copy of the stance or the preconditions rule, and keeps the rest', () => {
     const reply = 'Not yet. Before any plan to raise money, hire, spend or pivot, we must check its preconditions against the Company document and chat. You have 3.8 months of runway.\n\n- Before any plan to raise money, hire, spend or pivot, list its preconditions and check each against the Company document and the chat.\n- MRR over $10k\n\nMy call: wait.';
     expect(stripStance(reply)).toBe('Not yet. You have 3.8 months of runway.\n\n- MRR over $10k\n\nMy call: wait.');
+    // Journey 7: "Never round this upward." under the runway answer.
+    expect(stripStance('Your runway is **3.8 months** (€4,200 cash divided by an €1,100/month burn). Never round this upward.')).toBe('Your runway is **3.8 months** (€4,200 cash divided by an €1,100/month burn).');
+    expect(stripStance('Runway is 3.8 months, never rounded up.\n\nNever round it toward the better side.\n\nMy call: cut burn.')).toBe('Runway is 3.8 months, never rounded up.\n\nMy call: cut burn.');
+    // A short rule said back word for word goes too.
+    expect(stripStance('Be concise. My call: talk to users.')).toBe('My call: talk to users.');
     const own = 'Raise when you can show investors a month of retention and ten paying users who stayed, not before.';
     expect(stripStance(own)).toBe(own);
   });

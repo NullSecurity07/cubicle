@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { seedDocs } from '../../shared/model.ts';
 import { companyTemplate } from '../../shared/partner.ts';
+import { withSections } from './company.ts';
 import { companyFacts, keepFacts, keptLine, runwayFix } from './keep.ts';
 
 // Journey 4's first message, as the founder wrote it on Day 1.
@@ -102,6 +104,21 @@ describe('the brief keeps the name and one row of users', () => {
     expect(merged).not.toContain('Paying users: 2');
     // Free users are their own row.
     expect(keepFacts(once, companyFacts('We have 40 free users.'), '2026-09-28').text).toContain('- Paying beta users: 3 (founder, 2026-09-27)\n- Free users: 40 (founder, 2026-09-28)');
+  });
+});
+
+// Journey 7: the Day-1 message left two users rows, "Paying beta users: 3" and "Users: 3", in the seeded brief.
+describe('one users row from one message', () => {
+  const J7 = "I'm building Ledgerly: $29/month bookkeeping and VAT return drafting for solo consultants in the EU. We have 3 paying beta users, "
+    + 'and two of the three users asked for invoicing. I have €4,200 in the bank and burn €1,100/month. Tear it apart.';
+  it('reads the count once, the first way it was said, and writes one row into the seeded brief', () => {
+    expect(companyFacts(J7).numbers.filter((one) => /users/i.test(one.label))).toEqual([{ label: 'Paying beta users', value: '3' }]);
+    const seeded = withSections(seedDocs['company-brief']);
+    const { text, kept } = keepFacts(seeded, companyFacts(J7), '2026-09-27');
+    expect(text.match(/^- .*users.*$/gim)).toEqual(['- Paying beta users: 3 (founder, 2026-09-27)']);
+    expect(kept[0]).toBe('Numbers (Price $29/month, Paying beta users 3, Cash €4,200, Burn €1,100/month)');
+    // Two counts of one kind in the same message never make two rows, even when the words differ.
+    expect(keepFacts(seeded, { numbers: [{ label: 'Paying users', value: '3' }, { label: 'Users', value: '3' }] }, '2026-09-27').text.match(/^- .*users.*$/gim)).toHaveLength(1);
   });
 });
 

@@ -47,5 +47,11 @@ describe('what the reply is held to', () => {
     expect(staleNeeds('Accept the bet waiting in your Needs you.', [item('morning-note', 'Morning note')])).toMatch(/Nothing is waiting in Needs you\.\)$/);
     expect(staleNeeds('Accept the bet waiting in your Needs you.', [item('proposed-bet', 'Five paying users')])).toBe('Accept the bet waiting in your Needs you.');
     expect(staleNeeds('Talk to the three users today.', [])).toBe('Talk to the three users today.');
+    // Journey 7: sent to "your decisions list" to approve a decision declined a moment before.
+    const j7 = 'Yes, you should check your decisions list and approve the **Build invoicing feature this week?** decision.\n\nMy call: Open your decisions list and approve it.';
+    expect(staleNeeds(j7, [])).toBe(`${j7}\n\n${NOTHING_WAITING}`);
+    for (const said of ['Decline the proposal and move on.', 'Accept the tasks Dev proposed.', 'Approve the bet before Friday.']) expect(staleNeeds(said, []), said).toBe(`${said}\n\n${NOTHING_WAITING}`);
+    expect(staleNeeds(j7, [item('proposed-decision', 'Build invoicing feature this week?')])).toBe(j7);
+    expect(staleNeeds('Check the pricing pages of the three competitors.', [])).toBe('Check the pricing pages of the three competitors.');
   });
 });

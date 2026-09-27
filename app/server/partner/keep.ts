@@ -86,7 +86,10 @@ export function companyFacts(said: string): CompanyFacts {
       // "an update for our 3 beta users" names who a thing is for, not how many there are now.
       if (/\b(?:to|for|with)\s+(?:(?:our|my|the|all|your)\s+)?$/i.test(plain.slice(0, match.index))) continue;
       const count = WORD_COUNTS.includes(match[1].toLowerCase()) ? String(WORD_COUNTS.indexOf(match[1].toLowerCase())) : match[1];
-      put(capital(`${match[2].toLowerCase()}${match[3].toLowerCase()}`), count);
+      const label = capital(`${match[2].toLowerCase()}${match[3].toLowerCase()}`);
+      // "3 paying beta users … two of the three users": one count, kept the first way it was said.
+      if (numbers.some((one) => countFamily(one.label) === countFamily(label))) continue;
+      put(label, count);
     }
   }
   idea ??= named;
@@ -119,6 +122,8 @@ export function keepFacts(text: string, facts: CompanyFacts, day: string): { tex
       // Users, customers, paying users: one row, however they were counted before. Free or trial users are their own.
       const family = countFamily(fact.label);
       if (family) {
+        // A second count of the same kind in one message never makes a second row.
+        if (changed.some((one) => countFamily(one.label) === family)) continue;
         const counts = rows.map((row, index) => ({ row, index })).filter(({ row }) => COUNT_ROW.test(row) && countFamily(row) === family);
         if (counts.length === 1 && Number(/(\d[\d,]*)/.exec(counts[0].row.replace(/\(founder, [\d-]+\)/, ''))?.[1].replace(/,/g, '')) === Number(fact.value.replace(/,/g, ''))) continue;
         const line = `- ${fact.label}: ${fact.value}${stamp}`;

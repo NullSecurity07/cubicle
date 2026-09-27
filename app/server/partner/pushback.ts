@@ -118,8 +118,12 @@ export const UNWEIGHED = '*Partner did not weigh the team\'s verdict.*';
 // partner's own instructions is taken out: the founder reads the answer, not the rules.
 const words = (text: string) => text.toLowerCase().replace(/[^a-z0-9' ]+/g, ' ').split(/\s+/).filter(Boolean);
 const RULES = [PARTNER_STANCE, PARTNER_PRECONDITIONS, STANCE].flatMap((rule) => rule.split(/(?<=[.!?])\s+/)).map((one) => new Set(words(one))).filter((one) => one.size >= 8);
+// A short rule said back word for word ("Be concise."), and the runway rule in any words ("Never round this upward.").
+const SHORT_RULES = new Set([PARTNER_STANCE, PARTNER_PRECONDITIONS, STANCE].flatMap((rule) => rule.split(/(?<=[.!?])\s+/)).map((one) => words(one).join(' ')).filter((one) => one && one.split(' ').length < 8));
+const RUNWAY_RULE = /^\W*never\s+round\b[^.!?]*(?:up|upward|upwards|better side)\W*$/i;
 const copiesRule = (sentence: string) => {
   const said = words(sentence);
+  if (RUNWAY_RULE.test(sentence) || SHORT_RULES.has(said.join(' '))) return true;
   if (said.length < 8) return false;
   return RULES.some((rule) => said.filter((word) => rule.has(word)).length / said.length >= 0.75);
 };
