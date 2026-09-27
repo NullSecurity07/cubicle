@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import { resolve } from 'node:path';
 import { isHeaded, type Stage } from '../shared/model.ts';
 import { createApprovals } from './approvals.ts';
-import { boardAttention, createAttention, damageAttention, keyAttention } from './attention.ts';
+import { boardAttention, createAttention, damageAttention, doneAttention, keyAttention } from './attention.ts';
 import { createBoards } from './boards.ts';
 import { createBrowser, dnsResolve, fakeHand, fakeRunner, jinaReader, realRunner } from './browser.ts';
 import { createChat } from './chat.ts';
@@ -112,6 +112,8 @@ const { media, filmPictures, local } = wireStudios({ root, workspace, fake, stor
 const decisions = createDecisions(workspace);
 attention.source(decisionAttention(decisions));
 decisions.onChange(() => { void attention.refresh(); });
+// A proposal already answered elsewhere (its tasks on a board, the bet taken, the decision on record) leaves the list.
+attention.settle(doneAttention({ workspace, store, boards, decisions }));
 // Websites people proposed as sources, each waiting for the founder in Needs you.
 const sources = createSources(workspace);
 attention.source(sourceAttention(sources, () => store.loadStage()));

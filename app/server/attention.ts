@@ -1,7 +1,8 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Lapsed } from '../shared/lapsed.ts';
-import type { Attention, AttentionKind, ToolEvent } from '../shared/model.ts';
+import type { Attention, AttentionKind, Decision, ToolEvent } from '../shared/model.ts';
+import { planTaskTitle, stepText, type Bet, type PlanProposal } from '../shared/partner.ts';
 import type { Boards } from './boards.ts';
 import type { Damage, Store } from './store.ts';
 import { ENTRIES } from './providers.ts';
@@ -9,6 +10,8 @@ import type { UsageBook } from './usage.ts';
 
 export type AttentionBook = ReturnType<typeof createAttention>;
 type Source = () => Promise<Attention[]>;
+// Which of the rows on the list are already done where they live, by id, so they are left off it.
+type Settle = (list: Attention[]) => Promise<Set<string>>;
 // What the founder may wave away. A proposal or an approval is answered where it lives, never dismissed here.
 const DISMISSABLE = new Set<AttentionKind>(['run-failed', 'missed', 'review-due', 'page-changed']);
 // What is raised here only to tell the founder something, with no answer to wait for: they may wave it away once read.
@@ -30,6 +33,7 @@ const about = (event: ToolEvent) => [event.name.replace(/_/g, ' '), ...Object.en
 export function createAttention(dir: string, now: () => number = Date.now) {
   const path = join(dir, 'attention.json');
   const sources: Source[] = [];
+  const settles: Settle[] = [];
   const watchers = new Set<(list: Attention[]) => void>();
   let queue: Promise<unknown> = Promise.resolve();
   let state: { open: Lapsed[]; dismissed: string[] } | null = null;
@@ -56,8 +60,11 @@ export function createAttention(dir: string, now: () => number = Date.now) {
     // reading the list is also where it is let go, and the file is written again without it.
     const held = open.filter((entry) => !entry.lapsed || now() - entry.at < A_DAY);
     if (held.length !== open.length) { state!.open = held; await changed(); }
-    const reported = (await Promise.all(sources.map((source) => source().catch(() => [])))).flat();
-    return [...reported.filter((entry) => !dismissed.includes(entry.id)), ...held].sort((a, b) => b.at - a.at);
+    const reported = (await Promise.all(sources.map((source) => source().catch(() => [])))).flat().filter((entry) => !dismissed.includes(entry.id));
+    // A question whose answer is already given somewhere else (the tasks on the board, the bet taken, the decision on
+    // record) is not asked again: every reader of this list, the partner's advice included, sees it gone at once.
+    const done = new Set((await Promise.all(settles.map((settle) => settle(reported).catch(() => new Set<string>())))).flatMap((ids) => [...ids]));
+    return [...reported.filter((entry) => !done.has(entry.id)), ...held].sort((a, b) => b.at - a.at);
   }
   async function changed() {
     const { open, dismissed } = await load();
@@ -71,6 +78,7 @@ export function createAttention(dir: string, now: () => number = Date.now) {
     list,
     settled: () => queue,
     source(source: Source) { sources.push(source); },
+    settle(settle: Settle) { settles.push(settle); },
     // Something a source reports has changed (a board, a decision): tell whoever watches.
     async refresh() { const now = await list(); for (const tell of watchers) tell(now); },
     async raise(entry: Attention) { const { open } = await load(); state!.open = [...open.filter((one) => one.id !== entry.id), entry]; await changed(); },
@@ -166,5 +174,50 @@ export function backupAttention(attention: Pick<AttentionBook, 'raise' | 'clear'
       open = false;
       await attention.clear('backup-failed');
     }
+  };
+}
+
+// ---------------------------------------------------------------- what is already done
+
+// The same words however they were typed: case, spacing and a closing stop do not make two things different.
+const same = (text: string) => text.toLowerCase().replace(/\s+/g, ' ').trim().replace(/[.!?\u2026\s]+$/, '');
+const readJson = async <T>(path: string, fallback: T): Promise<T> => { try { return JSON.parse(await readFile(path, 'utf8')) as T; } catch { return fallback; } };
+
+// A proposal is done when what it asks for is already so, however it got there: a plan whose every step is a task on
+// a board (added by a first yes, or by hand), a bet already taken under the same words, a decision already on record
+// under the same title, or a question to choose a bet asked before a bet was taken. Read fresh on every look, so
+// the row goes on the next tick and on the action that did it, and never lingers to be advised on.
+export function doneAttention(deps: { workspace: string; store: Pick<Store, 'loadStage'>; boards: Pick<Boards, 'list'>; decisions: { list(): Promise<Decision[]> } }): Settle {
+  return async (list) => {
+    const done = new Set<string>();
+    const wanted = (kind: AttentionKind) => list.some((entry) => entry.kind === kind);
+    if (wanted('proposed-plan')) {
+      const { plans } = await readJson<{ plans?: PlanProposal[] }>(join(deps.workspace, 'partner.json'), {});
+      const stage = await deps.store.loadStage();
+      const titles = new Set<string>();
+      for (const card of (stage.cards ?? []).filter((one) => one.kind === 'board')) for (const task of await deps.boards.list(card.id)) if (task.column !== 'proposed') titles.add(same(task.title));
+      for (const plan of Array.isArray(plans) ? plans : []) {
+        const onBoard = plan.steps.length > 0 && plan.steps.every((step) => titles.has(same(planTaskTitle(step))) || titles.has(same(stepText(step))));
+        if (onBoard) done.add(`proposed-plan:${plan.id}`);
+      }
+    }
+    const bets = wanted('proposed-bet') || wanted('proposed-decision') ? (await readJson<{ bets?: Bet[] }>(join(deps.workspace, 'bets.json'), {})).bets ?? [] : [];
+    const taken = bets.filter((bet) => bet.status !== 'proposed');
+    for (const bet of bets) {
+      if (bet.status !== 'proposed') continue;
+      const twin = taken.some((one) => same(one.what) === same(bet.what) || (one.metric === bet.metric && one.target === bet.target && one.checkDate === bet.checkDate));
+      if (twin) done.add(`proposed-bet:${bet.id}`);
+    }
+    if (wanted('proposed-decision')) {
+      const all = await deps.decisions.list();
+      const decided = new Set(all.filter((one) => one.status === 'decided').map((one) => same(one.title)));
+      for (const decision of all) {
+        if (decision.status !== 'proposed') continue;
+        // "Choose a 2-week validation bet": a bet taken after it was asked is its answer.
+        const aboutBet = /\bbets?\b/i.test(decision.title) && taken.some((bet) => bet.at >= decision.at);
+        if (decided.has(same(decision.title)) || aboutBet) done.add(`proposed-decision:${decision.id}`);
+      }
+    }
+    return done;
   };
 }
