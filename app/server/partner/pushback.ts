@@ -16,6 +16,7 @@ const COMMIT = new RegExp([
   '\\bspend\\w*\\b[^.?!]{0,30}(?:savings|runway|on hiring)',
   '\\bpivot\\w*\\b',
   '\\bshould (?:i|we) (?:raise|fund-?raise|hire)\\b',
+  '\\b(?:take|accept)\\b[^.?!]{0,40}\\b(?:offer|loan|investment|term sheet)\\b',
   '\\b(?:our|a|the) (?:pre-?)?seed\\b',
 ].join('|'), 'i');
 // Help from outside by the job is not headcount: a contractor, a freelancer or an agency.
@@ -23,18 +24,25 @@ const HIRED_HELP = /\b(?:hire|hiring|recruit\w*)\b[^.?!]{0,30}\b(?:contractors?|
 const HEADCOUNT = /\b(?:hire|hiring|recruit\w*)\b/i;
 // A sum is a commitment from this much: below it, a spend is a week's ad test, not a bet of the company.
 export const SPEND_FROM = 1000;
-// A sum of money: "$15k", "$50,000", "10k", "1,500 dollars".
+// A sum of money: "$15k", "$50,000", "1,500 dollars", or a bare "10k" (read as money only in the right company).
 const SUM = /\$\s?(\d[\d,]*(?:\.\d+)?)\s?([kmb])?\b|\b(\d[\d,]*(?:\.\d+)?)\s?([kmb])\b|\b(\d[\d,]*(?:\.\d+)?)\s+(?:dollars|usd|euros|pounds)\b/gi;
-// What makes a sum money going out or coming in, said on either side of it.
-const MONEY_VERB = /\b(?:spend\w*|put\w*|allocat\w*|invest\w*|budget\w*|pay\w*|burn\w*|loans?|offers?)\b/i;
+// Money about to go out, in the present or the future: "spent", "burned" and "we pay" rent are the past or the
+// running cost, and an "offer" is a raise only when it is taken (the pattern above).
+const MONEY_VERB = /\b(?:spend|spends|spending|put|putting|allocate|allocating|invest|investing|budget|budgeting|burn|burning|loans?)\b/i;
 const NEAR = 30;
 const sums = (said: string) => [...said.matchAll(SUM)].map((found) => {
   const digits = found[1] ?? found[3] ?? found[5];
   const scale = (found[2] ?? found[4] ?? '').toLowerCase();
-  return { value: Number(digits.replace(/,/g, '')) * ({ k: 1e3, m: 1e6, b: 1e9 }[scale as 'k'] ?? 1), at: found.index, end: found.index + found[0].length };
+  return { value: Number(digits.replace(/,/g, '')) * ({ k: 1e3, m: 1e6, b: 1e9 }[scale as 'k'] ?? 1), at: found.index, end: found.index + found[0].length, bare: found[3] !== undefined };
 });
-const bigSpend = (said: string) => sums(said).some((sum) => sum.value >= SPEND_FROM
-  && MONEY_VERB.test(`${said.slice(Math.max(0, sum.at - NEAR), sum.at)} ${said.slice(sum.end, sum.end + NEAR)}`));
+// A "$" sum or one in dollars counts beside a money verb on either side. A bare "10k" counts only after one
+// ("invest 10k"), and never as a count of something ("20k users").
+const bigSpend = (said: string) => sums(said).some((sum) => {
+  if (sum.value < SPEND_FROM) return false;
+  const before = said.slice(Math.max(0, sum.at - NEAR), sum.at);
+  if (sum.bare) return MONEY_VERB.test(before) && !/^\s+[a-z][a-z-]*s\b/i.test(said.slice(sum.end));
+  return MONEY_VERB.test(`${before} ${said.slice(sum.end, sum.end + NEAR)}`);
+});
 // "The budget for" something is a commitment, unless the sum it names is a small one.
 const budgetFor = (said: string) => /\bbudget for\b/i.test(said) && !sums(said).some((sum) => sum.value < SPEND_FROM);
 const commits = (said: string) => {

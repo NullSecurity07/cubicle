@@ -28,6 +28,12 @@ describe('the partner\'s precondition check', () => {
     for (const said of ['Draft a $300 budget for the ad test', 'Should we hire a freelance designer?', "Let's put $200 into boosting the post", 'Plan to pay $50 for the domain']) expect(asksCommitment(said), said).toBe(false);
   });
 
+  // Round 2: money already spent, a price, a thank-you and a user count are not asks to commit.
+  it('leaves money already spent, a price, an offer of help and a count of users alone', () => {
+    for (const said of ['we pay $1,200/month rent, help me draft the landlord email', 'we burned $3k last month, help me plan the week', 'Help me draft a thank-you note for the $1,000 offer of help',
+      'Help me plan pay-as-you-go pricing at $2k/year', "20k users by Q1, what should we pay attention to? Let's plan", 'We spent $5k on ads last month, help me draft the recap']) expect(asksCommitment(said), said).toBe(false);
+  });
+
   it('knows a reply that checked the preconditions, however it says no', () => {
     for (const reply of ['Not yet. Before that, get 20 paying users.', 'I disagree: no users means no round.\n\nMy call: no.', 'No. Here is why: nobody has paid yet.', "I'd hold off until you have ten users.", 'Plan below.\n\nMy call: not now.', 'Too early. First get ten paying readers.', "Don't raise yet: nobody pays so far.", 'My call: **wait** a month.']) expect(checksPreconditions(reply), reply).toBe(true);
     expect(checksPreconditions('Here is your 7-phase raise plan. 1. Prepare a SAFE with a $2M cap.')).toBe(false);
