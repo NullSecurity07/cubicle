@@ -398,7 +398,7 @@ describe('the partner slice: the bets ledger', () => {
     // A card of that key left on the stage without its wire still gets the partner's wire.
     await deps.store.patchStage((draft) => { draft.wires = draft.wires.filter((wire) => !wire.to.startsWith('metrics-')); });
     const { metricsFromBrief } = await import('./partner.ts');
-    await metricsFromBrief(workspace, deps.store, { label: 'Paying users', value: 2 }, 'p1', Date.now());
+    await metricsFromBrief(workspace, deps.store, { label: 'Paying users', value: 2 }, 'p1', new Date('2026-09-27T10:00').getTime());
     const rewired = await deps.store.loadStage();
     expect((rewired.cards ?? []).filter((one) => one.kind === 'metrics')).toHaveLength(1);
     expect(rewired.wires.filter((wire) => wire.from === 'p1' && wire.to.startsWith('metrics-'))).toHaveLength(1);
