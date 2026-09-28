@@ -70,6 +70,23 @@ describe('a coder card', () => {
     expect(coder.snapshot(card.id).live).toBeNull();
   });
 
+  it('never shows the founder\'s own words as the reply being written', async () => {
+    // The real opencode echoes the prompt as a text part of the founder's message before the coder's first step.
+    const fake = fakeEngine({ step: 30 });
+    let ear: ((event: any) => void) | undefined;
+    const engine: Engine = { ...fake, listen: (hear) => { ear = hear; return fake.listen(hear); } };
+    const { coder, said } = setup(engine);
+    await coder.prompt(card, 'Tidy the readme', {});
+    const session = [...fake.sessions.keys()][0];
+    ear!({ type: 'message.updated', properties: { info: { id: 'msg_user', sessionID: session, role: 'user' } } });
+    ear!({ type: 'message.part.updated', properties: { sessionID: session, part: { id: 'prt_user', sessionID: session, messageID: 'msg_user', type: 'text', text: 'Tidy the readme' } } });
+    ear!({ type: 'message.part.delta', properties: { sessionID: session, messageID: 'msg_user', partID: 'prt_user', field: 'text', delta: ' please' } });
+    await coder.wait(card.id);
+    const texts = said.filter((one) => one.live).map((one) => one.live!.text);
+    expect(texts.some((text) => text.includes('Tidy the readme'))).toBe(false);
+    expect(texts.some((text) => text.startsWith('Did:'))).toBe(true);
+  });
+
   it('says what runs now while a question waits, and lets the live view go on Stop', async () => {
     const { coder, said } = setup();
     await coder.prompt(card, 'Run the test suite', {});

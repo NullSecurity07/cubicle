@@ -118,17 +118,23 @@ export function createCoder(deps: Deps) {
     if (!live) return;
     let urgent = false;
     let changed = false;
-    if (heard.opened) {
+    // opencode echoes the founder's own words as a text part before the coder's first step, and a step is where the
+    // coder's answer begins: nothing said before it is the coder writing.
+    if (heard.step) { live.step += 1; urgent = true; }
+    const spoken = live.step > 0;
+    if (heard.opened && spoken) {
       card.parts.set(heard.opened.id, heard.opened.kind);
+      // Thinking begins with the part itself: some providers send it whole, with no letters in between.
+      if (heard.opened.kind === 'reasoning' && !live.thinking) { live.thinking = true; urgent = true; }
       // A provider that sends the part whole rather than letter by letter: the text so far is in the part itself.
       if (heard.opened.kind === 'text' && heard.opened.text && heard.opened.text.length > live.text.length) { urgent = !live.text; live.text = heard.opened.text.slice(-LIVE_TEXT); changed = true; }
     }
-    if (heard.delta) {
+    if (heard.delta && spoken) {
       const kind = card.parts.get(heard.delta.id);
       if (kind === 'reasoning' && !live.thinking) { live.thinking = true; urgent = true; }
       if (kind === 'text' && heard.delta.text) { urgent ||= !live.text; live.text = (live.text + heard.delta.text).slice(-LIVE_TEXT); changed = true; }
     }
-    if (heard.closed) {
+    if (heard.closed && spoken) {
       card.parts.delete(heard.closed.id);
       if (heard.closed.kind === 'reasoning' && live.thinking) { live.thinking = false; urgent = true; }
       // The reply's own line lands in the log with this same word.
@@ -141,7 +147,6 @@ export function createCoder(deps: Deps) {
       if (at < 0) urgent = true; else changed = true;
     }
     if (heard.finished && live.tools.some((one) => one.id === heard.finished)) { live.tools = live.tools.filter((one) => one.id !== heard.finished); urgent = true; }
-    if (heard.step) { live.step += 1; urgent = true; }
     if (heard.usage) {
       card.usage.set(heard.usage.message, { tokens: heard.usage.tokens, cost: heard.usage.cost });
       const all = [...card.usage.values()];
