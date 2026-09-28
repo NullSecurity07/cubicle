@@ -456,6 +456,11 @@ test('a coder card: a wired person hands it work, the founder approves each step
   const question = card.getByRole('group', { name: 'Run this command?' });
   await expect(question).toContainText('pnpm test');
   await expect(card.getByRole('status', { name: 'Coder: Waiting for you' })).toBeVisible();
+  // What runs now shows live: the command with its ring turning, and which step the coder is on.
+  const live = card.locator('.coder__live');
+  await expect(live).toContainText('bash pnpm test');
+  await expect(live.locator('.coder__running').filter({ hasText: 'bash pnpm test' }).locator('.coder__ring')).toBeVisible();
+  await expect(live.locator('.coder__pulse')).toContainText('Step 1');
   // The same question waits in Needs you.
   await page.getByRole('button', { name: /Needs you/ }).click();
   const needs = page.locator('.needs li').filter({ hasText: 'The share coder needs your OK' });
@@ -468,6 +473,11 @@ test('a coder card: a wired person hands it work, the founder approves each step
   await expect(log.locator('.coder__line--diff')).toHaveText('+12 −3 in 1 file');
   await expect(log.locator('.coder__line--reply').last()).toContainText('Did: Add a health check endpoint and run the tests');
   await expect(card.getByRole('status', { name: 'Coder: Idle' })).toBeVisible();
+  // Once the work is over nothing is live, and the finished command keeps what it printed behind its chevron.
+  await expect(card.locator('.coder__live')).toHaveCount(0);
+  const ran = log.locator('.coder__step').filter({ has: page.locator('.coder__line--tool', { hasText: 'bash pnpm test' }) }).last();
+  await ran.getByRole('button', { name: 'Show output' }).click();
+  await expect(log.locator('.coder__out--done').last()).toContainText('12 passed');
   await expect.poll(async () => (await (await page.request.get('/api/attention')).json()).filter((one: { id: string }) => one.id.startsWith('coder:')).length).toBe(0);
 
   // The person's reply carries what the coder said and what changed.

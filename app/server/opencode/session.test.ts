@@ -49,6 +49,40 @@ describe('a coder card', () => {
     expect(remembered).toHaveLength(1);
   });
 
+  it('shows what the coder does as it happens, counts each answer\'s tokens once and lets it go at the end', async () => {
+    const { coder, said } = setup();
+    await coder.prompt(card, 'Add a health check', {});
+    expect(await coder.wait(card.id)).toBe('done');
+    const live = said.filter((one) => one.live !== undefined).map((one) => one.live);
+    const at = (check: (one: NonNullable<CoderEvent['live']>) => boolean) => live.findIndex((one) => !!one && check(one));
+    const thinking = at((one) => one.thinking);
+    const editing = at((one) => one.tools.some((tool) => tool.tool === 'edit' && tool.what === 'src/example.ts'));
+    const writing = at((one) => one.text.startsWith('Did:'));
+    expect(thinking).toBeGreaterThan(-1);
+    expect(editing).toBeGreaterThan(thinking);
+    expect(writing).toBeGreaterThan(editing);
+    expect(live[thinking]).toMatchObject({ step: 1, tokens: { input: 1200 } });
+    // The answer is said three times over its life; its tokens count once, the latest word.
+    const last = live.at(-2)!;
+    expect(last.tokens.input + last.tokens.output + last.tokens.reasoning + last.tokens.cache).toBe(1300);
+    expect(last.text).toBe('');
+    expect(live.at(-1)).toBeNull();
+    expect(coder.snapshot(card.id).live).toBeNull();
+  });
+
+  it('says what runs now while a question waits, and lets the live view go on Stop', async () => {
+    const { coder, said } = setup();
+    await coder.prompt(card, 'Run the test suite', {});
+    await until(() => coder.snapshot(card.id).state === 'waiting');
+    expect(coder.snapshot(card.id).live?.tools).toEqual([expect.objectContaining({ tool: 'bash', what: 'pnpm test' })]);
+    expect(await coder.status(card.id)).toMatch(/^Now: running bash pnpm test \(\d+ s\)$/m);
+    const before = said.length;
+    await coder.stop(card.id);
+    expect(said.slice(before).filter((one) => one.live !== undefined).map((one) => one.live)).toEqual([null]);
+    expect(coder.snapshot(card.id).live).toBeNull();
+    expect(await coder.status(card.id)).not.toContain('Now:');
+  });
+
   it('asks the founder before a command, and carries "always" and a reason back to the coder', async () => {
     const { coder, raised, cleared, calls, approvals, lines } = setup();
     await coder.prompt(card, 'Run the test suite', {});

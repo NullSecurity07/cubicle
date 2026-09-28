@@ -1,4 +1,4 @@
-import { diffLine, type CoderAsk, type CoderLine } from '../../shared/coder.ts';
+import { diffLine, type CoderAsk, type CoderLine, type CoderLiveTool } from '../../shared/coder.ts';
 
 // What OpenCode says on its event stream, as the few things the card cares about. Everything else it says (sync
 // records, plugin news, heartbeats) is left where it is.
@@ -10,6 +10,17 @@ export type Heard = {
   // The folder changed under this step (opencode's patch part), whichever tool changed it.
   changed?: true;
   line?: CoderLine; permission?: CoderAsk; replied?: string; reply?: string; error?: string;
+  // What the card shows live. A part of the reply or of the thinking is announced (`opened`), grows (`delta`) and ends
+  // (`closed`); opencode sends a delta with only the part's id, so whoever listens remembers which kind each part is.
+  opened?: { id: string; kind: 'reasoning' | 'text'; text?: string };
+  delta?: { id: string; text: string };
+  closed?: { id: string; kind: 'reasoning' | 'text' };
+  // A step still running (`running`), or the id of one that just finished (`finished`, alongside its `line`).
+  running?: CoderLiveTool; finished?: string;
+  // A new step of the model's own (it read what the last tools said and goes again).
+  step?: true;
+  // What one answer of the model's has cost so far. Said several times per answer: the latest one counts.
+  usage?: { message: string; tokens: { input: number; output: number; reasoning: number; cache: number }; cost: number };
 };
 
 // A path as the founder would say it inside their own folder.
@@ -26,29 +37,78 @@ export const plainError = (text: string) => unwrap(text)
   .replace(/\s+in organization `[^`]*`/gi, '').replace(/\s+service tier `[^`]*`/gi, '')
   .replace(/[^.?!]*https?:\/\/\S+[^.?!]*[.?!]?/g, '').replace(/\s*Need more tokens\?/gi, '').replace(/\s+/g, ' ').trim();
 
-// A finished step in the words the old project log used: the tool, then the command, the title, the file or the pattern.
-function toolLine(part: Record<string, any>, dir: string): CoderLine | undefined {
+// The end of what a command printed: the last lines are where a test run says how it went.
+const tail = (value: unknown, max: number) => { const text = String(value ?? '').replace(/\s+$/, ''); return text.length > max ? text.slice(-max) : text; };
+const number = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
+
+// A step as the founder reads it: the tool, then the command, the title, the file or the pattern.
+function toolWhat(part: Record<string, any>, dir: string) {
   const state = part.state ?? {};
   const input = state.input ?? {};
   const file = typeof input.filePath === 'string' ? short(input.filePath, dir) : undefined;
   const what = flat(short(String(input.command ?? file ?? state.title ?? input.pattern ?? ''), dir), 120);
-  const text = `${part.tool} ${what}`.trim();
-  if (state.status === 'completed') return { kind: 'tool', text, at: Date.now(), ...(file ? { file } : {}) };
-  if (state.status === 'error') return { kind: 'error', text: `${text} failed: ${flat(state.error, 160)}`, at: Date.now() };
+  return { tool: String(part.tool ?? 'step'), what, file };
+}
+
+// A finished step in the words the old project log used, with the end of what it printed and how long it ran.
+function toolLine(part: Record<string, any>, dir: string): CoderLine | undefined {
+  const state = part.state ?? {};
+  const { tool, what, file } = toolWhat(part, dir);
+  const text = `${tool} ${what}`.trim();
+  const took = typeof state.time?.start === 'number' && typeof state.time?.end === 'number' ? Math.max(0, state.time.end - state.time.start) : undefined;
+  const timed = took === undefined ? {} : { took };
+  if (state.status === 'completed') {
+    const detail = tool === 'bash' ? tail(state.output ?? state.metadata?.output, 1500) : '';
+    return { kind: 'tool', text, at: Date.now(), ...(file ? { file } : {}), ...(detail ? { detail } : {}), ...timed };
+  }
+  if (state.status === 'error') {
+    const detail = tail(state.error, 1500);
+    return { kind: 'error', text: `${text} failed: ${flat(state.error, 160)}`, at: Date.now(), ...(detail ? { detail } : {}), ...timed };
+  }
   return undefined;
+}
+
+// A step still running, as the live view shows it; a command's output so far comes with it.
+function toolRunning(part: Record<string, any>, dir: string): CoderLiveTool {
+  const state = part.state ?? {};
+  const { tool, what, file } = toolWhat(part, dir);
+  const output = tool === 'bash' ? tail(state.metadata?.output, 600) : '';
+  return { id: String(part.id ?? part.callID ?? ''), tool, what, ...(file ? { file } : {}), since: typeof state.time?.start === 'number' ? state.time.start : Date.now(), ...(output ? { output } : {}) };
 }
 
 export function translate(event: RawEvent, dir = ''): Heard | null {
   const { type, properties: said = {} } = event;
   const session: string | undefined = said.sessionID ?? said.part?.sessionID ?? said.info?.sessionID;
   if (!session) return null;
-  if (type === 'message.part.delta') return { session, progress: true };
+  if (type === 'message.part.delta') {
+    const grew = said.partID && (said.field ?? 'text') === 'text' && typeof said.delta === 'string' ? { delta: { id: String(said.partID), text: said.delta } } : {};
+    return { session, progress: true, ...grew };
+  }
   if (type === 'message.part.updated') {
     const part = said.part ?? {};
-    if (part.type === 'tool') { const line = toolLine(part, dir); return { session, progress: true, ...(line ? { line } : {}) }; }
-    if (part.type === 'text' && part.time?.end && String(part.text ?? '').trim()) return { session, progress: true, line: { kind: 'reply', text: String(part.text).trim().slice(0, 4000), at: Date.now() } };
+    const id = part.id ? String(part.id) : '';
+    if (part.type === 'tool') {
+      const status = part.state?.status;
+      if (status === 'pending' || status === 'running') return { session, progress: true, ...(id ? { running: toolRunning(part, dir) } : {}) };
+      const line = toolLine(part, dir);
+      return { session, progress: true, ...(line ? { line } : {}), ...(line && id ? { finished: id } : {}) };
+    }
+    if (part.type === 'text' || part.type === 'reasoning') {
+      const kind: 'text' | 'reasoning' = part.type;
+      const ended = !!part.time?.end;
+      const marks = !id ? {} : ended ? { closed: { id, kind } } : { opened: { id, kind, ...(part.text ? { text: String(part.text) } : {}) } };
+      const line: CoderLine | undefined = kind === 'text' && ended && String(part.text ?? '').trim() ? { kind: 'reply', text: String(part.text).trim().slice(0, 4000), at: Date.now() } : undefined;
+      return { session, progress: true, ...marks, ...(line ? { line } : {}) };
+    }
+    if (part.type === 'step-start') return { session, progress: true, step: true };
     if (part.type === 'patch') return { session, progress: true, changed: true };
     return { session, progress: true };
+  }
+  if (type === 'message.updated') {
+    const info = said.info ?? {};
+    if (info.role !== 'assistant' || !info.id) return null;
+    const tokens = info.tokens ?? {};
+    return { session, progress: true, usage: { message: String(info.id), tokens: { input: number(tokens.input), output: number(tokens.output), reasoning: number(tokens.reasoning), cache: number(tokens.cache?.read) + number(tokens.cache?.write) }, cost: number(info.cost) } };
   }
   if (type === 'session.diff') return Array.isArray(said.diff) && said.diff.length ? { session, line: { kind: 'diff', text: diffLine(said.diff), at: Date.now() } } : null;
   if (type === 'permission.asked') {

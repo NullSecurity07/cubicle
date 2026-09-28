@@ -26,11 +26,33 @@ export function fakeEngine({ step = 120, gap = 0, now = Date.now }: { step?: num
     session.run = run;
     session.busy = true;
     const sessionID = session.id;
-    const part = (part: Record<string, unknown>) => tell('message.part.updated', { sessionID, part: { sessionID, id: id('prt'), ...part } }, session.directory);
+    const messageID = id('msg');
+    const part = (part: Record<string, unknown>) => tell('message.part.updated', { sessionID, part: { sessionID, messageID, id: id('prt'), ...part } }, session.directory);
+    // A part the way the real one says it as it grows: announced, then word by word, then whole with its end time.
+    const grown = (partID: string, type: string, pieces: string[]) => {
+      const start = now();
+      tell('message.part.updated', { sessionID, part: { sessionID, messageID, id: partID, type, text: '', time: { start } } }, session.directory);
+      for (const delta of pieces) tell('message.part.delta', { sessionID, messageID, partID, field: 'text', delta }, session.directory);
+      tell('message.part.updated', { sessionID, part: { sessionID, messageID, id: partID, type, text: pieces.join(''), time: { start, end: now() } } }, session.directory);
+    };
+    // A tool as the real one says it: running first (and asked about, when it asks), then finished.
+    const tool = (name: string, input: Record<string, unknown>) => {
+      const partID = id('prt');
+      const start = now();
+      const say = (state: Record<string, unknown>) => tell('message.part.updated', { sessionID, part: { sessionID, messageID, id: partID, type: 'tool', tool: name, callID: partID, state: { input, ...state } } }, session.directory);
+      say({ status: 'running', time: { start } });
+      return {
+        done: (extra: Record<string, unknown> = {}) => say({ status: 'completed', time: { start, end: now() }, ...extra }),
+        failed: (error: string) => say({ status: 'error', error, time: { start, end: now() } }),
+      };
+    };
+    const usage = (tokens: { input: number; output: number; reasoning: number }) => tell('message.updated', { info: { id: messageID, sessionID, role: 'assistant', tokens: { ...tokens, cache: { read: 0, write: 0 } }, cost: 0, modelID: 'fake-free', providerID: 'opencode', time: { created: now() } } }, session.directory);
     try {
       tell('session.status', { sessionID, status: { type: 'busy' } }, session.directory);
       await pause(run.signal);
       part({ type: 'step-start' });
+      usage({ input: 1200, output: 0, reasoning: 0 });
+      grown(id('prt'), 'reasoning', ['Looking at the file']);
       await pause(run.signal);
       // One question, answered by the founder; the reply comes back on the stream the way opencode says it.
       const ask = (permission: string, rest: Record<string, unknown>) => new Promise<string>((answer) => {
@@ -40,25 +62,32 @@ export function fakeEngine({ step = 120, gap = 0, now = Date.now }: { step?: num
       });
       const edit = { permission: 'edit', patterns: ['src/example.ts'], metadata: {}, always: ['*'] };
       const bash = { permission: 'bash', patterns: ['pnpm test'], metadata: { command: 'pnpm test' }, always: ['pnpm *'] };
+      const editing = () => tool('edit', { filePath: `${session.directory}/src/example.ts` });
+      const testing = () => tool('bash', { command: 'pnpm test' });
       if (/\bboth\b/i.test(text)) {
+        const editTool = editing();
         const first = ask(id('per'), edit);
         await new Promise((settle) => setTimeout(settle, gap));
+        const bashTool = testing();
         const [edited, ran] = await Promise.all([first, ask(id('per'), bash)]);
         if (run.signal.aborted) throw new Error('aborted');
-        part({ type: 'tool', tool: 'edit', state: edited === 'reject' ? { status: 'error', input: { filePath: `${session.directory}/src/example.ts` }, error: 'the founder said no' } : { status: 'completed', input: { filePath: `${session.directory}/src/example.ts` }, title: 'src/example.ts' } });
-        part({ type: 'tool', tool: 'bash', state: ran === 'reject' ? { status: 'error', input: { command: 'pnpm test' }, error: 'the founder said no' } : { status: 'completed', input: { command: 'pnpm test' }, output: '12 passed' } });
-      } else part({ type: 'tool', tool: 'edit', state: { status: 'completed', input: { filePath: `${session.directory}/src/example.ts` }, title: 'src/example.ts' } });
+        if (edited === 'reject') editTool.failed('the founder said no'); else editTool.done({ title: 'src/example.ts' });
+        if (ran === 'reject') bashTool.failed('the founder said no'); else bashTool.done({ output: '12 passed' });
+      } else editing().done({ title: 'src/example.ts' });
       if (/test/i.test(text) && !/\bboth\b/i.test(text)) {
+        const bashTool = testing();
         const reply = await ask(id('per'), bash);
         if (run.signal.aborted) throw new Error('aborted');
         await pause(run.signal);
-        if (reply === 'reject') part({ type: 'tool', tool: 'bash', state: { status: 'error', input: { command: 'pnpm test' }, error: 'the founder said no' } });
-        else part({ type: 'tool', tool: 'bash', state: { status: 'completed', input: { command: 'pnpm test' }, output: '12 passed' } });
+        if (reply === 'reject') bashTool.failed('the founder said no');
+        else bashTool.done({ output: '12 passed' });
       }
       await pause(run.signal);
       const said = `Did: ${text.replace(/\s+/g, ' ').slice(0, 120)}`;
-      session.messages.push({ id: id('msg'), role: 'assistant', text: said });
-      part({ type: 'text', text: said, time: { start: now(), end: now() } });
+      session.messages.push({ id: messageID, role: 'assistant', text: said });
+      const half = Math.ceil(said.length / 2);
+      grown(id('prt'), 'text', [said.slice(0, half), said.slice(half)]);
+      usage({ input: 1200, output: 80, reasoning: 20 });
       tell('session.diff', { sessionID, diff: [{ file: 'src/example.ts', additions: 12, deletions: 3 }] }, session.directory);
     } catch { /* aborted: the abort below says idle */ }
     session.busy = false;
