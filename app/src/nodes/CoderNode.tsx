@@ -1,6 +1,6 @@
 import { useReactFlow, type NodeProps } from '@xyflow/react';
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { coderChannel, type CoderAsk as Asked, type CoderEvent, type CoderLine, type CoderPatch, type CoderState, type GraphMark, type GraphView } from '../../shared/coder';
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { coderChannel, type CoderAsk as Asked, type CoderEvent, type CoderLine, type CoderLive, type CoderLiveTool, type CoderPatch, type CoderState, type GraphMark, type GraphView } from '../../shared/coder';
 import { askCoder, getCoder, getCoderGraph, getCoderPatches, mapCoderFolder, newCoderSession, stopCoder, undoCoder } from '../api';
 import { feed, snapshot } from '../feed';
 import { overlay, useFocused } from '../overlay/store';
@@ -16,14 +16,14 @@ import { useAttempt } from '../attempt';
 import { SEND_ICON, STOP_ICON } from './icons';
 import { useGrowOnce } from '../flow';
 
-type View = { lines: CoderLine[]; state: CoderState; permission: Asked | null; waiting: number };
+type View = { lines: CoderLine[]; state: CoderState; permission: Asked | null; waiting: number; live: CoderLive | null };
 const SAID: Record<CoderState, string> = { idle: 'Idle', working: 'Working', waiting: 'Waiting for you', stopped: 'Stopped' };
 
 // The card's log, its question and its state, as the server has them: the whole of it when the window opens (or the
 // feed comes back after a gap), then one step at a time. The session the server started is written onto the card, so
 // the stage the window saves never loses it.
 function useCoder(id: string, keep: (session: string | undefined) => void): View {
-  const [view, setView] = useState<View>({ lines: [], state: 'idle', permission: null, waiting: 0 });
+  const [view, setView] = useState<View>({ lines: [], state: 'idle', permission: null, waiting: 0, live: null });
   const kept = useRef(keep);
   kept.current = keep;
   useEffect(() => {
@@ -32,8 +32,9 @@ function useCoder(id: string, keep: (session: string | undefined) => void): View
       state: event.state ?? was.state,
       permission: event.permission === undefined ? was.permission : event.permission,
       waiting: event.waiting ?? (event.permission === null ? 0 : was.waiting),
+      live: event.live === undefined ? was.live : event.live,
     }));
-    const read = () => { getCoder(id).then((now) => apply({ lines: now.lines, state: now.state, permission: now.permission ?? null, waiting: now.waiting ?? 0 }), () => {}); };
+    const read = () => { getCoder(id).then((now) => apply({ lines: now.lines, state: now.state, permission: now.permission ?? null, waiting: now.waiting ?? 0, live: now.live ?? null }), () => {}); };
     const stop = feed<CoderEvent>(coderChannel(id), (event) => {
       apply(event);
       if (event.session !== undefined && !event.lines) kept.current(event.session || undefined);
@@ -86,6 +87,78 @@ function MapReport({ map, onBack }: { map: GraphView; onBack: () => void }) {
   );
 }
 
+// How long a step ran, the way a stopwatch says it: 0.4 s, 3.2 s, 2 m 5 s.
+function took(ms: number) {
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`;
+  return `${Math.floor(ms / 60_000)} m ${Math.round((ms % 60_000) / 1000)} s`;
+}
+// Time since the work began, counted in whole seconds.
+function elapsed(ms: number) {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  return seconds < 60 ? `${seconds} s` : `${Math.floor(seconds / 60)} m ${seconds % 60} s`;
+}
+// Tokens the way people say them: 840, 6.3k, 1.2M.
+function count(tokens: number) {
+  if (tokens < 1000) return String(tokens);
+  if (tokens < 1_000_000) return `${(tokens / 1000).toFixed(tokens < 100_000 ? 1 : 0).replace(/\.0$/, '')}k`;
+  return `${(tokens / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+}
+
+// What a command printed: its last few lines, kept scrolled to the newest.
+function Output({ text, lines = 6 }: { text: string; lines?: number }) {
+  const box = useRef<HTMLPreElement>(null);
+  const shown = text.split('\n').slice(-lines).join('\n');
+  useEffect(() => { if (box.current) box.current.scrollTop = box.current.scrollHeight; }, [shown]);
+  return <pre className="coder__out" ref={box}>{shown}</pre>;
+}
+
+// A finished step, with how long it took and, when it printed something, a quiet way to look at it. The step's own
+// words stay alone in their line, the way the log has always said them.
+function Step({ line, children }: { line: CoderLine; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const timed = line.took !== undefined && line.took >= 100;
+  if (!timed && !line.detail) return <>{children}</>;
+  return (
+    <>
+      <div className="coder__step">
+        {children}
+        {timed && <span className="coder__took"> · {took(line.took!)}</span>}
+        {line.detail && (
+          <button type="button" className={`coder__peek${open ? ' is-open' : ''}`} aria-label={open ? 'Hide output' : 'Show output'} aria-expanded={open} title={open ? 'Hide output' : 'Show output'} onClick={() => setOpen((was) => !was)}>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4" /></svg>
+          </button>
+        )}
+      </div>
+      {open && line.detail && <pre className="coder__out coder__out--done">{line.detail}</pre>}
+    </>
+  );
+}
+
+// A step still running: a small turning ring, the tool and what it works on, and what a command has printed so far.
+function Running({ tool }: { tool: CoderLiveTool }) {
+  return (
+    <div className="coder__running">
+      <div className="coder__running-head"><i className="coder__ring" aria-hidden="true" /><span className="coder__tool">{tool.tool}</span> {tool.file ? <span className="coder__file">{tool.file}</span> : tool.what}</div>
+      {tool.output && <Output text={tool.output} />}
+    </div>
+  );
+}
+
+// The coder this moment, at the foot of the log: thinking, the steps running, the reply as it is written, and a quiet
+// line saying which step, for how long and how many tokens so far.
+function Live({ live, now }: { live: CoderLive; now: number }) {
+  const tokens = live.tokens.input + live.tokens.output + live.tokens.reasoning + live.tokens.cache;
+  const pulse = [live.step > 0 ? `Step ${live.step}` : '', elapsed(now - live.since), tokens > 0 ? `${count(tokens)} tokens` : '', live.cost > 0 ? `$${live.cost < 1 ? live.cost.toFixed(3) : live.cost.toFixed(2)}` : ''].filter(Boolean).join(' · ');
+  return (
+    <div className="coder__live">
+      {live.thinking && <div className="coder__thinking">Thinking…</div>}
+      {live.tools.map((tool) => <Running key={tool.id} tool={tool} />)}
+      {live.text && <div className="coder__line coder__line--reply is-live">{live.text}</div>}
+      <div className="coder__pulse">{pulse}</div>
+    </div>
+  );
+}
+
 // One step in the log. A diff opens the card large on the changes themselves.
 function Line({ line, onChanges }: { line: CoderLine; onChanges: () => void }) {
   if (line.kind === 'ask') return <div className="coder__line coder__line--ask"><span className="coder__who">{line.by ?? 'You'}</span>{line.text}</div>;
@@ -101,8 +174,10 @@ function Line({ line, onChanges }: { line: CoderLine; onChanges: () => void }) {
   }
   if (line.kind === 'tool') {
     const [tool, ...rest] = line.text.split(' ');
-    return <div className="coder__line coder__line--tool"><span className="coder__tool">{tool}</span> {line.file ? <span className="coder__file">{line.file}</span> : rest.join(' ')}</div>;
+    return <Step line={line}><div className="coder__line coder__line--tool"><span className="coder__tool">{tool}</span> {line.file ? <span className="coder__file">{line.file}</span> : rest.join(' ')}</div></Step>;
   }
+  // A failure shows its full words on the chevron when the line had to cut them short.
+  if (line.kind === 'error' && line.detail && line.detail.length > 160) return <Step line={line}><div className="coder__line coder__line--error">{line.text}</div></Step>;
   return <div className={`coder__line coder__line--${line.kind}`}>{line.text}</div>;
 }
 
@@ -146,10 +221,21 @@ export function CoderNode({ id, data, selected }: NodeProps<ProjectNodeType>) {
   const log = useRef<HTMLDivElement>(null);
   const name = data.path.trim().replace(/\/+$/, '').split('/').pop() || 'Coder';
   const busy = view.state === 'working' || view.state === 'waiting';
+  const live = busy ? view.live : null;
+  const showing = !!live && (live.thinking || live.tools.length > 0 || !!live.text);
+  const [clock, setClock] = useState(() => Date.now());
 
   // A card saved when this was the one-shot project card was too small for a conversation, so it grows once.
   useGrowOnce(id, { width: 380, height: 380 }, { width: 420, height: 440 });
-  useEffect(() => { log.current?.scrollTo({ top: log.current.scrollHeight, behavior: 'smooth' }); }, [view.lines.length, view.permission, view.state]);
+  const liveSize = live ? live.text.length + live.tools.reduce((sum, one) => sum + 1 + (one.output?.length ?? 0), 0) : 0;
+  useEffect(() => { log.current?.scrollTo({ top: log.current.scrollHeight, behavior: 'smooth' }); }, [view.lines.length, view.permission, view.state, liveSize, live?.thinking]);
+  // The live line's seconds count up while the coder works.
+  useEffect(() => {
+    if (!live) return;
+    setClock(Date.now());
+    const timer = setInterval(() => setClock(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [!!live, live?.since]);
   // Back on the stage, the log is what the card shows.
   useEffect(() => { if (!focused) { setChanges(false); setReport(false); } }, [focused]);
   // "Mapped 3 minutes ago" stays true as the minutes pass.
@@ -189,9 +275,10 @@ export function CoderNode({ id, data, selected }: NodeProps<ProjectNodeType>) {
           {view.lines.length === 0 && !view.permission
             ? <p className="chat__empty">Set the folder, then tell the coder what to build or fix, here or through a person wired to this card. It works inside this folder only, and asks you before it changes a file or runs a command.</p>
             : view.lines.map((line) => <Line key={`${line.at}:${line.kind}:${line.text.slice(0, 48)}`} line={line} onChanges={openChanges} />)}
+          {live && <Live live={live} now={clock} />}
           {view.permission && <CoderAsk key={view.permission.id} cardId={id} ask={view.permission} />}
           {view.permission && view.waiting > 0 && <p className="coder__more">and {view.waiting} more waiting</p>}
-          {view.state === 'working' && <div className="coder__working" aria-hidden="true"><i /><i /><i /></div>}
+          {view.state === 'working' && !showing && <div className="coder__working" aria-hidden="true"><i /><i /><i /></div>}
         </div>
       )}
       {problem && <p className="msg--problem coder__problem" role="alert">{problem}</p>}

@@ -11,9 +11,9 @@ describe('what the coder does, as lines a founder reads', () => {
     expect(translate(tool('edit', 'completed', { filePath: `${DIR}/src/x.ts` }, { title: `${DIR}/src/x.ts` }), DIR)).toMatchObject({ line: { kind: 'tool', text: 'edit src/x.ts', file: 'src/x.ts' } });
     expect(translate(tool('write', 'completed', { filePath: `${DIR}/README.md` }), DIR)?.line).toMatchObject({ text: 'write README.md', file: 'README.md' });
     expect(translate(tool('glob', 'completed', { pattern: '**/*.md' }), DIR)?.line?.text).toBe('glob **/*.md');
-    // Still running: the coder is alive, and nothing is said yet.
-    const running = translate(tool('bash', 'running', { command: 'ls' }), DIR);
-    expect(running).toMatchObject({ progress: true });
+    // Still running: the coder is alive, the live view shows the step, and the log says nothing yet.
+    const running = translate(part({ id: 'prt_1', type: 'tool', tool: 'bash', state: { status: 'running', input: { command: 'ls' }, time: { start: 5 } } }), DIR);
+    expect(running).toMatchObject({ progress: true, running: { id: 'prt_1', tool: 'bash', what: 'ls', since: 5 } });
     expect(running?.line).toBeUndefined();
     expect(translate(tool('bash', 'error', { command: 'pnpm test' }, { error: 'exit 1' }), DIR)?.line).toMatchObject({ kind: 'error', text: 'bash pnpm test failed: exit 1' });
   });
@@ -51,6 +51,45 @@ describe('what the coder does, as lines a founder reads', () => {
     const json = '{"message":"Tool call validation failed: attempted to call tool \'search\' which was not in request.tools","type":"invalid_request_error"}';
     expect(translate({ type: 'session.error', properties: { sessionID: 'ses_1', error: { name: 'APIError', data: { message: json } } } }, DIR)?.error)
       .toBe("Tool call validation failed: attempted to call tool 'search' which was not in request.tools");
+  });
+});
+
+describe('what the coder is doing right now', () => {
+  const delta = (partID: string, text: string) => ({ type: 'message.part.delta', properties: { sessionID: 'ses_1', messageID: 'msg_1', partID, field: 'text', delta: text } });
+
+  it('announces a part of the thinking or the reply, grows it by deltas and closes it', () => {
+    expect(translate(part({ id: 'prt_r', type: 'reasoning', text: '', time: { start: 1 } }), DIR)).toEqual({ session: 'ses_1', progress: true, opened: { id: 'prt_r', kind: 'reasoning' } });
+    expect(translate(delta('prt_r', 'Looking'), DIR)).toEqual({ session: 'ses_1', progress: true, delta: { id: 'prt_r', text: 'Looking' } });
+    expect(translate(part({ id: 'prt_r', type: 'reasoning', text: 'Looking', time: { start: 1, end: 2 } }), DIR)).toEqual({ session: 'ses_1', progress: true, closed: { id: 'prt_r', kind: 'reasoning' } });
+    expect(translate(part({ id: 'prt_t', type: 'text', text: '', time: { start: 1 } }), DIR)).toEqual({ session: 'ses_1', progress: true, opened: { id: 'prt_t', kind: 'text' } });
+    expect(translate(delta('prt_t', 'Done.'), DIR)?.delta).toEqual({ id: 'prt_t', text: 'Done.' });
+    expect(translate(part({ id: 'prt_t', type: 'text', text: 'Done.', time: { start: 1, end: 2 } }), DIR)).toMatchObject({ closed: { id: 'prt_t', kind: 'text' }, line: { kind: 'reply', text: 'Done.' } });
+    // A delta for some other field of a part is not text to show.
+    expect(translate({ type: 'message.part.delta', properties: { sessionID: 'ses_1', partID: 'prt_t', field: 'metadata', delta: 'x' } }, DIR)).toEqual({ session: 'ses_1', progress: true });
+  });
+
+  it('shows a running command with the end of its output so far, and a finished one with its output and time', () => {
+    const long = Array.from({ length: 400 }, (_, at) => `line ${at}`).join('\n');
+    const running = translate(part({ id: 'prt_b', type: 'tool', tool: 'bash', state: { status: 'running', input: { command: 'pnpm test' }, metadata: { output: long }, time: { start: 10 } } }), DIR);
+    expect(running?.running?.output).toHaveLength(600);
+    expect(running?.running?.output?.endsWith('line 399')).toBe(true);
+    // A tool announced before it has its input still shows, as itself.
+    expect(translate(part({ id: 'prt_p', type: 'tool', tool: 'edit', state: { status: 'pending', input: {} } }), DIR)?.running).toMatchObject({ id: 'prt_p', tool: 'edit', what: '' });
+    const done = translate(part({ id: 'prt_b', type: 'tool', tool: 'bash', state: { status: 'completed', input: { command: 'pnpm test' }, output: `${long}\n`, time: { start: 10, end: 3210 } } }), DIR);
+    expect(done).toMatchObject({ finished: 'prt_b', line: { kind: 'tool', text: 'bash pnpm test', took: 3200 } });
+    expect(done?.line?.detail).toHaveLength(1500);
+    expect(done?.line?.detail?.endsWith('line 399')).toBe(true);
+    // An edit keeps its line as it was: no output to show.
+    expect(translate(part({ id: 'prt_e', type: 'tool', tool: 'edit', state: { status: 'completed', input: { filePath: `${DIR}/a.ts` } } }), DIR)?.line).toEqual({ kind: 'tool', text: 'edit a.ts', file: 'a.ts', at: expect.any(Number) });
+    const failed = translate(part({ id: 'prt_f', type: 'tool', tool: 'bash', state: { status: 'error', input: { command: 'make' }, error: 'exit 2: no rule', time: { start: 1, end: 401 } } }), DIR);
+    expect(failed).toMatchObject({ finished: 'prt_f', line: { kind: 'error', text: 'bash make failed: exit 2: no rule', detail: 'exit 2: no rule', took: 400 } });
+  });
+
+  it('counts a new step, and reads what an answer cost from the assistant\'s message only', () => {
+    expect(translate(part({ id: 'prt_s', type: 'step-start' }), DIR)).toEqual({ session: 'ses_1', progress: true, step: true });
+    const info = (role: string) => ({ type: 'message.updated', properties: { info: { id: 'msg_2', sessionID: 'ses_1', role, tokens: { input: 1200, output: 80, reasoning: 20, cache: { read: 300, write: 5 } }, cost: 0.012, modelID: 'm', providerID: 'p', time: { created: 1 } } } });
+    expect(translate(info('assistant'), DIR)).toEqual({ session: 'ses_1', progress: true, usage: { message: 'msg_2', tokens: { input: 1200, output: 80, reasoning: 20, cache: 305 }, cost: 0.012 } });
+    expect(translate(info('user'), DIR)).toBeNull();
   });
 });
 

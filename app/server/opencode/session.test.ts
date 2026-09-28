@@ -49,6 +49,57 @@ describe('a coder card', () => {
     expect(remembered).toHaveLength(1);
   });
 
+  it('shows what the coder does as it happens, counts each answer\'s tokens once and lets it go at the end', async () => {
+    const { coder, said } = setup();
+    await coder.prompt(card, 'Add a health check', {});
+    expect(await coder.wait(card.id)).toBe('done');
+    const live = said.filter((one) => one.live !== undefined).map((one) => one.live);
+    const at = (check: (one: NonNullable<CoderEvent['live']>) => boolean) => live.findIndex((one) => !!one && check(one));
+    const thinking = at((one) => one.thinking);
+    const editing = at((one) => one.tools.some((tool) => tool.tool === 'edit' && tool.what === 'src/example.ts'));
+    const writing = at((one) => one.text.startsWith('Did:'));
+    expect(thinking).toBeGreaterThan(-1);
+    expect(editing).toBeGreaterThan(thinking);
+    expect(writing).toBeGreaterThan(editing);
+    expect(live[thinking]).toMatchObject({ step: 1, tokens: { input: 1200 } });
+    // The answer is said three times over its life; its tokens count once, the latest word.
+    const last = live.at(-2)!;
+    expect(last.tokens.input + last.tokens.output + last.tokens.reasoning + last.tokens.cache).toBe(1300);
+    expect(last.text).toBe('');
+    expect(live.at(-1)).toBeNull();
+    expect(coder.snapshot(card.id).live).toBeNull();
+  });
+
+  it('never shows the founder\'s own words as the reply being written', async () => {
+    // The real opencode echoes the prompt as a text part of the founder's message before the coder's first step.
+    const fake = fakeEngine({ step: 30 });
+    let ear: ((event: any) => void) | undefined;
+    const engine: Engine = { ...fake, listen: (hear) => { ear = hear; return fake.listen(hear); } };
+    const { coder, said } = setup(engine);
+    await coder.prompt(card, 'Tidy the readme', {});
+    const session = [...fake.sessions.keys()][0];
+    ear!({ type: 'message.updated', properties: { info: { id: 'msg_user', sessionID: session, role: 'user' } } });
+    ear!({ type: 'message.part.updated', properties: { sessionID: session, part: { id: 'prt_user', sessionID: session, messageID: 'msg_user', type: 'text', text: 'Tidy the readme' } } });
+    ear!({ type: 'message.part.delta', properties: { sessionID: session, messageID: 'msg_user', partID: 'prt_user', field: 'text', delta: ' please' } });
+    await coder.wait(card.id);
+    const texts = said.filter((one) => one.live).map((one) => one.live!.text);
+    expect(texts.some((text) => text.includes('Tidy the readme'))).toBe(false);
+    expect(texts.some((text) => text.startsWith('Did:'))).toBe(true);
+  });
+
+  it('says what runs now while a question waits, and lets the live view go on Stop', async () => {
+    const { coder, said } = setup();
+    await coder.prompt(card, 'Run the test suite', {});
+    await until(() => coder.snapshot(card.id).state === 'waiting');
+    expect(coder.snapshot(card.id).live?.tools).toEqual([expect.objectContaining({ tool: 'bash', what: 'pnpm test' })]);
+    expect(await coder.status(card.id)).toMatch(/^Now: running bash pnpm test \(\d+ s\)$/m);
+    const before = said.length;
+    await coder.stop(card.id);
+    expect(said.slice(before).filter((one) => one.live !== undefined).map((one) => one.live)).toEqual([null]);
+    expect(coder.snapshot(card.id).live).toBeNull();
+    expect(await coder.status(card.id)).not.toContain('Now:');
+  });
+
   it('asks the founder before a command, and carries "always" and a reason back to the coder', async () => {
     const { coder, raised, cleared, calls, approvals, lines } = setup();
     await coder.prompt(card, 'Run the test suite', {});

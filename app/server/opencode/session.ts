@@ -1,4 +1,4 @@
-import { diffLine, type CoderAsk, type CoderEvent, type CoderLine, type CoderModels, type CoderPatch, type CoderState } from '../../shared/coder.ts';
+import { diffLine, type CoderAsk, type CoderEvent, type CoderLine, type CoderLive, type CoderModels, type CoderPatch, type CoderState } from '../../shared/coder.ts';
 import type { Attention } from '../../shared/model.ts';
 import { askFounder, type Answer } from '../approvals.ts';
 import { KEYED as KEYS, MCP_NAME, type McpLocal } from './config.ts';
@@ -34,6 +34,10 @@ type Held = {
   // Whether this piece of work changed the folder at all, as opencode reported it.
   changed: boolean;
   done: Set<(how: 'done' | 'stopped') => void>;
+  // What the coder is doing this moment, for the card's live view (null once the work is over). `parts` remembers
+  // which kind each part of the answer is, since opencode's deltas name only the part; `usage` holds the latest word
+  // on each answer's tokens, so an answer said three times is counted once. `timer` holds back a burst of deltas.
+  live: CoderLive | null; parts: Map<string, 'reasoning' | 'text'>; usage: Map<string, { tokens: CoderLive['tokens']; cost: number }>; timer?: ReturnType<typeof setTimeout>;
 };
 
 // How long a working coder may say nothing before it is stopped. A hosted model that has gone quiet is retrying in
@@ -45,6 +49,9 @@ const POLL = 5_000;
 const KEPT = 500;
 const SHOWN = 200;
 const MONTH = 30 * 86_400_000;
+// A reply streams many deltas a second; the card hears of them at most this often. Anything else is said at once.
+const LIVE_EVERY = 80;
+const LIVE_TEXT = 8000;
 // The one local provider; its address comes from the config (the founder's bridge when it is up, Ollama itself otherwise).
 const LOCAL: Record<string, string> = { ollama: 'http://127.0.0.1:11434/v1' };
 const FREE = 'Free (OpenCode Zen)';
@@ -82,11 +89,81 @@ export function createCoder(deps: Deps) {
   const busy = (card: Held) => card.state === 'working' || card.state === 'waiting';
   const finish = (card: Held, how: 'done' | 'stopped') => { for (const done of [...card.done]) done(how); card.done.clear(); };
 
+  // The live view, said to the card: at once for a change the founder should see now (a step, a tool, thinking), and
+  // at most every LIVE_EVERY ms for the reply growing a few letters at a time.
+  // Said as a copy: the card's own view goes on changing under it.
+  const copyLive = (live: CoderLive | null) => (live ? { ...live, tools: [...live.tools], tokens: { ...live.tokens } } : null);
+  const sayLive = (card: Held, now = false) => {
+    if (now) {
+      if (card.timer) { clearTimeout(card.timer); card.timer = undefined; }
+      tell(card, { live: copyLive(card.live) });
+      return;
+    }
+    if (card.timer) return;
+    card.timer = setTimeout(() => { card.timer = undefined; tell(card, { live: copyLive(card.live) }); }, LIVE_EVERY);
+  };
+  // The work is over, however it ended: nothing is live any more.
+  const endLive = (card: Held) => {
+    if (card.timer) { clearTimeout(card.timer); card.timer = undefined; }
+    card.parts.clear();
+    card.usage.clear();
+    if (card.live === null) return;
+    card.live = null;
+    tell(card, { live: null });
+  };
+  const freshLive = (): CoderLive => ({ since: now(), step: 0, thinking: false, text: '', tools: [], tokens: { input: 0, output: 0, reasoning: 0, cache: 0 }, cost: 0 });
+  // One of opencode's words, applied to the live view.
+  function hearLive(card: Held, heard: NonNullable<ReturnType<typeof translate>>) {
+    const live = card.live;
+    if (!live) return;
+    let urgent = false;
+    let changed = false;
+    // opencode echoes the founder's own words as a text part before the coder's first step, and a step is where the
+    // coder's answer begins: nothing said before it is the coder writing.
+    if (heard.step) { live.step += 1; urgent = true; }
+    const spoken = live.step > 0;
+    if (heard.opened && spoken) {
+      card.parts.set(heard.opened.id, heard.opened.kind);
+      // Thinking begins with the part itself: some providers send it whole, with no letters in between.
+      if (heard.opened.kind === 'reasoning' && !live.thinking) { live.thinking = true; urgent = true; }
+      // A provider that sends the part whole rather than letter by letter: the text so far is in the part itself.
+      if (heard.opened.kind === 'text' && heard.opened.text && heard.opened.text.length > live.text.length) { urgent = !live.text; live.text = heard.opened.text.slice(-LIVE_TEXT); changed = true; }
+    }
+    if (heard.delta && spoken) {
+      const kind = card.parts.get(heard.delta.id);
+      if (kind === 'reasoning' && !live.thinking) { live.thinking = true; urgent = true; }
+      if (kind === 'text' && heard.delta.text) { urgent ||= !live.text; live.text = (live.text + heard.delta.text).slice(-LIVE_TEXT); changed = true; }
+    }
+    if (heard.closed && spoken) {
+      card.parts.delete(heard.closed.id);
+      if (heard.closed.kind === 'reasoning' && live.thinking) { live.thinking = false; urgent = true; }
+      // The reply's own line lands in the log with this same word.
+      if (heard.closed.kind === 'text' && live.text) { live.text = ''; urgent = true; }
+    }
+    if (heard.running) {
+      const at = live.tools.findIndex((one) => one.id === heard.running!.id);
+      live.tools = at < 0 ? [...live.tools, heard.running] : live.tools.map((one, index) => (index === at ? heard.running! : one));
+      // Output growing under a running command is a stream like the reply's; a new tool is news.
+      if (at < 0) urgent = true; else changed = true;
+    }
+    if (heard.finished && live.tools.some((one) => one.id === heard.finished)) { live.tools = live.tools.filter((one) => one.id !== heard.finished); urgent = true; }
+    if (heard.usage) {
+      card.usage.set(heard.usage.message, { tokens: heard.usage.tokens, cost: heard.usage.cost });
+      const all = [...card.usage.values()];
+      live.tokens = { input: 0, output: 0, reasoning: 0, cache: 0 };
+      for (const one of all) for (const key of ['input', 'output', 'reasoning', 'cache'] as const) live.tokens[key] += one.tokens[key];
+      live.cost = all.reduce((sum, one) => sum + one.cost, 0);
+      urgent = true;
+    }
+    if (urgent) sayLive(card, true);
+    else if (changed) sayLive(card);
+  }
+
   // The card as the stage has it now. A new folder is a new conversation: the old session stays in the database.
   function open(card: CoderCard): Held {
     let mine = cards.get(card.id);
     if (!mine) {
-      mine = { id: card.id, dir: card.dir, name: card.name, session: card.session || undefined, model: card.model, state: 'idle', lines: [], permissions: [], changed: false, heard: now(), prompted: 0, seenBusy: false, reply: '', done: new Set() };
+      mine = { id: card.id, dir: card.dir, name: card.name, session: card.session || undefined, model: card.model, state: 'idle', lines: [], permissions: [], changed: false, heard: now(), prompted: 0, seenBusy: false, reply: '', done: new Set(), live: null, parts: new Map(), usage: new Map() };
       cards.set(card.id, mine);
       if (mine.session) bySession.set(mine.session, card.id);
     }
@@ -160,6 +237,9 @@ export function createCoder(deps: Deps) {
       return;
     }
     setState(mine, 'working');
+    endLive(mine);
+    mine.live = freshLive();
+    sayLive(mine, true);
     try {
       const hint = await withMap(mine);
       const body = { model: { providerID, modelID: rest.join('/') }, parts: [{ type: 'text', text }], ...(hint ? { system: hint } : {}) };
@@ -172,6 +252,7 @@ export function createCoder(deps: Deps) {
     } catch (error) {
       mine.error = (error as Error).message;
       line(mine, { kind: 'error', text: `the coder could not start: ${mine.error}` });
+      endLive(mine);
       setState(mine, 'stopped');
       finish(mine, 'stopped');
     }
@@ -232,6 +313,7 @@ export function createCoder(deps: Deps) {
     const text = files.length ? diffLine(files) : '';
     if (card.state !== 'working') return;
     if (text && card.lines.findLast((one) => one.kind === 'diff' || one.kind === 'ask')?.text !== text) line(card, { kind: 'diff', text });
+    endLive(card);
     setState(card, card.error ? 'stopped' : 'idle');
     finish(card, card.error ? 'stopped' : 'done');
   }
@@ -281,12 +363,13 @@ export function createCoder(deps: Deps) {
         refuseAll(card, (ask) => `the question about ${ask.tool} ${ask.what} went with it`);
         card.error = 'stopped';
         line(card, { kind: 'error', text: 'the coder\'s server stopped; the next task starts it again' });
+        endLive(card);
         setState(card, 'stopped');
         finish(card, 'stopped');
       }
       return;
     }
-    const cardId = bySession.get(String(event.properties?.sessionID ?? event.properties?.part?.sessionID ?? ''));
+    const cardId = bySession.get(String(event.properties?.sessionID ?? event.properties?.part?.sessionID ?? event.properties?.info?.sessionID ?? ''));
     const card = cardId ? cards.get(cardId) : undefined;
     if (!card) return;
     const heard = translate(event, card.dir);
@@ -300,6 +383,7 @@ export function createCoder(deps: Deps) {
     // A diff only means something while work is on: opencode says one after an undo too, and that would sit under
     // "undone" claiming the change is still there.
     if (heard.line && (heard.line.kind !== 'diff' || busy(card))) line(card, heard.line);
+    if (busy(card)) hearLive(card, heard);
     if (heard.permission) void asked(card, heard.permission);
     // Answered without a word from here: opencode refuses every other question in a session when one is refused, and
     // lets through the ones an "always" now covers; or somebody answered on opencode's own screen. The question goes,
@@ -314,6 +398,7 @@ export function createCoder(deps: Deps) {
     if (heard.error) {
       card.error = heard.error;
       if (busy(card)) {
+        endLive(card);
         setState(card, 'stopped');
         finish(card, 'stopped');
         if (card.session) void engine.call('POST', `/session/${card.session}/abort`, { directory: card.dir }).catch(() => {});
@@ -323,12 +408,24 @@ export function createCoder(deps: Deps) {
   }
   engine.listen(hear);
 
+  // One line for whoever asks how the work goes: the step running now, or the thinking, or the reply being written.
+  function nowDoing(card: Held) {
+    const live = card.live;
+    if (!live || !busy(card)) return '';
+    const tool = live.tools.at(-1);
+    if (tool) return `Now: running ${`${tool.tool} ${tool.what}`.trim()} (${Math.max(0, Math.round((now() - tool.since) / 1000))} s)`;
+    if (live.thinking) return 'Now: thinking';
+    if (live.text) return 'Now: writing its reply';
+    return '';
+  }
+
   async function stop(cardId: string, why = 'by you') {
     const card = held(cardId);
     refuseAll(card, (ask) => `said no · ${ask.tool} ${ask.what} — stopped`);
     // Said and settled before the abort goes out: opencode answers an abort with "idle", and that must not read as done.
     card.error = 'stopped';
     line(card, { kind: 'note', text: `stopped · ${why}` });
+    endLive(card);
     setState(card, 'stopped');
     finish(card, 'stopped');
     if (card.session) await engine.call('POST', `/session/${card.session}/abort`, { directory: card.dir }).catch(() => {});
@@ -341,7 +438,7 @@ export function createCoder(deps: Deps) {
     patches: (cardId: string) => diff(held(cardId)),
     snapshot(cardId: string) {
       const card = cards.get(cardId);
-      return { lines: card?.lines.slice(-SHOWN) ?? [], state: card?.state ?? 'idle' as CoderState, permission: card?.permissions[0], waiting: Math.max(0, (card?.permissions.length ?? 0) - 1), session: card?.session, model: card?.model };
+      return { lines: card?.lines.slice(-SHOWN) ?? [], state: card?.state ?? 'idle' as CoderState, permission: card?.permissions[0], waiting: Math.max(0, (card?.permissions.length ?? 0) - 1), session: card?.session, model: card?.model, live: copyLive(card?.live ?? null) };
     },
     cards: () => [...cards.values()].map((card) => ({ id: card.id, dir: card.dir })),
 
@@ -357,7 +454,8 @@ export function createCoder(deps: Deps) {
       if (!card) return 'The coder has not been asked anything yet.';
       const files = await diff(card);
       const log = card.lines.slice(-20).map((one) => `${one.kind === 'reply' ? '»' : one.kind === 'ask' ? '→' : '·'} ${one.text.replace(/\s+/g, ' ').slice(0, 300)}`).join('\n');
-      return `State: ${card.state === 'waiting' ? 'waiting for the founder' : card.state}\n${log || '(nothing yet)'}\n\n${files.length ? `Changed so far: ${diffLine(files)}` : 'No files changed.'}`;
+      const doing = nowDoing(card);
+      return `State: ${card.state === 'waiting' ? 'waiting for the founder' : card.state}${doing ? `\n${doing}` : ''}\n${log || '(nothing yet)'}\n\n${files.length ? `Changed so far: ${diffLine(files)}` : 'No files changed.'}`;
     },
 
     // The founder's answer from the card itself: the same book the needs list answers in.
@@ -383,6 +481,7 @@ export function createCoder(deps: Deps) {
       await engine.call('POST', `/session/${card.session}/revert`, { directory: card.dir, body: { messageID: last.info.id } });
       const said = last.parts.find((one) => one.type === 'text')?.text?.replace(/\s+/g, ' ').trim().slice(0, 80) ?? '';
       line(card, { kind: 'note', text: `undone · "${said}"` });
+      endLive(card);
       setState(card, 'idle');
     },
 

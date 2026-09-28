@@ -53,6 +53,38 @@
 .coder__working i:nth-child(2) { animation-delay: 0.15s; }
 .coder__working i:nth-child(3) { animation-delay: 0.3s; }
 
+/* A finished step with its time after it, and a small chevron that opens what it printed. */
+.coder__step { display: flex; align-items: baseline; gap: 0; min-width: 0; animation: coder-rise 0.22s ease-out; }
+.coder__step > .coder__line { min-width: 0; }
+.coder__took { flex: none; color: #6b7280; white-space: pre; font-variant-numeric: tabular-nums; }
+.coder__peek { flex: none; align-self: center; display: inline-grid; place-items: center; width: 16px; height: 16px; margin-left: 4px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer; transition: color 0.15s, background 0.15s; }
+.coder__peek:hover, .coder__peek:focus-visible { color: var(--text); background: rgba(255, 255, 255, 0.08); outline: 0; }
+.coder__peek svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.18s ease; }
+.coder__peek.is-open svg { transform: rotate(90deg); }
+
+/* What a command printed: the last lines, small and quiet, scrolled to the newest. */
+.coder__out {
+  margin: 2px 0 2px 14px; padding: 5px 8px; max-height: 90px; overflow: auto; border-radius: 7px; background: rgba(0, 0, 0, 0.28);
+  font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace; font-size: 11px; line-height: 1.4; color: #8b92a1; white-space: pre-wrap; overflow-wrap: anywhere;
+  scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.18) transparent; animation: coder-rise 0.2s ease-out;
+}
+.coder__out--done { max-height: 160px; margin-left: 0; }
+
+/* The coder this moment: thinking, the steps running, the reply as it is written, and one quiet line under them. */
+.coder__live { display: flex; flex-direction: column; gap: 4px; padding-top: 2px; animation: coder-rise 0.22s ease-out; }
+.coder__thinking {
+  align-self: flex-start; font-family: 'Inter Variable', Inter, system-ui, sans-serif; font-size: 12.5px; color: var(--muted);
+  background: linear-gradient(90deg, var(--muted) 0%, var(--muted) 38%, var(--text) 50%, var(--muted) 62%, var(--muted) 100%);
+  background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  animation: coder-shimmer 1.8s linear infinite, coder-rise 0.22s ease-out;
+}
+.coder__running { display: flex; flex-direction: column; min-width: 0; animation: coder-rise 0.22s ease-out; }
+.coder__running-head { display: flex; align-items: baseline; gap: 0 6px; min-width: 0; color: var(--muted); overflow-wrap: anywhere; }
+.coder__ring { flex: none; align-self: center; width: 10px; height: 10px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid rgba(255, 255, 255, 0.16); border-top-color: var(--accent); animation: coder-spin 0.8s linear infinite; }
+.coder__line--reply.is-live { animation: none; }
+.coder__line--reply.is-live::after { content: ''; display: inline-block; width: 1px; height: 1.1em; margin-left: 2px; vertical-align: -0.2em; background: var(--text); animation: coder-caret 1s steps(2, start) infinite; }
+.coder__pulse { padding-top: 2px; font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace; font-size: 11px; color: var(--muted); opacity: 0.75; font-variant-numeric: tabular-nums; }
+
 /* The question, inside the log: the approval card every other step uses, with the command in the code face. */
 .coder-ask { margin: 6px 0 2px; font-family: 'Inter Variable', Inter, system-ui, sans-serif; border-color: rgba(230, 169, 60, 0.5); background: rgba(230, 169, 60, 0.08); animation: coder-rise 0.22s ease-out; }
 .coder-ask__what { display: block; padding: 7px 9px; border-radius: 8px; background: rgba(0, 0, 0, 0.3); color: var(--text); font-family: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace; font-size: 11.5px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
@@ -98,7 +130,12 @@
 
 @keyframes coder-rise { from { opacity: 0; transform: translateY(4px); } }
 @keyframes coder-think { 50% { opacity: 0.9; transform: translateY(-1px); } }
+@keyframes coder-shimmer { from { background-position: 120% 0; } to { background-position: -20% 0; } }
+@keyframes coder-spin { to { transform: rotate(360deg); } }
+@keyframes coder-caret { to { visibility: hidden; } }
 @media (prefers-reduced-motion: reduce) {
   .coder__line, .coder-ask, .coder-model__menu, .coder__changes, .coder__map { animation: none; }
   .coder__dot--working, .coder__dot--waiting, .coder__working i { animation: none; }
+  .coder__step, .coder__out, .coder__live, .coder__running, .coder__ring, .coder__line--reply.is-live::after, .coder__peek svg { animation: none; transition: none; }
+  .coder__thinking { animation: none; background: none; -webkit-text-fill-color: currentColor; }
 }
