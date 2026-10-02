@@ -65,3 +65,39 @@ describe('an evidence claim on a pain, conversations or traction section', () =>
     expect(out.marked).toEqual(['I think retention is likely OK.']);
   });
 });
+
+// A count on a line with no section, held to what was read: null when it stands, else what is not written.
+const unbacked = (line: string, read: string[]) => { try { evidenceCheck({ before: '', after: line, counts: read, said: read }); return null; } catch (error) { return (error as Error).message; } };
+
+describe('matching a count to what was read', () => {
+  // Each row: the line written, what was read, whether the count stands.
+  const CASES: [string, string[], boolean][] = [
+    ['Beta users: 12', [FOUNDER], true],
+    ['12 beta users so far.', [FOUNDER], true],
+    ['Paying users: 2', [BRIEF], true],
+    ['40 playtest sessions logged.', [FOUNDER], true],
+    ['1,200 sign-ups from the launch.', ['We got 1200 sign-ups from the launch.'], true],
+    ['1200 sign-ups from the launch.', ['We got 1,200 sign-ups.'], true],
+    ['12 testers joined.', ['Twelve testers joined in March.'], true],
+    ['12 hosts on the waitlist.', ['A dozen hosts are on the waitlist.'], true],
+    ['25 designers signed up.', ['Twenty-five designers signed up.'], true],
+    ['12 users in the beta.', ['There are 12.0 users in the beta.'], true],
+    ['| Beta users | 12 |', ['| Beta users | 12 |'], true],
+    ['Customer conversations: 3', ['I had three customer calls this week.'], true],
+    // Journey 10: two paying users are not two conversations, nor forty sessions forty hosts.
+    ['Real customer conversations done: 2', [FOUNDER, BRIEF], false],
+    ['Only 2 real customer conversations have been conducted.', [FOUNDER, BRIEF], false],
+    ['What it costs them per month: 3+ hours per test', [FOUNDER, BRIEF], false],
+    ['Your 40 playtest hosts are active.', [FOUNDER], false],
+    ['10 non-paying beta users contacted for testing.', [FOUNDER, BRIEF], false],
+    // The same number in the same sentence, but said of something far from it.
+    ['2 sessions a week.', [FOUNDER], false],
+    // Word overlap alone was enough before: "12" and "users" are both in the founder's sentence, not together.
+    ['12 paying users.', ['We have 12 beta testers and 3 paying users.'], false],
+  ];
+  it.each(CASES)('%s', (line, read, stands) => {
+    const out = unbacked(line, read);
+    if (stands) expect(out).toBeNull();
+    else expect(out).toMatch(/^not written: "\d+\+?"/);
+  });
+});
