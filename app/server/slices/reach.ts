@@ -9,7 +9,7 @@ import { DEFAULT_VOICE, fakeVoices, isVoice, kokoroVoices, VOICES } from '../med
 import type { Source } from '../seams.ts';
 import { healthRows } from '../openends/health.ts';
 import { createBridge } from '../reach/bridge.ts';
-import { createDigest, dailyDue, digestSettlesNote, dueAt } from '../reach/digest.ts';
+import { createDigest, dailyDue, dueAt } from '../reach/digest.ts';
 import { localDay } from '../clock.ts';
 import { MORNING_HOUR, morningMessage } from '../partner/morning.ts';
 import { partnerState } from '../partner/state.ts';
@@ -400,10 +400,9 @@ export default {
         const going = dailyDue({ at, due, digestOn: now.updates.digest, lastDigest: last, today, noteDay: partner ? written!.day : undefined, noteSent: kept.morning, noteExpected: expected, noteFrom: MORNING_HOUR });
         if (!going.digest && !going.note) return;
         // Marked before it is sent: a note that fails to go is not sent twice, the way the digest never was. A digest
-        // that went without the note at or after the partner's hour is the day's one message, so a note written later
-        // stays in the app; one that went before the partner writes at all leaves the note to go on its own.
-        const settles = going.digest && digestSettlesNote(due, MORNING_HOUR);
-        await book.set((one) => { if (going.digest) one.digestAt = at; if (settles || going.note) one.morning = today; });
+        // that went without the note is the day's one message, whenever the founder set it, so a note written later
+        // stays in the app: a digest set before the partner's hour once left the note to follow, two messages a day.
+        await book.set((one) => { if (going.digest) one.digestAt = at; if (going.digest || going.note) one.morning = today; });
         const parts = [
           ...(going.note && partner ? [headed(partner, morningMessage(written!))] : []),
           ...(going.digest ? [await digest(last || at - DAY)] : []),
