@@ -20,6 +20,7 @@ import { createStore } from '../store.ts';
 import { decisionTools } from '../tools/decisions.ts';
 import { docTools } from '../tools/docs.ts';
 import { fileTools } from '../tools/files.ts';
+import { calcTools } from '../tools/calc.ts';
 import { founderTools } from '../tools/founder.ts';
 import { mediaTools } from '../tools/media.ts';
 import { outwardTools } from '../tools/outward.ts';
@@ -49,7 +50,7 @@ async function everything(mail = false): Promise<Tool[]> {
     ...coderTools(createCoder({ engine: fakeEngine(), approvals: createApprovals(), attention: { raise: async () => {}, clear: async () => {} }, say: () => {}, remember: async () => {}, env: {} }), [dir]), ...teamTools(async () => 'said'), ...taskTools(createBoards(dir)),
     ...decisionTools(createDecisions(dir)), ...memoryTools(createMemory(store, async () => '')),
     ...recallTools(createRecall({ dir, embed: wordEmbedder, gather: async () => [] })),
-    ...mediaTools(media), ...skillTools(createSkills(dir)), ...founderTools(createFounder(dir)),
+    ...mediaTools(media), ...skillTools(createSkills(dir)), ...founderTools(createFounder(dir)), ...calcTools(),
   ];
 }
 
@@ -78,11 +79,11 @@ describe('what a person is offered', () => {
       + ` · bare room ${size(mine)} (${mine.length} tools) plus ${told} for the line saying what to connect`
       + ` · fully wired room ${size(wholly)} (${wholly.length} tools)`);
     expect(size(mine) + told).toBeLessThan(size(all) / 2);
-    // A person alone on the stage keeps what needs nothing: the web, the files, their notes, the decisions, the playbook.
+    // A person alone on the stage keeps what needs nothing: the web, the files, their notes, the decisions, the playbook, sums.
     // Making a document is always offered, and so is writing to the one just made.
     expect(mine.map((tool) => tool.name)).toEqual([
       'read_doc', 'write_doc', 'replace_section', 'append_doc', 'create_doc', 'list_files', 'read_file', 'write_file', 'web_search', 'web_fetch', 'run_code',
-      'propose_decision', 'read_decision', 'remember', 'recall', 'use_skill', 'note_founder',
+      'propose_decision', 'read_decision', 'remember', 'recall', 'use_skill', 'note_founder', 'calc',
     ]);
     // Wired to one of everything, and with mail set up, nothing at all is taken away.
     expect(wholly).toHaveLength((await everything(true)).length);

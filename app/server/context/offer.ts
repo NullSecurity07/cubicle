@@ -25,7 +25,7 @@ const reachOf = (stage: Stage, roomId: string, tools: Tool[]): Reach => {
 // on the live check, most of it schemas for studios and boards that were not there — a person cannot use a video
 // studio nobody wired to them, and reading about one costs the same as using it.
 // Everything left out of this list is always offered: searching and reading the web, the shared files, remember,
-// recall, the decisions, use_skill, note_founder, running code, creating a document — and whatever a later feature
+// recall, the decisions, use_skill, note_founder, running code, calc, creating a document — and whatever a later feature
 // adds, because a rule written here can only ever take away a tool it knows by name.
 const NEEDS: Record<string, (reach: Reach, tool: Tool) => boolean> = {
   code_task: (reach) => reach.kinds.has('project'),

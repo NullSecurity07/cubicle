@@ -45,6 +45,7 @@ import { createStore, type Damage } from './store.ts';
 import { decisionTools } from './tools/decisions.ts';
 import { docTools, heldForMemory } from './tools/docs.ts';
 import { fileTools } from './tools/files.ts';
+import { calcTools } from './tools/calc.ts';
 import { founderTools } from './tools/founder.ts';
 import { mediaTools } from './tools/media.ts';
 import { outwardTools } from './tools/outward.ts';
@@ -154,7 +155,7 @@ seams.on('tool:after', guards.after);
 seams.on('turn:before', createPlaybook({ skills, recall, tools: () => tools.map((tool) => tool.name) }).before);
 // The founder talking to one person, and one person asking another. A turn's tools are asked for only when it starts.
 const { chat, consult } = createChat({ store, roomFeed, busy, clients, usage, seams, attention, approvals, memory, promptFor, toolsFor: (stage, roomId) => toolsFor(stage, roomId) });
-const tools = [...docTools, ...fileTools, ...webTools(browser, (id, card) => ({ profile: store.browserProfile(id), headed: isHeaded(card), ...(!fake && card?.kind === 'browser' && card.app ? { pace: [1500, 3000] as [number, number] } : {}) })), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir), ...teamTools(consult), ...taskTools(boards), ...decisionTools(decisions), ...sourceTools(browser, sources), ...memoryTools(memory), ...recallTools(recall), ...mediaTools(media, () => !local.ready()), ...skillTools(skills), ...founderTools(founder)];
+const tools = [...docTools, ...fileTools, ...webTools(browser, (id, card) => ({ profile: store.browserProfile(id), headed: isHeaded(card), ...(!fake && card?.kind === 'browser' && card.app ? { pace: [1500, 3000] as [number, number] } : {}) })), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir), ...teamTools(consult), ...taskTools(boards), ...decisionTools(decisions), ...sourceTools(browser, sources), ...memoryTools(memory), ...recallTools(recall), ...mediaTools(media, () => !local.ready()), ...skillTools(skills), ...founderTools(founder), ...calcTools()];
 // Anything dropped into `server/slices` is installed here, so a new feature is new files rather than one more edit to
 // this one. They are handed a `runs` that is not built yet: the runner is made from the final tool list, and that
 // list is only final once every slice has added its own, so `late.runs` stands in and is filled the moment it exists.

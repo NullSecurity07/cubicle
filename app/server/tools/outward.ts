@@ -53,7 +53,7 @@ export function outwardTools(mail: Mail, filesDir: string): Tool[] {
         + 'It sees only the shared files folder, as the working directory (JavaScript gets files.list(), files.read(path), files.write(path, text)). '
         + 'Look at a data file with read_file before you write code for it, so the columns are right the first time. Print what you want to see. '
         + 'For a chart, save a PNG into the folder (plt.savefig("chart.png")) and show it in your reply as ![chart](/api/files/chart.png). '
-        + 'The founder must read and approve every run, so do the whole job in one run.',
+        + 'The founder must read and approve every run, so do the whole job in one run. For a sum on known figures use calc, which needs no approval.',
       parameters: { type: 'object', properties: { language: { type: 'string', enum: ['python', 'javascript'] }, code: { type: 'string' } }, required: ['language', 'code'] },
       // The context goes in so that code can reach this person's own tools, if anything offered them any.
       async run(args, context) {

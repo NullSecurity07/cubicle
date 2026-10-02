@@ -427,7 +427,7 @@ const TEAMS: Record<string, Team> = {
     note: 'Raising a seed round', roles: ['Round planner', 'Investor lister', 'Data room keeper', 'Process keeper'],
     size: '4 people · 1 doc · 1 sticky note · 1 note · 1 browser · 1 task board', doc: 'Round', headings: ['## Plan', '## Investors', '## One-pager', '## Data room', '## Questions they will ask', '## Pipeline'],
     sections: [['When to raise', 'How much', 'Safe, cap and dilution'], ['Who to meet', 'Warm first'], ['The one-pager', 'The data room', 'Questions they will ask'], ['Every meeting ends with a next step', 'Close fast']],
-    words: [['post-money', 'working', 'lawyer', 'propose_decision', 'run_code', '[founder to set]'], ['"not found"', 'Due diligence', 'evidence-outreach', 'You never send'], ['HAVE, MISSING or N/A', 'IP assignment', 'An empty folder is not a reason to stop'], ['no next step', 'You never negotiate']],
+    words: [['post-money', 'working', 'lawyer', 'propose_decision', 'calc', '[founder to set]'], ['"not found"', 'Due diligence', 'evidence-outreach', 'You never send'], ['HAVE, MISSING or N/A', 'IP assignment', 'An empty folder is not a reason to stop'], ['no next step', 'You never negotiate']],
   },
   'pre-mortem': {
     note: 'Imagining the failure first', roles: ['Failure imaginer', 'Evidence checker', 'Risk registrar'],
