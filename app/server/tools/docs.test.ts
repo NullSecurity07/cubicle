@@ -92,6 +92,42 @@ describe('doc tools', () => {
   });
 });
 
+// A count in a plain doc held as on a team doc, but marked rather than refused: "14 customer interviews" nobody read
+// stays in the founder's doc as the writer's alone.
+describe('a count nothing read gives, in a doc with no rules', () => {
+  const READ = ['The founder: we have 12 beta users, 2 of them paying, and 40 playtest sessions logged.'];
+  const write = async (text: string, read = READ) => {
+    const { store, context } = await setup();
+    const turn = { ...context, sources: () => read, evidence: () => ({ read, said: read }) };
+    const out = await runTool(docTools, 'append_doc', JSON.stringify({ doc: 'Brand doc', text }), turn);
+    return { out, doc: (await store.readDoc('brand-doc')).slice(PLAN.length), again: async () => runTool(docTools, 'write_doc', JSON.stringify({ doc: 'Brand doc', text: await store.readDoc('brand-doc') }), turn), store };
+  };
+
+  it('is marked "(unsourced)" after the number once, and the writer is told which', async () => {
+    const { out, doc, again, store } = await write('We ran 14 customer interviews with our 40 playtest hosts.');
+    expect(out.ok).toBe(true);
+    expect(doc).toContain('We ran 14 (unsourced) customer interviews with our 40 (unsourced) playtest hosts.');
+    expect(out.text).toMatch(/Marked as unsourced, since nothing read gives them for what they count: "14" .*"40" .*Read for them, or take them out\.$/);
+    expect((await again()).text).not.toMatch(/Marked/);
+    expect((await store.readDoc('brand-doc')).match(/\(unsourced\)/g)).toHaveLength(2);
+  });
+
+  it('leaves alone counts read, dates, versions, list numbers, headings, plans, quotes of a source and totals shown', async () => {
+    const text = [
+      '## Week 2 plan',
+      '',
+      '1. On 3 October we ship v2 and 2.1.4 to all 12 beta users.',
+      '2. Call 5 hosts by Friday; we should book 8 more sessions.',
+      '3. The founder wrote "we have 12 beta users, 2 of them paying".',
+      '4. 14 in all: 12 beta users and 2 paying users.',
+      '5. 40 playtest sessions logged at 3pm on the 2nd, step 4 of the plan.',
+    ].join('\n');
+    const { out, doc } = await write(text);
+    expect(doc).toContain(text);
+    expect(out.text).toMatch(/^Added \d+ characters\.$/);
+  });
+});
+
 // A figure the truth net would flag under the reply went into the doc unflagged: Meera's "€80–€200/month" for an
 // accountant was flagged in chat and written plain into the Evaluation doc.
 describe('a figure nothing this turn read', () => {

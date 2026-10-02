@@ -117,11 +117,12 @@ function unbackedCounts(line: string, sources: Token[][], quoted = '', strict = 
   const quotes = [...line.matchAll(/["“]([^"”]{3,})["”]/g)].filter((match) => quoted.includes(flat(match[1])))
     .map((match) => [match.index!, match.index! + match[0].length]);
   // Each sentence on its own; a "?" in a template label ("survivable?") ends one too.
+  // The list number goes first, or "1." would be read as a sentence of its own.
+  const listed = line.replace(/^\s*(?:[-*+]\s+)?\d+[.)]\s+/, (lead) => ' '.repeat(lead.length));
   let offset = 0;
-  for (const sentence of line.split(/(?<=[.!?;])\s+/)) {
-    const start = line.indexOf(sentence, offset);
-    offset = start + sentence.length;
-    const body = sentence.replace(/^\s*(?:[-*+]\s+)?\d+[.)]\s+/, (lead) => ' '.repeat(lead.length));
+  for (const body of listed.split(/(?<=[.!?;])\s+/)) {
+    const start = listed.indexOf(body, offset);
+    offset = start + body.length;
     const misses: (Unbacked & { value: number })[] = [];
     const shown: number[] = [];
     for (const match of body.matchAll(COUNT)) {
@@ -160,6 +161,22 @@ export function heardFrom(answer: string, read: string[]): string[] {
     return value === null ? word : String(value);
   });
   return sentencesOf([answer]).filter((sentence) => !unbackedCounts(digits(sentence), sources, '', true).length);
+}
+
+// The counts a write adds to a document with no rules that nothing read gives for what they count, each marked
+// "(unsourced)" right after it, once: the doc keeps the writer's words and says which figures are theirs alone.
+export function markUnbacked(input: { before: string; after: string; read: string[] }): { text: string; marked: string[] } {
+  const sources = sourceTokens(input.read);
+  const quoted = flat(input.read.join('\n'));
+  const lines = input.after.split('\n');
+  const marked: string[] = [];
+  for (const { line } of added(input.before, input.after)) {
+    if (/^\s*(?:>|```)/.test(lines[line])) continue;
+    const misses = unbackedCounts(lines[line], sources, quoted);
+    marked.push(...misses.map((miss) => `"${miss.label}" (in "${quote(lines[line])}")`));
+    for (const miss of [...misses].reverse()) lines[line] = `${lines[line].slice(0, miss.end)} (unsourced)${lines[line].slice(miss.end)}`;
+  }
+  return { text: lines.join('\n'), marked };
 }
 
 // A claim of evidence, and the words one of the founder's sentences or a tool result has to share with it.

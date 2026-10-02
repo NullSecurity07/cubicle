@@ -8,7 +8,7 @@ import { text, type Tool, type ToolContext } from './registry.ts';
 import { shortDay } from '../clock.ts';
 import { dropFlagged, figureCheck, HELD_BACK, holdVerdict, verdictStanding, type Receipt } from '../truth.ts';
 import { findCompanyDoc } from '../../shared/partner.ts';
-import { evidenceCheck } from './evidence.ts';
+import { evidenceCheck, markUnbacked } from './evidence.ts';
 import { filled, guardWrite, sectionBody, standingVerdict, unmarked, verdictState, WHOLE } from './verdict.ts';
 
 // A new doc card's size, and the gap kept round it: the same the window uses when it places one.
@@ -152,7 +152,8 @@ async function numbersOf(context: Pick<ToolContext, 'stage' | 'store'>): Promise
 
 async function save(context: ToolContext, id: string, before: string, written: string, done: string, touches?: string | typeof WHOLE) {
   const rules = await rulesOf(context.stage, id);
-  // A team doc with rules is held to its evidence, so an unsourced figure is refused there; anywhere else it is marked.
+  // A team doc with rules is held to its evidence, so an unsourced figure or count is refused there; anywhere else it is
+  // marked.
   const unsourced = unsourcedIn(context, before, written);
   if (unsourced.length && rules) {
     throw new Error(`not written: ${unsourced.join(', ')} ${unsourced.length > 1 ? 'are' : 'is'} not in anything this turn read. Search or read for them first, take them out, or write "(unsourced)" right after each.`);
@@ -163,6 +164,14 @@ async function save(context: ToolContext, id: string, before: string, written: s
     const held = await heldToEvidence(context, before, after);
     after = held.text;
     done = `${done}${held.note}`;
+  } else {
+    // Any other doc gets the same count check, marking what it would refuse: the writer's words stay, said as theirs.
+    const read = await evidenceFor(context, before);
+    const counts = read ? markUnbacked({ before, after, read: read.read }) : null;
+    if (counts?.marked.length) {
+      after = counts.text;
+      done = `${done} Marked as unsourced, since nothing read gives them for what they count: ${counts.marked.join(', ')}. Read for them, or take them out.`;
+    }
   }
   // Only a team doc's own sections are kept to one copy, where a second would slip past the checks; a plain doc such
   // as a running log repeats "## Monday" on purpose.
