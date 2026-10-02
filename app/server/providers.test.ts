@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fitHistory, plainBreak, plainFailure, scrubProvider, wireTools, collectCalls, complete, expand, portable, readQuota, realClients, unset, type ModelClient, type ToolCall } from './providers.ts';
+import { fitHistory, holdsTools, toolSize, plainBreak, plainFailure, scrubProvider, wireTools, collectCalls, complete, expand, portable, readQuota, realClients, unset, type ModelClient, type ToolCall } from './providers.ts';
 
 const client = (name: string, tokens: string[] | Error, maxPromptChars = Infinity): ModelClient => ({
   name, model: `${name}-1`, maxPromptChars, tools: true, limits: {},
@@ -401,6 +401,24 @@ describe('the last model that can take a turn', () => {
     const result = await complete(messages, { onToken: () => {} }, [{ ...client('groq', ['x']), maxPromptChars: 1 }, client('gemini', ['here'])]);
     expect(result).toMatchObject({ client: { name: 'gemini' }, oversize: ['groq'] });
   });
+
+  it('never sends Groq a tool list bigger than its room: no request, no mark against its key, and the next model answers', async () => {
+    const many = Array.from({ length: 70 }, (_, n) => ({ name: `tool_${n}`, description: 'x'.repeat(500), parameters: { type: 'object', properties: {} } }));
+    expect(toolSize(many)).toBeGreaterThan(18_000);
+    let asked = 0;
+    const failed: string[] = [];
+    const groq: ModelClient = { ...client('groq', ['never']), maxPromptChars: 18_000, async step() { asked += 1; throw Object.assign(new Error('413 Request too large'), { status: 413 }); } };
+    expect(holdsTools(groq, many, messages)).toBe(false);
+    expect(holdsTools(groq, many.slice(0, 2), messages)).toBe(true);
+    const result = await complete(messages, { onToken: () => {}, tools: many }, [groq, client('gemini', ['here'])], ({ client: one }) => failed.push(one.name));
+    expect(result.client.name).toBe('gemini');
+    expect(asked).toBe(0);
+    expect(failed).toEqual([]);
+    // Alone it is still not asked: the turn says the prompt is too large rather than spending a request on a 413.
+    await expect(complete(messages, { onToken: () => {}, tools: many }, [groq], ({ client: one }) => failed.push(one.name))).rejects.toThrow(/groq: prompt too large/);
+    expect(asked).toBe(0);
+    expect(failed).toEqual([]);
+  });
 });
 
 describe('the second hosted model on the Cloudflare key (round 5)', () => {
@@ -529,9 +547,9 @@ describe('NVIDIA and Mistral on their free tiers (round 6)', () => {
   // What kimi-k3 sent in the live probe: the whole call at once, named by the tool and its place in the turn.
   const kimiCall = [{ choices: [{ delta: { tool_calls: [{ index: 0, id: 'read_doc:0', function: { name: 'read_doc', arguments: '{"title":"Numbers"}' } }] } }] }];
 
-  it('asks NVIDIA for kimi-k3 (kimi-k2.6 is listed but not served to a free account) at 40 a minute, and Mistral small at one a second', () => {
+  it('asks NVIDIA for Nemotron 3 Super (Kimi took two minutes to a first word) at 40 a minute, and Mistral small at one a second', () => {
     const clients = realClients(env);
-    expect(clients.find((one) => one.name === 'nvidia')).toMatchObject({ model: 'moonshotai/kimi-k3', maxPromptChars: 100_000, tools: true, limits: { rpm: 40 } });
+    expect(clients.find((one) => one.name === 'nvidia')).toMatchObject({ model: 'nvidia/nemotron-3-super-120b-a12b', maxPromptChars: 100_000, tools: true, limits: { rpm: 40 } });
     expect(clients.find((one) => one.name === 'mistral')).toMatchObject({ model: 'mistral-small-latest', maxPromptChars: 100_000, tools: true, limits: { rpm: 60, tpm: 500_000 }, concurrency: 1 });
   });
 
@@ -540,7 +558,7 @@ describe('NVIDIA and Mistral on their free tiers (round 6)', () => {
     const sent = script(nvidia, () => kimiCall);
     const first = await complete(room, { onToken: () => {}, tools }, [nvidia]);
     const second = await complete(room, { onToken: () => {}, tools }, [nvidia]);
-    expect(sent[0]).toMatchObject({ model: 'moonshotai/kimi-k3', max_tokens: 4096, tools: [expect.objectContaining({ type: 'function' })] });
+    expect(sent[0]).toMatchObject({ model: 'nvidia/nemotron-3-super-120b-a12b', max_tokens: 4096, tools: [expect.objectContaining({ type: 'function' })] });
     expect(first.calls).toEqual([expect.objectContaining({ name: 'read_doc', args: '{"title":"Numbers"}', id: expect.stringMatching(/^call_[0-9a-f]{16}$/) })]);
     expect(second.calls[0].id).not.toBe(first.calls[0].id);
   });
@@ -594,16 +612,17 @@ describe('the first-word clock for a slow model (round 6 review)', () => {
 
   it('gives Kimi on NVIDIA a minute before its first word, and everyone else the usual 20 s, unless the machine says', () => {
     const clients = realClients(env);
-    expect(clients.find((one) => one.name === 'nvidia')!.firstWordMs).toBe(60_000);
+    expect(clients.find((one) => one.name === 'nvidia-kimi')!.firstWordMs).toBe(60_000);
+    expect(clients.find((one) => one.name === 'nvidia')!.firstWordMs).toBe(20_000);
     expect(clients.find((one) => one.name === 'groq')!.firstWordMs).toBe(20_000);
-    expect(realClients({ ...env, STAGE_FIRST_TOKEN_MS: '500' }).find((one) => one.name === 'nvidia')!.firstWordMs).toBe(500);
+    expect(realClients({ ...env, STAGE_FIRST_TOKEN_MS: '500' }).find((one) => one.name === 'nvidia-kimi')!.firstWordMs).toBe(500);
   });
 
   it('waits out 25 s of silence from Kimi, where it cuts another model at 20', async () => {
     vi.useFakeTimers();
     try {
       const clients = realClients(env);
-      const nvidia = clients.find((one) => one.name === 'nvidia')!;
+      const nvidia = clients.find((one) => one.name === 'nvidia-kimi')!;
       const groq = clients.find((one) => one.name === 'groq')!;
       silentFor(nvidia, 25_000);
       silentFor(groq, 25_000);
@@ -622,7 +641,7 @@ describe('the request clock for a slow model (round 6 integrate)', () => {
   it('gives a request whose first word may take over 30 s that long plus 15 s, so the 45 s request clock never cuts it first', async () => {
     const clients = realClients({ NVIDIA_API_KEY: 'nvapi-x', GROQ_API_KEY: 'g' } as NodeJS.ProcessEnv);
     const asked: { name: string; timeout?: number }[] = [];
-    for (const one of clients.filter((client) => client.name === 'nvidia' || client.name === 'groq')) {
+    for (const one of clients.filter((client) => client.name === 'nvidia-kimi' || client.name === 'groq')) {
       (one.openai!.chat.completions as unknown as { create: unknown }).create = (_body: unknown, options: { timeout?: number }) => {
         asked.push({ name: one.name, timeout: options.timeout });
         async function* chunks() { yield { choices: [{ delta: { content: 'ok' } }] }; }
@@ -630,7 +649,7 @@ describe('the request clock for a slow model (round 6 integrate)', () => {
       };
       await one.step(messages, { onToken: () => {} });
     }
-    expect(asked).toEqual([{ name: 'groq', timeout: undefined }, { name: 'nvidia', timeout: 75_000 }]);
+    expect(asked).toEqual([{ name: 'groq', timeout: undefined }, { name: 'nvidia-kimi', timeout: 75_000 }]);
   });
 });
 

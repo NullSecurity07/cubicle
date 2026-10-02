@@ -10,10 +10,14 @@ const title = (name: string) => name[0].toUpperCase() + name.slice(1);
 // in the live runs; gpt-oss on Cloudflare held a 25-40k room prompt with a tool call and answered best and fast; Kimi on
 // NVIDIA took 13-44 s to a first word, so it stands behind both, where a colleague's turn in journey 10 waited 20 s on
 // Gemini and then 60 s on it before gpt-oss answered. SambaNova is 20 requests a day.
-export const STRONG = ['gemini', 'cloudflare-gpt-oss', 'nvidia', 'mistral', 'sambanova'];
+// The same gpt-oss-120b on Ollama's cloud (answering with all 70 tools on 2026-10-02, no daily cap published) goes
+// right after Gemini, ahead of Cloudflare's copy: every turn it takes leaves Cloudflare's neurons to the pictures.
+// NVIDIA is now its own Nemotron 3 Super, quick to answer; Kimi on the same key (`nvidia-kimi`) took two minutes to
+// a first word, so it is not among these and is reached only when they cannot answer.
+export const STRONG = ['gemini', 'ollama-cloud', 'cloudflare-gpt-oss', 'nvidia', 'mistral', 'sambanova'];
 // A colleague's turns take the same strong models with gpt-oss on Cloudflare last among them: its 25 requests a day
 // are kept for the partner, whose calls matter most, where a busy team would spend them by mid-morning.
-const COLLEAGUE = ['gemini', 'nvidia', 'mistral', 'sambanova', 'cloudflare-gpt-oss'];
+const COLLEAGUE = ['gemini', 'ollama-cloud', 'nvidia', 'mistral', 'sambanova', 'cloudflare-gpt-oss'];
 export const tierOrder = (partner = false) => [...(partner ? STRONG : COLLEAGUE), ...SECOND];
 // Behind them, the Qwens that also held a room prompt: OpenRouter's (only there when its key is set), then
 // Cloudflare's, which invented one claim. Everything else follows in the order it is listed.

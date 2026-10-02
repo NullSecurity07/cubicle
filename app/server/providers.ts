@@ -185,7 +185,7 @@ export async function complete(
   blocked: (client: ModelClient) => boolean = () => false,
 ): Promise<Completion> {
   // The tool definitions go to the model too, and count against what it can hold.
-  const toolChars = options.tools?.length ? JSON.stringify(wireTools(options.tools)).length : 0;
+  const toolChars = toolSize(options.tools);
   const failures: string[] = [];
   // The longest reply that broke off part way, kept in case nobody does better; and what the window shows right now.
   let broken: Completion | undefined;
@@ -266,6 +266,14 @@ export async function complete(
   throw new Error(`no provider answered — ${failures.join('; ')}`);
 }
 
+// What the tool definitions take of a request, in characters. Groq's free tier walls a request at 7-8k tokens, which is
+// less than the whole tool list a person is offered (47k characters for 70 tools on 2026-10-02): a model whose room is
+// smaller than that is never sent a tool turn, without a call and without a mark against its breaker (see `complete`).
+export const toolSize = (tools?: ToolSpec[]) => (tools?.length ? JSON.stringify(wireTools(tools)).length : 0);
+// Whether a model can take a turn with these tools at all: the tools and the prompt, its oldest talk cut, fit its room.
+export const holdsTools = (client: Pick<ModelClient, 'maxPromptChars'>, tools: ToolSpec[], messages: ModelMessage[]) =>
+  fitHistory(messages, client.maxPromptChars - toolSize(tools)) !== null;
+
 // Only the three fields the API knows. Our tools carry more (limits, approval rules), and Gemini refuses a request with any unknown field.
 export const wireTools = (tools: ToolSpec[]) => tools.map(({ name, description, parameters }) => ({ type: 'function' as const, function: { name, description, parameters } }));
 
@@ -344,9 +352,12 @@ export type Entry = (typeof models)[number] & { side?: boolean; sharedPool?: boo
 // What the free providers give, as their own pages said on 2026-09-24. A line with only `rpm` has no published daily
 // cap. Groq and Cerebras count each model apart, so `groq-qwen` and `cerebras-qwen` are a second day's worth on the
 // same key. NVIDIA's terms are for prototyping, development and evaluation; kimi-k2.6 is listed there but a free account
-// is refused it (404), so it is kimi-k3, which held a 25k room prompt with a tool call on 2026-09-27. Mistral's free
+// is refused it (404), and kimi-k3 took 106-117 s to a first word on 2026-10-02 even for "say hi", so a turn waited on it
+// and then lost it: NVIDIA's own Nemotron 3 Super (120B) answers with a tool call in under 3 s. OpenRouter's free Gemma
+// was rate-limited upstream on every tool call that day, so its entry is the same Nemotron on OpenRouter. Mistral's free
 // plan is one request a second (`concurrency: 1`), 500k tokens a minute and a billion a month. Z.ai's flash model and Ollama's cloud take
-// one request at a time (`concurrency: 1`); Z.ai's 10 a minute is our own guess, it publishes none. Vercel gives $5 of
+// one request at a time (`concurrency: 1`); Z.ai's 10 a minute is our own guess, it publishes none. Its glm-4.7-flash
+// answered every request on 2026-10-02 with "temporarily overloaded" (1305), so it is the older free glm-4.5-flash. Vercel gives $5 of
 // credit a month, and buying any ends the free part. Cloudflare gives 10,000 neurons a day (about 130k tokens out on
 // Scout) and needs the account id in its address; gpt-oss spends about 236 of them on a 25k-character request, Qwen
 // about 394 and Scout 166. Their `rpd` (25, 5, 10 requests, a tool turn being two or three) come to about 9,500 at

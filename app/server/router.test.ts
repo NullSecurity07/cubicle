@@ -220,16 +220,16 @@ describe('Cloudflare\'s neuron pool, one an account, pictures included (round 6)
 });
 
 describe('one order for every turn, the partner\'s (pass 8)', () => {
-  const listed = () => ['groq', 'cerebras', 'gemini', 'nvidia', 'zai-flash', 'vercel', 'cloudflare-gpt-oss', 'sambanova', 'mistral', 'openrouter-qwen'].map((name) => client(name, { maxPromptChars: 100_000 }));
+  const listed = () => ['groq', 'cerebras', 'gemini', 'nvidia', 'zai-flash', 'vercel', 'cloudflare-gpt-oss', 'sambanova', 'mistral', 'openrouter-qwen', 'ollama-cloud'].map((name) => client(name, { maxPromptChars: 100_000 }));
 
-  it('asks a colleague\'s models Gemini, NVIDIA, Mistral, SambaNova, then gpt-oss on Cloudflare, the rest as listed, and the low-effort gpt-oss last', () => {
+  it('asks a colleague\'s models Gemini, gpt-oss on Ollama, NVIDIA, Mistral, SambaNova, then gpt-oss on Cloudflare, the rest as listed, and the low-effort gpt-oss last', () => {
     expect(names(route(listed(), createUsage(null), { promptChars: 10, tools: true })))
-      .toEqual(['gemini', 'nvidia', 'mistral', 'sambanova', 'cloudflare-gpt-oss', 'openrouter-qwen', 'zai-flash', 'vercel', 'groq', 'cerebras']);
+      .toEqual(['gemini', 'ollama-cloud', 'nvidia', 'mistral', 'sambanova', 'cloudflare-gpt-oss', 'openrouter-qwen', 'zai-flash', 'vercel', 'groq', 'cerebras']);
   });
 
-  it('keeps gpt-oss on Cloudflare second for the partner, whose calls its 25 a day are kept for', () => {
-    expect(tierOrder(true).slice(0, 5)).toEqual(['gemini', 'cloudflare-gpt-oss', 'nvidia', 'mistral', 'sambanova']);
-    expect(names(partnerRoute(listed(), createUsage(null), { promptChars: 10, tools: true })).slice(0, 4)).toEqual(['gemini', 'cloudflare-gpt-oss', 'nvidia', 'mistral']);
+  it('keeps gpt-oss on Cloudflare third for the partner, whose calls its 25 a day are kept for, behind the same gpt-oss on Ollama', () => {
+    expect(tierOrder(true).slice(0, 6)).toEqual(['gemini', 'ollama-cloud', 'cloudflare-gpt-oss', 'nvidia', 'mistral', 'sambanova']);
+    expect(names(partnerRoute(listed(), createUsage(null), { promptChars: 10, tools: true })).slice(0, 5)).toEqual(['gemini', 'ollama-cloud', 'cloudflare-gpt-oss', 'nvidia', 'mistral']);
   });
 
   it('leaves side calls in the order they were given', () => {
@@ -263,8 +263,9 @@ describe('a stalled Gemini and a stalled NVIDIA, with real clients on a fake clo
     });
   };
   const setUp = (skip: string[] = []) => {
-    const clients = realClients(env).filter((one) => !skip.includes(one.name));
-    for (const one of clients) script(one, one.name === 'gemini' || one.name === 'nvidia');
+    // The quick Nemotron on the NVIDIA key is left out: these are about the slow Kimi beside it.
+    const clients = realClients(env).filter((one) => !skip.includes(one.name) && one.name !== 'nvidia');
+    for (const one of clients) script(one, one.name === 'gemini' || one.name === 'nvidia-kimi');
     return { clients, usage: createUsage(null) };
   };
   const turn = async ({ clients, usage }: ReturnType<typeof setUp>, partner = false) => {
@@ -292,8 +293,10 @@ describe('a stalled Gemini and a stalled NVIDIA, with real clients on a fake clo
       const third = await turn(set, true);
       expect(third.by).toBe('cloudflare-gpt-oss');
       expect(third.seconds).toBeLessThan(1);
-      // A colleague's turn skips the resting Gemini for NVIDIA, which is cut at 20 s, and Mistral answers before Cloudflare.
-      expect(await turn(set)).toMatchObject({ by: 'mistral', seconds: 20, notice: 'Gemini was slow to start answering twice, so Nvidia answers for now.' });
+      // A colleague's turn skips the resting Gemini, and Mistral answers before Cloudflare; Kimi is behind them both.
+      const colleague = await turn(set);
+      expect(colleague).toMatchObject({ by: 'mistral', notice: 'Gemini was slow to start answering twice, so Mistral answers for now.' });
+      expect(colleague.seconds).toBeLessThan(1);
     } finally { vi.useRealTimers(); }
   });
 
@@ -302,32 +305,32 @@ describe('a stalled Gemini and a stalled NVIDIA, with real clients on a fake clo
     try {
       // Mistral's plan is off: it cannot answer, so NVIDIA is really the last one and is not cut at 20 s.
       const refusedBehind = setUp(['cloudflare-gpt-oss', 'cloudflare-qwen', 'cloudflare']);
-      script(refusedBehind.clients.find((one) => one.name === 'nvidia')!, false, 45_000);
+      script(refusedBehind.clients.find((one) => one.name === 'nvidia-kimi')!, false, 45_000);
       refusedBehind.usage.failed('mistral', Object.assign(new Error('429 Rate limit exceeded'), { status: 429, headers: new Headers({ 'x-ratelimit-limit-req-minute': '0' }) }));
       const first = await turn(refusedBehind);
-      expect(first.by).toBe('nvidia');
+      expect(first.by).toBe('nvidia-kimi');
       expect(first.seconds).toBeGreaterThanOrEqual(65);
       // Nobody at all behind it: the last model able waits well past its minute.
       const alone = setUp(['cloudflare-gpt-oss', 'cloudflare-qwen', 'cloudflare', 'mistral']);
-      script(alone.clients.find((one) => one.name === 'nvidia')!, false, 100_000);
+      script(alone.clients.find((one) => one.name === 'nvidia-kimi')!, false, 100_000);
       const last = await turn(alone);
-      expect(last.by).toBe('nvidia');
+      expect(last.by).toBe('nvidia-kimi');
       expect(last.seconds).toBeGreaterThanOrEqual(120);
     } finally { vi.useRealTimers(); }
   });
 
-  it('cuts NVIDIA at 20 s, not 60, while a model behind it can answer, and rests both after their second silence', async () => {
+  it('cuts Kimi at 20 s, not 60, while a model behind it can answer, and rests both after their second silence', async () => {
     vi.useFakeTimers();
     try {
-      // gpt-oss on Cloudflare spent for the day: Gemini, then NVIDIA, then Mistral.
-      const set = setUp(['cloudflare-gpt-oss', 'cloudflare-qwen', 'cloudflare']);
+      // No Mistral and gpt-oss and Qwen on Cloudflare spent for the day: Gemini, then Kimi, then Scout on Cloudflare.
+      const set = setUp(['cloudflare-gpt-oss', 'cloudflare-qwen', 'mistral']);
       const first = await turn(set);
-      expect(first.by).toBe('mistral');
+      expect(first.by).toBe('cloudflare');
       expect(first.seconds).toBeGreaterThanOrEqual(40);
       expect(first.seconds).toBeLessThanOrEqual(45);
       await turn(set);
       const third = await turn(set);
-      expect(third.by).toBe('mistral');
+      expect(third.by).toBe('cloudflare');
       expect(third.seconds).toBeLessThan(1);
     } finally { vi.useRealTimers(); }
   });
