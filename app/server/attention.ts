@@ -8,8 +8,8 @@ import type { Damage, Store } from './store.ts';
 import { localDay } from './clock.ts';
 import { PROVIDERS } from './keys-file/catalogue.ts';
 import { ENTRIES } from './providers.ts';
-import type { UsageBook } from './usage.ts';
-import { PLANLESS } from './breaker.ts';
+import type { KeyEvent, UsageBook } from './usage.ts';
+import { PLANLESS, UNPAID } from './breaker.ts';
 import { readBook } from './rescue.ts';
 
 export type AttentionBook = ReturnType<typeof createAttention>;
@@ -133,9 +133,13 @@ export const planlessWords = (keyEnv: string) => `${PLANLESS}: turn on the free 
 // A key the provider refused (401, 403) is one item for the founder, raised once and kept until the key answers again:
 // no turn can fix it, only a new key in Keys can. One item a key: one Groq key serves groq, groq-small and groq-qwen,
 // so the item is named by the key's variable and number, and any model on that key answering clears it.
-export function keyAttention(usage: Pick<UsageBook, 'onKey'>, attention: AttentionBook, now: () => number = Date.now) {
+// A key the usage book kept as refused across a restart is told again here, so its item is back at once.
+export function keyAttention(usage: Pick<UsageBook, 'onKey'> & Partial<Pick<UsageBook, 'refusals'>>, attention: AttentionBook, now: () => number = Date.now) {
   const open = new Set<string>();
-  return usage.onKey(({ name, dead, status, planless }) => {
+  const stop = usage.onKey(hear);
+  for (const event of usage.refusals?.() ?? []) hear(event);
+  return stop;
+  function hear({ name, dead, status, planless, unpaid }: KeyEvent) {
     const [model, number = '1'] = name.split('#');
     const entry = ENTRIES.find((one) => one.name === model);
     const keyEnv = entry?.keyEnv ?? model;
@@ -146,10 +150,13 @@ export function keyAttention(usage: Pick<UsageBook, 'onKey'>, attention: Attenti
     const said = PROVIDERS[keyEnv]?.label ?? first[0].toUpperCase() + first.slice(1);
     const which = number === '1' ? keyEnv : `${keyEnv}_${number}`;
     if (dead) open.add(id); else open.delete(id);
+    const where = PROVIDERS[keyEnv]?.where ? ` at ${PROVIDERS[keyEnv].where}` : ' in its console';
+    const title = planless ? `${said}'s free plan is not on; turn it on${where}` : unpaid ? `${said} needs a card on file; add one${where} or leave it off` : `${said} key rejected; fix it in Keys`;
+    const why = planless ? planlessWords(keyEnv) : unpaid ? `${UNPAID}${where}` : 'the key is wrong, revoked or out of credit';
     void (dead
-      ? attention.raise({ id, kind: 'key-rejected', at: now(), title: planless ? `${said}'s free plan is not on; turn it on${PROVIDERS[keyEnv]?.where ? ` at ${PROVIDERS[keyEnv].where}` : ' in its console'}` : `${said} key rejected; fix it in Keys`, detail: `${which} was refused (${status ?? 'no status'}): ${planless ? planlessWords(keyEnv) : 'the key is wrong, revoked or out of credit'}. Other models answer meanwhile; this goes away the next time it answers.` })
+      ? attention.raise({ id, kind: 'key-rejected', at: now(), title, detail: `${which} was refused (${status ?? 'no status'}): ${why}. Other models answer meanwhile; this goes away the next time it answers.` })
       : attention.clear(id)).catch(() => {});
-  });
+  }
 }
 
 // A file the store could not read and rescued (see `recover` in store.ts), said the way the founder knows it: the

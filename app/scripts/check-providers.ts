@@ -2,7 +2,7 @@
 // One line for every provider in models.json: OK, NO KEY with the name to set, or what the provider said.
 import { resolve } from 'node:path';
 try { process.loadEnvFile(resolve(import.meta.dirname, '../../.env')); } catch { /* no keys: nothing to check */ }
-const { ENTRIES, providerOf, realClients, unset } = await import('../server/providers.ts');
+const { ENTRIES, holdsTools, providerOf, realClients, toolSize, unset } = await import('../server/providers.ts');
 const { docTools } = await import('../server/tools/docs.ts');
 const { fileTools } = await import('../server/tools/files.ts');
 const { webTools } = await import('../server/tools/web.ts');
@@ -39,10 +39,15 @@ for (const entry of ENTRIES) {
   if (!mine.length) { console.log(entry.name, `NO KEY (set ${unset(entry, process.env).join(' and ')} in .env)`); continue; }
   // A client without tools (the small side model) is only ever asked without them, so it is checked the same way.
   for (const client of mine) {
-    const offered = client.tools ? tools : [];
+    // Judged the way the app uses it: a model whose room cannot hold the tool list (Groq's per-minute wall) is never
+    // sent a tool turn there, so sending it one here only proves a 413. It is asked without tools, as the app asks it.
+    const ask = [{ role: 'user' as const, content: 'List the shared files with your tool.' }];
+    const withTools = client.tools && holdsTools(client, tools, ask);
+    const offered = withTools ? tools : [];
+    const passed = client.tools && !withTools ? `passed over on tool turns (room ${client.maxPromptChars} < ${toolSize(tools)}-character tool list), ` : '';
     // Asked about a tool it was not offered, a small model tries to call one anyway; it is asked for words instead.
-    const content = client.tools ? 'List the shared files with your tool.' : 'Say in five words what a summary is for.';
-    try { const turn = await client.step([{ role: 'user', content }], { tools: offered, onToken: () => {} }); console.log(client.name, 'OK', client.tools ? `with ${tools.length} tools ->` : 'without tools (side model) ->', turn.calls.map((c: any) => c.name).join(',') || 'text'); }
+    const content = withTools ? ask[0].content : 'Say in five words what a summary is for.';
+    try { const turn = await client.step([{ role: 'user', content }], { tools: offered, onToken: () => {} }); console.log(client.name, 'OK', withTools ? `with ${tools.length} tools ->` : `${passed || 'side model, '}without tools ->`, turn.calls.map((c: any) => c.name).join(',') || 'text'); }
     catch (error: any) { refused.push(client.name); console.log(client.name, 'ERROR', error.status ?? '', String(error.message).slice(0, 200)); }
   }
 }

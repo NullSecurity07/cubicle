@@ -3,7 +3,7 @@ import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Check } from '../../shared/openends.ts';
 import { fallbackList, PROVIDERS } from '../keys-file/catalogue.ts';
-import { planless, PLANLESS } from '../breaker.ts';
+import { planless, PLANLESS, unpaid, UNPAID } from '../breaker.ts';
 import { ENTRIES, providerOf, unset, type ModelClient } from '../providers.ts';
 import type { EngineHealth } from '../opencode/server.ts';
 import { graphifyVersion, INSTALL, mcpCommand, PIN } from '../slices/graph.ts';
@@ -97,6 +97,8 @@ export type HealthDeps = {
   graphServer?: () => string[] | null;
   // The keys that have made today's published number of requests, by name.
   spent?: () => string[];
+  // The keys a provider refuses right now and why: only the founder can turn a plan on, add a card or fix a key.
+  refused?: () => Refusal[];
   // Whether the app runs as a systemd user service; asked of systemctl unless a test says otherwise.
   service?: () => Promise<ServiceState>;
   // The rows slices add about themselves. The app's own registry when left out.
@@ -166,17 +168,34 @@ export function keyChecks(env: NodeJS.ProcessEnv, root: string): Check[] {
   return checks;
 }
 
+export type Refusal = { name: string; why: 'plan' | 'card' | 'key' };
+// Each refused key as the usage book knows it, one line a provider: `mistral` once, however many keys it has.
+export function refusals(clients: Pick<ModelClient, 'name'>[], usage: { planOff(name: string): boolean; needsCard(name: string): boolean; dead(name: string): boolean }): Refusal[] {
+  const found = new Map<string, Refusal['why']>();
+  for (const { name } of clients) {
+    const why = usage.planOff(name) ? 'plan' : usage.needsCard(name) ? 'card' : usage.dead(name) ? 'key' : undefined;
+    if (why && !found.has(providerOf(name))) found.set(providerOf(name), why);
+  }
+  return [...found].map(([name, why]) => ({ name, why }));
+}
+const REFUSAL_WORDS: Record<Refusal['why'], string> = { plan: 'plan off', card: 'needs a card', key: 'key refused' };
+
 export async function checkAll(deps: HealthDeps): Promise<Check[]> {
   const { workspace, root, env = process.env, now = Date.now } = deps;
   const checks: Check[] = [];
 
   const pools = keyPools(env).filter((one) => one.keys > 0);
   const total = pools.reduce((sum, one) => sum + one.keys, 0);
+  // A key whose provider refuses it (a plan that is off, an account that wants a card) is not fine, however many keys
+  // there are: it answers nobody until the founder does something only they can.
+  const refused = deps.refused?.() ?? [];
+  const waiting = refused.map((one) => `${one.name} ${REFUSAL_WORDS[one.why]}`).join(', ');
   checks.push({
     name: 'Models',
-    ok: pools.length > 0,
-    detail: pools.length ? `${total} ${total === 1 ? 'key' : 'keys'}: ${pools.map((one) => `${one.provider} (${one.keys})`).join(', ')}` : 'no keys found, so nobody here can answer you',
-    fix: 'Open Keys from the command bar and paste a free key, such as Groq\'s. A second key for the same provider goes in .env as GROQ_API_KEY_2, a third as _3.',
+    ok: pools.length > 0 && !refused.length,
+    detail: pools.length ? `${total} ${total === 1 ? 'key' : 'keys'}: ${pools.map((one) => `${one.provider} (${one.keys})`).join(', ')}${waiting ? `; needs you: ${waiting}` : ''}` : 'no keys found, so nobody here can answer you',
+    fix: refused.length ? `${[...new Set(refused.map((one) => (one.why === 'plan' ? 'Turn on the free plan in the provider\'s console' : one.why === 'card' ? 'Add a card or payment method to the provider\'s account (or leave that provider off; the others answer)' : 'Paste a working key in Keys from the command bar')))].join('. ')}. The others answer meanwhile.`
+      : 'Open Keys from the command bar and paste a free key, such as Groq\'s. A second key for the same provider goes in .env as GROQ_API_KEY_2, a third as _3.',
   });
 
   checks.push(freeProviders(env));
@@ -290,6 +309,7 @@ export async function liveChecks(clients: ModelClient[], failed?: (client: Model
       return { name: `A word with ${client.name}`, ok: true, detail: `answered in ${Date.now() - started} ms as ${client.model}`, fix: '' };
     } catch (error) {
       failed?.(client, error);
+      if (unpaid(error)) return { name: `A word with ${client.name}`, ok: false, detail: UNPAID, fix: `Add a card or payment method to ${client.name}'s account, or leave it off; the others answer.` };
       return { name: `A word with ${client.name}`, ok: false, detail: planless(error) ? PLANLESS : (error as Error).message.slice(0, 200), fix: planless(error) ? planFix(client.name) : `Check this provider's key in .env, and whether today's free allowance is used up.` };
     }
   }));

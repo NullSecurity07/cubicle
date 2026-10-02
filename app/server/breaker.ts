@@ -33,10 +33,17 @@ export const planless = (error: unknown) => {
 };
 // What a key whose plan allows no requests is said to be, before where to turn the plan on is added (attention.ts).
 export const PLANLESS = 'its plan allows no requests yet';
+// A key the provider serves only once the founder adds a card or a payment method to the account: SambaNova answers
+// 402 "A payment method is required", Vercel's gateway 403 "requires a valid credit card on file". Waiting never fixes
+// it either, and it is said as what it is, not as a wrong key.
+export const unpaid = (error: unknown) => statusOf(error) === 402
+  || (statusOf(error) === 403 && /credit card|payment method|billing/i.test(String((error as Error)?.message ?? '')));
+// What a key that needs a card is said to be, before where to add one is added (attention.ts).
+export const UNPAID = 'its account needs a card or payment method on file before the free part works';
 // A 403 for a prompt the provider's moderation flagged (OpenRouter does this) says nothing about the key.
 export const refused = (error: unknown) => statusOf(error) === 401
   || (statusOf(error) === 403 && !/moderat|flagged/i.test(String((error as Error)?.message ?? '')))
-  || planless(error);
+  || unpaid(error) || planless(error);
 // Which free limit a 429 hit, in the words the founder reads, from what the provider wrote: the day's quota is not
 // the same news as a busy minute, and the dashboard's "left today" is only about the first.
 export const limitWords = (error: unknown) => {
@@ -122,6 +129,9 @@ export function createBreaker(now: () => number = Date.now) {
     },
     // True while the key rests after the provider refused it.
     dead: (name: string) => (keys[name]?.deadUntil ?? 0) > now(),
+    // Until when a refusal holds, for the usage book to keep across a restart, and a kept one put back.
+    deadUntil: (name: string) => keys[name]?.deadUntil,
+    refuse(name: string, until: number) { if (until > now()) key(name).deadUntil = until; },
     // True while the model rests after giving no first word twice in a row.
     slow: (name: string) => (keys[name]?.slowUntil ?? 0) > now(),
     state(name: string): 'closed' | 'open' | 'half-open' {

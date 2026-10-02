@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { PLANLESS } from '../breaker.ts';
-import { backupRow, checkAll, freeProviders, healthRows, keyChecks, keyPools, keysOf, liveChecks, liveReaders, LIVE_FEED, LIVE_REDDIT, LIVE_REDDIT_FEED, onPath, ytdlpVersion } from './health.ts';
+import { backupRow, checkAll, freeProviders, healthRows, keyChecks, keyPools, keysOf, liveChecks, liveReaders, LIVE_FEED, LIVE_REDDIT, LIVE_REDDIT_FEED, onPath, refusals, ytdlpVersion } from './health.ts';
 import type { Check } from '../../shared/openends.ts';
 
 const at = new Date('2026-09-20T09:00:00').getTime();
@@ -39,15 +39,15 @@ describe('keys', () => {
   it('say how many free providers can answer, and which names would bring the rest', async () => {
     const none = row(await setup(), 'Free providers');
     expect(none.ok).toBe(false);
-    expect(none.detail).toMatch(/^0 of 16 keyed; unset: GROQ_API_KEY, CEREBRAS_API_KEY, GEMINI_API_KEY, NVIDIA_API_KEY, /);
+    expect(none.detail).toMatch(/^0 of 17 keyed; unset: GROQ_API_KEY, CEREBRAS_API_KEY, GEMINI_API_KEY, NVIDIA_API_KEY, /);
     // A token without its account id is not a provider yet, and the id is named as missing.
     const env = { GROQ_API_KEY: 'sk-secret', GEMINI_API_KEY: 'AIza-secret', CLOUDFLARE_API_TOKEN: 'cf-secret' };
     const some = freeProviders(env);
     expect(some.ok).toBe(true);
     // groq, groq-qwen and gemini: the second Groq model is its own day's worth on the same key.
-    expect(some.detail).toMatch(/^3 of 16 keyed; unset: CEREBRAS_API_KEY, NVIDIA_API_KEY, ZAI_API_KEY, AI_GATEWAY_API_KEY, CLOUDFLARE_ACCOUNT_ID, OLLAMA_API_KEY, SAMBANOVA_API_KEY, MISTRAL_API_KEY, OPENROUTER_API_KEY$/);
+    expect(some.detail).toMatch(/^3 of 17 keyed; unset: CEREBRAS_API_KEY, NVIDIA_API_KEY, ZAI_API_KEY, AI_GATEWAY_API_KEY, CLOUDFLARE_ACCOUNT_ID, OLLAMA_API_KEY, SAMBANOVA_API_KEY, MISTRAL_API_KEY, OPENROUTER_API_KEY$/);
     expect(JSON.stringify(some)).not.toContain('secret');
-    expect(freeProviders({ ...env, CLOUDFLARE_ACCOUNT_ID: 'abc' }).detail).toMatch(/^6 of 16 keyed/);
+    expect(freeProviders({ ...env, CLOUDFLARE_ACCOUNT_ID: 'abc' }).detail).toMatch(/^6 of 17 keyed/);
     expect(freeProviders({ GROQ_API_KEY: 'a' }).ok).toBe(true);
     expect(freeProviders({ GEMINI_API_KEY: 'a' }).ok).toBe(false);
     // Each key is counted once in the Models line, though three models read Groq's.
@@ -267,7 +267,7 @@ describe('a model whose free turns for the day are used (round 5)', () => {
 
 describe('the keys that would add a fallback, in Health (round 5)', () => {
   it('is a row while any is unset, and gone once all are', async () => {
-    expect(row(await setup(), 'Keys that would add a fallback')).toMatchObject({ ok: true, detail: expect.stringMatching(/^NVIDIA at build\.nvidia\.com \(kimi-k3\); Mistral/) });
+    expect(row(await setup(), 'Keys that would add a fallback')).toMatchObject({ ok: true, detail: expect.stringMatching(/^NVIDIA at build\.nvidia\.com \(nemotron-3-super-120b-a12b, kimi-k3\); Mistral/) });
     const all = { NVIDIA_API_KEY: 'n', MISTRAL_API_KEY: 'm', CEREBRAS_API_KEY: 'c', OPENROUTER_API_KEY: 'o' };
     expect(row(await setup({ env: all }), 'Keys that would add a fallback')).toBeUndefined();
   });
@@ -284,5 +284,22 @@ describe('running while closed', () => {
     expect(no.fix).toContain('pnpm service:install');
     const fallen = row(await setup({ service: async () => ({ systemd: true, installed: true, enabled: true, active: 'failed', path: '/x' }) }), 'Runs while closed');
     expect(fallen.ok).toBe(false);
+  });
+});
+
+describe('the Models row while a key needs the founder (providers round)', () => {
+  it('is not fine while a plan is off or an account wants a card, and says which and what to do', async () => {
+    const env = { GEMINI_API_KEY: 'g', MISTRAL_API_KEY: 'm', SAMBANOVA_API_KEY: 's' };
+    expect(row(await setup({ env, refused: () => [] }), 'Models').ok).toBe(true);
+    const models = row(await setup({ env, refused: () => [{ name: 'mistral', why: 'plan' }, { name: 'sambanova', why: 'card' }] }), 'Models');
+    expect(models.ok).toBe(false);
+    expect(models.detail).toMatch(/; needs you: mistral plan off, sambanova needs a card$/);
+    expect(models.fix).toMatch(/Turn on the free plan.*Add a card or payment method/);
+  });
+
+  it('names each refused provider once, however many keys it has, from what the usage book knows', () => {
+    const usage = { planOff: (name: string) => name.startsWith('mistral'), needsCard: (name: string) => name === 'vercel', dead: (name: string) => name !== 'gemini' };
+    expect(refusals([{ name: 'gemini' }, { name: 'mistral' }, { name: 'mistral#2' }, { name: 'vercel' }, { name: 'groq' }], usage))
+      .toEqual([{ name: 'mistral', why: 'plan' }, { name: 'vercel', why: 'card' }, { name: 'groq', why: 'key' }]);
   });
 });

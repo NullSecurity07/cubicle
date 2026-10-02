@@ -77,7 +77,7 @@ test.describe('the Keys panel', () => {
       await expect(panel(page).getByRole('region', { name: group })).toBeVisible();
     }
     // The free sign-ups that would put another model behind the first are named, with where to make each.
-    await expect(panel(page)).toContainText('Keys that would add a fallback, each a free sign-up: NVIDIA at build.nvidia.com (kimi-k3)');
+    await expect(panel(page)).toContainText('Keys that would add a fallback, each a free sign-up: NVIDIA at build.nvidia.com (nemotron-3-super-120b-a12b, kimi-k3)');
     const groq = panel(page).getByRole('listitem', { name: 'Groq' });
     await expect(groq).toContainText('GROQ_API_KEY');
     await expect(groq).toContainText('Not set. Make one at console.groq.com/keys.');

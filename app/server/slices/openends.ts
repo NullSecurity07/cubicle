@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { Slice } from '../install.ts';
 import { backupAttention } from '../attention.ts';
 import { autoBackup, backupDirOf, listBackups, makeBackup } from '../openends/backup.ts';
-import { checkAll, outsideHealth } from '../openends/health.ts';
+import { checkAll, outsideHealth, refusals } from '../openends/health.ts';
 import { coderHealth } from '../opencode/server.ts';
 import { createInsights } from '../openends/insights.ts';
 import { connectAll, createSafeBook, FILE, loadEntries, outsideTools, outsideView, type Connected } from '../openends/mcp.ts';
@@ -49,6 +49,7 @@ export default {
       outside,
       coder: () => coderHealth.now(),
       spent: () => deps.clients.filter((client) => deps.usage.spent(client)).map((client) => client.name),
+      refused: () => refusals(deps.clients, deps.usage),
     });
 
     return {

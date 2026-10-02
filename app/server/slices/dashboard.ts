@@ -10,7 +10,7 @@ import { FRAMEWORK_ID, type Framework } from '../../shared/frameworks.ts';
 import type { Deps, Slice } from '../install.ts';
 import { leadsCardIds } from '../leads/store.ts';
 import { backupDirOf, canWrite, listBackups, sameDisk } from '../openends/backup.ts';
-import { backupRow, checkAll, outsideHealth } from '../openends/health.ts';
+import { backupRow, checkAll, outsideHealth, refusals } from '../openends/health.ts';
 import { coderHealth } from '../opencode/server.ts';
 import { providerOf } from '../providers.ts';
 import type { TraceLine } from '../trace.ts';
@@ -183,8 +183,9 @@ export async function readTokens(deps: Pick<Deps, 'workspace' | 'usage' | 'clien
       name: info.name, model: info.model, usedToday: { requests: info.requests, tokens: info.tokens }, limits: limit,
       leftPct: Math.round(info.left * 100),
       // The usage book starts each provider's day on the UTC date, whatever the founder's clock says.
-      window: info.planOff ? 'free plan not on' : !capped ? 'no daily limit' : spent.has(info.name) ? 'daily free turns used; resets at midnight UTC' : 'resets at midnight UTC',
+      window: info.planOff ? 'free plan not on' : info.needsCard ? 'needs a card on file' : !capped ? 'no daily limit' : spent.has(info.name) ? 'daily free turns used; resets at midnight UTC' : 'resets at midnight UTC',
       ...(info.planOff ? { planOff: true } : {}),
+      ...(info.needsCard ? { needsCard: true } : {}),
       ...(pool ? { neurons: { used: Math.round(pool.used), of: pool.of, pictures: Math.round(pool.pictures), drawn: pool.drawn } } : {}),
     };
   });
@@ -291,7 +292,7 @@ export default {
       if (checking || Date.now() - health.at < HEALTH_FOR) return;
       const dir = dirOf();
       void listBackups(dir).then((held) => { sawBackup = { dir, at: held[0]?.at ?? null }; });
-      checking = checkAll({ workspace: deps.workspace, root: deps.root, backupDir: dir, backups: () => listBackups(dir), outside: () => outsideHealth.now(), coder: () => coderHealth.now(), spent: () => deps.clients.filter((client) => deps.usage.spent(client)).map((client) => client.name) })
+      checking = checkAll({ workspace: deps.workspace, root: deps.root, backupDir: dir, backups: () => listBackups(dir), outside: () => outsideHealth.now(), coder: () => coderHealth.now(), spent: () => deps.clients.filter((client) => deps.usage.spent(client)).map((client) => client.name), refused: () => refusals(deps.clients, deps.usage) })
         .then((checks) => {
           const fresh = checks.map(({ name, ok, detail }) => ({ name, ok, detail }));
           const moved = JSON.stringify(fresh) !== JSON.stringify(health.checks);

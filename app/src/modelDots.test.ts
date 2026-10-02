@@ -29,6 +29,10 @@ describe('a model dot says what is known about the model, not a guess', () => {
     expect(dotOf(model('gemini'), keys).tone).toBe('fine');
   });
 
+  it('says needs a card on file for a provider every key of which wants a card, as a warning, not as a full ring', () => {
+    expect(dotOf(model('sambanova', { needsCard: true, requests: 0 }), new Map())).toEqual({ tone: 'refused', words: 'needs a card on file' });
+  });
+
   it('says free plan not on for a provider every key of which wants a plan, before anything else', () => {
     expect(dotOf(model('mistral', { planOff: true, requests: 0 }), new Map())).toEqual({ tone: 'refused', words: 'free plan not on' });
     expect(dotOf(model('mistral', { planOff: true }), refusedKeys([refused('MISTRAL_API_KEY')]))).toEqual({ tone: 'refused', words: 'free plan not on' });
