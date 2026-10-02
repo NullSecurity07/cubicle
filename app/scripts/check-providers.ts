@@ -16,6 +16,7 @@ const { mediaTools } = await import('../server/tools/media.ts');
 const { skillTools } = await import('../server/tools/skills.ts');
 const { founderTools } = await import('../server/tools/founder.ts');
 const { sourceTools } = await import('../server/tools/sources.ts');
+const { calcTools } = await import('../server/tools/calc.ts');
 // Whatever `server/slices` holds counts too: a dropped-in feature must not be the thing that makes a provider refuse
 // the list. A slice only installs when it is handed the real things it listens to, so it gets them, small and empty, on
 // a throwaway workspace; stubs that were too thin left slices out, and the check passed without ever offering their
@@ -30,7 +31,7 @@ const scratch = mkdtempSync(resolve(tmpdir(), 'check-providers-'));
 const skipped: string[] = [];
 const said = (name: string, error: Error) => { skipped.push(name); console.log('slice', name, 'COULD NOT INSTALL:', error.message); };
 const extras = await installSlices(await loadSlices(resolve(import.meta.dirname, '../server/slices'), said), stubDeps(scratch, resolve(import.meta.dirname, '../..')), said);
-const tools = [...docTools, ...fileTools, ...webTools({} as any), ...outwardTools({ ready: () => true, ways: () => ({}) } as any, '/tmp'), ...teamTools((async () => '') as any), ...taskTools({} as any), ...memoryTools({} as any), ...decisionTools({} as any), ...sourceTools({} as any, {} as any), ...recallTools({} as any), ...mediaTools({ ready: () => null } as any), ...skillTools({} as any), ...founderTools({} as any), ...extras.tools];
+const tools = [...docTools, ...fileTools, ...webTools({} as any), ...outwardTools({ ready: () => true, ways: () => ({}) } as any, '/tmp'), ...teamTools((async () => '') as any), ...taskTools({} as any), ...memoryTools({} as any), ...decisionTools({} as any), ...sourceTools({} as any, {} as any), ...recallTools({} as any), ...mediaTools({ ready: () => null } as any), ...skillTools({} as any), ...founderTools({} as any), ...calcTools(), ...extras.tools];
 const refused: string[] = [];
 const clients = realClients();
 for (const entry of ENTRIES) {

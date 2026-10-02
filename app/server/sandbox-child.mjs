@@ -3,6 +3,7 @@
 // stdin and the result goes out as one line on stdout; in between, a line each way carries one tool call, so code can
 // use the person's own tools without the wall getting a single hole in it.
 import { constants, mkdirSync, readFileSync, readSync, readdirSync, writeFileSync, writeSync } from 'node:fs';
+import { isBuiltin, registerHooks } from 'node:module';
 import { dirname, resolve, sep } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import vm from 'node:vm';
@@ -73,18 +74,47 @@ tools = _Tools(_json.loads(_tool_names))
 del _Tools
 `;
 
-// The permission model stops files, programs and the network, but not signals: code that climbs out of vm could still
-// kill or abort any process of the user, the app server included. Take those away before any code runs. process.exit
-// stays, since ending this process is only ending the sandbox.
-for (const name of ['kill', '_kill', 'abort']) {
-  Object.defineProperty(process, name, { value: () => { throw new Error('no signals from the sandbox'); }, writable: false, configurable: false });
+// The permission model stops files, programs and the network, but not the rest of the process: code that climbs out of
+// vm, or simply asks Pyodide for `js.process`, holds the real one, and through it os.setPriority on any process of the
+// user, a SIGUSR1 to any pid (_debugProcess), signals, uid changes and the machine's own details. So before any code
+// runs, what it can reach is cut to a short list rather than a list of known dangers: a process method not named here
+// throws, a built-in module not named here cannot be loaded by getBuiltinModule, import() or Pyodide's require.
+// process.exit stays, since ending this process is only ending the sandbox.
+const PROCESS_KEEPS = new Set(['cwd', 'hrtime', 'nextTick', 'emitWarning', 'exit', 'reallyExit', 'uptime', 'memoryUsage', 'cpuUsage', 'threadCpuUsage',
+  'resourceUsage', 'constrainedMemory', 'availableMemory', 'ref', 'unref', '_rawDebug', '_tickCallback', '_fatalException',
+  '_getActiveRequests', '_getActiveHandles', 'getActiveResourcesInfo', 'setSourceMapsEnabled',
+  'setUncaughtExceptionCaptureCallback', 'addUncaughtExceptionCaptureCallback', 'hasUncaughtExceptionCaptureCallback']);
+// What Pyodide itself loads in Node, and the plain helpers those lean on. No os, no network, no programs, no workers.
+const MODULES = new Set(['fs', 'fs/promises', 'path', 'url', 'vm', 'crypto', 'buffer', 'string_decoder', 'util', 'events', 'stream']);
+const allowed = (name) => MODULES.has(String(name).replace(/^node:/, ''));
+const refuse = (what) => () => { throw new Error(`${what} is not available in the sandbox`); };
+// Emscripten's file layer asks for one internal table, which the permission model hides: it gets the public one, and
+// no raw binding is handed out to anybody, whatever Node itself would allow.
+const binding = (name) => { if (name === 'constants') return { fs: constants }; throw new Error(`process.binding('${name}') is not available in the sandbox`); };
+const seal = (target, key, value) => Object.defineProperty(target, key, { value, writable: false, configurable: false });
+function lockdown() {
+  const builtin = process.getBuiltinModule.bind(process);
+  registerHooks({
+    resolve(specifier, context, next) {
+      if (isBuiltin(specifier) && !allowed(specifier)) throw new Error(`${specifier} is not available in the sandbox`);
+      return next(specifier, context);
+    },
+  });
+  for (const key of Object.getOwnPropertyNames(process)) {
+    if (typeof process[key] !== 'function' || PROCESS_KEEPS.has(key)) continue;
+    seal(process, key, key === 'getBuiltinModule' ? (name) => (allowed(name) ? builtin(name) : refuse(name)()) : key === 'binding' ? binding : refuse(`process.${key}`));
+  }
+  // Pyodide hands its own few modules round through a global require; it keeps only what the list allows.
+  if (typeof globalThis.require === 'function') {
+    const shim = globalThis.require;
+    seal(globalThis, 'require', (name) => (allowed(name) ? shim(name) : refuse(name)()));
+  }
 }
 
 let error;
 try {
   if (job.language === 'python') {
-    // Emscripten's file layer asks for this one internal table, which the permission model hides. Give it the public one.
-    process.binding = (name) => { if (name === 'constants') return { fs: constants }; throw new Error('not available'); };
+    process.binding = binding;
     const { loadPyodide } = await import(`${pyodideDir}/pyodide.mjs`);
     const python = await loadPyodide({ stdout: say, stderr: (line) => { if (!/Warning/.test(line)) say(line); }, ...(packageDir ? { packageCacheDir: packageDir } : {}) });
     // Wheels come from the folder the server filled; there is no network here to fetch anything else.
@@ -96,6 +126,7 @@ try {
     python.FS.mkdirTree('/files');
     python.FS.mount(python.FS.filesystems.NODEFS, { root: filesDir }, '/files');
     python.FS.chdir('/files');
+    lockdown();
     const value = await python.runPythonAsync(job.code);
     if (value !== undefined && value !== null) say(String(value));
   } else {
@@ -104,6 +135,7 @@ try {
       read: (name) => readFileSync(inside(name), 'utf8'),
       write: (name, text) => { mkdirSync(dirname(inside(name)), { recursive: true }); writeFileSync(inside(name), String(text)); },
     };
+    lockdown();
     // This clock only stops a runaway loop from holding the pipe for ever; the parent's is the real limit. Code that
     // calls tools waits here while the parent works, so it gets the longer one rather than being cut off mid-call.
     const value = vm.runInNewContext(job.code, { console: { log: say, error: say, warn: say, info: say }, files, tools }, { timeout: names.length ? 120_000 : 15_000 });
