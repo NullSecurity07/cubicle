@@ -3,8 +3,7 @@
  "log": [
   "starting…",
   "reading what is wired to the deck…",
-  "using Company brief",
-  "no Metrics card is wired, so traction says \"No numbers yet.\"",
+  "using Company brief, the Metrics card",
   "writing the storyboard…",
   "the critic found 1 thing to fix",
   "asking again with what the critic found…",
@@ -55,11 +54,18 @@
   {
    "id": "s15",
    "shape": "traction",
-   "headline": "Early interest but no hard metrics yet",
+   "headline": "12 beta users in twelve weeks, 2 already paying",
    "lines": [
-    "No numbers yet."
+    "Beta users grew from 2 to 12 since 6 July.",
+    "Two designers pay €39 a month: €78 MRR.",
+    "40 playtest sessions run on the kit so far."
    ],
-   "notes": "State the current lack of formal traction data."
+   "figure": {
+    "value": "12",
+    "label": "Beta users"
+   },
+   "notes": "Every number here is read off the Metrics card, the week of 21 September.",
+   "source": "Metrics card, kindling-12-weeks.csv, week of 21 Sep"
   },
   {
    "id": "s16",
@@ -163,11 +169,18 @@
     {
      "id": "s15",
      "shape": "traction",
-     "headline": "Early interest but no hard metrics yet",
+     "headline": "12 beta users in twelve weeks, 2 already paying",
      "lines": [
-      "No numbers yet."
+      "Beta users grew from 2 to 12 since 6 July.",
+      "Two designers pay €39 a month: €78 MRR.",
+      "40 playtest sessions run on the kit so far."
      ],
-     "notes": "State the current lack of formal traction data."
+     "figure": {
+      "value": "12",
+      "label": "Beta users"
+     },
+     "notes": "Every number here is read off the Metrics card, the week of 21 September.",
+     "source": "Metrics card, kindling-12-weeks.csv, week of 21 Sep"
     },
     {
      "id": "s16",
