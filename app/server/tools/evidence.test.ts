@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { evidenceCheck } from './evidence.ts';
+import { evidenceCheck, heardFrom } from './evidence.ts';
 
 const TEMPLATE = '# Evaluation\n\n## 2. Three specific ways it dies\n\n1. — survivable? — cheapest test:\n\n## 3. Is the pain real?\n\nVitamin — painkiller — hair on fire:\n\nWhat it costs them per month:\n\nReal customer conversations done (of ten to twenty):\n\n## 5. Verdict\n\nOne word (STRONG / WEAK / PIVOT REQUIRED):\n';
 // Journey 10's founder: twelve beta users, two paying, forty playtest sessions logged. Nobody talked to anyone.
@@ -99,5 +99,13 @@ describe('matching a count to what was read', () => {
     const out = unbacked(line, read);
     if (stands) expect(out).toBeNull();
     else expect(out).toMatch(/^not written: "\d+\+?"/);
+  });
+});
+
+describe('what of a colleague\'s answer backs a count', () => {
+  it('keeps only the sentences whose counts the colleague read, plans and orders held too', () => {
+    expect(heardFrom('The founder has 12 beta users. They signed 7 paid pilots. We should interview 5 hosts.', [FOUNDER]))
+      .toEqual(['The founder has 12 beta users.']);
+    expect(heardFrom('Twelve beta users, I think.', [])).toEqual([]);
   });
 });

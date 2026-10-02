@@ -97,6 +97,9 @@ export async function runTurn(input: {
   const results: string[] = [];
   // The results of tools that worked, for what a team doc may say: a refusal is no source, nor is a person's own memory.
   const worked: string[] = [];
+  // What a colleague asked with ask_person had read for their answer: it backs a count, never a claim, and the rest of
+  // their answer, said from their own head, backs nothing.
+  const heard: string[] = [];
   // Why the stream broke off mid-reply, when it did; whether a tool call came back as text and was already asked about
   // once; whether it came back so twice and was held back; whether the reply had to be made from the receipts.
   let broke = '';
@@ -255,7 +258,7 @@ export async function runTurn(input: {
       context.sources = () => [...turnSources(inputs), ...results, query];
       context.evidence = () => {
         const { read, said } = turnEvidence(inputs);
-        return { read: [...read, ...worked, query], said: [...said, ...worked, query] };
+        return { read: [...read, ...worked, ...heard, query], said: [...said, ...worked, query] };
       };
       context.report = (effect) => events.tool({ id: call.id, name: call.name, args, effect });
       // A tool that runs a turn of its own inside itself asks the founder on this turn's path, not on one of its own.
@@ -271,7 +274,8 @@ export async function runTurn(input: {
       events.tool(event);
       messages.push({ role: 'tool', tool_call_id: call.id, content: full });
       results.push(full);
-      if (ran.ok && !/^(?:recall|reflect|remember)$/.test(call.name)) worked.push(full);
+      if (ran.ok && ran.heard) heard.push(...ran.heard);
+      else if (ran.ok && !/^(?:recall|reflect|remember)$/.test(call.name)) worked.push(full);
     }
   }
 

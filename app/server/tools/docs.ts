@@ -262,7 +262,7 @@ async function colleagueRead(context: ToolContext, targetId: string, question: s
   return [...(context.sources?.() ?? []), question, ...await colleagueOwn(context, targetId)];
 }
 // What the founder said in the colleague's room, and the documents the colleague reads.
-async function colleagueOwn(context: ToolContext, targetId: string): Promise<string[]> {
+export async function colleagueOwn(context: ToolContext, targetId: string): Promise<string[]> {
   const chat = await context.store.readChat(targetId).catch(() => []);
   const docs = await Promise.all(readableDocIds(context.stage, targetId).map((id) => context.store.readDoc(id).catch(() => '')));
   return [...chat.filter((message) => message.role === 'user').map((message) => message.text), ...docs];

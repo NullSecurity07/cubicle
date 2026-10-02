@@ -150,6 +150,18 @@ function unbackedCounts(line: string, sources: Token[][], quoted = '', strict = 
 const flat = (text: string) => text.replace(/\s+/g, ' ').trim().toLowerCase();
 const sourceTokens = (sources: string[]) => sentencesOf(sources).map(tokensOf);
 
+// The sentences of a colleague's answer whose every count is in what that colleague read, said of the same thing: the
+// part of it that may back a count in the asker's write. What they said from their own head backs nothing.
+export function heardFrom(answer: string, read: string[]): string[] {
+  const sources = sourceTokens(read);
+  // A count said in words is a count too: "twelve beta users" is held as "12 beta users".
+  const digits = (sentence: string) => sentence.replace(/[\p{L}][\p{L}'-]*/gu, (word) => {
+    const value = /^(?:zero|one)$/i.test(word) ? null : spelled(word);
+    return value === null ? word : String(value);
+  });
+  return sentencesOf([answer]).filter((sentence) => !unbackedCounts(digits(sentence), sources, '', true).length);
+}
+
 // A claim of evidence, and the words one of the founder's sentences or a tool result has to share with it.
 const CLAIMS: { said: RegExp; keys: RegExp }[] = [
   { said: /\bretention\b[^.;!?]{0,30}?\b(?:ok|okay|good|fine|strong|high|solid|great|healthy)\b/i, keys: /\b(?:retention|retain|retained|churn|renew|came back|come back|returning|stayed)\b/i },
