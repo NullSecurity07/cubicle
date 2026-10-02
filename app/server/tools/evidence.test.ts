@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { evidenceCheck } from './evidence.ts';
+import { evidenceCheck, heardFrom } from './evidence.ts';
 
 const TEMPLATE = '# Evaluation\n\n## 2. Three specific ways it dies\n\n1. — survivable? — cheapest test:\n\n## 3. Is the pain real?\n\nVitamin — painkiller — hair on fire:\n\nWhat it costs them per month:\n\nReal customer conversations done (of ten to twenty):\n\n## 5. Verdict\n\nOne word (STRONG / WEAK / PIVOT REQUIRED):\n';
 // Journey 10's founder: twelve beta users, two paying, forty playtest sessions logged. Nobody talked to anyone.
@@ -63,5 +63,49 @@ describe('an evidence claim on a pain, conversations or traction section', () =>
     const out = check(pain('I think retention is likely OK. Likely a painkiller (assumption).'));
     expect(out.text).toContain('I think retention is likely OK (assumption). Likely a painkiller (assumption).');
     expect(out.marked).toEqual(['I think retention is likely OK.']);
+  });
+});
+
+// A count on a line with no section, held to what was read: null when it stands, else what is not written.
+const unbacked = (line: string, read: string[]) => { try { evidenceCheck({ before: '', after: line, counts: read, said: read }); return null; } catch (error) { return (error as Error).message; } };
+
+describe('matching a count to what was read', () => {
+  // Each row: the line written, what was read, whether the count stands.
+  const CASES: [string, string[], boolean][] = [
+    ['Beta users: 12', [FOUNDER], true],
+    ['12 beta users so far.', [FOUNDER], true],
+    ['Paying users: 2', [BRIEF], true],
+    ['40 playtest sessions logged.', [FOUNDER], true],
+    ['1,200 sign-ups from the launch.', ['We got 1200 sign-ups from the launch.'], true],
+    ['1200 sign-ups from the launch.', ['We got 1,200 sign-ups.'], true],
+    ['12 testers joined.', ['Twelve testers joined in March.'], true],
+    ['12 hosts on the waitlist.', ['A dozen hosts are on the waitlist.'], true],
+    ['25 designers signed up.', ['Twenty-five designers signed up.'], true],
+    ['12 users in the beta.', ['There are 12.0 users in the beta.'], true],
+    ['| Beta users | 12 |', ['| Beta users | 12 |'], true],
+    ['Customer conversations: 3', ['I had three customer calls this week.'], true],
+    // Journey 10: two paying users are not two conversations, nor forty sessions forty hosts.
+    ['Real customer conversations done: 2', [FOUNDER, BRIEF], false],
+    ['Only 2 real customer conversations have been conducted.', [FOUNDER, BRIEF], false],
+    ['What it costs them per month: 3+ hours per test', [FOUNDER, BRIEF], false],
+    ['Your 40 playtest hosts are active.', [FOUNDER], false],
+    ['10 non-paying beta users contacted for testing.', [FOUNDER, BRIEF], false],
+    // The same number in the same sentence, but said of something far from it.
+    ['2 sessions a week.', [FOUNDER], false],
+    // Word overlap alone was enough before: "12" and "users" are both in the founder's sentence, not together.
+    ['12 paying users.', ['We have 12 beta testers and 3 paying users.'], false],
+  ];
+  it.each(CASES)('%s', (line, read, stands) => {
+    const out = unbacked(line, read);
+    if (stands) expect(out).toBeNull();
+    else expect(out).toMatch(/^not written: "\d+\+?"/);
+  });
+});
+
+describe('what of a colleague\'s answer backs a count', () => {
+  it('keeps only the sentences whose counts the colleague read, plans and orders held too', () => {
+    expect(heardFrom('The founder has 12 beta users. They signed 7 paid pilots. We should interview 5 hosts.', [FOUNDER]))
+      .toEqual(['The founder has 12 beta users.']);
+    expect(heardFrom('Twelve beta users, I think.', [])).toEqual([]);
   });
 });

@@ -8,7 +8,7 @@ import { text, type Tool, type ToolContext } from './registry.ts';
 import { shortDay } from '../clock.ts';
 import { dropFlagged, figureCheck, HELD_BACK, holdVerdict, verdictStanding, type Receipt } from '../truth.ts';
 import { findCompanyDoc } from '../../shared/partner.ts';
-import { evidenceCheck } from './evidence.ts';
+import { evidenceCheck, markUnbacked, unbackedEnds } from './evidence.ts';
 import { filled, guardWrite, sectionBody, standingVerdict, unmarked, verdictState, WHOLE } from './verdict.ts';
 
 // A new doc card's size, and the gap kept round it: the same the window uses when it places one.
@@ -121,15 +121,27 @@ function unsourcedIn(context: ToolContext, before: string, after: string): strin
 // marked every line of a team doc, figures the founder gave and lines with no figure at all, and the founder read the
 // marks as noise; a mark anywhere but right after the figure never even held the figure back from being a source.
 const WRITER_MARK = /\s*\(unsourced\)/gi;
-function honestMarks(context: ToolContext, before: string, written: string): { text: string; dropped: number } {
+function honestMarks(context: ToolContext, before: string, written: string, read: string[] | null): { text: string; dropped: number } {
   if (!context.sources || !/\(unsourced\)/i.test(written)) return { text: written, dropped: 0 };
   const unsourced = figureCheck(written.replace(WRITER_MARK, ''), [...context.sources(), before]).unsourced;
   let dropped = 0;
-  const text = written.replace(WRITER_MARK, (mark, offset: number) => {
-    if (unsourced.some((label) => written.slice(0, offset).endsWith(label))) return mark;
-    dropped += 1;
-    return '';
-  });
+  // A count the doc itself marked is no source for the same count said again.
+  const unmarked = read?.map((source) => source.replace(/\S+\s*\(unsourced\)/gi, '')) ?? null;
+  // Line by line, since a count is judged in its own line: a mark right after a count nothing read backs is true too,
+  // whoever put it there, and must outlive the doc being written again.
+  const text = written.split('\n').map((line) => {
+    if (!/\(unsourced\)/i.test(line)) return line;
+    const ends = unmarked ? unbackedEnds(line.replace(WRITER_MARK, ''), unmarked) : null;
+    let gone = 0;
+    return line.replace(WRITER_MARK, (mark, offset: number) => {
+      const said = line.slice(0, offset);
+      const afterCount = !!ends && ends.includes(offset - gone);
+      gone += mark.length;
+      if (afterCount || unsourced.some((label) => said.endsWith(label))) return mark;
+      dropped += 1;
+      return '';
+    });
+  }).join('\n');
   return { text, dropped };
 }
 
@@ -168,10 +180,11 @@ async function numbersOf(context: Pick<ToolContext, 'stage' | 'store'>): Promise
 
 async function save(context: ToolContext, id: string, before: string, written: string, done: string, touches?: string | typeof WHOLE) {
   const rules = await rulesOf(context.stage, id);
-  const honest = honestMarks(context, before, written);
+  const honest = honestMarks(context, before, written, (await evidenceFor(context, before))?.read ?? null);
   written = honest.text;
   if (honest.dropped) done = `${done} Took out "(unsourced)" where this turn's reading gives the figure or no figure stands before it.`;
-  // A team doc with rules is held to its evidence, so an unsourced figure is refused there; anywhere else it is marked.
+  // A team doc with rules is held to its evidence, so an unsourced figure or count is refused there; anywhere else it is
+  // marked.
   const unsourced = unsourcedIn(context, before, written);
   if (unsourced.length && rules) {
     throw new Error(`not written: ${unsourced.join(', ')} ${unsourced.length > 1 ? 'are' : 'is'} not in anything this turn read. Search or read for them first, take them out, or write "(unsourced)" right after each.`);
@@ -182,6 +195,14 @@ async function save(context: ToolContext, id: string, before: string, written: s
     const held = await heldToEvidence(context, before, after);
     after = held.text;
     done = `${done}${held.note}`;
+  } else {
+    // Any other doc gets the same count check, marking what it would refuse: the writer's words stay, said as theirs.
+    const read = await evidenceFor(context, before);
+    const counts = read ? markUnbacked({ before, after, read: read.read }) : null;
+    if (counts?.marked.length) {
+      after = counts.text;
+      done = `${done} Marked as unsourced, since nothing read gives them for what they count: ${counts.marked.join(', ')}. Read for them, or take them out.`;
+    }
   }
   // Only a team doc's own sections are kept to one copy, where a second would slip past the checks; a plain doc such
   // as a running log repeats "## Monday" on purpose.
@@ -281,7 +302,7 @@ async function colleagueRead(context: ToolContext, targetId: string, question: s
   return [...(context.sources?.() ?? []), question, ...await colleagueOwn(context, targetId)];
 }
 // What the founder said in the colleague's room, and the documents the colleague reads.
-async function colleagueOwn(context: ToolContext, targetId: string): Promise<string[]> {
+export async function colleagueOwn(context: ToolContext, targetId: string): Promise<string[]> {
   const chat = await context.store.readChat(targetId).catch(() => []);
   const docs = await Promise.all(readableDocIds(context.stage, targetId).map((id) => context.store.readDoc(id).catch(() => '')));
   return [...chat.filter((message) => message.role === 'user').map((message) => message.text), ...docs];

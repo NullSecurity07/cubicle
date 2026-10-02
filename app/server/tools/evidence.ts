@@ -2,8 +2,8 @@
 // customer conversations done: 2", "retention OK among the 2 paying" and "3+ hours per test" into the Evaluation
 // doc, none of it said by anyone, and the judge built her verdict on it. The figure check before this skipped counts
 // of ten or less and every claim made in words. Two checks, on the lines a write adds:
-// - a count must be in something read, beside the thing it counts: the "2" of "2 paying" is no source for "2 real
-//   customer conversations";
+// - a count must be in something read, the same number however it was written, within a few words of the word for
+//   what it counts: the "2" of "2 paying" is no source for "2 real customer conversations";
 // - on a pain, conversations or traction section, a claim of evidence ("retention OK", "customers love it",
 //   "validated", "we've had two conversations") needs a founder's sentence or a tool result that says it. A document
 //   is no source here: a colleague's invented line in it would do. Said as a view ("I think", "likely") it stands,
@@ -24,73 +24,164 @@ const stem = (word: string) => {
   const same = SAME.find(([pattern]) => pattern.test(low));
   return same ? same[1] : low.replace(/(?:ing|ed|es|s)$/, '');
 };
-const wordsIn = (text: string) => (text.match(/[\p{L}][\p{L}'-]*/gu) ?? []).filter((word) => word.length > 2 && !SMALL.has(word.toLowerCase())).map(stem);
 const alike = (a: string, b: string) => a === b || (Math.min(a.length, b.length) >= 3 && (a.startsWith(b) || b.startsWith(a)));
 
 // A source cut into sentences, each without its list number or heading number, so "## 3. Is the pain real?" is no
-// source for a "3".
+// source for a "3". A table row is a line, so it is one sentence too.
 const sentencesOf = (sources: string[]) => sources.flatMap((source) => source.split(/\n|(?<=[.!?;])\s+/))
   .map((line) => line.replace(/^\s*#{1,6}\s*/, '').replace(/^\s*(?:[-*+]\s+)?\d+[.)]\s+/, '').trim()).filter(Boolean);
 const valueOf = (digits: string) => Number(digits.replace(/,/g, ''));
-// A number said in words counts as the same number: "six years" gives the "6" of "6 years".
-const SPELLED = 'zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty'.split(' ');
-const numbersIn = (sentence: string) => [
-  ...[...sentence.matchAll(/(?<![\d.,])(\d{1,3}(?:,\d{3})+|\d+)(?![\d]|[.,]\d)/g)].map((match) => valueOf(match[1])),
-  ...(sentence.toLowerCase().match(/[a-z]+/g) ?? []).map((word) => SPELLED.indexOf(word)).filter((value) => value >= 0),
-];
+
+// A number as read, however it was written: "12", "12.0", "1,200", "1.2k", "15%", "15 percent", "€78", "twelve",
+// "twenty-five", "a dozen". Each word of a sentence in order, as its value or its stem, so how far a number stands from
+// a word can be told.
+const SPELLED = 'zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen'.split(' ');
+const TENS = 'twenty thirty forty fifty sixty seventy eighty ninety'.split(' ');
+function spelled(word: string): number | null {
+  const [tens, one] = word.toLowerCase().split('-');
+  if (word.toLowerCase() === 'dozen') return 12;
+  const ten = TENS.indexOf(tens);
+  if (ten >= 0) return (ten + 2) * 10 + (one ? Math.max(SPELLED.indexOf(one), 0) : 0);
+  return !one && SPELLED.includes(tens) ? SPELLED.indexOf(tens) : null;
+}
+type Token = { value?: number; word?: string };
+const TOKENS = /(?:[$€£]\s?)?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(?:\s?(k|m|thousand|million)\b)?(?:\s?(?:%|percent\b))?|[\p{L}][\p{L}'-]*/giu;
+function tokensOf(sentence: string): Token[] {
+  return [...sentence.matchAll(TOKENS)].map((match) => {
+    if (match[1] !== undefined) {
+      const scale = { k: 1e3, thousand: 1e3, m: 1e6, million: 1e6 }[match[3]?.toLowerCase() ?? ''] ?? 1;
+      return { value: Number(`${match[1].replace(/,/g, '')}${match[2] ?? ''}`) * scale };
+    }
+    const value = spelled(match[0]);
+    return value === null ? { word: stem(match[0]) } : { value };
+  });
+}
 
 const MONTHS = 'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?';
-// A whole number, not part of a decimal, a date, a time, a fraction, money, a share or a "7-day": those are the figure
-// check's, or no count at all.
-const COUNT = /(?<![\d.,:/$€£#\-–—]|[$€£]\s)(\d{1,3}(?:,\d{3})+|\d+)(\+?)(?![\d]|[.,]\d|\s*(?:%|percent\b|\/|:\d|-[a-z]|[kmb]n?\b|x\b|×|\(unsourced\)))/gi;
+// A whole number, not part of a decimal, a version, a date, a time, a fraction, money, a share, an ordinal or a
+// "7-day": those are the figure check's, or no count at all.
+const COUNT = /(?<![\p{L}\d.,:/$€£#\-–—]|[$€£]\s)(\d{1,3}(?:,\d{3})+|\d+)(\+?)(?![\d]|[.,]\d|\s*(?:%|percent\b|\/|:\d|-[a-z]|[kmb]n?\b|x\b|×|\(unsourced\))|(?:st|nd|rd|th|am|pm)\b)/giu;
 const DATE_AFTER = new RegExp(`^\\s+(?:${MONTHS})\\b`, 'i');
 const DATE_BEFORE = new RegExp(`\\b(?:${MONTHS})\\.?\\s+$`, 'i');
+// A number that names a step, not a count of anything: "week 2", "step 3", "top 5", "v2".
+const NAMES = /\b(?:step|day|week|phase|round|version|chapter|part|item|no|page|slide|section|stage|level|tier|option|batch|sprint|line|row|column|figure|table|pass|slice|task|issue|top|rank|ranked|number|q)\s*#?$/i;
 // A count put as a plan, a goal or advice is the writer's proposal, not a claim: "cheapest test: interview 5 hosts",
 // "conduct 8 more conversations".
 const AHEAD = /\b(?:next|goal|target|aim|plan|planned|should|needs?|must|will|would|could|cheapest|try|if|want|wants)\b/i;
 const ORDER = /^[\s\W]*(?:conduct|interview|talk|call|run|book|ask|reach|get|find|recruit|email|survey|schedule|do|test)\b/i;
+// Words a label or a phrase carries that say nothing about what is counted.
+const WEAK = new Set('done total number count real currently overall least roughly approx approximately far'.split(' '));
+const content = (text: string) => (text.match(/[\p{L}][\p{L}'-]*/gu) ?? []).filter((word) => word.length > 2 && !SMALL.has(word.toLowerCase()) && !WEAK.has(word.toLowerCase()));
+// The head of a run of words: its last, unless that is a verb ("sessions logged", "users contacted").
+const headOf = (words: string[]) => {
+  const nouns = words.filter((word) => !/(?:ed|ing)$/i.test(word));
+  const last = nouns.at(-1) ?? words.at(-1);
+  return last ? stem(last) : null;
+};
 
-// The words that say what a count counts. A count right after a line's colon counts what the label names ("Real
-// customer conversations done: 2"): the label's words, and the three after the count. Anywhere else ("Lived it:
-// consulted for 6 years") it counts what is round it: three words either side, after the colon.
-function countedBy(sentence: string, at: number, length: number): { label: string[]; near: string[] } {
-  const colon = sentence.lastIndexOf(':', at);
-  const after = wordsIn(sentence.slice(at + length)).slice(0, 3);
-  if (colon >= 0 && !sentence.slice(colon + 1, at).trim()) return { label: wordsIn(sentence.slice(0, colon).replace(/\([^)]*\)/g, ' ')), near: after };
-  return { label: [], near: [...wordsIn(sentence.slice(colon + 1, at)).slice(-3), ...after] };
+// The word that names what a count counts. The words right after it, up to a stop word or a mark ("12 beta users
+// logged" counts users, "3+ hours per test" hours); with none, the label before the line's colon or the row's first
+// cell ("Real customer conversations done: 2" counts conversations); else the word before it.
+function countedBy(sentence: string, at: number, length: number): string | null {
+  const rest = sentence.slice(at + length).match(/^[^,.;:()!?|"“”\[\]]*/)![0];
+  const after: string[] = [];
+  for (const word of rest.match(/[\p{L}][\p{L}'-]*/gu) ?? []) {
+    if (after.length === 3 || SMALL.has(word.toLowerCase())) break;
+    if (word.length > 2 && !WEAK.has(word.toLowerCase())) after.push(word);
+  }
+  if (after.length) return headOf(after);
+  const before = sentence.slice(0, at);
+  const colon = before.lastIndexOf(':');
+  if (colon >= 0 && !before.slice(colon + 1).trim()) return headOf(content(before.slice(0, colon).replace(/\([^)]*\)/g, ' ')));
+  const cell = /\|\s*$/.test(before) ? before.replace(/\|\s*$/, '').split('|').filter((one) => one.trim()).at(-1) : null;
+  if (cell) return headOf(content(cell));
+  return headOf(content(before.slice(colon + 1)).slice(-1));
 }
 
-// A sentence read that holds the same number, said of the same thing: half the label's words at least, and one of
-// the words after the count; with no label, half the words round it.
-function backed(value: number, counted: { label: string[]; near: string[] }, sources: string[]): boolean {
-  return sources.some((sentence) => {
-    if (!numbersIn(sentence).includes(value)) return false;
-    const held = wordsIn(sentence);
-    const hits = (words: string[]) => words.filter((word) => held.some((one) => alike(word, one))).length;
-    if (counted.label.length) return hits(counted.label) >= Math.ceil(counted.label.length / 2) && (!counted.near.length || hits(counted.near) > 0);
-    return hits(counted.near) >= Math.ceil(counted.near.length / 2);
-  });
+// How many words apart a number read and the word for what it counts may stand: "12 beta users" and "Beta users: 12"
+// both hold, "12 beta testers and 3 paying users" holds no "12 users".
+const NEAR = 4;
+// A sentence read that holds the same number with the word for what it counts beside it. A count with no such word is
+// held to its number alone.
+function backed(value: number, counted: string | null, sources: Token[][]): boolean {
+  return sources.some((tokens) => tokens.some((token, index) => token.value === value
+    && (!counted || tokens.slice(Math.max(0, index - NEAR), index + NEAR + 1).some((one) => one.word && alike(one.word, counted)))));
 }
 
-function unbackedCounts(line: string, sources: string[]): string[] {
-  const found: string[] = [];
+type Unbacked = { label: string; end: number };
+// The counts on a line nothing read gives for what they count, with where each number ends on the line. `strict` holds
+// plans and orders too, for a colleague's answer, where every count is a claim about what was read.
+function unbackedCounts(line: string, sources: Token[][], quoted = '', strict = false): Unbacked[] {
+  const found: Unbacked[] = [];
+  // A quote of something read is left as it is: "the founder said “we have 12 users”" quotes, it does not claim.
+  const quotes = [...line.matchAll(/["“]([^"”]{3,})["”]/g)].filter((match) => quoted.includes(flat(match[1])))
+    .map((match) => [match.index!, match.index! + match[0].length]);
   // Each sentence on its own; a "?" in a template label ("survivable?") ends one too.
-  for (const sentence of line.split(/(?<=[.!?;])\s+/)) {
-    const body = sentence.replace(/^\s*(?:[-*+]\s+)?\d+[.)]\s+/, (lead) => ' '.repeat(lead.length));
+  // The list number goes first, or "1." would be read as a sentence of its own.
+  const listed = line.replace(/^\s*(?:[-*+]\s+)?\d+[.)]\s+/, (lead) => ' '.repeat(lead.length));
+  let offset = 0;
+  for (const body of listed.split(/(?<=[.!?;])\s+/)) {
+    const start = listed.indexOf(body, offset);
+    offset = start + body.length;
+    const misses: (Unbacked & { value: number })[] = [];
+    const shown: number[] = [];
     for (const match of body.matchAll(COUNT)) {
       const at = match.index!;
       const value = valueOf(match[1]);
       const before = body.slice(0, at);
       const rest = body.slice(at + match[0].length);
       if (value >= 1900 && value <= 2099) continue;
-      if (DATE_AFTER.test(rest) || DATE_BEFORE.test(before)) continue;
+      if (DATE_AFTER.test(rest) || DATE_BEFORE.test(before) || NAMES.test(before)) continue;
       // A section named by number, "(3)" or "section 3".
-      if ((/\($/.test(before) && /^\)/.test(rest)) || /\bsection\s+$/i.test(before)) continue;
-      if (AHEAD.test(before) || /^\s+more\b/i.test(rest) || ORDER.test(before.slice(before.lastIndexOf(':') + 1))) continue;
-      if (!backed(value, countedBy(body, at, match[0].length), sources)) found.push(`"${match[1]}${match[2]}" (in "${quote(line)}")`);
+      if (/\($/.test(before) && /^\)/.test(rest)) continue;
+      if (quotes.some(([from, to]) => start + at >= from && start + at < to)) continue;
+      // Marked by the writer or the figure check a few words on: "200 users (unsourced)".
+      if (/^\s*(?:[\p{L}'-]+\s+){0,3}\(unsourced\)/u.test(rest)) continue;
+      if (!strict && (AHEAD.test(before) || /^\s+more\b/i.test(rest) || ORDER.test(before.slice(before.lastIndexOf(':') + 1)))) continue;
+      if (backed(value, countedBy(body, at, match[0].length), sources)) { shown.push(value); continue; }
+      misses.push({ label: `${match[1]}${match[2]}`, end: start + at + match[1].length + match[2].length, value });
     }
+    // A total the line works out in front of the reader from counts read: "14 in all (12 beta + 2 paying)".
+    const worked = (value: number) => shown.some((a, i) => shown.some((b, j) => i !== j && (a + b === value || a - b === value || a * b === value)))
+      || (shown.length > 1 && shown.reduce((sum, one) => sum + one, 0) === value);
+    found.push(...misses.filter((miss) => !worked(miss.value)).map(({ label, end }) => ({ label, end })));
   }
   return found;
+}
+const flat = (text: string) => text.replace(/\s+/g, ' ').trim().toLowerCase();
+const sourceTokens = (sources: string[]) => sentencesOf(sources).map(tokensOf);
+
+// The sentences of a colleague's answer whose every count is in what that colleague read, said of the same thing: the
+// part of it that may back a count in the asker's write. What they said from their own head backs nothing.
+export function heardFrom(answer: string, read: string[]): string[] {
+  const sources = sourceTokens(read);
+  // A count said in words is a count too: "twelve beta users" is held as "12 beta users".
+  const digits = (sentence: string) => sentence.replace(/[\p{L}][\p{L}'-]*/gu, (word) => {
+    const value = /^(?:zero|one)$/i.test(word) ? null : spelled(word);
+    return value === null ? word : String(value);
+  });
+  return sentencesOf([answer]).filter((sentence) => !unbackedCounts(digits(sentence), sources, '', true).length);
+}
+
+// Where in one line the counts nothing read backs end: for telling a true "(unsourced)" from a stray one.
+export function unbackedEnds(line: string, read: string[]): number[] {
+  return unbackedCounts(line, sourceTokens(read), flat(read.join('\n'))).map((miss) => miss.end);
+}
+
+// The counts a write adds to a document with no rules that nothing read gives for what they count, each marked
+// "(unsourced)" right after it, once: the doc keeps the writer's words and says which figures are theirs alone.
+export function markUnbacked(input: { before: string; after: string; read: string[] }): { text: string; marked: string[] } {
+  const sources = sourceTokens(input.read);
+  const quoted = flat(input.read.join('\n'));
+  const lines = input.after.split('\n');
+  const marked: string[] = [];
+  for (const { line } of added(input.before, input.after)) {
+    if (/^\s*(?:>|```)/.test(lines[line])) continue;
+    const misses = unbackedCounts(lines[line], sources, quoted);
+    marked.push(...misses.map((miss) => `"${miss.label}" (in "${quote(lines[line])}")`));
+    for (const miss of [...misses].reverse()) lines[line] = `${lines[line].slice(0, miss.end)} (unsourced)${lines[line].slice(miss.end)}`;
+  }
+  return { text: lines.join('\n'), marked };
 }
 
 // A claim of evidence, and the words one of the founder's sentences or a tool result has to share with it.
@@ -126,14 +217,15 @@ function added(before: string, after: string): { line: number; heading: string }
 // worked); `said` is only the founder's words and those tool results. Returns the text to save, with "(assumption)"
 // put after a view the writer did not mark, or throws what is not written and why.
 export function evidenceCheck(input: { before: string; after: string; counts: string[]; said: string[] }): { text: string; marked: string[] } {
-  const counts = sentencesOf(input.counts);
+  const counts = sourceTokens(input.counts);
+  const quoted = flat(input.counts.join('\n'));
   const said = sentencesOf(input.said);
   const lines = input.after.split('\n');
   const figures: string[] = [];
   const claims: string[] = [];
   const marked: string[] = [];
   for (const { line, heading } of added(input.before, input.after)) {
-    figures.push(...unbackedCounts(lines[line], counts));
+    figures.push(...unbackedCounts(lines[line], counts, quoted).map((miss) => `"${miss.label}" (in "${quote(lines[line])}")`));
     if (!EVIDENCE.test(heading)) continue;
     lines[line] = lines[line].split(/(?<=[.!?])\s+/).map((sentence) => {
       if (sentence.includes(MARK)) return sentence;

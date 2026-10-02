@@ -1040,3 +1040,44 @@ describe('a colleague\'s answer written in from chat', () => {
     expect(await both('Lived it: filed VAT by hand for their own studio.', [])).toMatchObject({ tool: true, chat: true });
   });
 });
+
+// Priya asks Rohan, then writes her verdict on what he said. Rohan answers from his own head, with no tools.
+async function askThenJudge(answer: string, because: string, founder?: string) {
+  const { stage, store, doc, fill } = await setup();
+  if (founder) await store.appendChat('fit', { id: 'f1', role: 'user', text: founder, at: Date.now() });
+  await fill();
+  const consult: Consult = async () => answer;
+  const steps: ({ name: string; args: unknown }[] | string)[] = [
+    [{ name: 'ask_person', args: { name: 'Rohan', question: 'What traction does the founder have?' } }],
+    [{ name: 'replace_section', args: { doc: 'Evaluation', heading: '5. Verdict', text: `WEAK\n\n${because}\n\nScore: 4/10` } }],
+    'Done.',
+  ];
+  const client: ModelClient = {
+    name: 'script', model: 's-1', maxPromptChars: Infinity, tools: true, limits: {},
+    async step(_messages, { onToken }): Promise<ModelTurn> {
+      const next = steps.shift() ?? 'done';
+      if (typeof next === 'string') { onToken(next); return { text: '', calls: [], usage: { input: 1, output: 1 } }; }
+      return { text: '', calls: next.map((call, index) => ({ id: `c${steps.length}-${index}`, name: call.name, args: JSON.stringify(call.args) })), usage: { input: 1, output: 1 } };
+    },
+  };
+  const result = await runTurn({
+    messages: [{ role: 'user', content: 'Give the verdict.' }], tools: [...docTools, ...teamTools(consult)], clients: [client], usage: createUsage(null),
+    context: { stage, roomId: 'verdict', store, granted: new Map() },
+    events: { token: () => {}, tool: () => {} },
+  });
+  return { result, text: await doc() };
+}
+
+describe('a colleague\'s answer as the ground of a count', () => {
+  it('backs nothing when the colleague only said it', async () => {
+    const { result, text } = await askThenJudge('The founder has signed 7 paid pilots.', '7 paid pilots signed (3).');
+    expect(result.tools[1].ok).toBe(false);
+    expect(result.tools[1].result).toMatch(/not written: "7"/);
+    expect(sectionBody(text, '5. Verdict')).not.toContain('7 paid pilots');
+  });
+
+  it('backs the count when what the colleague said is on record', async () => {
+    const { result } = await askThenJudge('The founder has signed 7 paid pilots.', '7 paid pilots signed (3).', 'We signed 7 paid pilots last month.');
+    expect(result.tools[1].ok).toBe(true);
+  });
+});

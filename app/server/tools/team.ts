@@ -1,5 +1,6 @@
 import { colleagueIds } from '../prompt.ts';
-import { answerIntoSection } from './docs.ts';
+import { answerIntoSection, colleagueOwn } from './docs.ts';
+import { heardFrom } from './evidence.ts';
 import { text, type Tool, type ToolContext } from './registry.ts';
 
 // Puts a question to a colleague and returns their answer. The server supplies it, because it needs the model and both chats.
@@ -44,7 +45,9 @@ export function teamTools(consult: Consult): Tool[] {
       if (proseCall(answer)) throw new Error(`${target.name} did not answer: their reply came back as a tool call instead of words. Do not write their part yourself; work from what you have, or tell the founder you are waiting on ${target.name}.`);
       // Their answer about their own empty section of a shared team doc goes into it, under their name.
       const wrote = await answerIntoSection(context, target.id, question.question, answer);
-      return { text: [`${target.name} answered:\n${answer}`, wrote].filter(Boolean).join('\n\n'), effect: { kind: 'chat-changed', id: target.id } };
+      // A colleague answers from their head, without tools: only what of it they had read backs a count the asker writes.
+      const heard = heardFrom(answer, await colleagueOwn(context, target.id).catch(() => []));
+      return { text: [`${target.name} answered:\n${answer}`, wrote].filter(Boolean).join('\n\n'), effect: { kind: 'chat-changed', id: target.id }, heard };
     },
   }];
 }
