@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createBreaker, DEAD_MS, limitWords, OPEN_MS, REST_MOST, SLOW_MS } from './breaker.ts';
+import { createBreaker, DEAD_MS, limitWords, OPEN_MS, REST_MOST, SLOW_MS, refused, unpaid } from './breaker.ts';
 import { complete, type ModelClient } from './providers.ts';
 import { route } from './router.ts';
 import { createUsage } from './usage.ts';
@@ -83,6 +83,26 @@ describe('a key that keeps failing', () => {
 });
 
 describe('a key that is refused', () => {
+  it('takes SambaNova\'s 402 and Vercel\'s 403 for want of a card as refused keys that need a card, and a moderation 403 as neither', () => {
+    const card = Object.assign(new Error('402 A payment method is required. Add one at the billing page to continue.'), { status: 402 });
+    const vercel = Object.assign(new Error('403 AI Gateway requires a valid credit card on file to service requests.'), { status: 403 });
+    const wrong = Object.assign(new Error('403 Forbidden'), { status: 403 });
+    const flagged = Object.assign(new Error('403 Your prompt was flagged by moderation'), { status: 403 });
+    expect([card, vercel, wrong, flagged].map(unpaid)).toEqual([true, true, false, false]);
+    expect([card, vercel, wrong, flagged].map(refused)).toEqual([true, true, true, false]);
+    let now = 0;
+    const breaker = createBreaker(() => now);
+    expect(breaker.failed('sambanova', card)).toBe(DEAD_MS);
+    expect(breaker.dead('sambanova')).toBe(true);
+    // A refusal kept from the last run is put back until the hour it would have ended, never past it.
+    breaker.refuse('vercel', 1000);
+    expect(breaker.dead('vercel')).toBe(true);
+    now = 1000;
+    expect(breaker.dead('vercel')).toBe(false);
+    breaker.refuse('vercel', 500);
+    expect(breaker.dead('vercel')).toBe(false);
+  });
+
   it('rests six hours after a 401 or a 403, is moved to the back, and comes back on one good answer', () => {
     let now = 0;
     const breaker = createBreaker(() => now);

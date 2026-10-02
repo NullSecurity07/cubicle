@@ -1,7 +1,8 @@
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { ModelInfo, Usage } from '../shared/model.ts';
-import { createBreaker, planless, refused } from './breaker.ts';
+import { createBreaker, planless, refused, unpaid } from './breaker.ts';
 import { fromCache, onCache } from './cache.ts';
 import { neuronPoolOf, PICTURE_POOL, poolOf, providerOf, type ModelClient, type Quota } from './providers.ts';
 import { writeAtomic } from './fsx.ts';
@@ -17,8 +18,16 @@ type CacheCount = { hits: number; misses: number; tokensSaved: number };
 // `pictures`: by neuron pool, the pictures drawn on it today and the neurons they cost.
 type State = { day: string; providers: Record<string, Count>; kinds?: Record<string, Count>; tools?: Record<string, ToolCount>; cache?: Record<string, CacheCount>; pictures?: Record<string, { drawn: number; neurons: number }> };
 type Seen = { at: number; tokens: number };
-// A key refused (`dead`) or answering again. `planless`: refused because its plan allows no requests at all yet.
-export type KeyEvent = { name: string; dead: boolean; status?: number; planless?: boolean };
+// A key refused (`dead`) or answering again. `planless`: refused because its plan allows no requests at all yet;
+// `unpaid`: refused until the account has a card or payment method on file.
+export type KeyEvent = { name: string; dead: boolean; status?: number; planless?: boolean; unpaid?: boolean };
+// What the rail's dots are drawn from, kept beside the day's counts so a restart does not forget it: a refusal and
+// until when it holds, when a key last answered, and whether a check found it answering. A refusal kept here is put
+// back on start, so the dot, the Needs-you item and the route all know it before the key is asked again.
+// `key` is a short hash of the key that was refused: a new key pasted while the app was off starts clean.
+type KeyMemory = { deadUntil?: number; status?: number; why?: 'plan' | 'card' | 'key'; key?: string; answeredAt?: number; checked?: boolean };
+// A key's short hash, never the key: enough to tell a new key from the one that was refused.
+export const keyPrint = (key?: string | null) => (key ? createHash('sha256').update(key).digest('hex').slice(0, 12) : undefined);
 
 export type UsageBook = ReturnType<typeof createUsage>;
 
@@ -51,10 +60,38 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
   // Keys last refused because their plan allows no requests. Only true while the refusal itself still holds.
   const planlessKeys = new Set<string>();
   const planOff = (name: string) => planlessKeys.has(name) && breaker.dead(name);
+  // Keys last refused because the account wants a card on file. Only true while the refusal itself still holds.
+  const unpaidKeys = new Set<string>();
+  const needsCard = (name: string) => unpaidKeys.has(name) && breaker.dead(name);
+  const refusalStatus: Record<string, number | undefined> = {};
   // Every refusal (401, 403) and, while anyone listens, every answer: whoever listens decides what is news.
   const keyWatchers = new Set<(event: KeyEvent) => void>();
   const tellKey = (event: KeyEvent) => { for (const tell of keyWatchers) { try { tell(event); } catch { /* a listener never costs a call */ } } };
   const folder = path ? dirname(path) : null;
+  const keysPath = folder ? `${folder}/model-dots.json` : null;
+  let keysSaving: Promise<unknown> = Promise.resolve();
+  let prints: Record<string, string | undefined> = {};
+  const saveKeys = () => {
+    if (!keysPath) return;
+    const keys: Record<string, KeyMemory> = {};
+    for (const name of new Set([...Object.keys(answeredAt), ...checked, ...planlessKeys, ...unpaidKeys, ...Object.keys(refusalStatus)])) {
+      const until = breaker.dead(name) ? breaker.deadUntil(name) : undefined;
+      const one: KeyMemory = {
+        ...(until ? { deadUntil: until, status: refusalStatus[name], why: planlessKeys.has(name) ? 'plan' : unpaidKeys.has(name) ? 'card' : 'key', ...(prints[name] ? { key: prints[name] } : {}) } : {}),
+        ...(answeredAt[name] ? { answeredAt: answeredAt[name] } : {}), ...(checked.has(name) ? { checked: true } : {}),
+      };
+      if (Object.keys(one).length) keys[name] = one;
+    }
+    const text = JSON.stringify({ keys }, null, 2);
+    keysSaving = keysSaving.then(() => writeAtomic(keysPath, text, { mkdir: true })).catch(() => {});
+  };
+  // A key is news to the dots when it is refused, answers for the first time since start or since a refusal, or passes a
+  // check: not every answer, which would write the file on every call.
+  const forget = (name: string) => {
+    const was = name in refusalStatus || planlessKeys.has(name) || unpaidKeys.has(name);
+    planlessKeys.delete(name); unpaidKeys.delete(name); delete refusalStatus[name];
+    return was;
+  };
 
   const roll = () => { if (state.day !== today(now())) state = { day: today(now()), providers: {} }; };
   const count = (name: string) => (state.providers[name] ??= { requests: 0, input: 0, output: 0 });
@@ -121,15 +158,39 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
         const saved = JSON.parse(await readFile(path, 'utf8')) as State;
         if (saved.day === today(now())) state = saved;
       } catch { /* first run, or a damaged file: start the day at zero */ }
+      if (!keysPath) return;
+      try {
+        const saved = JSON.parse(await readFile(keysPath, 'utf8')) as { keys?: Record<string, KeyMemory> };
+        for (const [name, one] of Object.entries(saved.keys ?? {})) {
+          if (typeof one.answeredAt === 'number') answeredAt[name] = one.answeredAt;
+          if (one.checked) checked.add(name);
+          if (typeof one.deadUntil !== 'number' || one.deadUntil <= now() || one.key !== prints[name]) continue;
+          breaker.refuse(name, one.deadUntil);
+          refusalStatus[name] = one.status;
+          if (one.why === 'plan') planlessKeys.add(name);
+          if (one.why === 'card') unpaidKeys.add(name);
+        }
+      } catch { /* first run, or a damaged file: the dots start untested */ }
+    },
+    // The keys refused right now, as the events that said so: told again to whoever starts listening after a restart,
+    // so the founder's Needs-you item is back before the key is asked again.
+    refusals(): KeyEvent[] {
+      return Object.keys(refusalStatus).filter((name) => breaker.dead(name)).map((name) => ({
+        name, dead: true, status: refusalStatus[name], ...(planlessKeys.has(name) ? { planless: true } : {}), ...(unpaidKeys.has(name) ? { unpaid: true } : {}),
+      }));
     },
     settled: () => saving,
+    // Each client's key as a short hash, told before `load`: a refusal kept from the last run comes back only for the
+    // very key that was refused.
+    fingerprints(next: Record<string, string | undefined>) { prints = next; },
     record(name: string, usage?: Usage, quota?: Quota, kind: CallKind = 'turn') {
       // Answered from the cache: nothing was asked of the provider, and the cache counted it already.
       if (usage && fromCache.has(usage)) return;
       roll();
       breaker.ok(name);
-      planlessKeys.delete(name);
+      const news = forget(name) || !answeredAt[name];
       answeredAt[name] = now();
+      if (news) saveKeys();
       if (keyWatchers.size) tellKey({ name, dead: false });
       const of = ((state.kinds ??= {})[kind] ??= { requests: 0, input: 0, output: 0 });
       of.requests += 1;
@@ -150,9 +211,15 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     // timeouts in a row open its breaker, a 401 or 403 rests it six hours as dead. See breaker.ts.
     failed(name: string, error: unknown) {
       const rest = breaker.failed(name, error);
-      if (planless(error)) planlessKeys.add(name);
-      else if (refused(error)) planlessKeys.delete(name);
-      if (refused(error)) tellKey({ name, dead: true, status: (error as { status?: number })?.status, ...(planless(error) ? { planless: true } : {}) });
+      if (refused(error)) {
+        const status = (error as { status?: number })?.status;
+        forget(name);
+        refusalStatus[name] = status;
+        if (planless(error)) planlessKeys.add(name);
+        if (unpaid(error)) unpaidKeys.add(name);
+        saveKeys();
+        tellKey({ name, dead: true, status, ...(planless(error) ? { planless: true } : {}), ...(unpaid(error) ? { unpaid: true } : {}) });
+      }
       return rest;
     },
     // Hears a key the provider refused, and the same key answering again.
@@ -164,10 +231,14 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     dead: (name: string) => breaker.dead(name),
     // True while this key is refused because its free plan is not on (Mistral's 429 with a limit of 0).
     planOff,
+    // True while this key is refused until its account has a card or payment method on file (SambaNova, Vercel).
+    needsCard,
+    // Written once whatever the dots are drawn from has settled (tests wait on it).
+    keysSettled: () => keysSaving,
     // A key a check found answering: whatever its breaker held against it (a refusal's six hours, say, after the founder
     // turned a plan on) is forgotten, and whoever heard of the refusal hears it answer.
     // The check that found it answering is remembered, so its dot says so.
-    revive(name: string) { breaker.ok(name); planlessKeys.delete(name); checked.add(name); if (keyWatchers.size) tellKey({ name, dead: false }); },
+    revive(name: string) { breaker.ok(name); forget(name); checked.add(name); saveKeys(); if (keyWatchers.size) tellKey({ name, dead: false }); },
     // How much one key has carried, the last minute first: what spreads a provider's keys evenly.
     carried(name: string) {
       roll();
@@ -228,14 +299,14 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     // The side model is no one's to pin, so the picker never lists it; the insights ask for it with `withSide`.
     info(clients: ModelClient[], withSide = false): ModelInfo[] {
       roll();
-      const rows = new Map<string, { info: ModelInfo; keys: number; off: number; slow: number }>();
+      const rows = new Map<string, { info: ModelInfo; keys: number; off: number; card: number; slow: number }>();
       for (const client of clients.filter((one) => withSide || !one.side)) {
         const name = providerOf(client.name);
         const used = count(client.name);
-        const row = rows.get(name) ?? { info: { name, model: client.model, ready: true, left: 0, requests: 0, tokens: 0 }, keys: 0, off: 0, slow: 0 };
+        const row = rows.get(name) ?? { info: { name, model: client.model, ready: true, left: 0, requests: 0, tokens: 0 }, keys: 0, off: 0, card: 0, slow: 0 };
         const last = Math.max(row.info.lastAnswerAt ?? 0, answeredAt[client.name] ?? 0);
         rows.set(name, {
-          keys: row.keys + 1, off: row.off + (planOff(client.name) ? 1 : 0), slow: row.slow + (breaker.slow(client.name) ? 1 : 0),
+          keys: row.keys + 1, off: row.off + (planOff(client.name) ? 1 : 0), card: row.card + (needsCard(client.name) ? 1 : 0), slow: row.slow + (breaker.slow(client.name) ? 1 : 0),
           info: {
             ...row.info, left: row.info.left + left(client), requests: row.info.requests + used.requests, tokens: row.info.tokens + used.input + used.output,
             ...(last ? { lastAnswerAt: last } : {}), ...(row.info.checked || checked.has(client.name) ? { checked: true } : {}),
@@ -244,7 +315,8 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
       }
       // A provider none of whose keys has a plan on answers nobody: said as that, not as a full ring. One whose every key
       // rests slow is slow; one slow key of two is not, its sibling still serves.
-      return [...rows.values()].map(({ info, keys, off, slow }) => ({ ...info, left: info.left / keys, ...(off === keys ? { planOff: true } : {}), ...(slow === keys ? { slow: true } : {}) }));
+      // One that needs a card on file is said the same way.
+      return [...rows.values()].map(({ info, keys, off, card, slow }) => ({ ...info, left: info.left / keys, ...(off === keys ? { planOff: true } : {}), ...(card === keys ? { needsCard: true } : {}), ...(slow === keys ? { slow: true } : {}) }));
     },
   };
 }

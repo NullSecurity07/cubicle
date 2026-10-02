@@ -57,7 +57,7 @@ import { teamTools } from './tools/team.ts';
 import { webTools } from './tools/web.ts';
 import { createTrace } from './trace.ts';
 import { createPromptFor } from './turn-prompt.ts';
-import { createUsage } from './usage.ts';
+import { createUsage, keyPrint } from './usage.ts';
 import { wireStudios } from './wiring/studios.ts';
 
 // First of all: a promise nobody caught is written down and the app goes on; a throw nobody caught ends it with a
@@ -92,6 +92,7 @@ const store = createStore(workspace, (roomId) => roomFeed.tell({ roomId, chat: '
 bookRescue.backups = () => backupDirOf({ fake, workspace, root });
 bookRescue.tell = (damage) => tellDamage(damage);
 const usage = createUsage(resolve(workspace, 'usage.json'));
+usage.fingerprints(Object.fromEntries(clients.map((client) => [client.name, keyPrint(client.openai?.apiKey)])));
 await usage.load();
 const browser = fake ? createBrowser(fakeRunner, undefined, undefined, fakeHand) : createBrowser(realRunner(), { direct: [redditFeed(), stackExchange()], fallback: process.env.STAGE_NO_READER === '1' ? [] : [jinaReader, archiveCopy()] }, dnsResolve);
 const approvals = createApprovals();

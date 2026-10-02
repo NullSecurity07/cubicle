@@ -32,6 +32,8 @@ export type DashProvider = {
   limits: { rpd?: number; tpd?: number }; leftPct: number; window: string;
   // Every key refused for want of a plan: `window` then says "free plan not on" and no limit applies.
   planOff?: boolean;
+  // Every key refused until the account has a card or payment method on file: said the same way.
+  needsCard?: boolean;
   neurons?: { used: number; of: number; pictures: number; drawn: number };
 };
 export type DashTokens = {

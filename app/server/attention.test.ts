@@ -181,6 +181,23 @@ describe('a key the provider refuses', () => {
     expect(await attention.list()).toHaveLength(2);
   });
 
+  it('says a key whose account wants a card as that, with where to add one, and raises it again after a restart', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'attention-'));
+    const usage = createUsage(join(dir, 'usage.json'), () => NOON);
+    usage.fingerprints({ sambanova: 'aaa' });
+    keyAttention(usage, createAttention(dir), () => NOON);
+    usage.failed('sambanova', Object.assign(new Error('402 A payment method is required.'), { status: 402 }));
+    await usage.keysSettled();
+    // A new start: the attention book drops refused keys from the last run, the usage book kept this one.
+    const again = createUsage(join(dir, 'usage.json'), () => NOON + 60_000);
+    again.fingerprints({ sambanova: 'aaa' });
+    await again.load();
+    const attention = createAttention(await mkdtemp(join(tmpdir(), 'attention-')));
+    keyAttention(again, attention, () => NOON);
+    await new Promise((settle) => setTimeout(settle, 20));
+    expect(await attention.list()).toEqual([expect.objectContaining({ id: 'key-rejected:SAMBANOVA_API_KEY:1', title: 'SambaNova needs a card on file; add one at cloud.sambanova.ai or leave it off', detail: expect.stringContaining('needs a card or payment method on file') })]);
+  });
+
   it('lets the founder dismiss a refused-key item', async () => {
     const attention = createAttention(await mkdtemp(join(tmpdir(), 'attention-')));
     await attention.raise({ id: 'key-rejected:GROQ_API_KEY:1', kind: 'key-rejected', title: 'Groq key rejected; fix it in Keys', at: Date.now() });

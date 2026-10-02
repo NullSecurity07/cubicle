@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { PLANLESS } from '../breaker.ts';
-import { backupRow, checkAll, freeProviders, healthRows, keyChecks, keyPools, keysOf, liveChecks, liveReaders, LIVE_FEED, LIVE_REDDIT, LIVE_REDDIT_FEED, onPath, ytdlpVersion } from './health.ts';
+import { backupRow, checkAll, freeProviders, healthRows, keyChecks, keyPools, keysOf, liveChecks, liveReaders, LIVE_FEED, LIVE_REDDIT, LIVE_REDDIT_FEED, onPath, refusals, ytdlpVersion } from './health.ts';
 import type { Check } from '../../shared/openends.ts';
 
 const at = new Date('2026-09-20T09:00:00').getTime();
@@ -284,5 +284,22 @@ describe('running while closed', () => {
     expect(no.fix).toContain('pnpm service:install');
     const fallen = row(await setup({ service: async () => ({ systemd: true, installed: true, enabled: true, active: 'failed', path: '/x' }) }), 'Runs while closed');
     expect(fallen.ok).toBe(false);
+  });
+});
+
+describe('the Models row while a key needs the founder (providers round)', () => {
+  it('is not fine while a plan is off or an account wants a card, and says which and what to do', async () => {
+    const env = { GEMINI_API_KEY: 'g', MISTRAL_API_KEY: 'm', SAMBANOVA_API_KEY: 's' };
+    expect(row(await setup({ env, refused: () => [] }), 'Models').ok).toBe(true);
+    const models = row(await setup({ env, refused: () => [{ name: 'mistral', why: 'plan' }, { name: 'sambanova', why: 'card' }] }), 'Models');
+    expect(models.ok).toBe(false);
+    expect(models.detail).toMatch(/; needs you: mistral plan off, sambanova needs a card$/);
+    expect(models.fix).toMatch(/Turn on the free plan.*Add a card or payment method/);
+  });
+
+  it('names each refused provider once, however many keys it has, from what the usage book knows', () => {
+    const usage = { planOff: (name: string) => name.startsWith('mistral'), needsCard: (name: string) => name === 'vercel', dead: (name: string) => name !== 'gemini' };
+    expect(refusals([{ name: 'gemini' }, { name: 'mistral' }, { name: 'mistral#2' }, { name: 'vercel' }, { name: 'groq' }], usage))
+      .toEqual([{ name: 'mistral', why: 'plan' }, { name: 'vercel', why: 'card' }, { name: 'groq', why: 'key' }]);
   });
 });

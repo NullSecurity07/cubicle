@@ -125,6 +125,7 @@ function failureWords(message: string): string {
   if (REJECTED.test(message)) return 'rejected the request';
   if (/\b429\b|too many requests|rate limit|already answering/i.test(message)) return 'busy';
   if (/timed? ?out|timeout/i.test(message)) return 'timed out';
+  if (/\b402\b|credit card|payment method/i.test(message)) return 'needs a card on file';
   if (/\b40[13]\b|unauthori[sz]ed|forbidden|invalid api key/i.test(message)) return 'refused the key';
   if (/\b5\d\d\b|overloaded|unavailable|ECONNRESET|ECONNREFUSED|fetch failed|connection error/i.test(message)) return 'down';
   if (/prompt too large/i.test(message)) return 'prompt too large';
