@@ -81,13 +81,16 @@ del _Tools
 // throws, a built-in module not named here cannot be loaded by getBuiltinModule, import() or Pyodide's require.
 // process.exit stays, since ending this process is only ending the sandbox.
 const PROCESS_KEEPS = new Set(['cwd', 'hrtime', 'nextTick', 'emitWarning', 'exit', 'reallyExit', 'uptime', 'memoryUsage', 'cpuUsage', 'threadCpuUsage',
-  'resourceUsage', 'constrainedMemory', 'availableMemory', 'ref', 'unref', 'binding', '_rawDebug', '_tickCallback', '_fatalException',
+  'resourceUsage', 'constrainedMemory', 'availableMemory', 'ref', 'unref', '_rawDebug', '_tickCallback', '_fatalException',
   '_getActiveRequests', '_getActiveHandles', 'getActiveResourcesInfo', 'setSourceMapsEnabled',
   'setUncaughtExceptionCaptureCallback', 'addUncaughtExceptionCaptureCallback', 'hasUncaughtExceptionCaptureCallback']);
 // What Pyodide itself loads in Node, and the plain helpers those lean on. No os, no network, no programs, no workers.
 const MODULES = new Set(['fs', 'fs/promises', 'path', 'url', 'vm', 'crypto', 'buffer', 'string_decoder', 'util', 'events', 'stream']);
 const allowed = (name) => MODULES.has(String(name).replace(/^node:/, ''));
 const refuse = (what) => () => { throw new Error(`${what} is not available in the sandbox`); };
+// Emscripten's file layer asks for one internal table, which the permission model hides: it gets the public one, and
+// no raw binding is handed out to anybody, whatever Node itself would allow.
+const binding = (name) => { if (name === 'constants') return { fs: constants }; throw new Error(`process.binding('${name}') is not available in the sandbox`); };
 const seal = (target, key, value) => Object.defineProperty(target, key, { value, writable: false, configurable: false });
 function lockdown() {
   const builtin = process.getBuiltinModule.bind(process);
@@ -99,7 +102,7 @@ function lockdown() {
   });
   for (const key of Object.getOwnPropertyNames(process)) {
     if (typeof process[key] !== 'function' || PROCESS_KEEPS.has(key)) continue;
-    seal(process, key, key === 'getBuiltinModule' ? (name) => (allowed(name) ? builtin(name) : refuse(name)()) : refuse(`process.${key}`));
+    seal(process, key, key === 'getBuiltinModule' ? (name) => (allowed(name) ? builtin(name) : refuse(name)()) : key === 'binding' ? binding : refuse(`process.${key}`));
   }
   // Pyodide hands its own few modules round through a global require; it keeps only what the list allows.
   if (typeof globalThis.require === 'function') {
@@ -111,8 +114,7 @@ function lockdown() {
 let error;
 try {
   if (job.language === 'python') {
-    // Emscripten's file layer asks for this one internal table, which the permission model hides. Give it the public one.
-    process.binding = (name) => { if (name === 'constants') return { fs: constants }; throw new Error('not available'); };
+    process.binding = binding;
     const { loadPyodide } = await import(`${pyodideDir}/pyodide.mjs`);
     const python = await loadPyodide({ stdout: say, stderr: (line) => { if (!/Warning/.test(line)) say(line); }, ...(packageDir ? { packageCacheDir: packageDir } : {}) });
     // Wheels come from the folder the server filled; there is no network here to fetch anything else.

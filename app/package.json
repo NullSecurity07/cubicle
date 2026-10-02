@@ -21,6 +21,7 @@
     "service:remove": "node scripts/service.ts remove",
     "check:providers": "node scripts/check-providers.ts",
     "check:media": "node scripts/check-media.ts",
+    "check:sandbox": "node scripts/check-sandbox.ts",
     "check:evals": "node scripts/check-evals.ts",
     "vendor:hyperframes": "node scripts/vendor-hyperframes.ts",
     "site:shots": "node scripts/site-shots.ts",

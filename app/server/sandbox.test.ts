@@ -86,6 +86,14 @@ describe('sandbox', () => {
         worker_threads: "new (p.getBuiltinModule('worker_threads').Worker)('1', { eval: true })",
         inspector: 'p.getBuiltinModule(\'inspector\').open(9339)',
         module: "p.getBuiltinModule('module').createRequire('/')('os')",
+        bindingOs: `p.binding('os').setPriority(${pid}, 19, {})`,
+        bindingSpawn: "p.binding('spawn_sync').spawn({ file: '/bin/sh', args: ['sh', '-c', 'id'], stdio: [] })",
+        bindingProcessWrap: "new (p.binding('process_wrap').Process)()",
+        bindingUv: "p.binding('uv').errname(-1)",
+        bindingFs: "p.binding('fs').open('/etc/hostname', 0, 0)",
+        linkedBinding: "p._linkedBinding('os')",
+        reportOutside: "p.report.writeReport('/tmp/sandbox-report.json')",
+        mainModule: "p.mainModule.require('os')",
         procEnviron: `p.getBuiltinModule('fs').readFileSync('/proc/${process.pid}/environ', 'utf8')`,
         fetch: `this.constructor.constructor('return fetch')()('http://127.0.0.1:${port}/'); p.getBuiltinModule('fs').readFileSync('/proc/self/status')`,
       };
@@ -97,13 +105,13 @@ describe('sandbox', () => {
       // A module loaded through import() meets the same wall as getBuiltinModule.
       await runCode({ language: 'javascript', code: `${escaped}this.constructor.constructor('return import("node:os")')().then((os) => os.setPriority(${pid}, 18), () => {}); 'x'` }, dir);
       const python = await runCode({ language: 'python', code: `import js
-for name, go in [('os', lambda: js.process.getBuiltinModule('os').setPriority(${pid}, 17)), ('debug', lambda: js.process._debugProcess(${pid})), ('require', lambda: js.require('child_process').execSync('id'))]:
+for name, go in [('os', lambda: js.process.getBuiltinModule('os').setPriority(${pid}, 17)), ('debug', lambda: js.process._debugProcess(${pid})), ('require', lambda: js.require('child_process').execSync('id')), ('binding', lambda: js.process.binding('spawn_sync'))]:
     try:
         go()
         print(name, 'OPEN')
     except Exception:
         print(name, 'blocked')` }, dir);
-      expect(python.output).toBe('os blocked\ndebug blocked\nrequire blocked');
+      expect(python.output).toBe('os blocked\ndebug blocked\nrequire blocked\nbinding blocked');
       expect((await runCode({ language: 'javascript', code: `${escaped}JSON.stringify(p.env)` }, dir)).output).toBe('{}');
       await new Promise((wait) => setTimeout(wait, 300));
       expect(getPriority(pid)).toBe(nice);
