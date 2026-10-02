@@ -85,6 +85,11 @@ button.dash__stat:hover { background: var(--dash-raise-hover); }
 .dash__rows { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; }
 .dash__row { width: 100%; display: flex; align-items: center; gap: 11px; border: 0; border-radius: 11px; padding: 9px 12px; background: var(--dash-raise); color: var(--text); font: inherit; text-align: left; cursor: pointer; transition: background 0.15s; }
 .dash__row:hover { background: var(--dash-raise-hover); }
+/* A step waiting for the founder's OK is answered on its row: Don't and the step's own yes, under its words. */
+.dash__answerable { display: flex; flex-direction: column; }
+.dash__answerable > .dash__row { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.dash__answer { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; padding: 2px 12px 9px; border-radius: 0 0 11px 11px; background: var(--dash-raise); }
+.dash__answer .msg--problem { flex-basis: 100%; margin: 0; text-align: right; }
 .dash__row:hover .dash__chev { transform: translateX(2px); stroke: var(--text); }
 .dash__dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
 .dash__row--needs .dash__dot { background: var(--needs); }

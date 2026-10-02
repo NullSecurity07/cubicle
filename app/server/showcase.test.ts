@@ -82,4 +82,23 @@ describe('the showcase company', () => {
     const made = film.results[0];
     expect(existsSync(join(root, 'files', made.path)) || existsSync(join(root, 'files', made.poster))).toBe(true);
   });
+
+  it('pitches the week\'s own numbers: the deck\'s traction slide carries the Metrics card\'s latest figures', () => {
+    const metrics = read('metrics/metrics.json').metrics as { key: string; points: { value: number }[] }[];
+    const latest = (key: string) => String(metrics.find((one) => one.key === key)!.points.at(-1)!.value);
+    const deck = read('decks/deck.json');
+    for (const slides of [deck.slides, ...deck.versions.map((version: { slides: unknown }) => version.slides)]) {
+      const traction = (slides as { shape: string; headline: string; lines: string[]; source?: string }[]).find((slide) => slide.shape === 'traction')!;
+      const said = [traction.headline, ...traction.lines].join(' ');
+      expect(said).not.toContain('No numbers yet');
+      for (const key of ['beta-users', 'paying-customers', 'mrr-eur']) expect(said, key).toContain(latest(key));
+      expect(traction.source).toMatch(/Metrics card/);
+    }
+    const printed = readFileSync(join(root, 'files', deck.versions.at(-1).html), 'utf8');
+    expect(printed).not.toContain('No numbers yet');
+  });
+
+  it('leaves every room to the route: none pinned to one provider', () => {
+    for (const room of stage.rooms) expect(room.model, room.id).toBeUndefined();
+  });
 });

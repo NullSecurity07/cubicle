@@ -289,19 +289,22 @@ describe('the partner\'s morning note on the phone', () => {
     await part.close?.();
   });
 
-  it('sends the note on its own later when the digest came before the partner writes', async () => {
-    // Midnight is before the partner's hour: the digest goes at once, and the note, when it comes, follows it.
-    const { part, telegram, late } = await paired(false, true, '00:00');
-    await part.tick!();
-    expect((await telegram()).posted).toHaveLength(1);
-    late();
-    await part.tick!();
-    const posted = (await telegram()).posted;
-    expect(posted).toHaveLength(2);
-    expect(posted[1].text).toContain('Call the three dentists');
-    await part.tick!();
-    expect((await telegram()).posted).toHaveLength(2);
-    await part.close?.();
+  it('keeps a digest set before the partner\'s hour the day\'s one message: the note written later stays in the app', async () => {
+    // A digest at five, before the partner writes at six: it goes alone, and the note that follows stays off the phone.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date(2026, 9, 2, 5, 30));
+      const { part, telegram, late } = await paired(false, true, '05:00');
+      await part.tick!();
+      expect((await telegram()).posted).toHaveLength(1);
+      expect((await telegram()).posted[0].text).toContain('Today');
+      vi.setSystemTime(new Date(2026, 9, 2, 6, 30));
+      late();
+      await part.tick!();
+      await part.tick!();
+      expect((await telegram()).posted).toHaveLength(1);
+      await part.close?.();
+    } finally { vi.useRealTimers(); }
   });
 
   it('stays off the phone when the founder asked for quiet', async () => {

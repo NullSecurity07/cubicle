@@ -164,8 +164,10 @@ describe('backupDirOf', () => {
     // A worktree or a second checkout run without STAGE_WORKSPACE is not the founder's app.
     const tree = await checkout(false);
     expect(backupDirOf({ fake: false, workspace: join(tree, 'workspace'), root: tree }, {}, true, '/home/founder')).toBe(join(tree, 'workspace', 'backups'));
-    // Nor is a folder that is no checkout at all.
-    expect(backupDirOf({ fake: false, workspace: '/r/workspace', root: '/r' }, {}, true, '/home/founder')).toBe('/r/workspace/backups');
+    // A packaged build has no .git at all: it is the founder's app, and its backups never go inside the workspace.
+    const packaged = await dir('packaged');
+    expect(backupDirOf({ fake: false, workspace: join(packaged, 'workspace'), root: packaged }, {}, true, '/home/founder')).toBe('/home/founder/Cubicle backups');
+    expect(backupDirOf({ fake: false, workspace: join(packaged, 'workspace'), root: packaged }, { STAGE_BACKUP_DIR: '/b' }, true, '/home/founder')).toBe('/b');
   });
 
   it('takes the folder chosen for this workspace, and only for this one', async () => {

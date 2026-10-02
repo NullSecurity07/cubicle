@@ -109,13 +109,13 @@ describe('what goes out each day', () => {
     expect(dailyDue({ ...base, due: late, at: last, noteExpected: true })).toEqual({ digest: true, note: false });
   });
 
-  it('does not wait for the note when the digest comes before the partner writes it, and leaves the note to go later', () => {
+  it('does not wait for the note when the digest comes before the partner writes it', () => {
     const early = dueAt('05:30', NOON);
     expect(dailyDue({ ...base, due: early, at: early + 60_000, noteExpected: true, noteFrom: 6 })).toEqual({ digest: true, note: false });
     expect(digestSettlesNote(early, 6)).toBe(false);
     expect(digestSettlesNote(due, 6)).toBe(true);
-    // The note, written at six, then goes on its own.
-    expect(dailyDue({ ...base, due: early, lastDigest: early + 60_000, noteDay: '2026-09-20', noteFrom: 6 })).toEqual({ digest: false, note: true });
+    // The digest marked the note as sent for the day, so the note written at six stays in the app.
+    expect(dailyDue({ ...base, due: early, lastDigest: early + 60_000, noteDay: '2026-09-20', noteSent: '2026-09-20', noteFrom: 6 })).toEqual({ digest: false, note: false });
   });
 
   it('sends a note the digest did not mark as sent on its own, once', () => {

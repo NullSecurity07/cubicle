@@ -40,10 +40,10 @@ export async function chooseBackupDir(workspace: string, dir: string | null): Pr
 // scratch run, a second company) keeps its backups beside it, in its own "backups": it has no business writing into
 // the founder's folder, and a scratch run once did.
 // `withChoice` false asks where they would go without the founder's choice: the default "Use the default" returns to.
-// The founder's app runs from the main checkout, whose .git is a folder. A worktree or a second checkout has a .git
-// file (or none): a run from there is somebody working on the app, and its keep-five rule must never reach the
-// founder's own backups.
-const mainCheckout = (root: string) => { try { return statSync(join(root, '.git')).isDirectory(); } catch { return false; } };
+// The founder's app runs from the main checkout, whose .git is a folder, or from a packaged build, which has no .git
+// at all and must never keep its backups inside the workspace they copy. A worktree has a .git file: a run from there
+// is somebody working on the app, and its keep-five rule must never reach the founder's own backups.
+const mainCheckout = (root: string) => { try { return statSync(join(root, '.git')).isDirectory(); } catch { return true; } };
 export const backupDirOf = (deps: { fake: boolean; workspace: string; root: string }, env: NodeJS.ProcessEnv = process.env, withChoice = true, home = homedir()) => {
   if (env.STAGE_BACKUP_DIR) return env.STAGE_BACKUP_DIR;
   const chosen = withChoice ? chosenBackupDir(deps.workspace) : null;

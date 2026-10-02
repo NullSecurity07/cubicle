@@ -80,8 +80,8 @@ export function dueAt(at: string, now: number): number {
 // message a morning, never two. A note the partner has not written yet is waited for up to ten minutes past that
 // time, never past the end of the day (a 23:55 digest still goes that day); then the digest goes alone, and the caller
 // marks the note as sent for the day. A digest due before the partner writes at all (`noteFrom`, an hour) waits for
-// nothing and settles nothing: the note goes on its own when it comes. So does it on a day the digest is off.
-// Yesterday's note never goes.
+// nothing, since nothing can come, and is still the day's one message: the note stays in the app. Only on a day the
+// digest is off does the note go on its own. Yesterday's note never goes.
 export const NOTE_WAIT = 10 * 60_000;
 // The last tick that is surely still today: a tick comes every half minute.
 const LAST_TICK = 60_000;
