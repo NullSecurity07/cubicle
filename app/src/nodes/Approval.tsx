@@ -22,6 +22,8 @@ export const canAnswer = (tool: string, args: Record<string, string>) => tool !=
 // What the founder was asked, when the step itself came with no question of its own. The needs panel says it back
 // in the same words, so an approval the app closed on reads there exactly as it read in the room.
 export const asked = (name: string) => TITLES[name]?.[0] ?? `Allow ${name}?`;
+// The word on the yes button, the same wherever the step is answered.
+export const yesOf = (name: string) => TITLES[name]?.[1] ?? 'Allow';
 
 // An outward action waiting for the founder: everything that will go out, open to edits, and two answers.
 export function Approval({ tool }: { tool: ToolEvent }) {
@@ -30,7 +32,7 @@ export function Approval({ tool }: { tool: ToolEvent }) {
   const [always, setAlways] = useState(false);
   const [problem, setProblem] = useState('');
   const fallback = asked(tool.name);
-  const yes = TITLES[tool.name]?.[1] ?? 'Allow';
+  const yes = yesOf(tool.name);
   const title = tool.question || fallback;
   // What this step reaches, as the founder has it in front of them now — so editing the address changes what a
   // standing yes would cover. A step whose reach nothing in it decides is never offered one.

@@ -13,6 +13,7 @@ import { providerLeft, providerLine } from './providerLine';
 import { overlay, showDecision, showPlaybook } from './store';
 import './dashboard.css';
 import { PanelShell } from './PanelShell';
+import { QuickAnswer, useQuick } from './QuickAnswer';
 import { firstPlace } from './firstPlace';
 import { TodayFive } from './TodayFive';
 
@@ -41,14 +42,16 @@ const KIND_WORD: Record<DashMedia['kind'], string> = { picture: 'Picture', voice
 const Chevron = () => <svg className="dash__chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M4.500 2.500L8 6l-3.500 3.500" /></svg>;
 
 // One row that goes somewhere. The whole row is the button: the founder never has to aim at a small link.
-function Row({ tone, title, meta, onGo, label }: { tone?: 'needs' | 'run' | 'calm'; title: ReactNode; meta?: ReactNode; onGo: () => void; label?: string }) {
+// A step waiting for the founder's OK carries its answer under its words, so the founder answers without leaving.
+function Row({ tone, title, meta, onGo, label, answer }: { tone?: 'needs' | 'run' | 'calm'; title: ReactNode; meta?: ReactNode; onGo: () => void; label?: string; answer?: ReactNode }) {
   return (
-    <li>
+    <li className={answer ? 'dash__answerable' : undefined}>
       <button type="button" className={`dash__row${tone ? ` dash__row--${tone}` : ''}`} onClick={onGo} aria-label={label}>
         {tone && <span className="dash__dot" aria-hidden="true" />}
         <span className="dash__text"><b>{title}</b>{meta && <small>{meta}</small>}</span>
         <Chevron />
       </button>
+      {answer}
     </li>
   );
 }
@@ -131,6 +134,7 @@ export function Dashboard() {
   const scroller = useRef<HTMLDivElement>(null);
   const frameworks = useFrameworks();
   const place = usePlaceFramework();
+  const quickOf = useQuick();
 
   // Read once on opening, and again whenever the server says something under the dashboard moved.
   useEffect(() => {
@@ -221,7 +225,10 @@ export function Dashboard() {
               </div>
 
               <Group title="Needs you" count={rest.needsYou.length} empty={above(day.needsYou.length, rest.needsYou.length, 'Nothing is waiting for you.')}>
-                {rest.needsYou.slice(0, 8).map((one) => <Row key={one.id} tone="needs" title={one.title} meta={`${one.who ? `${one.who} ${WHAT[one.kind]}` : WHAT[one.kind]} · ${since(one.at)}`} onGo={() => need(one)} />)}
+                {rest.needsYou.slice(0, 8).map((one) => {
+                  const quick = quickOf(one.id);
+                  return <Row key={one.id} tone="needs" title={one.title} meta={`${one.who ? `${one.who} ${WHAT[one.kind]}` : WHAT[one.kind]} · ${since(one.at)}`} onGo={() => need(one)} answer={quick && <QuickAnswer quick={quick} title={one.title} />} />;
+                })}
                 {rest.needsYou.length > 8 && <Row title={`${rest.needsYou.length - 8} more`} meta="Open the needs-you list" onGo={() => panel('needs')} />}
               </Group>
 

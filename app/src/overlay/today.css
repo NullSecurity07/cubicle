@@ -13,3 +13,8 @@
 .today__away:hover { background: var(--dash-raise-hover); color: var(--text); }
 @media (hover: none) { .today__away { opacity: 0.7; } }
 @media (prefers-reduced-motion: reduce) { .today__item { animation: none; } }
+/* A step waiting for the founder's OK: its answer sits under its words, the cross beside the first line. */
+.today__item--answer { flex-wrap: wrap; }
+.today__item--answer .today__row { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.today__item--answer .dash__answer { flex-basis: 100%; }
+.today__item--answer .today__away { top: 22px; }

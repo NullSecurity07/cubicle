@@ -430,6 +430,28 @@ test('code runs only after the founder reads it, in the sandbox', async ({ page 
   await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('Tool said: 42');
 });
 
+test('a step waiting for the founder is answered on its dashboard row, and the answer clears it everywhere', async ({ page }) => {
+  await send(page, 'build', '/tool run_code {"language":"javascript","code":"console.log(6 * 7)"}');
+  const ask = node(page, 'build').getByRole('group', { name: 'Run this code?' });
+  await expect(ask).toBeVisible();
+  const bell = page.getByRole('button', { name: /^Needs you/ });
+  await expect(bell).toHaveAccessibleName('Needs you: 1 waiting');
+  await page.keyboard.press('Control+d');
+  const dash = page.getByRole('dialog', { name: 'Dashboard' });
+  // The row carries the same two answers the needs-you list gives, under its words.
+  const answer = dash.locator('#dash-today').getByRole('group', { name: /^Answer: Dev needs your OK/ });
+  await expect(answer).toHaveCount(1);
+  await expect(answer.getByRole('button', { name: "Don't" })).toBeVisible();
+  await answer.getByRole('button', { name: 'Run' }).click();
+  // Gone from the dashboard, from Needs you and from the card, and the step ran.
+  await expect(dash.locator('#dash-today').getByRole('group', { name: /^Answer:/ })).toHaveCount(0);
+  await expect(dash.locator('#dash-today').locator('.today__row, .dash__rows button').filter({ hasText: 'Dev needs your OK' })).toHaveCount(0);
+  await expect(bell).toHaveAccessibleName('Needs you: nothing waiting');
+  await page.keyboard.press('Escape');
+  await expect(ask).toHaveCount(0);
+  await expect(node(page, 'build').locator('.chip--ok summary').last()).toHaveText('Ran javascript code');
+});
+
 test('a coder card: a wired person hands it work, the founder approves each step on the card, and drives it directly too', async ({ page }) => {
   await tidy(page);
   await addCard(page, 'Add coder');
