@@ -130,6 +130,16 @@ describe('a figure nothing this turn read', () => {
     expect(out.text).toMatch(/not written: €80, €200 (?:are|is) not in anything this turn read\. Search or read for them first, take them out, or write "\(unsourced\)" right after each\./);
     const marked = text.replace('€80', '€80 (unsourced)').replace('€200', '€200 (unsourced)');
     expect((await runTool(docTools, 'replace_section', JSON.stringify({ doc: 'Evaluation', heading: '3. Is the pain real?', text: marked }), context)).ok).toBe(true);
+    // Marking every line, a figure the turn read and a line with no figure at all, leaves the mark only where it is true.
+    const everywhere = 'Vitamin — painkiller — hair on fire: painkiller (unsourced)\n\nWhat it costs them per month: an accountant at €80 (unsourced)–€200 (unsourced)/month, against $29 (unsourced) a month. (unsourced)\n\nReal customer conversations done (of ten to twenty): 3 (unsourced)';
+    const out2 = await runTool(docTools, 'replace_section', JSON.stringify({ doc: 'Evaluation', heading: '3. Is the pain real?', text: everywhere }), context);
+    expect(out2.ok).toBe(true);
+    expect(out2.text).toContain('Took out "(unsourced)" where this turn\'s reading gives the figure or no figure stands before it.');
+    const saved = await store.readDoc(stage.docs.find((doc) => doc.title === 'Evaluation')!.id);
+    expect(saved).toContain('an accountant at €80 (unsourced)–€200 (unsourced)/month, against $29 a month.');
+    expect(saved).toContain('hair on fire: painkiller\n');
+    expect(saved).toMatch(/twenty\): 3(?! \(unsourced\))/);
+    expect(saved.match(/\(unsourced\)/g)).toHaveLength(2);
   });
 });
 

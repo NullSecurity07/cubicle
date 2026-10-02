@@ -117,6 +117,22 @@ function unsourcedIn(context: ToolContext, before: string, after: string): strin
   return figureCheck(after, [...context.sources(), before]).unsourced.filter((label) => at(label).test(after));
 }
 
+// A writer's own "(unsourced)" stays only right after a figure nothing this turn read gives. Refused once, a person
+// marked every line of a team doc, figures the founder gave and lines with no figure at all, and the founder read the
+// marks as noise; a mark anywhere but right after the figure never even held the figure back from being a source.
+const WRITER_MARK = /\s*\(unsourced\)/gi;
+function honestMarks(context: ToolContext, before: string, written: string): { text: string; dropped: number } {
+  if (!context.sources || !/\(unsourced\)/i.test(written)) return { text: written, dropped: 0 };
+  const unsourced = figureCheck(written.replace(WRITER_MARK, ''), [...context.sources(), before]).unsourced;
+  let dropped = 0;
+  const text = written.replace(WRITER_MARK, (mark, offset: number) => {
+    if (unsourced.some((label) => written.slice(0, offset).endsWith(label))) return mark;
+    dropped += 1;
+    return '';
+  });
+  return { text, dropped };
+}
+
 // The founder's own words in every room: a count the founder gave the partner on day one is a source for a colleague
 // writing it down, though it was never said in the colleague's room. A colleague's question is not the founder's.
 async function founderWords(context: Pick<ToolContext, 'stage' | 'store'>): Promise<string[]> {
@@ -152,6 +168,9 @@ async function numbersOf(context: Pick<ToolContext, 'stage' | 'store'>): Promise
 
 async function save(context: ToolContext, id: string, before: string, written: string, done: string, touches?: string | typeof WHOLE) {
   const rules = await rulesOf(context.stage, id);
+  const honest = honestMarks(context, before, written);
+  written = honest.text;
+  if (honest.dropped) done = `${done} Took out "(unsourced)" where this turn's reading gives the figure or no figure stands before it.`;
   // A team doc with rules is held to its evidence, so an unsourced figure is refused there; anywhere else it is marked.
   const unsourced = unsourcedIn(context, before, written);
   if (unsourced.length && rules) {
