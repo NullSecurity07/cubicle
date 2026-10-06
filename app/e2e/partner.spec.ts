@@ -235,3 +235,34 @@ test('a reading below the kill line wakes the partner: Sam proposes, with the nu
     await page.request.put('/api/stage', { data: { ...now, cards: (now.cards ?? []).filter((card: { id: string; kind: string }) => card.id !== 'metrics-watch' && !(card.kind === 'board' && !(stage.cards ?? []).some((one: { id: string }) => one.id === card.id))) } });
   }
 });
+
+// Journey 16: a lead asked "Can you deliver on Thursday instead of Sunday? And are the meals nut-free?" and Sam's ready
+// reply promised both. The fake partner says yes to each question as a careless model would; Needs you shows the reply
+// with neither promise in it and a line saying what was left out.
+test('a lead\'s reply wakes the partner, and the ready answer promises nothing the record does not say', async ({ page }) => {
+  const LEADS = 'leads-watch-e2e';
+  await bar(page, 'add a partner called Sam', 'Add Sam, your partner');
+  await expect(page.getByRole('status').filter({ hasText: 'Sam is your partner' })).toBeVisible({ timeout: 15_000 });
+  const stage = await (await page.request.get('/api/stage')).json();
+  await page.request.put('/api/stage', { data: { ...stage, cards: [...(stage.cards ?? []), { id: LEADS, kind: 'leads', x: 2400, y: 0, w: 900, h: 460 }] } });
+  try {
+    const lead = (await (await page.request.post(`/api/leads/${LEADS}`, { data: { name: 'Anna Kowalski', company: 'St. Marien Hospital', email: 'anna@marien.example' } })).json()) as { id: string };
+    await page.request.patch(`/api/leads/${LEADS}/${lead.id}`, { data: { stage: 'contacted' } });
+    // The first look only learns where every lead stands.
+    await page.request.post('/api/partner/watch');
+    await page.request.post(`/api/leads/${LEADS}/${lead.id}/replied`, { data: { text: 'Three of us on the night ward would try it. Can you deliver on Thursday instead of Sunday? And are the meals nut-free? Anna' } });
+    await expect.poll(async () => ((await (await page.request.post('/api/partner/watch')).json()) as { made: unknown[] }).made.length + ((await (await page.request.get('/api/partner/watch')).json()) as { proposals: unknown[] }).proposals.length, { timeout: 10_000 }).toBeGreaterThan(0);
+
+    await bar(page, 'needs', 'Needs you');
+    const row = page.getByRole('dialog', { name: 'Needs you' }).locator('.needs__item--partner-proposal');
+    await expect(row).toHaveCount(1);
+    await expect(row).toContainText('Ready: an email to anna@marien.example');
+    await expect(row).toContainText('(left out: nothing on record about delivery on Thursday, nut-free)');
+    await expect(row).not.toContainText('we can deliver on Thursday');
+    await expect(row).not.toContainText('are nut-free');
+  } finally {
+    for (const one of ((await (await page.request.get(`/api/leads/${LEADS}`)).json()) as { leads: { id: string }[] }).leads ?? []) await page.request.delete(`/api/leads/${LEADS}/${one.id}`);
+    const now = await (await page.request.get('/api/stage')).json();
+    await page.request.put('/api/stage', { data: { ...now, cards: (now.cards ?? []).filter((card: { id: string }) => card.id !== LEADS) } });
+  }
+});

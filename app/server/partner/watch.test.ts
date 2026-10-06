@@ -10,7 +10,7 @@ import { unaskedRow } from '../openends/health.ts';
 import type { ModelClient } from '../providers.ts';
 import { createUnasked } from '../usage.ts';
 import { saidNoFor } from './saidno.ts';
-import { budgetUsed, createWatch, emailBody, fakeWatchReply, killLineOf, killToward, leadSparks, metricSparks, proposalOf, towardLine, trending, watchAsk, type Acts, type Budget, type Proposal, type WatchDeps, watchBudget } from './watch.ts';
+import { budgetUsed, createWatch, emailBody, fakeWatchReply, guardProposal, killLineOf, killToward, leadSparks, metricSparks, proposalOf, towardLine, trending, watchAsk, type Acts, type Budget, type Proposal, type WatchDeps, watchBudget } from './watch.ts';
 
 const NOON = new Date('2026-10-06T12:00:00').getTime();
 const DAY = 86_400_000;
@@ -328,6 +328,27 @@ describe('the reply to a lead who wrote back', () => {
     expect(asked).toContain('proposes a call only if they asked for one');
     expect(asked).toContain('no "My call", "Why", "Kill signal" or "This week" lines');
     expect(asked).not.toContain('proposing a 20-minute call');
+  });
+
+  // Journey 16: the ready reply promised Thursday delivery and nut-free meals; nobody had said either.
+  it('takes out of the ready reply what nothing on record says, and the row says what was left out', async () => {
+    const anna: Lead & { cardId: string } = { ...mira, id: 'lead-anna', person: { name: 'Anna Kowalski', email: 'anna@marien.example' }, company: { name: 'St. Marien Hospital' }, thread: [{ kind: 'replied', at: 2, text: 'Three of us on the night ward would try it. Can you deliver on Thursday instead of Sunday? And are the meals nut-free? Anna' }] };
+    const [spark] = leadSparks([anna], { 'lead-anna': 'contacted' }, NOON);
+    const reply = 'Move: Answer Anna today.\nSubject: Thursday and nut-free\nBody: Hi Anna,\n\nYes, we can definitely deliver on Thursday instead of Sunday, and all our meals are completely nut-free, so you can eat safely.\n\nBest,';
+    const held = guardProposal(spark, proposalOf(spark, reply, '2026-10-07'), ['Meals are delivered on Sunday.']);
+    expect(held.draft).toMatchObject({ kind: 'email', body: 'Hi Anna,\n\nBest,' });
+    expect([...held.left!].sort()).toEqual(['allergen safety', 'delivery on Thursday', 'nut-free']);
+
+    // On the row: the fake partner says yes to both questions, and Needs you shows neither, with the left-out line.
+    const { watch, world } = await rig();
+    world.promises = [];
+    world.leads = [{ ...anna, stage: 'contacted' }];
+    await watch.look();
+    world.leads = [anna];
+    await watch.look();
+    const [row] = await watch.rows();
+    expect(row.detail).toContain('(left out: nothing on record about delivery on Thursday, nut-free)');
+    expect(row.detail).not.toMatch(/deliver on Thursday|are nut-free/);
   });
 
   it('keeps the partner\'s own lines out of the email', () => {
