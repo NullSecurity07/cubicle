@@ -48,13 +48,16 @@ function spelled(word: string): number | null {
 }
 // `free`: a number a sum worked out from figures read, which backs a count of anything, since the sum carries no words.
 type Token = { value?: number; word?: string; free?: boolean };
-const TOKENS = /(?:[$€£]\s?)?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(?:\s?(k|m|thousand|million)\b)?(?:\s?(?:%|percent\b))?|[\p{L}][\p{L}'-]*/giu;
+// A number glued to letters ("3D", "4K", "H2", "mp4", "COVID-19") is a word, not a figure: journey 15's brief read "3D
+// printers", whose "3" then backed "3 printers".
+const TOKENS = /(?<![\p{L}\d]|\d\.)(?:[$€£]\s?)?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(?:\s?(k|m|thousand|million)\b)?(?:\s?(?:%|percent\b))?(?![\p{L}\d])|[\p{L}\d][\p{L}\d'-]*/giu;
 function tokensOf(sentence: string): Token[] {
   return [...sentence.matchAll(TOKENS)].map((match) => {
     if (match[1] !== undefined) {
       const scale = { k: 1e3, thousand: 1e3, m: 1e6, million: 1e6 }[match[3]?.toLowerCase() ?? ''] ?? 1;
       return { value: Number(`${match[1].replace(/,/g, '')}${match[2] ?? ''}`) * scale };
     }
+    if (/\d/.test(match[0])) return { word: match[0].toLowerCase() };
     const value = spelled(match[0]);
     return value === null ? { word: stem(match[0]) } : { value };
   });
@@ -63,7 +66,7 @@ function tokensOf(sentence: string): Token[] {
 const MONTHS = 'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?';
 // A whole number, not part of a decimal, a version, a date, a time, a fraction, money, a share, an ordinal or a
 // "7-day": those are the figure check's, or no count at all.
-const COUNT = /(?<![\p{L}\d.,:/$€£#\-–—]|[$€£]\s)(\d{1,3}(?:,\d{3})+|\d+)(\+?)(?![\d]|[.,]\d|\s*(?:%|percent\b|\/|:\d|-[a-z]|[kmb]n?\b|x\b|×|\(unsourced\))|(?:st|nd|rd|th|am|pm)\b)/giu;
+const COUNT = /(?<![\p{L}\d.,:/$€£#+\-–—]|[$€£]\s)(\d{1,3}(?:,\d{3})+|\d+)(\+?)(?![\d\p{L}_]|[.,]\d|\s*(?:%|percent\b|\/|:\d|-[a-z]|[kmb]n?\b|x\b|×|\(unsourced\))|(?:st|nd|rd|th|am|pm)\b)/giu;
 const DATE_AFTER = new RegExp(`^\\s+(?:${MONTHS})\\b`, 'i');
 const DATE_BEFORE = new RegExp(`\\b(?:${MONTHS})\\.?\\s+$`, 'i');
 // A number that names a step, not a count of anything: "week 2", "step 3", "top 5", "v2".
@@ -73,7 +76,7 @@ const NAMES = /\b(?:step|day|week|phase|round|version|chapter|part|item|no|page|
 const AHEAD = /\b(?:next|goal|target|aim|plan|planned|should|needs?|must|will|would|could|cheapest|try|if|want|wants)\b/i;
 const ORDER = /^[\s\W]*(?:conduct|interview|talk|call|run|book|ask|reach|get|find|recruit|email|survey|schedule|do|test)\b/i;
 // Words a label or a phrase carries that say nothing about what is counted.
-const WEAK = new Set('done total number count real currently overall least roughly approx approximately far'.split(' '));
+const WEAK = new Set('done total number count real current currently overall least roughly approx approximately far'.split(' '));
 const content = (text: string) => (text.match(/[\p{L}][\p{L}'-]*/gu) ?? []).filter((word) => word.length > 2 && !SMALL.has(word.toLowerCase()) && !WEAK.has(word.toLowerCase()));
 // The head of a run of words: its last, unless that is a verb ("sessions logged", "users contacted").
 const headOf = (words: string[]) => {
@@ -95,7 +98,8 @@ function countedBy(sentence: string, at: number, length: number): string | null 
   if (after.length) return headOf(after);
   const before = sentence.slice(0, at);
   const colon = before.lastIndexOf(':');
-  if (colon >= 0 && !before.slice(colon + 1).trim()) return headOf(content(before.slice(0, colon).replace(/\([^)]*\)/g, ' ')));
+  // "Printers listed (Current: 9)" counts printers: an open bracket before the colon is cut with what it holds.
+  if (colon >= 0 && !before.slice(colon + 1).trim()) return headOf(content(before.slice(0, colon).replace(/\([^)]*\)/g, ' ').replace(/\([^)]*$/, ' ')));
   const cell = /\|\s*$/.test(before) ? before.replace(/\|\s*$/, '').split('|').filter((one) => one.trim()).at(-1) : null;
   if (cell) return headOf(content(cell));
   return headOf(content(before.slice(colon + 1)).slice(-1));
@@ -111,6 +115,18 @@ function backed(value: number, counted: string | null, sources: Token[][]): bool
     && (token.free || !counted || tokens.slice(Math.max(0, index - NEAR), index + NEAR + 1).some((one) => one.word && alike(one.word, counted)))));
 }
 
+// Numbers that are codes, not counts: a phone number ("+44 20 7946 0958", "555-123-4567"), a date written with
+// dashes ("2026-10-19"), a postcode ("postcode 10115", "10115 Berlin") and a house number ("Torstrasse 1"). Each as the span of the line it covers.
+const PHONE = /(?:\+\s?)?\(?\d[\d()\s.-]{5,}\d/g;
+const POSTCODE = /\b(?:post\s?code|postal code|zip(?:\s?code)?|PLZ)\W{0,3}[\p{L}\d]+(?:\s[\p{L}\d]{3})?|\b\d{5}(?=\s\p{Lu}\p{Ll}+\s*(?:[,.;]|$))/giu;
+const STREET = /\b[\p{L}-]*(?:stra(?:ss|ß)e|str\.|street|road|avenue|lane|weg|platz|allee|gasse)\s\d+[a-z]?\b/giu;
+function codesIn(text: string): [number, number][] {
+  const phones = [...text.matchAll(PHONE)].filter((hit) => (hit[0].match(/\d/g) ?? []).length >= 7 && /[\s().-]\d/.test(hit[0]))
+    .map((hit): [number, number] => [hit.index!, hit.index! + hit[0].length]);
+  return [...phones, ...[...text.matchAll(POSTCODE), ...text.matchAll(STREET)].map((hit): [number, number] => [hit.index!, hit.index! + hit[0].length])];
+}
+
+const RATIO = /(?<![\p{L}\d.,:/$€£#+\-])(\d+)\/(\d+)(?![\d/\p{L}]|[.,]\d)/gu;
 type Unbacked = { label: string; end: number };
 // The counts on a line nothing read gives for what they count, with where each number ends on the line. `strict` holds
 // plans and orders too, for a colleague's answer, where every count is a claim about what was read.
@@ -128,8 +144,10 @@ function unbackedCounts(line: string, sources: Token[][], quoted = '', strict = 
     offset = start + body.length;
     const misses: (Unbacked & { value: number })[] = [];
     const shown: number[] = [];
+    const codes = codesIn(body);
     for (const match of body.matchAll(COUNT)) {
       const at = match.index!;
+      if (codes.some(([from, to]) => at >= from && at < to)) continue;
       const value = valueOf(match[1]);
       const before = body.slice(0, at);
       const rest = body.slice(at + match[0].length);
@@ -143,6 +161,14 @@ function unbackedCounts(line: string, sources: Token[][], quoted = '', strict = 
       if (!strict && (AHEAD.test(before) || /^\s+more\b/i.test(rest) || ORDER.test(before.slice(before.lastIndexOf(':') + 1)))) continue;
       if (backed(value, countedBy(body, at, match[0].length), sources)) { shown.push(value); continue; }
       misses.push({ label: `${match[1]}${match[2]}`, end: start + at + match[1].length + match[2].length, value });
+    }
+    // A ratio of two counts, "9/60", stands when both numbers are read; a fraction ("2/3"), "24/7" and "50/50" are no counts.
+    const known = (value: number) => sources.some((tokens) => tokens.some((token) => token.value === value));
+    for (const match of body.matchAll(RATIO)) {
+      const [a, b] = [Number(match[1]), Number(match[2])];
+      if (b <= 10 || a === b || (a === 24 && b === 7) || codes.some(([from, to]) => match.index! >= from && match.index! < to)) continue;
+      if (/^\s*(?:[\p{L}'-]+\s+){0,3}\(unsourced\)/u.test(body.slice(match.index! + match[0].length))) continue;
+      if (!known(a) || !known(b)) misses.push({ label: match[0], end: start + match.index! + match[0].length, value: Number.NaN });
     }
     // A total the line works out in front of the reader from counts read: "14 in all (12 beta + 2 paying)".
     const worked = (value: number) => shown.some((a, i) => shown.some((b, j) => i !== j && (a + b === value || a - b === value || a * b === value)))
@@ -267,7 +293,7 @@ export const markSaid = (mark: CountMark) => `"${mark.label}" (in "${quote(mark.
 // a total, a monthly figure), a number stands only when something read gives it as written or a calc this turn
 // worked it out from figures read; else it is marked "(unsourced)", even when its inputs were read.
 const DERIVED = /\b(?:burn|runway|margins?|profits?|loss(?:es)?|break[- ]?even|CAC|LTV|payback|totals?|per[- ]month|monthly|a month|net)\b|\/\s?mo(?:nth)?\b/i;
-const FIGURE = /(?<![\p{L}\d.,:/#-])([$€£]\s?)?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(?:\s?(k|m)\b)?(\s?%)?(?![\d]|[.,]\d|\s*\(unsourced\)|(?:st|nd|rd|th|am|pm)\b|\s?[-:/]\d)/giu;
+const FIGURE = /(?<![\p{L}\d.,:/#+-])([$€£]\s?)?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(?:\s?(k|m)\b)?(\s?%)?(?![\d\p{L}_]|[.,]\d|\s*\(unsourced\)|(?:st|nd|rd|th|am|pm)\b|\s?[-:/]\d)/giu;
 // A figure put as a goal or a suggestion is the writer's proposal, not a sum: "I suggest a target of $49 next".
 const PROPOSED = /\b(?:suggest\w*|propos\w*|recommend\w*|aim|goal|target|plan|should|could|would|want)\b/i;
 function unworkedFigures(line: string, known: Set<number>, worked: number[]): Unbacked[] {
