@@ -2,6 +2,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { findCompanyDoc } from '../shared/partner.ts';
 import { DRAFT_BODY_MOST, draftId, gmailLink, mailtoLink } from '../shared/maildraft.ts';
 import type { Attention, Card, Stage } from '../shared/model.ts';
 import { createAttention } from './attention.ts';
@@ -89,6 +90,43 @@ describe('draft_email', () => {
     const [entry] = await createAttention(dir, () => 2000).list();
     expect(entry.kind).toBe('mail-draft');
     expect((entry as Attention & { lapsed?: boolean }).lapsed).toBeFalsy();
+  });
+});
+
+// Journey 13: Tom drafted to office@example.com, an address nothing had ever given.
+describe('an address in a draft', () => {
+  const ask = { to: 'office@example.com', subject: 'A free trial box', body: 'Hi,' };
+  async function turn(read: string[], options: { leads?: string[]; brief?: string; founder?: string } = {}) {
+    const dir = await mkdtemp(join(tmpdir(), 'draft-'));
+    const store = createStore(dir);
+    const attention = createAttention(dir, () => 1000);
+    const tools = outwardTools(createMail({}, (async () => new Response('{}')) as typeof fetch), store.filesDir, { raise: attention.raise, onRecord: async () => options.leads ?? [] }, () => 1000);
+    const stage = await store.loadStage();
+    if (options.brief) {
+      const company = findCompanyDoc(stage.docs) ?? (stage.docs.push({ id: 'company', title: 'Company brief', pinned: true, x: 0, y: 0, w: 1, h: 1 } as Stage['docs'][number]), stage.docs.at(-1)!);
+      await store.replaceDoc(company.id, options.brief);
+    }
+    if (options.founder) await store.appendChat(stage.rooms[0].id, { role: 'user', text: options.founder } as never);
+    const context = { stage, roomId: stage.rooms[0].id, store, granted: new Map(), sources: () => read };
+    return { attention, run: (args: object) => runTool(tools, 'draft_email', JSON.stringify(args), context) };
+  }
+
+  it('is refused when nothing on record gives it, and a role address before their domain is called a guess', async () => {
+    const { run, attention } = await turn(['Exampleco: 30 staff, hiring an office manager. https://www.example.com/jobs']);
+    const out = await run(ask);
+    expect(out.ok).toBe(false);
+    expect(out.text).toMatch(/^Failed: no address on record for office@example\.com: .*"office@" put before their domain is a guess\. Ask the founder for it, or find it on their site/);
+    expect(await attention.list()).toEqual([]);
+  });
+
+  it('stands when a page read, a Leads card row, the founder or the Company brief gives it', async () => {
+    expect((await (await turn(['Contact us: office@example.com'])).run(ask)).ok).toBe(true);
+    expect((await (await turn([], { leads: ['Office@Example.com'] })).run(ask)).ok).toBe(true);
+    expect((await (await turn([], { founder: 'Their office manager is office@example.com' })).run(ask)).ok).toBe(true);
+    expect((await (await turn([], { brief: '# Company brief\n\nFirst lead: office@example.com' })).run(ask)).ok).toBe(true);
+    // One of two unknown is still refused, naming only that one.
+    const two = await (await turn(['Contact us: office@example.com'])).run({ ...ask, to: 'office@example.com, anna@samplely.example' });
+    expect(two.text).toMatch(/^Failed: no address on record for anna@samplely\.example: /);
   });
 });
 

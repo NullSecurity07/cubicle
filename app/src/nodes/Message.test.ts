@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { canAnswer, choicesOf, fieldLabel } from './Approval';
-import { receiptOf } from './Message';
+import { failedLine, receiptOf } from './Message';
 
 describe('what a receipt says', () => {
   it('names a skill read, a line kept about the founder and a question put to them', () => {
@@ -29,5 +29,14 @@ describe('what a receipt says', () => {
     expect(canAnswer('ask_founder', { answer: '  ' })).toBe(false);
     expect(canAnswer('ask_founder', { answer: 'Lived it' })).toBe(true);
     expect(canAnswer('send_email', { to: 'a@b.c' })).toBe(true);
+  });
+});
+
+describe('a failed step with words of its own', () => {
+  it('says a draft had no address on record, and leaves every other failure to the plain line', () => {
+    const refused = { name: 'draft_email', args: { to: 'office@example.com' }, ok: false, result: 'Failed: no address on record for office@example.com: nothing read ...' };
+    expect(failedLine(refused)).toBe('No address on record for office@example.com: ask the founder or find it on their site');
+    expect(failedLine({ ...refused, result: 'Failed: not an email address: x' })).toBeNull();
+    expect(failedLine({ ...refused, ok: true })).toBeNull();
   });
 });
