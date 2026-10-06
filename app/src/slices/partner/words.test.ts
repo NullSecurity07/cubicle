@@ -19,6 +19,17 @@ describe('the partner\'s words in the command bar', () => {
     expect(added).toEqual(['Partner', 'Sam Lee']);
   });
 
+  it('runs the name in the words it was asked with, whatever was asked in between', () => {
+    const added: string[] = [];
+    const extra = partnerCommands({ add: (name) => added.push(name), morning: () => {} });
+    const named = suggest('add a partner called sam', known, extra)[0];
+    // The dock asks with "add partner" on every render, which once reset the name the bar had shown.
+    expect(extra.find((one) => one.when?.('add partner'))?.action.do).toBe('run');
+    expect(named.label).toBe('Add Sam, your partner');
+    (named.action as { run(): void }).run();
+    expect(added).toEqual(['Sam']);
+  });
+
   it('asks for the morning note and opens the bets by the words a founder reaches for', () => {
     let asked = 0;
     const extra = partnerCommands({ add: () => {}, morning: () => { asked += 1; } });

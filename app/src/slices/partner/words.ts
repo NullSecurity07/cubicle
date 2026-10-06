@@ -11,16 +11,15 @@ const BETS = /^(?:(?:my |open |the )?bets?|bet(?:s)? ledger|ledger)$/;
 const named = (said: string) => said.trim().split(/\s+/).map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ').slice(0, 40);
 
 export function partnerCommands(act: { add(name: string): void; morning(): void }): Command[] {
-  // The name the founder typed, kept from the moment the bar asked whether these words were ours.
-  let name = '';
+  // The name comes from the words themselves each time, never kept between askings: the dock asks with "add partner"
+  // while the bar is open, and what Enter runs must be what the founder typed.
+  const adding = (name: string) => ({
+    section: 'Do' as const, hint: 'One person who holds the whole company and keeps the Company document',
+    label: name ? `Add ${name}, your partner` : 'Add your partner', action: { do: 'run' as const, run: () => act.add(name || PARTNER_NAME) },
+  });
+  const nameIn = (typed: string) => { const found = ADD.exec(typed)?.[1]; return found ? named(found) : ''; };
   return [
-    {
-      section: 'Do', hint: 'One person who holds the whole company and keeps the Company document',
-      get label() { return name ? `Add ${name}, your partner` : 'Add your partner'; },
-      get action() { const chosen = name || PARTNER_NAME; return { do: 'run' as const, run: () => act.add(chosen) }; },
-      when: (typed) => { const found = ADD.exec(typed); if (!found) return false; name = found[1] ? named(found[1]) : ''; return true; },
-      say: ['add partner', 'add a partner called …'],
-    },
+    { ...adding(''), when: (typed) => ADD.test(typed), fit: (typed) => adding(nameIn(typed)), say: ['add partner', 'add a partner called …'] },
     { section: 'Do', label: 'Morning note', hint: 'Three things, one risk and one question from your partner', action: { do: 'run', run: act.morning }, when: (typed) => MORNING.test(typed), say: ['morning note'] },
     { section: 'Do', label: 'Bets', hint: 'What the company bet on, and how each went', action: { do: 'run', run: () => overlay.open({ kind: 'panel', name: 'bets' }) }, when: (typed) => BETS.test(typed), say: ['bets'] },
   ];
