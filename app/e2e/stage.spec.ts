@@ -255,7 +255,7 @@ test('a person rewrites a wired doc: the chip shows it, the doc card updates, th
   await expect(reply.locator('.chip--ok summary')).toHaveText('Rewrote Brand doc');
   await expect(reply).toContainText(/Tool said: Wrote \d+ characters\./);
   await expect(node(page, 'brand-doc').locator('textarea.doc')).toHaveValue('# Brand\n\nCalm tools for founders.');
-  await expect(reply.locator('.msg__foot')).toContainText('fake · fake-1 ·');
+  await expect(reply.locator('.msg__foot')).toContainText('Fake · fake-1 ·');
   await expect(reply.locator('.msg__foot')).toContainText('tokens');
 
   await page.reload();
@@ -1299,6 +1299,8 @@ test('command bar: find anything, do anything, and never a guess', async ({ page
   // A small question is answered in the bar itself; "/" opens it too.
   await page.locator('.react-flow__pane').click({ position: { x: 12, y: 12 } });
   await page.keyboard.press('/');
+  // Maya's reply is on screen a moment before her turn is over; the question is about after.
+  await expect.poll(async () => ((await (await page.request.get('/api/threads')).json()) as { id: string; live?: boolean }[]).find((one) => one.id === 'marketing')?.live ?? false).toBe(false);
   await box.fill('who is idle?');
   await page.keyboard.press('Enter');
   await expect(bar.getByRole('status')).toContainText('Idle: Maya, Dev.');

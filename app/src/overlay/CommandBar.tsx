@@ -32,29 +32,34 @@ export function CommandBar() {
   const { getNodes, fitView } = useReactFlow<StageNode>();
   const addCard = useAddCard();
   const [input, setInput] = useState('');
-  const [hits, setHits] = useState<Hit[]>([]);
-  const [notes, setNotes] = useState<Hit[]>([]);
+  // Each search's results remember the words they were for: a result for words no longer in the bar is never shown,
+  // so a fast Enter cannot land on what an earlier search found.
+  const [hits, setHits] = useState<{ for: string; hits: Hit[] }>({ for: '', hits: [] });
+  const [notes, setNotes] = useState<{ for: string; hits: Hit[] }>({ for: '', hits: [] });
   const [answer, setAnswer] = useState('');
   const [at, setAt] = useState(0);
   const list = useRef<HTMLUListElement>(null);
 
   const known = useMemo(() => ({ cards: getNodes().map((node) => ({ id: node.id, type: node.type ?? '', label: labelOf(node), role: node.type === 'room' ? node.data.role : undefined })) }), [getNodes]);
-  const typed = useMemo(() => suggest(input, known), [input, known]);
   // What the founder asked for outright comes first, then what the workspace holds, then the offers to ask someone.
   // The founder's own notes rank above the rest of the workspace: they wrote them to be worked from.
-  const offered = useMemo(() => {
-    if (input.trim().length < 3) return typed;
-    return [...typed.filter((one) => !one.fallback), ...notes.map(fromNote), ...hits.map(fromHit), ...typed.filter((one) => one.fallback)];
-  }, [typed, hits, notes, input]);
+  const offerFor = (text: string) => {
+    const typed = suggest(text, known);
+    const asked = text.trim();
+    if (asked.length < 3) return typed;
+    const mine = (found: { for: string; hits: Hit[] }) => (found.for === asked ? found.hits : []);
+    return [...typed.filter((one) => !one.fallback), ...mine(notes).map(fromNote), ...mine(hits).map(fromHit), ...typed.filter((one) => one.fallback)];
+  };
+  const offered = useMemo(() => offerFor(input), [input, known, hits, notes]);
 
   useEffect(() => {
-    setAt(0); setAnswer('');
+    setAnswer('');
     const asked = input.trim();
-    if (asked.length < 3) { setHits([]); setNotes([]); return; }
+    if (asked.length < 3) return;
     const stop = new AbortController();
     const soon = setTimeout(() => {
-      search(asked, stop.signal).then((found) => setHits(found.hits.slice(0, 6))).catch(() => {});
-      searchNotes(asked, stop.signal).then((found) => setNotes(found.hits.slice(0, 5))).catch(() => {});
+      search(asked, stop.signal).then((found) => setHits({ for: asked, hits: found.hits.slice(0, 6) })).catch(() => {});
+      searchNotes(asked, stop.signal).then((found) => setNotes({ for: asked, hits: found.hits.slice(0, 5) })).catch(() => {});
     }, 220);
     return () => { clearTimeout(soon); stop.abort(); };
   }, [input]);
@@ -95,13 +100,19 @@ export function CommandBar() {
   function onKeyDown(event: React.KeyboardEvent) {
     if (pressed(event, 'command-down')) { event.preventDefault(); setAt((at + 1) % Math.max(1, offered.length)); }
     if (pressed(event, 'command-up')) { event.preventDefault(); setAt((at - 1 + offered.length) % Math.max(1, offered.length)); }
-    if (pressed(event, 'command-run') && offered[at]) { event.preventDefault(); run(offered[at].action); }
+    // Enter works the suggestions out again from what is in the bar this instant, never from a list drawn for
+    // fewer letters: typed fast, "add a partner called Sam" must add Sam.
+    if (pressed(event, 'command-run')) {
+      const now = offerFor((event.target as HTMLInputElement).value);
+      const chosen = now[Math.min(at, now.length - 1)];
+      if (chosen) { event.preventDefault(); run(chosen.action); }
+    }
   }
 
   let section = '';
   return (
     <section className="command" role="dialog" aria-modal="true" aria-label="Command bar">
-      <input autoFocus role="combobox" aria-expanded="true" aria-controls="command-list" aria-label="Command or search" placeholder={'Try "hire a designer", "ask Maya to…", or a few words you remember'} value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={onKeyDown} />
+      <input autoFocus role="combobox" aria-expanded="true" aria-controls="command-list" aria-label="Command or search" placeholder={'Try "hire a designer", "ask Maya to…", or a few words you remember'} value={input} onChange={(event) => { setInput(event.target.value); setAt(0); }} onKeyDown={onKeyDown} />
       {answer && <p className="command__answer" role="status">{answer}</p>}
       <ul id="command-list" role="listbox" aria-label="Suggestions" ref={list}>
         {offered.map((one, index) => {

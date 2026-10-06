@@ -41,6 +41,11 @@ export type CoderModels = { groups: { name: string; models: CoderModel[] }[]; de
 // One file the coder changed, with its patch, for the card opened large.
 export type CoderPatch = { file: string; patch: string; additions: number; deletions: number };
 
+// What a run leaves behind that nobody wrote: compiled bytecode, caches, installed packages, the system's own files.
+// The change line and the patches leave these out, with whatever the folder's .gitignore names and any binary file.
+const JUNK = /(^|\/)(__pycache__|node_modules|\.pytest_cache|\.mypy_cache|\.ruff_cache|\.venv|\.tox|\.gradle|\.next|\.turbo|\.cache)\/|\.(pyc|pyo|class|o|obj|so|dylib|dll|exe|egg-info)$|(^|\/)(\.DS_Store|Thumbs\.db)$/;
+export const isJunk = (one: { file: string; patch?: string }) => JUNK.test(one.file.replace(/\\/g, '/')) || /^Binary files /m.test(one.patch ?? '');
+
 // How much changed, the way the log says it: `+12 −3 in 2 files`.
 export function diffLine(files: { additions: number; deletions: number }[]): string {
   const added = files.reduce((sum, one) => sum + (one.additions || 0), 0);

@@ -118,6 +118,24 @@ test('the founder adds a partner who keeps the Company document and leaves a mor
 
 // A promise the founder makes in any room is kept, dated, and comes to Needs you and Today's five on its day; the
 // founder closes it there.
+test('the command bar adds the partner by the name typed, with Enter pressed at once', async ({ page }) => {
+  // Typed fast: no wait between the words and Enter. The dock asks for "add partner" on its own renders, which once
+  // left the bar running the plain "Add your partner" and a partner called Partner.
+  await page.keyboard.press('Control+k');
+  const input = page.getByRole('combobox', { name: 'Command or search' });
+  await input.fill('add a partner');
+  await input.fill('add a partner called Sam');
+  // The dock's partner button asks the same words with "add partner" whenever it redraws; done here the way it does it.
+  await page.evaluate(async () => {
+    const slices = (await import(/* @vite-ignore */ `${location.origin}/src/slices/index.ts`)) as { sliceCommands(): { when?(typed: string): boolean }[] };
+    slices.sliceCommands().find((one) => one.when?.('add partner'));
+  });
+  await input.press('Enter');
+  await expect(page.getByRole('status').filter({ hasText: 'Sam is your partner' })).toBeVisible({ timeout: 15_000 });
+  const partners = (await stageOf(page)).rooms.filter((room) => room.partner).map((room) => room.name);
+  expect(partners).toEqual(['Sam']);
+});
+
 test('a promise the founder makes comes to Needs you on its day, and the founder closes it', async ({ page }) => {
   await page.request.post('/api/rooms/marketing/chat', { data: { text: 'OK. I\'ll call 5 beta users today.' } });
   const chat = (await (await page.request.get('/api/rooms/marketing/chat')).json()) as { text: string }[];

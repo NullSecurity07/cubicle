@@ -1,4 +1,5 @@
-import { diffLine, type CoderAsk, type CoderModel, type CoderEvent, type CoderLine, type CoderLive, type CoderModels, type CoderPatch, type CoderState } from '../../shared/coder.ts';
+import { execFile } from 'node:child_process';
+import { diffLine, isJunk, type CoderAsk, type CoderModel, type CoderEvent, type CoderLine, type CoderLive, type CoderModels, type CoderPatch, type CoderState } from '../../shared/coder.ts';
 import type { Attention } from '../../shared/model.ts';
 import { askFounder, type Answer } from '../approvals.ts';
 import { KEYED as KEYS, MCP_NAME, type McpLocal } from './config.ts';
@@ -22,7 +23,16 @@ type Deps = {
   reachable?: (url: string) => Promise<boolean>;
   // The folder's map, when it has one: the tool server that reads it and the one sentence that tells the coder so.
   map?: (dir: string) => Promise<{ mcp: McpLocal; hint: string } | null>;
+  // Which of these files the folder's .gitignore names. Nothing, when the folder is not a git repository.
+  ignored?: (dir: string, files: string[]) => Promise<Set<string>>;
 };
+
+// git itself says which files its ignore rules cover, nested .gitignore files and the global one included.
+export const gitIgnored = (dir: string, files: string[]) => new Promise<Set<string>>((settle) => {
+  if (!files.length) { settle(new Set()); return; }
+  const child = execFile('git', ['-C', dir, 'check-ignore', '--no-index', '-z', '--stdin'], { timeout: 5000 }, (_error, out) => settle(new Set(String(out ?? '').split('\0').filter(Boolean))));
+  child.stdin?.end(files.join('\0'));
+});
 type McpStatus = Record<string, { status?: string; error?: string }> | null;
 type Held = {
   id: string; dir: string; name: string; session?: string; model?: string;
@@ -37,6 +47,9 @@ type Held = {
   ask?: string; using?: string; switched?: boolean; switching?: 'aborting' | 'sent';
   // Counts the asks (and the hand-overs): an end that was being worked out for one of them never ends another.
   round: number;
+  // A change line still being checked against the folder's .gitignore: the end of the work waits for it, so the
+  // lines stay in the order they happened.
+  diffing?: Promise<void>;
   // Whether this piece of work changed the folder at all, as opencode reported it.
   changed: boolean;
   done: Set<(how: 'done' | 'stopped') => void>;
@@ -79,6 +92,7 @@ export function createCoder(deps: Deps) {
   const { engine, say, approvals, attention } = deps;
   const now = deps.now ?? Date.now;
   const reachable = deps.reachable ?? lookedAt;
+  const ignored = deps.ignored ?? gitIgnored;
   const cards = new Map<string, Held>();
   const bySession = new Map<string, string>();
   let swept = false;
@@ -382,20 +396,28 @@ export function createCoder(deps: Deps) {
     if (status && !(card.session in status)) await idle(card);
   }
 
+  // Only what somebody wrote: no bytecode, caches or binaries, and nothing the folder's .gitignore names.
+  async function written<T extends { file: string; patch?: string }>(card: Held, files: T[]): Promise<T[]> {
+    const plain = files.filter((one) => !isJunk(one));
+    const skip = await ignored(card.dir, plain.map((one) => one.file)).catch(() => new Set<string>());
+    return plain.filter((one) => !skip.has(one.file));
+  }
+
   async function diff(card: Held): Promise<CoderPatch[]> {
     if (!card.session) return [];
-    const own = await engine.call<CoderPatch[]>('GET', `/session/${card.session}/diff`, { directory: card.dir }).catch(() => []);
-    if (own?.length) return own;
+    const own = await written(card, (await engine.call<CoderPatch[]>('GET', `/session/${card.session}/diff`, { directory: card.dir }).catch(() => [])) ?? []);
+    if (own.length) return own;
     // A change made by a command rather than an edit is not in the session's own diff; the folder's is. It is only
     // read when opencode said this work changed something: otherwise it is the founder's own uncommitted work.
     if (!card.changed) return [];
-    return (await engine.call<CoderPatch[]>('GET', '/vcs/diff?mode=git', { directory: card.dir }).catch(() => [])) ?? [];
+    return written(card, (await engine.call<CoderPatch[]>('GET', '/vcs/diff?mode=git', { directory: card.dir }).catch(() => [])) ?? []);
   }
 
   async function idle(card: Held) {
     if (card.state !== 'working' || card.switching === 'aborting') return;
     card.switching = undefined;
     const round = card.round;
+    await card.diffing;
     const files = await diff(card);
     const text = files.length ? diffLine(files) : '';
     // opencode says idle twice, so two of these can be on their way: the first ends the ask, and the second, coming
@@ -480,7 +502,12 @@ export function createCoder(deps: Deps) {
     if (heard.line?.kind === 'reply') card.reply = heard.line.text;
     // A diff only means something while work is on: opencode says one after an undo too, and that would sit under
     // "undone" claiming the change is still there.
-    if (heard.line && (heard.line.kind !== 'diff' || busy(card))) line(card, heard.line);
+    if (heard.line?.kind === 'diff' && heard.diff) {
+      // The folder's own ignore rules are asked first; the work may have ended by the time they answer.
+      const round = card.round;
+      const said = heard.line;
+      if (busy(card)) card.diffing = written(card, heard.diff).then((files) => { if (files.length && card.round === round) line(card, { ...said, text: diffLine(files) }); });
+    } else if (heard.line && (heard.line.kind !== 'diff' || busy(card))) line(card, heard.line);
     if (busy(card)) hearLive(card, heard);
     if (heard.permission) void asked(card, heard.permission);
     // Answered without a word from here: opencode refuses every other question in a session when one is refused, and

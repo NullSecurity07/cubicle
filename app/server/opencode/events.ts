@@ -1,4 +1,4 @@
-import { diffLine, type CoderAsk, type CoderLine, type CoderLiveTool } from '../../shared/coder.ts';
+import { diffLine, isJunk, type CoderAsk, type CoderLine, type CoderLiveTool } from '../../shared/coder.ts';
 
 // What OpenCode says on its event stream, as the few things the card cares about. Everything else it says (sync
 // records, plugin news, heartbeats) is left where it is.
@@ -9,7 +9,9 @@ export type Heard = {
   progress?: true; busy?: true; idle?: true;
   // The folder changed under this step (opencode's patch part), whichever tool changed it.
   changed?: true;
-  line?: CoderLine; permission?: CoderAsk; replied?: string; reply?: string; error?: string;
+  line?: CoderLine; permission?: CoderAsk;
+  // The files a diff line counts, so the folder's .gitignore can be asked about them before it is shown.
+  diff?: { file: string; additions: number; deletions: number }[]; replied?: string; reply?: string; error?: string;
   // opencode trying the model's request again after the provider refused it, with the provider's reason in plain words.
   retry?: string;
   // What the card shows live. A part of the reply or of the thinking is announced (`opened`), grows (`delta`) and ends
@@ -119,7 +121,10 @@ export function translate(event: RawEvent, dir = ''): Heard | null {
     const tokens = info.tokens ?? {};
     return { session, progress: true, usage: { message: String(info.id), tokens: { input: number(tokens.input), output: number(tokens.output), reasoning: number(tokens.reasoning), cache: number(tokens.cache?.read) + number(tokens.cache?.write) }, cost: number(info.cost) } };
   }
-  if (type === 'session.diff') return Array.isArray(said.diff) && said.diff.length ? { session, line: { kind: 'diff', text: diffLine(said.diff), at: Date.now() } } : null;
+  if (type === 'session.diff') {
+    const files = Array.isArray(said.diff) ? (said.diff as { file?: unknown; patch?: string; additions: number; deletions: number }[]).map((one) => ({ ...one, file: String(one.file ?? '') })).filter((one) => !isJunk(one)) : [];
+    return files.length ? { session, diff: files, line: { kind: 'diff', text: diffLine(files), at: Date.now() } } : null;
+  }
   if (type === 'permission.asked') {
     const what = flat(said.metadata?.command ?? short(String((said.patterns ?? [])[0] ?? ''), dir), 400);
     return { session, permission: { id: String(said.id), tool: String(said.permission ?? 'step'), what, always: Array.isArray(said.always) ? said.always.map(String) : [], at: Date.now() } };

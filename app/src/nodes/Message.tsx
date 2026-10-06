@@ -5,7 +5,9 @@ import { dismissAttention, fileUrl } from '../api';
 import { compact } from '../numbers';
 import { SLICES } from '../slices';
 import { Approval } from './Approval';
+import { markDraftOpened, useDraftOpened } from './draftOpened';
 import { Words } from './Rich';
+import { modelTitle } from '../../shared/modelNames';
 
 const VERBS: Record<string, [doing: string, done: string]> = {
   read_doc: ['Reading', 'Read'], write_doc: ['Rewriting', 'Rewrote'], append_doc: ['Adding to', 'Added to'], replace_section: ['Rewriting a section of', 'Rewrote a section of'], create_doc: ['Creating', 'Created'],
@@ -81,15 +83,22 @@ export function receiptOf(tool: Pick<ToolEvent, 'name' | 'args' | 'question' | '
   return { doing, done, subject };
 }
 
-// A drafted email, one press from the founder's Gmail with every field filled. Opening it is what the founder came
-// for, so it also takes the draft off Needs you; the mailto: link is for anyone whose mail is not Gmail.
+// A drafted email, one press from the founder's Gmail with every field filled. Until the founder opens it, it is only
+// that link, so it says "drafted for you", never that it is in their Gmail; opened, it says so. Opening it also takes
+// the draft off Needs you; the mailto: link is for anyone whose mail is not Gmail.
 function DraftOpen({ tool }: { tool: ToolEvent }) {
   const draft = draftOf(tool.args);
   if (!draft) return null;
-  const opened = () => { void dismissAttention(draftId(draft)).catch(() => { /* already gone from Needs you */ }); };
+  return <DraftLinks draft={draft} />;
+}
+function DraftLinks({ draft }: { draft: NonNullable<ReturnType<typeof draftOf>> }) {
+  const id = draftId(draft);
+  const seen = useDraftOpened(id);
+  const opened = () => { markDraftOpened(id); void dismissAttention(id).catch(() => { /* already gone from Needs you */ }); };
   return (
     <div className="draft-open nodrag">
-      <a className="playbook__act primary" href={gmailLink(draft)} target="_blank" rel="noreferrer" onClick={opened}>Open in Gmail</a>
+      <span className="draft-open__said">{seen ? 'Opened in Gmail' : 'Email drafted for you'}</span>
+      <a className="playbook__act primary" href={gmailLink(draft)} target="_blank" rel="noreferrer" onClick={opened}>{seen ? 'Open again' : 'Open in Gmail'}</a>
       <a className="draft-open__other" href={mailtoLink(draft)} onClick={opened}>Other mail app</a>
     </div>
   );
@@ -154,7 +163,7 @@ export function Message({ message, live = false, roomId, ...actions }: { message
       {message.text && <div className="md"><Words text={message.text} /></div>}
       {!live && message.provider && (
         <div className="msg__foot">
-          {message.provider} · {message.model}{tokens ? ` · ${compact(tokens)} tokens` : ''}{message.stopped ? ' · stopped' : ''}
+          {modelTitle(message.provider)} · {message.model}{tokens ? ` · ${compact(tokens)} tokens` : ''}{message.stopped ? ' · stopped' : ''}
           <Tools {...actions} />
           {/* What a slice offers to do with this finished reply, where the reply's own actions are. */}
           {message.id && roomId && SLICES.map((slice) => (slice.reply ? <slice.reply key={slice.name} message={{ ...message, id: message.id!, at: message.at ?? 0 }} roomId={roomId} /> : null))}

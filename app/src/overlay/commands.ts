@@ -16,8 +16,10 @@ export type Suggestion = { section: 'Do' | 'On the stage' | 'Notes' | 'In the wo
 export type Known = { cards: { id: string; type: string; label: string; role?: string }[] };
 // What a UI slice adds to the bar: the suggestion the bar already knows how to show, and when to show it. `when` is
 // asked with what was typed, tidied and in lower case; a command without one is offered only on an empty bar.
-// `say` is what the cheatsheet lists for it, when its own label is not the thing to type.
-export type Command = Suggestion & { when?: (typed: string) => boolean; say?: string[] };
+// `say` is what the cheatsheet lists for it, when its own label is not the thing to type. `fit` makes the suggestion
+// for the words typed ("add a partner called Sam" names Sam): it is worked out from those words alone, every time, so
+// what Enter runs is always what the bar shows for what is in it now, whoever else asked a moment ago.
+export type Command = Suggestion & { when?: (typed: string) => boolean; say?: string[]; fit?: (typed: string) => Suggestion };
 
 // Each card the bar can add: the words that ask for it, what it says, and an example of the words for the cheatsheet.
 const CARD_WORDS: [RegExp, Extract<Action, { do: 'add' }>['kind'], string, string][] = [
@@ -157,7 +159,7 @@ export function suggest(input: string, known: Known, extra: Command[] = sliceCom
   if (low.length >= 3) for (const starter of STARTERS) if (starter.label.toLowerCase().startsWith(low) && !found.some((one) => one.label === starter.label)) found.push(offer(starter));
 
   // What the slices brought, on their own terms; a command without a `when` answers to a few letters of its label.
-  for (const one of extra) if (one.when ? one.when(low) : low.length >= 3 && one.label.toLowerCase().startsWith(low)) found.push(one);
+  for (const one of extra) if (one.when ? one.when(low) : low.length >= 3 && one.label.toLowerCase().startsWith(low)) found.push(one.fit ? one.fit(low) : one);
 
   if (!found.length) for (const one of people.slice(0, 5)) found.push({ section: 'Ask', label: `Ask ${one.label}`, hint: typed, action: { do: 'ask', roomId: one.id, text: typed }, fallback: true });
   return found;

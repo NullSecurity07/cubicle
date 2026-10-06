@@ -12,6 +12,7 @@ import { ago, since, useAttention, WHAT } from './attention';
 import { PanelShell } from './PanelShell';
 import { overlay, showDecision } from './store';
 import { useAttempt } from '../attempt';
+import { markDraftOpened } from '../nodes/draftOpened';
 
 // What the founder says to start it over. It asks for the work, never for the step: the person still has to come back
 // for the OK through the usual door, and pressing this has never said yes to anything.
@@ -84,7 +85,7 @@ export function NeedsPanel() {
                 <PartnerNeed entry={entry} attempt={attempt} />
                 {entry.decisionId && <button type="button" className="primary" onClick={() => { showDecision(entry.decisionId!); overlay.open({ kind: 'panel', name: 'decisions' }); }}>{entry.kind === 'review-due' ? 'Look at it' : 'Decide'}</button>}
                 {entry.kind === 'key-rejected' && <button type="button" className="primary" onClick={() => { overlay.close({ kind: 'panel', name: 'needs' }); overlay.open({ kind: 'panel', name: 'apikeys' }); }}>Open Keys</button>}
-                {entry.kind === 'mail-draft' && entry.url && <a className="needs__link primary" href={entry.url} target="_blank" rel="noreferrer" onClick={() => attempt(dismissAttention(entry.id))}>Open in Gmail</a>}
+                {entry.kind === 'mail-draft' && entry.url && <a className="needs__link primary" href={entry.url} target="_blank" rel="noreferrer" onClick={() => { markDraftOpened(entry.id); attempt(dismissAttention(entry.id)); }}>Open in Gmail</a>}
                 {(entry.lapsed || entry.kind === 'mail-draft' || entry.kind === 'key-rejected' || entry.kind === 'file-damaged' || entry.kind === 'backup-failed' || entry.kind === 'run-failed' || entry.kind === 'missed' || entry.kind === 'review-due' || entry.kind === 'page-changed') && <button type="button" onClick={() => attempt(dismissAttention(entry.id))}>Dismiss</button>}
                 {entry.lapsed && entry.roomId && <button type="button" className="primary" onClick={() => ask(entry, said)}>Ask {entry.who ?? 'them'} again</button>}
               </div>

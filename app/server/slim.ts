@@ -1,3 +1,4 @@
+import { modelTitle } from '../shared/modelNames.ts';
 import { fitHistory, providerOf, wireTools, type ModelClient, type ToolSpec } from './providers.ts';
 import type { ModelMessage } from './prompt.ts';
 import type { UsageBook } from './usage.ts';
@@ -24,6 +25,5 @@ export function needsSlim(clients: ModelClient[], usage: Pick<UsageBook, 'dead' 
   return able.length > 0 && !able.some((client) => fitHistory(messages, client.maxPromptChars - toolChars - headroom) !== null);
 }
 
-const title = (name: string) => name[0].toUpperCase() + name.slice(1);
 export const slimNotice = (client: Pick<ModelClient, 'name'>) =>
-  `${title(providerOf(client.name))} answers with a short prompt: the documents' titles and openings only, no playbook, and only the latest talk.`;
+  `${modelTitle(providerOf(client.name))} answers with a short prompt: the documents' titles and openings only, no playbook, and only the latest talk.`;

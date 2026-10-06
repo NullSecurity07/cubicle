@@ -12,6 +12,7 @@ import { ANSWER_IN_WORDS, CALL_THE_TOOL, checkReply, HELD_BACK, proseToolCall, t
 import type { UsageBook } from './usage.ts';
 import { needsSlim, slimNotice } from './slim.ts';
 import { localDay } from './clock.ts';
+import { modelTitle } from '../shared/modelNames.ts';
 
 const MAX_STEPS = 8;
 // The most tool calls that change something a stand-in model (one that answers because the first could not, or one on this machine) may
@@ -122,7 +123,7 @@ export async function runTurn(input: {
   // When the model that should have answered could not, the founder hears which one stepped in and why.
   const onFailure = ({ client, error }: Failure) => {
     const status = (error as { status?: number }).status;
-    failed.push(`${client.name} could not answer (${planless(error) ? 'its plan allows no requests yet' : status === 429 ? limitWords(error) : plainBreak(error.message || 'error', providerOf(client.name)).slice(0, 120)})`);
+    failed.push(`${modelTitle(client.name)} could not answer (${planless(error) ? 'its plan allows no requests yet' : status === 429 ? limitWords(error) : plainBreak(error.message || 'error', providerOf(client.name)).slice(0, 120)})`);
     // A 429 rests the key, five breakdowns in a row open its breaker; either way its siblings serve meanwhile.
     usage.failed(client.name, error);
   };
@@ -183,12 +184,12 @@ export async function runTurn(input: {
       const told = `${roomId}|${primary.name}|${turn.client.name}`;
       if (sizeTold.get(told) !== localDay(Date.now())) {
         sizeTold.set(told, localDay(Date.now()));
-        events.notice?.(`${primary.name} cannot hold this room's prompt; ${turn.client.name} answers.`);
+        events.notice?.(`${modelTitle(primary.name)} cannot hold this room's prompt; ${modelTitle(turn.client.name)} answers.`);
       }
     }
-    if (failed.length) events.notice?.(turn.broke ? `${failed.splice(0).join('; ')}, so no model could finish this reply.` : `${failed.splice(0).join('; ')}, so ${turn.client.name} answers.`);
+    if (failed.length) events.notice?.(turn.broke ? `${failed.splice(0).join('; ')}, so no model could finish this reply.` : `${failed.splice(0).join('; ')}, so ${modelTitle(turn.client.name)} answers.`);
     // Words already shown stay; the founder is told they stop short. (A cut reply with no words moved to the next model already.)
-    if (turn.cut && !turn.broke) events.notice?.(`${turn.client.name} hit its length limit, so this reply is cut short. Ask for the rest, or for a shorter answer.`);
+    if (turn.cut && !turn.broke) events.notice?.(`${modelTitle(turn.client.name)} hit its length limit, so this reply is cut short. Ask for the rest, or for a shorter answer.`);
     // A broken reply every model failed on was counted as a failure already, not a good answer.
     if (!turn.reported) usage.record(turn.client.name, turn.usage, turn.quota);
     total.input += turn.usage?.input ?? 0;
@@ -289,7 +290,7 @@ export async function runTurn(input: {
       }, clients, onFailure, (client) => usage.admit(client.name), (client) => usage.resting(client.name), (client) => usage.blocked(client.name))
         .catch((error: Error) => { if (!/empty reply/.test(error.message)) unanswered = error.message; return null; });
       if (said) {
-        if (failed.length) events.notice?.(said.broke ? `${failed.join('; ')}, so no model could finish this reply.` : `${failed.join('; ')}, so ${said.client.name} answers.`);
+        if (failed.length) events.notice?.(said.broke ? `${failed.join('; ')}, so no model could finish this reply.` : `${failed.join('; ')}, so ${modelTitle(said.client.name)} answers.`);
         if (!said.reported) usage.record(said.client.name, said.usage, said.quota);
         total.input += said.usage?.input ?? 0;
         total.output += said.usage?.output ?? 0;

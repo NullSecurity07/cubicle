@@ -4,6 +4,7 @@ import { everyoneIn, useFlowPick } from '../flow';
 import { SLICES } from '../slices';
 import { useVoices } from './MediaCards';
 import { useModels } from '../models';
+import { modelTitle } from '../../shared/modelNames';
 
 export type Person = { name: string; role: string; brief: string; model?: string; gender?: Gender; voice?: string; voiceBy?: VoiceBy };
 
@@ -73,8 +74,8 @@ export function PersonForm({ id, person, onSave, onCancel }: { id: string; perso
       <label>Model
         <select aria-label="Model" value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })}>
           <option value="auto">Auto · best free model with room left</option>
-          {models.map((model) => <option key={model.name} value={model.name}>{model.name} · {model.model} · {Math.round(model.left * 100)}% left</option>)}
-          {form.model !== 'auto' && !models.some((model) => model.name === form.model) && <option value={form.model}>{form.model} · not set up</option>}
+          {models.map((model) => <option key={model.name} value={model.name}>{modelTitle(model.name)} · {model.model} · {Math.round(model.left * 100)}% left</option>)}
+          {form.model !== 'auto' && !models.some((model) => model.name === form.model) && <option value={form.model}>{modelTitle(form.model)} · not set up</option>}
         </select>
       </label>
       <div className="setup__end">

@@ -1,10 +1,12 @@
+import { modelTitle } from '../shared/modelNames.ts';
 import { sideClient } from './cache.ts';
 import { providerOf, type ModelClient } from './providers.ts';
 import type { UsageBook } from './usage.ts';
 
 // Below this share of a day's free quota a provider is treated as spent: what is left would not survive a turn.
 export const FLOOR = 0.05;
-const title = (name: string) => name[0].toUpperCase() + name.slice(1);
+// Every model is said by its name, never by the id the config gives it.
+const title = modelTitle;
 
 // One order for every turn, the partner's and everyone else's: the strongest free models first. Gemini held its ground
 // in the live runs; gpt-oss on Cloudflare held a 25-40k room prompt with a tool call and answered best and fast; Kimi on
@@ -81,6 +83,13 @@ export function route(all: ModelClient[], usage: UsageBook, want: Want) {
   // is all there is: its credit is the founder's money.
   const clients = all.filter((client) => (want.partner || !client.partnerOnly) && !(client.limits.rpmo && usage.spent?.(client)));
   // A side call keeps the order it was given: summaries read the list backwards on purpose.
+  // A side model only writes the short calls around a turn. Pinned to a person, it cannot answer their turn, and the
+  // founder hears that, not that it is missing: its key is there.
+  const pin = want.pinned && want.pinned !== 'auto' ? clients.filter((client) => providerOf(client.name) === want.pinned) : [];
+  if ((want.kind ?? 'turn') === 'turn' && pin.length && pin.every((client) => client.side)) {
+    const found = rank([...clients.filter((client) => !client.side)].sort((a, b) => tier(a) - tier(b)), usage, { ...want, pinned: undefined });
+    return { order: found.order, notice: `${title(want.pinned!)} is a side model (short answers); the turn uses the normal order.` };
+  }
   if ((want.kind ?? 'turn') === 'turn') return rank([...clients.filter((client) => !client.side)].sort((a, b) => tier(a) - tier(b)), usage, want);
   const found = rank(clients, usage, want);
   // The small model first while it has room; the rest behind it keep the fallthrough as it always was.
