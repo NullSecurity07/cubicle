@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type DragEvent, type KeyboardEvent } from 'react';
 import type { Attachment, ChatMessage, ChatVia, ToolEvent } from '../../shared/model';
-import { deleteMessage, getChat, sendChat, uploadFile } from '../api';
+import { deleteMessage, getChat, sendChat, stopChat, uploadFile } from '../api';
 import { emit, listen } from '../bus';
 import { useLearnedIn } from '../overlay/playbook';
 import { overlay, showPlaybook } from '../overlay/store';
@@ -229,7 +229,7 @@ export function Chat({ id, name, role, partner, onStatus }: { id: string; name: 
         {SLICES.map((slice) => (slice.compose ? <slice.compose key={slice.name} roomId={id} insert={insert} busy={busy} /> : null))}
         <textarea ref={box} rows={1} value={draft} placeholder={`Ask ${name}…`} onChange={(event) => setDraft(event.target.value)} onKeyDown={onKeyDown} {...(editing ? { 'data-holds-escape': '' } : {})} />
         {thinking ? (
-          <button type="button" className="ask__stop" aria-label="Stop" title="Stop" onClick={() => stop.current?.abort()}>
+          <button type="button" className="ask__stop" aria-label="Stop" title="Stop" onClick={() => { void stopChat(id); stop.current?.abort(); }}>
             {STOP_ICON}
           </button>
         ) : (

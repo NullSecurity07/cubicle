@@ -452,6 +452,24 @@ test('a step waiting for the founder is answered on its dashboard row, and the a
   await expect(node(page, 'build').locator('.chip--ok summary').last()).toHaveText('Ran javascript code');
 });
 
+test('a step waiting for the founder outlives a reload: answered later in Needs you, the result lands', async ({ page }) => {
+  await send(page, 'build', '/tool run_code {"language":"javascript","code":"console.log(6 * 7)"}');
+  await expect(node(page, 'build').getByRole('group', { name: 'Run this code?' })).toBeVisible();
+  // The window that asked goes away. Closing it is not the founder's Stop: the question waits on.
+  await page.reload();
+  const bell = page.getByRole('button', { name: /^Needs you/ });
+  await expect(bell).toHaveAccessibleName('Needs you: 1 waiting');
+  await bell.click();
+  const needs = page.getByRole('dialog', { name: 'Needs you' });
+  await needs.getByRole('group', { name: 'Run this code?' }).getByRole('button', { name: 'Run' }).click();
+  await expect(bell).toHaveAccessibleName('Needs you: nothing waiting');
+  await page.keyboard.press('Escape');
+  await expect(node(page, 'build').locator('.chip--ok summary').last()).toHaveText('Ran javascript code');
+  await expect(node(page, 'build').locator('.msg--assistant').last()).toContainText('Tool said: 42');
+  await expect(node(page, 'build').locator('.msg--assistant').last()).not.toContainText('Stopped by the founder');
+  await expect(node(page, 'build').locator('.status--idle')).toBeVisible();
+});
+
 test('a coder card: a wired person hands it work, the founder approves each step on the card, and drives it directly too', async ({ page }) => {
   await tidy(page);
   await addCard(page, 'Add coder');
