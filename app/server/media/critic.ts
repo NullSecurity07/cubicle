@@ -13,6 +13,7 @@ import {
   carriesVisual, CODEY, contrasty, DATA, ECHO_FINE, EMPHASIS_WORDS, facesCamera, figureIn, hasNumber, headlineOf, keywords,
   kickerOf, listable, listy, NEEDS_TEXT, noFace, opensADoor, plainClose, shorten, stockHeading, subjectOf, trimTo, trimWhole, wholeBullet, worthAStat,
 } from './wording.ts';
+import { withoutFigures } from '../figures.ts';
 
 // What a creator says to an audience on a platform, never a film's close anywhere else.
 const SIGN_OFF = /\b(?:follow (?:for more|us|me|along)|like and (?:share|subscribe)|smash (?:that|the) \w+|hit (?:the )?(?:like|follow|subscribe)|link in (?:the )?bio)\b/i;
@@ -273,7 +274,7 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
       const figure = figureIn(scene.text) ?? figureIn(scene.say);
       // A number only becomes the size of the frame when it is a number the viewer gets something from.
       if (!figure || countWords(figure) > 3 || !worthAStat(figure, `${scene.text ?? ''} ${scene.say ?? ''}`)) return null;
-      return { ...scene, layout: 'stat', heading: figure, text: headlineOf((scene.text ?? scene.say ?? '').replace(figure, ' '), 6) };
+      return { ...scene, layout: 'stat', heading: figure, text: headlineOf(withoutFigures(scene.text ?? scene.say ?? '', [figure], ' '), 6) };
     }
     if (next === 'compare') {
       const halves = (scene.text || scene.say || '').split(/\s+(?:but|instead of|rather than|versus|vs\.?)\s+/i);
@@ -407,10 +408,10 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
         for (const key of ['heading', 'text', 'say'] as const) {
           const said = made[key];
           if (!said) continue;
-          const clean = unsourced.reduce((line, figure) => line.replace(figure, ''), said).replace(/\s{2,}/g, ' ').replace(/\s+([,.!?%])/g, '$1').trim();
+          const clean = withoutFigures(said, unsourced).replace(/\s{2,}/g, ' ').replace(/\s+([,.!?%])/g, '$1').trim();
           made = { ...made, [key]: countWords(clean) >= 2 ? clean : undefined } as Scene;
         }
-        made = { ...made, bullets: made.bullets?.map((one) => unsourced.reduce((line, figure) => line.replace(figure, ''), one).trim()).filter((one) => countWords(one) >= 1) };
+        made = { ...made, bullets: made.bullets?.map((one) => withoutFigures(one, unsourced).trim()).filter((one) => countWords(one) >= 1) };
       }
       // A company the film made up is struck out of every line it appears in; there is nothing to put in its place,
       // because there was never anything there.
@@ -500,7 +501,7 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
     if (scene.layout !== 'stat' || !scene.heading) return scene;
     const figure = figureIn(scene.heading);
     if (!figure || scene.heading.trim() === figure) return scene;
-    const rest = scene.heading.replace(figure, ' ').replace(/\s+/g, ' ').trim();
+    const rest = withoutFigures(scene.heading, [figure], ' ').replace(/\s+/g, ' ').trim();
     note('the words beside a figure are set under it, so the figure can be the size of the scene');
     return { ...scene, heading: figure, text: trimTo([rest, scene.text].filter(Boolean).join(' '), 6) || scene.text };
   });

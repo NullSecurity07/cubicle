@@ -1,4 +1,5 @@
 import { content, countWords, STOP, VISUAL_LAYOUTS, type Layout, type Purpose, type Scene } from './spec.ts';
+import { hitsOutsideCodes } from '../figures.ts';
 
 // Reading what a line of writing actually is: where a headline may stop, what a line's keywords are, whether it
 // opens a door, carries a figure or asks for a face. The critic reads every storyboard with these, and the studio
@@ -223,7 +224,8 @@ export const contrasty = (text?: string): boolean => /\b(?:but|instead of|rather
 
 // The one number a stat scene is built on, pulled out of the line that mentions it.
 export const figureIn = (text?: string): string | null => {
-  const found = FIGURE_IN.exec(text ?? '');
+  // Never a piece of a date, a time, a version or a phone number: "2026" out of "2026-10-19" is no stat.
+  const found = hitsOutsideCodes(text ?? '', new RegExp(FIGURE_IN.source, 'gi'))[0];
   return found ? found[1].trim().replace(/[.,]$/, '') : null;
 };
 

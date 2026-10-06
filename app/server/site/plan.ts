@@ -2,6 +2,7 @@ import { isSectionKind, SECTION_KINDS, SECTION_NAMES, type Section, type Section
 import { fullDay } from '../clock.ts';
 import { invented, moneyIn, numbersIn, sourceOf, type Material } from '../deck/critic.ts';
 import { firstJson, JSON_RULE } from '../json.ts';
+import { replaceOutsideCodes } from '../figures.ts';
 
 // A page plan is flat: a title and a run of sections, each a headline, a few lines, perhaps one figure and one picture
 // ask. A model fills it; the critic reads it; the model hears what was wrong once and gets a second go; then the rules
@@ -72,7 +73,7 @@ export function mend(input: Section[], material: Material, fresh: () => string =
     const section: Section = { ...original, lines: [...original.lines], ...(original.figure ? { figure: { ...original.figure } } : {}) };
     const at = `${SECTION_NAMES[section.kind].toLowerCase()} (section ${index + 1})`;
     if (!sourced(section.headline, material)) {
-      const kept = words(section.headline.replace(/[$€£]?\s?\d[\d,.]*\s?(?:%|x\b|k\b|m\b|bn\b|million\b|billion\b|thousand\b)?/gi, ' ')).join(' ').replace(/^[^\p{L}\d]+|[\s,;:–-]+$/gu, '');
+      const kept = words(replaceOutsideCodes(section.headline, /[$€£]?\s?\d[\d,.]*\s?(?:%|x\b|k\b|m\b|bn\b|million\b|billion\b|thousand\b)?/gi, () => ' ')).join(' ').replace(/^[^\p{L}\d]+|[\s,;:–-]+$/gu, '');
       section.headline = words(kept).length >= 2 ? kept : SECTION_NAMES[section.kind];
       said.push(`${at}: took a number with no source out of the headline`);
       cut += 1;
