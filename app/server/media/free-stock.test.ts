@@ -140,6 +140,13 @@ describe('Wikimedia Commons', () => {
     const got = await commons(answering(COMMONS_VIDEOS), dir).get(found[0]);
     expect(got.ext).toBe('webm');
   });
+  // Journey 13 live proof: a square film asked Commons for square footage only, and Commons has almost none.
+  it('takes wide footage for a square or tall film, which is cut to its frame afterwards', async () => {
+    for (const shape of ['square', 'tall']) {
+      const found = await commons(answering(COMMONS_VIDEOS), dir).find({ query: 'bakery', kind: 'video', shape });
+      expect(found.map((one) => one.id)).toEqual(['commons-video-21', 'commons-video-24']);
+    }
+  });
   it('an error is said, not swallowed', async () => {
     await expect(commons(answering('down', 503), dir).find({ query: 'oven' })).rejects.toThrow('Wikimedia Commons answered 503');
   });
