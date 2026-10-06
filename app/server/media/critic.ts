@@ -40,6 +40,9 @@ export type Want = {
   // Whether the brief asked for somebody on camera. A film that was asked for one and shows a photograph instead is
   // the thing a founder wrote "no talking, no body and hand movement" about.
   person?: boolean;
+  // Whether the brief asked for real moving footage ("with real footage clips of the stalls"). A film that was asked
+  // for clips and plans none is a slideshow nobody asked for.
+  footage?: boolean;
   // The one line of visual direction every drawn picture in this film is prefixed with, so six pictures look like
   // six frames of one film rather than six stock photos.
   bible: string;
@@ -534,6 +537,20 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
     }
   }
 
+  // 2b4. Footage, where footage was asked for. The director is told it may use one clip and often uses none; a brief
+  //      that says "real footage clips" gets one, in the middle of the film, of what that scene's picture was of.
+  if (want.footage && can('clip') && !scenes.some((one) => one.layout === 'clip' || one.layout === 'footage' || one.layout === 'presenter')) {
+    const moving = (one: Scene) => one.layout === 'picture' && !one.asset && !one.person;
+    const middle = scenes.findIndex((one, index) => index > 0 && index < scenes.length - 1 && moving(one));
+    const at = middle >= 0 ? middle : scenes.findIndex(moving);
+    if (at >= 0) {
+      note('the brief asks for real footage, so one scene is a moving clip rather than a still');
+      scenes = scenes.map((one, index) => (index === at
+        ? { ...one, layout: 'clip' as Layout, clip_prompt: (one.clip_prompt ?? one.image_prompt ?? one.text ?? one.say ?? '').slice(0, 240), seconds: Math.min(5, Math.max(3, one.seconds ?? 4)) }
+        : one));
+    }
+  }
+
   // 2c. The product, shown. Where there are real screenshots on the card and not one scene holds one, the scene that
   //     was going to be a drawing holds a screenshot instead — that being the picture the founder actually has.
   if (want.screens?.length && can('device') && !scenes.some((one) => one.layout === 'device' || one.layout === 'footage')) {
@@ -634,6 +651,26 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
       return made;
     });
   }
+
+  // 4b. Nothing is said twice. Journey 13: the director, asked for one more line to fill twenty seconds, wrote the
+  //     film's closing line again, and "Taste the difference real dirt and sunshine make" was heard in scenes three
+  //     and five. The second saying goes; when it is the close, the earlier one goes instead, so the film still ends
+  //     on it. A scene that shows something real (a screenshot, a picture, a clip) stays on screen without the
+  //     line; one that only said it is dropped.
+  const shows = (scene: Scene) => !!(scene.asset || scene.image_prompt || scene.clip_prompt || scene.portrait_prompt) || scene.layout === 'device' || scene.layout === 'footage';
+  const sayOnce = () => {
+    for (let later = 1; later < scenes.length && scenes.length > 2; later += 1) {
+      const said = scenes[later].say?.trim();
+      if (!said) continue;
+      const earlier = scenes.findIndex((one, index) => index < later && !!one.say?.trim() && saidAgain(one.say!, said));
+      if (earlier < 0) continue;
+      const quiet = later === scenes.length - 1 ? earlier : later;
+      note('a line the film already said was said again, so it is said once');
+      if (shows(scenes[quiet])) scenes = scenes.map((one, index) => (index === quiet ? { ...one, say: undefined, source: undefined } : one));
+      else { scenes = scenes.filter((_one, index) => index !== quiet); later -= 1; }
+    }
+  };
+  sayOnce();
 
   // 5. No scene holds longer than a breath. A line too long for one scene is two scenes when there is room for one
   //    and a shorter line when there is not.
@@ -856,7 +893,13 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
     }
   }
 
+  // 15. Nothing is said twice, once more: the close and the promise above may have put a line back.
+  sayOnce();
+
   return { spec: { ...spec, scenes }, notes };
 }
+
+// Whether two spoken lines are the same line: each has nearly all of the other's words.
+export const saidAgain = (one: string, other: string): boolean => echoes(one, other) >= 0.8 && echoes(other, one) >= 0.8;
 
 const LISTS = new Set<Layout>(['checklist', 'steps', 'bullets', 'compare', 'chart']);

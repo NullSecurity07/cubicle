@@ -59,6 +59,10 @@ export type Stock = {
   heard?(): string[];
   // Whether it has moving footage as well as photographs.
   moving?: boolean;
+  // The libraries that are asked for footage, by name, for the line that says why a film has no clip.
+  footageFrom?(): string[];
+  // Counts one clip a film asked for and found nowhere, so Health can say so.
+  noClip?(): Promise<void>;
 };
 
 // A photographer's name and the page their picture lives on, said the way a credit is said.
@@ -113,28 +117,45 @@ export type FilmStock = {
     Promise<{ found: Found; ext: string; bytes: Buffer } | null>;
   // A few seconds of real footage of the scene's own things, or null. Same rules as a photograph: never the speaker,
   // never beside a named product's claim.
-  clip(ask: { query: string; shape?: string; speaker?: boolean; names?: string[]; seconds?: number }, signal?: AbortSignal):
+  clip(ask: { query: string; shape?: string; speaker?: boolean; names?: string[]; seconds?: number; fits?: (one: Found) => boolean }, signal?: AbortSignal):
     Promise<{ found: Found; ext: string; bytes: Buffer } | null>;
+  // Why the clips asked for since the last call found nothing, in one line, or '' when one was found; the miss is
+  // counted for Health.
+  noClip(): Promise<string>;
 };
+
+// The one line a film's log says when no footage fitted: what was asked, where, and how many came back against how
+// many fitted. "no free clip for 'farmers market'; tried Wikimedia Commons, 0 of 4 fit"
+export type ClipMiss = { query: string; seen: number; fit: number };
+export function clipMissLine(misses: ClipMiss[], from: string[]): string {
+  if (!misses.length) return '';
+  const seen = misses.reduce((sum, one) => sum + one.seen, 0);
+  const fit = misses.reduce((sum, one) => sum + one.fit, 0);
+  const where = from.length ? from.join(' and ') : 'the free footage libraries';
+  return `no free clip for '${misses[0].query}'; tried ${where}, ${seen ? `${fit} of ${seen} fit` : 'none came back with a free licence, a wide enough frame and three to ninety seconds'}`;
+}
 export function filmStock(stock: Stock | undefined, pack: string, report: (line: string) => void): FilmStock {
   const on = !!stock && photographable(pack);
   let troubled = false;
   const said = new Set<string>();
   const say = (line: string) => { if (line && !said.has(line)) { said.add(line); report(line); } };
   const hear = () => { for (const line of stock?.heard?.() ?? []) say(line); };
+  const misses: ClipMiss[] = [];
   const one = async (kind: StockKind, ask: { query: string; shape?: string; speaker?: boolean; names?: string[]; fits?: (one: Found) => boolean; seconds?: number }, signal?: AbortSignal) => {
     if (!on || stock!.ready() || troubled || signal?.aborted) return null;
     try {
-      const found = broll(await stock!.find({ query: ask.query, kind, shape: ask.shape, many: 6 }, signal),
-        { speaker: ask.speaker, names: ask.names })
+      const all = await stock!.find({ query: ask.query, kind, shape: ask.shape, many: kind === 'video' ? 12 : 6 }, signal);
+      const found = broll(all, { speaker: ask.speaker, names: ask.names })
         .filter((one) => !ask.fits || ask.fits(one))
         .filter((one) => kind !== 'video' || !one.seconds || one.seconds >= Math.min(3, ask.seconds ?? 3));
       hear();
+      if (kind === 'video' && !found.length) misses.push({ query: ask.query, seen: all.length, fit: 0 });
       if (!found.length) return null;
       const piece = await stock!.get(found[0], signal);
       return { found: found[0], ...piece };
     } catch (error) {
       hear();
+      if (kind === 'video') misses.push({ query: ask.query, seen: 0, fit: 0 });
       const { say: line, stop } = trouble(error);
       say(line);
       if (stop) troubled = true;
@@ -145,7 +166,16 @@ export function filmStock(stock: Stock | undefined, pack: string, report: (line:
     missing: on && !!stock!.ready(),
     clips: on && !stock!.ready() && !!stock!.moving,
     take: (ask, signal) => one('photo', ask, signal),
-    clip: (ask, signal) => one('video', ask, signal),
+    clip: async (ask, signal) => {
+      const got = await one('video', ask, signal);
+      if (got) misses.length = 0;
+      return got;
+    },
+    async noClip() {
+      const line = clipMissLine(misses.splice(0), stock?.footageFrom?.() ?? (stock?.moving ? [stock.name] : []));
+      if (line) await stock?.noClip?.().catch(() => {});
+      return line;
+    },
   };
 }
 
@@ -182,19 +212,33 @@ export const libraryOf = (id: string): string =>
 
 // How many pictures and clips each library served today, kept beside the cached pictures so Health can say which
 // library films really drew on — a row that said "drawn pictures only" while a film used two Openverse photographs.
-export type Served = { day: string; by: Record<string, number> };
+export type Served = { day: string; by: Record<string, number>; missed?: number };
 const servedFile = (dir: string) => join(dir, 'served.json');
 const today = (now: number) => new Date(now).toISOString().slice(0, 10);
 export async function servedToday(dir: string, now = Date.now()): Promise<Record<string, number>> {
   const held = await readFile(servedFile(dir), 'utf8').then((raw) => JSON.parse(raw) as Served).catch(() => null);
   return held && held.day === today(now) ? held.by ?? {} : {};
 }
+const servedHeld = async (dir: string, now: number): Promise<Served> => {
+  const held = await readFile(servedFile(dir), 'utf8').then((raw) => JSON.parse(raw) as Served).catch(() => null);
+  return held && held.day === today(now) ? { day: held.day, by: held.by ?? {}, missed: held.missed ?? 0 } : { day: today(now), by: {}, missed: 0 };
+};
 export async function served(dir: string, one: Pick<Found, 'id'>, now = Date.now()): Promise<void> {
   await mkdir(dir, { recursive: true }).catch(() => {});
-  const by = await servedToday(dir, now);
+  const held = await servedHeld(dir, now);
   const name = libraryOf(one.id);
-  by[name] = (by[name] ?? 0) + 1;
-  await writeFile(servedFile(dir), JSON.stringify({ day: today(now), by } satisfies Served)).catch(() => {});
+  held.by[name] = (held.by[name] ?? 0) + 1;
+  await writeFile(servedFile(dir), JSON.stringify(held satisfies Served)).catch(() => {});
+}
+// How many clips films asked for today and found in no library, which Health says beside the photographs.
+export async function clipsMissedToday(dir: string, now = Date.now()): Promise<number> {
+  return (await servedHeld(dir, now)).missed ?? 0;
+}
+export async function missedClip(dir: string, now = Date.now()): Promise<void> {
+  await mkdir(dir, { recursive: true }).catch(() => {});
+  const held = await servedHeld(dir, now);
+  held.missed = (held.missed ?? 0) + 1;
+  await writeFile(servedFile(dir), JSON.stringify(held satisfies Served)).catch(() => {});
 }
 
 export function pexels(env: NodeJS.ProcessEnv = process.env, http: typeof fetch = fetch, dir = '.cache/stock'): Stock {

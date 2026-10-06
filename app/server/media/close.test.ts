@@ -131,3 +131,10 @@ describe('nothing beside the close the founder did not write', () => {
     expect(close.heading).toBe('free forever');
   });
 });
+
+describe('whether the brief asked for footage', () => {
+  it('reads "real footage clips" as footage, and a film called a clip as not', () => {
+    expect(briefWants({ lines: [] }, 'A 20 second documentary about a farmers market, with real footage clips of the stalls.').footage).toBe(true);
+    expect(briefWants({ lines: [] }, 'A 20 second documentary clip about a pottery class, with real photographs.').footage).toBeUndefined();
+  });
+});

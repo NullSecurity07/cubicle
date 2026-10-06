@@ -963,7 +963,10 @@ test('a video studio: the founder sets the film going and watches it being made,
   // Who took the photographs in it is one click away, as the words that travel beside the film.
   const credits = card.getByRole('link', { name: 'Credits' });
   await expect(credits).toHaveAttribute('href', /\/api\/files\/media\/.+\.mp4\.credits\.txt$/);
-  expect(await (await page.request.get((await credits.getAttribute('href'))!)).text()).toContain('Openverse');
+  const creditsFile = await page.request.get((await credits.getAttribute('href'))!);
+  expect(await creditsFile.text()).toContain('Openverse');
+  // Said to be UTF-8, or the browser shows "Â·" for every middle dot in it.
+  expect(creditsFile.headers()['content-type']).toBe('text/plain; charset=utf-8');
   await expect.poll(async () => (await (await page.request.get(`/api/media/${id}`)).json()).results[0]?.poster).toMatch(/\.png$/);
 
   // The person writes the whole storyboard, and the film lands on the same card.

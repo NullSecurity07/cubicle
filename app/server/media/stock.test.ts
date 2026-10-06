@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  broll, creditOf, fakeStock, filmStock, LICENCE, peopleIn, pexels, PEXELS_HINT, PEXELS_REFUSED, photographable, trouble, type Found,
+  broll, clipMissLine, clipsMissedToday, creditOf, fakeStock, filmStock, missedClip, LICENCE, peopleIn, pexels, PEXELS_HINT, PEXELS_REFUSED, photographable, trouble, type Found,
 } from './stock.ts';
 import { heldFaceLine, NO_PHOTOS_LINE } from './video.ts';
 
@@ -235,5 +235,36 @@ describe('one film asking the library, as the founder hears it', () => {
 
   it('reads a 403 on one photograph file as that picture only, not a refused key', () => {
     expect(trouble(new Error('that photograph could not be fetched (403)'))).toEqual({ say: '', stop: false });
+  });
+});
+
+// Journey 13: a film asked for clips and had none, and nothing said why.
+describe('a clip that was asked for and not found', () => {
+  const video = (what: string): Found => ({ id: `commons-video-${what.length}`, kind: 'video', url: 'file://clip.webm', page: 'https://commons.wikimedia.org/x', width: 1920, height: 1080, seconds: 20, by: 'Someone', byUrl: '', licence: 'CC0', what, people: false });
+
+  it('says in one line what was asked, where, and how many fitted', () => {
+    expect(clipMissLine([{ query: 'farmers market', seen: 4, fit: 0 }], ['Wikimedia Commons'])).toBe("no free clip for 'farmers market'; tried Wikimedia Commons, 0 of 4 fit");
+    expect(clipMissLine([{ query: 'farmers market', seen: 0, fit: 0 }], [])).toMatch(/^no free clip for 'farmers market'; tried the free footage libraries, none came back/);
+    expect(clipMissLine([], ['Wikimedia Commons'])).toBe('');
+  });
+
+  it('counts what came back against what fitted across every try, and counts the miss once for Health', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'clip-miss-'));
+    try {
+      const stock = { ...fakeStock([video('a parade in Beirut'), video('a protest march')]), footageFrom: () => ['Wikimedia Commons'], noClip: () => missedClip(dir) };
+      const film = filmStock(stock, 'clean', () => {});
+      for (const query of ['stalls market', 'farmers market']) expect(await film.clip({ query, fits: (one) => !/beirut|protest/i.test(one.what) })).toBeNull();
+      expect(await film.noClip()).toBe("no free clip for 'stalls market'; tried Wikimedia Commons, 0 of 4 fit");
+      expect(await clipsMissedToday(dir)).toBe(1);
+      // Said once: asked again with nothing new missed, there is nothing to say and nothing more to count.
+      expect(await film.noClip()).toBe('');
+      expect(await clipsMissedToday(dir)).toBe(1);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('has nothing to say when a clip was found', async () => {
+    const film = filmStock(fakeStock([video('2012 USDA Farmers Market Opening')]), 'clean', () => {});
+    expect(await film.clip({ query: 'farmers market' })).not.toBeNull();
+    expect(await film.noClip()).toBe('');
   });
 });

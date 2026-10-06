@@ -122,8 +122,16 @@ export function firstHeadline(scenes: Scene[]): string | undefined {
   return undefined;
 }
 
-// Everything a critic needs out of the brief and the material beyond the truth: the close, and the founder's phrases.
-export function briefWants(material: Pick<Material, 'lines' | 'pitch'>, brief: string): { close?: Close; phrases: Phrases; endOn?: string } {
+// Whether the brief asks for real moving footage in the film ("with real footage clips of the stalls"). A film that
+// is itself called a clip ("a documentary clip about a pottery class") is not asking for one inside it.
+export const FOOTAGE_ASKED = /\b(?:footage|b-?roll|video clips|clips of|moving (?:shots|pictures|images))\b/i;
+
+// Everything a critic needs out of the brief and the material beyond the truth: the close, the founder's phrases, and
+// whether moving footage was asked for.
+export function briefWants(material: Pick<Material, 'lines' | 'pitch'>, brief: string): { close?: Close; phrases: Phrases; endOn?: string; footage?: boolean } {
   const endOn = endOnOf(brief);
-  return { close: closeLineOf(brief, material), phrases: phrasesOf(brief, [material.pitch ?? '', ...material.lines].filter(Boolean)), ...(endOn ? { endOn } : {}) };
+  return {
+    close: closeLineOf(brief, material), phrases: phrasesOf(brief, [material.pitch ?? '', ...material.lines].filter(Boolean)),
+    ...(endOn ? { endOn } : {}), ...(FOOTAGE_ASKED.test(brief ?? '') ? { footage: true } : {}),
+  };
 }

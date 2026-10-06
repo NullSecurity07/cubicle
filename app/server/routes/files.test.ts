@@ -15,6 +15,7 @@ beforeAll(async () => {
   const store = createStore(await mkdtemp(join(tmpdir(), 'files-route-')));
   await store.saveFileBytes('media/film.mp4', film);
   await store.saveFileBytes('notes/page.html', Buffer.from('<script>alert(1)</script>'));
+  await store.saveFileBytes('media/film.credits.txt', Buffer.from('"Stalls" by Someone · CC0 · Wikimedia Commons — https://commons.wikimedia.org/x\n', 'utf8'));
   const route = fileRoutes({ store });
   server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
@@ -57,8 +58,16 @@ describe('/api/files', () => {
 
   it('never serves a page somebody made as a page', async () => {
     const res = await fetch(`${base}/api/files/notes/page.html`);
-    expect(res.headers.get('content-type')).toBe('text/plain');
+    expect(res.headers.get('content-type')).toBe('text/plain; charset=utf-8');
     expect(res.headers.get('content-security-policy')).toContain('sandbox');
+  });
+
+  // Journey 13: a film's credits file showed "Â·" and "â€”", because text went out with no charset.
+  it('says text is UTF-8, so a credits line reads as written', async () => {
+    const res = await fetch(`${base}/api/files/media/film.credits.txt`);
+    expect(res.headers.get('content-type')).toBe('text/plain; charset=utf-8');
+    expect(await res.text()).toBe('"Stalls" by Someone · CC0 · Wikimedia Commons — https://commons.wikimedia.org/x\n');
+    expect((await fetch(`${base}/api/files/media/film.mp4`)).headers.get('content-type')).toBe('video/mp4');
   });
 
   it('takes an upload and says where it went', async () => {

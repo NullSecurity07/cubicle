@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { carriesVisual, criticise, criticiseShots, DATA, facesCamera, mendShots, noFace, opensADoor, plainClose, echoes, figureIn, headlineOf, inStyle, keywords, offStyle, repair, shorten, trimTo, worthAStat, type Want } from './critic.ts';
+import { carriesVisual, criticise, criticiseShots, DATA, saidAgain, facesCamera, mendShots, noFace, opensADoor, plainClose, echoes, figureIn, headlineOf, inStyle, keywords, offStyle, repair, shorten, trimTo, worthAStat, type Want } from './critic.ts';
 import { stillMoves } from './moves.ts';
 import { barOf, countWords, LAYOUTS, parseSpec, saidWords, saysWhatItShows, type Layout, type Scene, type Spec } from './spec.ts';
 
@@ -175,7 +175,11 @@ describe('one rule at a time', () => {
   });
 
   it('length: the narration is cut to what fifteen seconds really holds, not what thirty does', () => {
-    const over = spec(Array.from({ length: 5 }, () => ({ layout: 'picture' as const, image_prompt: 'a desk', say: 'Investors look for a real problem and a team that can ship it fast.' })));
+    // Five different lines: the same line five times is said once (rule 4b), which is a different rule.
+    const lines = ['Investors look for a real problem and a team that can ship it fast.', 'Buyers look for a cheap answer and a seller who can deliver it soon.',
+      'Partners want a clear market and a founder who can explain it well.', 'Customers pay for a painful need and a product that can solve it now.',
+      'Funds back a large market and a crew that can capture it early.'];
+    const over = spec(lines.map((say) => ({ layout: 'picture' as const, image_prompt: 'a desk', say })));
     expect(rules(criticise(over, reelWant({ reel: false })))).toContain('length');
     const { spec: fixed } = repair(over, reelWant({ reel: false }));
     expect(saidWords(fixed)).toBeLessThanOrEqual(Math.round(15 * 2.4));
@@ -771,5 +775,81 @@ describe('a sign-off for followers, outside a social post', () => {
   it('keeps it on a reel', () => {
     const { spec } = repair(pottery, want({ purpose: 'reel', reel: true }));
     expect(spec.scenes.at(-1)?.text).toMatch(/follow for more/i);
+  });
+});
+
+// Journey 13: "a 20 s documentary about a farmers market with real footage clips", Footage on Stock and generated,
+// came back all stills: the director may use one clip and used none, and nothing put one in.
+describe('a clip, where the brief asked for real footage', () => {
+  const want = (over: Partial<Want> = {}): Want => ({
+    seconds: 20, pace: 'calm', purpose: 'explainer', captions: false,
+    bible: 'quiet documentary photography, soft window light', layouts: [...LAYOUTS], reel: false, ...over,
+  });
+  const stills: Spec = {
+    title: 'Market',
+    scenes: [
+      { layout: 'picture', image_prompt: 'a crate of tomatoes at dawn', say: 'Why do grocery tomatoes taste like water?' },
+      { layout: 'picture', image_prompt: 'wooden stalls piled with greens at a busy farmers market', say: 'Here the growers sell what they picked yesterday.' },
+      { layout: 'cta', text: 'Find fresh harvest this weekend', say: 'Find fresh harvest this weekend.' },
+    ],
+  };
+
+  it('makes one scene in the middle a clip of what its picture was of', () => {
+    const { spec, notes } = repair(stills, want({ footage: true }));
+    expect(spec.scenes.map((one) => one.layout)).toEqual(['picture', 'clip', 'cta']);
+    expect(spec.scenes[1].clip_prompt).toContain('farmers market');
+    expect(notes.join(' ')).toContain('real footage');
+  });
+
+  it('leaves the stills alone when footage was not asked for, or no clip can be had', () => {
+    expect(repair(stills, want()).spec.scenes.some((one) => one.layout === 'clip')).toBe(false);
+    expect(repair(stills, want({ footage: true, layouts: LAYOUTS.filter((one) => one !== 'clip') })).spec.scenes.some((one) => one.layout === 'clip')).toBe(false);
+  });
+});
+
+// Journey 13: asked for one more line, the director wrote the closing line again and the film said it twice.
+describe('a line said twice', () => {
+  const want = (over: Partial<Want> = {}): Want => ({
+    seconds: 20, pace: 'calm', purpose: 'explainer', captions: false,
+    bible: 'quiet documentary photography, soft window light', layouts: [...LAYOUTS], reel: false, ...over,
+  });
+  const scene = (say: string, layout: Layout = 'statement'): Scene => ({ layout, text: say.split(' ').slice(0, 3).join(' '), say });
+
+  it('is said once, and a close that repeats an earlier line keeps the close', () => {
+    const twice: Spec = { title: 'Market', scenes: [
+      scene('Why do grocery tomatoes taste like water?'),
+      scene('Here the growers sell what they picked yesterday.'),
+      scene('Taste the difference real dirt and sunshine make.'),
+      scene('Every stall is somebody who grew it.'),
+      scene('Taste the difference real dirt and sunshine make!'),
+      scene('Find fresh harvest this weekend.', 'cta'),
+    ] };
+    const { spec, notes } = repair(twice, want());
+    const said = spec.scenes.map((one) => one.say);
+    expect(said.filter((one) => /Taste the difference/.test(one ?? ''))).toHaveLength(1);
+    expect(said.at(-1)).toBe('Find fresh harvest this weekend.');
+    expect(notes.join(' ')).toContain('said once');
+
+    const closeAgain: Spec = { title: 'Market', scenes: [
+      scene('Find fresh harvest this weekend.'), scene('Here the growers sell what they picked yesterday.'), scene('Find fresh harvest this weekend.', 'cta'),
+    ] };
+    const kept = repair(closeAgain, want()).spec.scenes;
+    expect(kept.filter((one) => /fresh harvest/.test(one.say ?? ''))).toHaveLength(1);
+    expect(kept.at(-1)!.layout).toBe('cta');
+  });
+
+  it('keeps a scene that shows something on screen, without the line', () => {
+    const shown: Spec = { title: 'Market', scenes: [
+      scene('Here the growers sell what they picked yesterday.'),
+      { layout: 'picture', image_prompt: 'a grower at a stall', say: 'Here the growers sell what they picked yesterday.' },
+      scene('Find fresh harvest this weekend.', 'cta'),
+    ] };
+    const kept = repair(shown, want()).spec.scenes;
+    expect(kept.some((one) => one.image_prompt === 'a grower at a stall')).toBe(true);
+    expect(kept.filter((one) => /growers sell/.test(one.say ?? ''))).toHaveLength(1);
+  });
+
+  it('leaves two lines that only share a few words', () => {
+    expect(saidAgain('Taste the difference real dirt and sunshine make.', 'Real dirt makes a difference you can taste in every bite of this.')).toBe(false);
   });
 });

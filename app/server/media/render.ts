@@ -97,11 +97,15 @@ export async function renderProject(bin: string, at: string, film: Film, help: {
   const total = film.shots.reduce((sum, one) => sum + one.seconds, 0);
   report(`rendering ${Math.round(total)} seconds…`);
   let last = 0;
+  const said = new Set<string>();
   const rendered = await run(bin, ['render', '.', '--no-browser-gpu', '--quiet', ...(draft ? ['--quality', 'draft'] : []), '-o', 'out.mp4'], at, (line) => {
-    // The renderer talks a lot; a line a second is enough for the founder to see it moving.
-    if (!line || Date.now() - last < 1000) return;
+    // The renderer talks a lot, and mostly to itself; what a founder hears is its few steps in words, each once, and
+    // at most a line a second.
+    const words = renderWords(line);
+    if (!words || said.has(words) || Date.now() - last < 1000) return;
     last = Date.now();
-    report(`rendering · ${line.slice(0, 120)}`);
+    said.add(words);
+    report(`rendering · ${words}`);
   }, signal, RENDER_TAIL);
   if (signal?.aborted) throw new Error('stopped');
   if (rendered.code !== 0) throw new Error(`the render stopped: ${(rendered.out.trim().split('\n').filter(Boolean).at(-1) ?? 'no reason given').slice(0, 200)}`);
@@ -178,4 +182,23 @@ export async function editPlan(film: Film, at: string): Promise<EditPlan> {
     },
     files: [...files].map(([name, bytes]) => ({ name, bytes })),
   };
+}
+
+// One of the renderer's own lines, in the founder's words, or null when it is the renderer talking to itself. Journey
+// 13: the film's log showed "rendering · [HyperFrames] render runtime fps [object Object]", which is the page's own
+// console line with its details already lost to the renderer's printing, and "[INFO] [Render:trace] {" lines that
+// are the start of a block of JSON. Neither says anything a founder can use, so only the steps are kept.
+export function renderWords(line: string): string | null {
+  const text = (line ?? '').trim();
+  if (!text || /\[object Object\]/.test(text) || /[{[]\\?$/.test(text)) return null;
+  if (/browser launched/i.test(text)) return 'the renderer is open';
+  if (/calibration/i.test(text)) return 'measuring how fast this machine draws a frame';
+  const reused = text.match(/reused (\d+)\/(\d+) frame/i);
+  if (reused) return `${reused[1]} of ${reused[2]} frames are still and were drawn once`;
+  const frame = text.match(/\bframe[s]?\s+(\d+)\s*(?:\/|of)\s*(\d+)/i);
+  if (frame && /render|encod|captur/i.test(text) && !/calibration|test frame/i.test(text)) return `frame ${frame[1]} of ${frame[2]}`;
+  const percent = text.match(/(\d{1,3})\s*%/);
+  if (percent && /render|encod|progress/i.test(text) && !/static|dedup|saved/i.test(text)) return `${percent[1]}%`;
+  if (/encod/i.test(text) && !/\[(INFO|DEBUG)\]/.test(text)) return 'putting the frames into a film';
+  return null;
 }

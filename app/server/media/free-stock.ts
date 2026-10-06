@@ -1,7 +1,7 @@
 import { digestOf } from './hash.ts';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { NONE_ANSWERED, peopleIn, pexels, remember, served, type Found, type Stock, type StockKind } from './stock.ts';
+import { missedClip, NONE_ANSWERED, peopleIn, pexels, remember, served, type Found, type Stock, type StockKind } from './stock.ts';
 import { nounsOf, numberish } from './visuals.ts';
 
 // Real photographs and real footage with no key at all.
@@ -274,7 +274,9 @@ export function commons(http: typeof fetch = fetch, dir = '.cache/stock'): Stock
         // enough. Either is cut to the film's frame by ffmpeg afterwards.
         // A long film is hundreds of megabytes for four seconds of use, so only short footage is taken.
         const seconds = Number(item.duration ?? 0);
-        if (!wantsShape(want.shape, width, height) || !(seconds >= 3 && seconds <= MAX_CLIP_SECONDS)) return [];
+        // Any shape of footage will do: it is cut to the film's own frame afterwards, and a square or tall film asking
+        // only for square or tall footage found none at all on Commons, where nearly everything is wide.
+        if (!(seconds >= 3 && seconds <= MAX_CLIP_SECONDS)) return [];
         const copies = (Array.isArray(item.derivatives) ? item.derivatives as Record<string, unknown>[] : [])
           .filter((one) => /vp9\.webm$/.test(String(one.transcodekey ?? '')) && Math.min(Number(one.width ?? 0), Number(one.height ?? 0)) >= MIN_CLIP)
           .sort((a, b) => Math.min(Number(b.width), Number(b.height)) - Math.min(Number(a.width), Number(a.height)));
@@ -351,11 +353,13 @@ export function stockChain(sources: Stock[]): Stock {
     },
     used: () => sources.flatMap((one) => one.used()),
     heard: () => lines.splice(0),
+    footageFrom: () => live().filter((one) => one.moving).map((one) => (one.name === 'pexels' ? 'Pexels' : one.name)),
   };
 }
 
 // The library a film gets: Pexels first when the founder has a key, then the two that need none.
 export function photoLibrary(env: NodeJS.ProcessEnv = process.env, http: typeof fetch = fetch, dir = '.cache/stock'): Stock {
   const free = [openverse(http, dir), commons(http, dir)];
-  return stockChain(env.PEXELS_API_KEY?.trim() ? [pexels(env, http, dir), ...free] : free);
+  const chain = stockChain(env.PEXELS_API_KEY?.trim() ? [pexels(env, http, dir), ...free] : free);
+  return { ...chain, noClip: () => missedClip(dir) };
 }
