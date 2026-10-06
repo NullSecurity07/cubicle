@@ -404,7 +404,8 @@ export function createPartner(options: PartnerOptions = {}) {
             deps.store.readChat(me.id).catch(() => []),
           ]);
           const evidence = [company, block, payload.query, ...chat.slice(-30).map((one) => one.text ?? ''), ...payload.reply.tools.map((tool) => tool.result ?? '')].join('\n');
-          const { reply, call, askedAgain } = await holdCall(payload.query, payload.reply, payload.again, today, evidence);
+          const said = [company, payload.query, ...chat.slice(-30).filter((one) => one.role === 'user' && !one.from).map((one) => one.text ?? ''), ...payload.reply.tools.filter((tool) => tool.ok !== false).map((tool) => tool.result ?? '')];
+          const { reply, call, askedAgain } = await holdCall(payload.query, payload.reply, payload.again, today, evidence, said);
           if (call) {
             payload = { ...payload, reply, lookedAgain: payload.lookedAgain || askedAgain };
             await state.change((held) => { held.call = { ...call, at: now(), day: today, roomId: me.id }; });

@@ -9,6 +9,8 @@
 //   is no source here: a colleague's invented line in it would do. Said as a view ("I think", "likely") it stands,
 //   marked "(assumption)".
 
+import { calculate } from './calc.ts';
+
 const EVIDENCE = /\b(?:pain|conversations?|interviews?|traction|evidence)\b/i;
 const HEADING = /^\s*#{1,6}\s+(.*)$/;
 const MARKER = /^\s*(?:[-*+>]\s+)?\(From chat:/;
@@ -44,7 +46,8 @@ function spelled(word: string): number | null {
   if (ten >= 0) return (ten + 2) * 10 + (one ? Math.max(SPELLED.indexOf(one), 0) : 0);
   return !one && SPELLED.includes(tens) ? SPELLED.indexOf(tens) : null;
 }
-type Token = { value?: number; word?: string };
+// `free`: a number a sum worked out from figures read, which backs a count of anything, since the sum carries no words.
+type Token = { value?: number; word?: string; free?: boolean };
 const TOKENS = /(?:[$€£]\s?)?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(?:\s?(k|m|thousand|million)\b)?(?:\s?(?:%|percent\b))?|[\p{L}][\p{L}'-]*/giu;
 function tokensOf(sentence: string): Token[] {
   return [...sentence.matchAll(TOKENS)].map((match) => {
@@ -105,7 +108,7 @@ const NEAR = 4;
 // held to its number alone.
 function backed(value: number, counted: string | null, sources: Token[][]): boolean {
   return sources.some((tokens) => tokens.some((token, index) => token.value === value
-    && (!counted || tokens.slice(Math.max(0, index - NEAR), index + NEAR + 1).some((one) => one.word && alike(one.word, counted)))));
+    && (token.free || !counted || tokens.slice(Math.max(0, index - NEAR), index + NEAR + 1).some((one) => one.word && alike(one.word, counted)))));
 }
 
 type Unbacked = { label: string; end: number };
@@ -149,7 +152,76 @@ function unbackedCounts(line: string, sources: Token[][], quoted = '', strict = 
   return found;
 }
 const flat = (text: string) => text.replace(/\s+/g, ' ').trim().toLowerCase();
-const sourceTokens = (sources: string[]) => sentencesOf(sources).map(tokensOf);
+
+// A sum as the calc tool gives it back, "7200 / 900 = 8" or "900 / 29 = 31.03448276 (exact: 31.034482758620690)", worked
+// again here so only true arithmetic counts. Journey 12: a person worked out a runway of 8 months and 32 paying studios
+// to break even with calc from the brief's figures, and the doc marked both "(unsourced)", since the sum names no
+// months and no studios. Its result, its rounding up or down ("31.03 studios" means 32 to break even) and every number
+// in its working are read, when each number in the working is: one nothing gives makes the whole sum unsourced.
+const SUM = /^\s*(.+?)\s=\s(-?\d[\d,]*(?:\.\d+)?(?:e[+-]?\d+)?)(?:\s\(exact:\s[^)]+\))?\s*$/i;
+const FUNCTIONS = /\b(?:min|max|sum|avg|round|floor|ceil|abs|sqrt)\b/g;
+// What a sum may use without a source: nothing, one, a pair, a year's months, a hundred for a share.
+const CONSTANTS = new Set([0, 1, 2, 12, 100]);
+function sumOf(line: string): { inputs: number[]; results: number[] } | null {
+  const match = SUM.exec(line);
+  if (!match) return null;
+  const working = match[1];
+  if (!/\d/.test(working) || !/^[\d\s.+\-*/%^(),e]*$/i.test(working.replace(FUNCTIONS, ''))) return null;
+  let value: number;
+  try { value = calculate(working).value; } catch { return null; }
+  const shown = Number(match[2].replace(/,/g, ''));
+  if (Math.abs(value - shown) > Math.abs(value) * 1e-8 + 1e-9) return null;
+  const inputs = [...working.replace(FUNCTIONS, '').matchAll(/\d+(?:\.\d+)?(?:e[+-]?\d+)?/gi)].map((one) => Number(one[0]));
+  return { inputs, results: [...new Set([shown, value, Math.ceil(value), Math.floor(value)])] };
+}
+
+// A count the doc tools or the writer marked "(unsourced)" is no source for itself said again, nor is the sum it went into;
+// nor is a doc tool's report of the marks it put in, whose label sits beside the words of its line.
+const unmarked = (source: string) => source.split('\n').filter((line) => !/\bMarked as unsourced\b/.test(line)).join('\n')
+  .replace(/\S+\s*\(unsourced\)/gi, '');
+
+// The sources with every sum taken out, and the sums whose working rests on what was read, in turn: a sum may build on
+// an earlier sum's result.
+function sortSums(sources: string[]): { plain: string[]; sums: string[]; free: number[] } {
+  const plain: string[] = [];
+  const pending: { line: string; inputs: number[]; results: number[] }[] = [];
+  for (const source of sources.map(unmarked)) {
+    const kept: string[] = [];
+    for (const line of source.split('\n')) {
+      const sum = sumOf(line);
+      if (sum) pending.push({ line, ...sum });
+      else kept.push(line);
+    }
+    plain.push(kept.join('\n'));
+  }
+  const known = new Set(sentencesOf(plain).flatMap(tokensOf).flatMap((token) => (token.value === undefined ? [] : [token.value])));
+  const read = (value: number) => CONSTANTS.has(value) || known.has(value) || known.has(Number((value * 100).toPrecision(12)));
+  const sums: string[] = [];
+  const free: number[] = [];
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const sum of [...pending]) {
+      if (!sum.inputs.every(read)) continue;
+      pending.splice(pending.indexOf(sum), 1);
+      sums.push(sum.line);
+      for (const value of [...sum.inputs, ...sum.results]) { free.push(value); known.add(value); }
+      grew = true;
+    }
+  }
+  return { plain, sums, free };
+}
+
+// The sources a figure check may take as read: a sum whose working rests on a figure nothing gives is left out, so its
+// result is unsourced like its input.
+export function readableSources(sources: string[]): string[] {
+  const { plain, sums } = sortSums(sources);
+  return [...plain, ...sums];
+}
+
+const sourceTokens = (sources: string[]): Token[][] => {
+  const { plain, free } = sortSums(sources);
+  return [...sentencesOf(plain).map(tokensOf), ...free.map((value) => [{ value, free: true }])];
+};
 
 // The sentences of a colleague's answer whose every count is in what that colleague read, said of the same thing: the
 // part of it that may back a count in the asker's write. What they said from their own head backs nothing.
@@ -170,25 +242,31 @@ export function unbackedEnds(line: string, read: string[]): number[] {
 
 // The counts a write adds to a document with no rules that nothing read gives for what they count, each marked
 // "(unsourced)" right after it, once: the doc keeps the writer's words and says which figures are theirs alone.
-export function markUnbacked(input: { before: string; after: string; read: string[] }): { text: string; marked: string[] } {
+// Each mark comes back with its line as the doc now has it, mark and all: quoted without it, the report was itself
+// read as a source for the bare count, and the next write in the same turn took the mark out again (journey 12).
+export type CountMark = { label: string; line: string };
+export function markUnbacked(input: { before: string; after: string; read: string[] }): { text: string; marked: CountMark[] } {
   const sources = sourceTokens(input.read);
   const quoted = flat(input.read.join('\n'));
   const lines = input.after.split('\n');
-  const marked: string[] = [];
+  const marked: CountMark[] = [];
   for (const { line } of added(input.before, input.after)) {
     if (/^\s*(?:>|```)/.test(lines[line])) continue;
     const misses = unbackedCounts(lines[line], sources, quoted);
-    marked.push(...misses.map((miss) => `"${miss.label}" (in "${quote(lines[line])}")`));
     for (const miss of [...misses].reverse()) lines[line] = `${lines[line].slice(0, miss.end)} (unsourced)${lines[line].slice(miss.end)}`;
+    marked.push(...misses.map((miss) => ({ label: miss.label, line: lines[line] })));
   }
   return { text: lines.join('\n'), marked };
 }
+export const markSaid = (mark: CountMark) => `"${mark.label}" (in "${quote(mark.line)}")`;
 
 // A claim of evidence, and the words one of the founder's sentences or a tool result has to share with it.
 const CLAIMS: { said: RegExp; keys: RegExp }[] = [
   { said: /\bretention\b[^.;!?]{0,30}?\b(?:ok|okay|good|fine|strong|high|solid|great|healthy)\b/i, keys: /\b(?:retention|retain|retained|churn|renew|came back|come back|returning|stayed)\b/i },
   { said: /\b(?:customers?|users?|hosts?|clients?|designers?|people|they|everyone)\s+(?:really\s+|all\s+)?(?:love|loves|loved|like|likes|want|wants|need|needs|rave|begged|asked for)\b/i, keys: /\b(?:love|loves|loved|like|likes|liked|want|wants|wanted|need|needs|needed|rave|raved|begged|asked for)\b/i },
   { said: /\b(?:validated|confirmed|proven|verified)\b/i, keys: /\b(?:validat\w*|confirm\w*|prov\w*|verif\w*)\b/i },
+  // Journey 12: "The product itself works" stood in the partner's verdict with nothing behind it.
+  { said: /\b(?:(?:the\s+)?(?:product|app|tool|platform|prototype|mvp|beta|it)\s+(?:itself\s+|really\s+|clearly\s+)?(?:works|is working|does work)|proven to work|validated the (?:product|idea|market|demand))\b/i, keys: /\b(?:works?|working|worked|validat\w*|proven|bugs?|crash\w*|broken|uptime)\b/i },
   { said: /\b(?:we(?:'ve| have)|I(?:'ve| have)|the founder has|they(?:'ve| have))\s+(?:had|done|held|run|conducted|completed)\s+[\w-]+\s+(?:real\s+)?(?:customer\s+|user\s+)?(?:conversations?|interviews?|calls?)\b/i, keys: /\b(?:conversations?|interview\w*|calls?|called|talk\w*|spoke|spoken)\b/i },
 ];
 // Denied, doubted or still to come: "not validated yet", "unproven", "needs to be confirmed".
@@ -211,6 +289,24 @@ function added(before: string, after: string): { line: number; heading: string }
     if (title) { heading = title[1].trim(); return []; }
     return !line.trim() || had.has(line.trim()) || MARKER.test(line) ? [] : [{ line: index, heading }];
   });
+}
+
+// The claims of evidence in a text that no sentence of `said` backs, each as written: for a verdict's reason, where an
+// unbacked one is kept and marked "(assumption)" rather than refused.
+export function unbackedClaims(text: string, said: string[]): string[] {
+  const heard = sentencesOf(said);
+  return text.split(/(?<=[.!?])\s+/).flatMap((sentence) => {
+    if (sentence.includes(MARK) || VIEW.test(sentence)) return [];
+    return CLAIMS.flatMap(({ said: claim, keys }) => {
+      const hit = claim.exec(sentence);
+      return !hit || DENIED.test(sentence.slice(0, hit.index)) || heard.some((one) => keys.test(one)) ? [] : [hit[0]];
+    });
+  });
+}
+
+// A text with "(assumption)" put after each sentence that makes a claim of evidence nothing in `said` backs.
+export function markClaims(text: string, said: string[]): string {
+  return text.split(/(?<=[.!?])\s+/).map((sentence) => (unbackedClaims(sentence, said).length ? sentence.replace(/([.!?]*)(\s*)$/, ` ${MARK}$1$2`) : sentence)).join(' ');
 }
 
 // `counts` is everything read that may give a count (founder messages, readable documents, tool results that

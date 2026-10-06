@@ -8,7 +8,7 @@ import { text, type Tool, type ToolContext } from './registry.ts';
 import { shortDay } from '../clock.ts';
 import { dropFlagged, figureCheck, HELD_BACK, holdVerdict, verdictStanding, type Receipt } from '../truth.ts';
 import { findCompanyDoc } from '../../shared/partner.ts';
-import { evidenceCheck, markUnbacked, unbackedEnds } from './evidence.ts';
+import { evidenceCheck, markSaid, markUnbacked, readableSources, unbackedEnds } from './evidence.ts';
 import { filled, guardWrite, sectionBody, standingVerdict, unmarked, verdictState, WHOLE } from './verdict.ts';
 
 // A new doc card's size, and the gap kept round it: the same the window uses when it places one.
@@ -114,7 +114,7 @@ const MARK = ' (unsourced)';
 const at = (label: string) => new RegExp(`(?<![\\d.,])${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\d])(?!\\s*\\(unsourced\\))`, 'g');
 function unsourcedIn(context: ToolContext, before: string, after: string): string[] {
   if (!context.sources) return [];
-  return figureCheck(after, [...context.sources(), before]).unsourced.filter((label) => at(label).test(after));
+  return figureCheck(after, readableSources([...context.sources(), before])).unsourced.filter((label) => at(label).test(after));
 }
 
 // A writer's own "(unsourced)" stays only right after a figure nothing this turn read gives. Refused once, a person
@@ -123,7 +123,7 @@ function unsourcedIn(context: ToolContext, before: string, after: string): strin
 const WRITER_MARK = /\s*\(unsourced\)/gi;
 function honestMarks(context: ToolContext, before: string, written: string, read: string[] | null): { text: string; dropped: number } {
   if (!context.sources || !/\(unsourced\)/i.test(written)) return { text: written, dropped: 0 };
-  const unsourced = figureCheck(written.replace(WRITER_MARK, ''), [...context.sources(), before]).unsourced;
+  const unsourced = figureCheck(written.replace(WRITER_MARK, ''), readableSources([...context.sources(), before])).unsourced;
   let dropped = 0;
   // A count the doc itself marked is no source for the same count said again.
   const unmarked = read?.map((source) => source.replace(/\S+\s*\(unsourced\)/gi, '')) ?? null;
@@ -210,7 +210,10 @@ async function save(context: ToolContext, id: string, before: string, written: s
     const counts = read ? markUnbacked({ before, after, read: read.read }) : null;
     if (counts?.marked.length) {
       after = counts.text;
-      done = `${done} Marked as unsourced, since nothing read gives them for what they count: ${counts.marked.join(', ')}. Read for them, or take them out.`;
+      // Only the marks the saved text still carries are reported, each quoted with its mark.
+      const kept = new Set(after.split('\n'));
+      const landed = counts.marked.filter((mark) => kept.has(mark.line));
+      if (landed.length) done = `${done} Marked as unsourced, since nothing read gives them for what they count: ${landed.map(markSaid).join(', ')}. Read for them, or take them out.`;
     }
   }
   // Only a team doc's own sections are kept to one copy, where a second would slip past the checks; a plain doc such
