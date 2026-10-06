@@ -1,5 +1,5 @@
 import { isShape, SHAPE_NAMES, type Slide } from '../../shared/deck.ts';
-import { unbackedClaims } from '../tools/evidence.ts';
+import { unbackedClaims, unbackedEnds } from '../tools/evidence.ts';
 
 // What a deck may be made of: the founder's brief, the documents, notes and project wired to the card, and where
 // traction is read from: a wired Metrics card's block, else the Company brief's Numbers (`metrics`, named for which it
@@ -60,6 +60,54 @@ export function tractionLines(material: Material): string[] {
 // the traction source. Journey 14: slide 8's notes answered the brief's own open question with a pilot nobody ran.
 const recordOf = (material: Material) => [material.brief, ...material.sources.map((source) => source.text), ...(material.metrics ? [material.metrics.text] : [])];
 export const claimsIn = (text: string, material: Material): string[] => unbackedClaims(text, recordOf(material));
+
+// What a slide may not say unless the material does. Journey 15: the PrintNear deck said "thousands of printers sit
+// unused nearby", "Trust built via local reviews and collection" (no such feature), "Solo founder with sales and
+// product background" and "Four completed jobs prove makers will use local hosts", none of it in the brief.
+// - a count, as the doc guard holds one: the number with the word for what it counts beside it in something read;
+// - a count in words ("thousands", "hundreds", "dozens") the material does not say;
+// - a product feature (reviews, insurance, pickup…) the material never names;
+// - a founder's background ("ex-", "former", "years at", "PhD") with no line of the material's Team section or a
+//   read sentence of background that shares a name with it;
+// - an empty field ("no dominant player") the material does not claim, and a proof ("prove", "proves") of what is
+//   still an open question.
+const VAGUE = /\b(?:thousands|hundreds|dozens|millions|billions|countless|tens of thousands)\b/gi;
+const FEATURE = /\b(?:reviews?|ratings?|insurance|insured|escrow|deposits?|verification|verified|ID checks?|background checks?|messaging|chat|tracking|notifications?|delivery|deliveries|pickup|pick-up|collection|courier|booking|scheduling|calendar|dashboard|analytics|AI|machine learning|API|integrations?|subscriptions?|loyalty|referrals?|guarantees?|refunds?|warranty|leaderboards?|badges|matching|same[- ]day)\b/gi;
+const BIO = /(?:\bex-\p{L}+|\b(?:former(?:ly)?|previously|years? (?:at|in|with|of)|PhD|MBA|background|veteran|alumn\w*|serial (?:founder|entrepreneur)|exited|worked (?:at|for)|built and sold)\b)/iu;
+const RIVALS = /\b(?:no\s+(?:\w+\s+){0,2}(?:competitors?|players?|rivals?|competition|alternatives?)|first (?:mover|to market)|no one (?:else )?(?:does|offers))\b/i;
+const PROOF = /\b(?:prove[sn]?|proof that)\b/i;
+const NOT_YET = /\b(?:to|must|need|needs|will|can|could|should|yet|if|whether|not)\s+(?:\w+\s+)?$/i;
+const BIO_PLAIN = new Set('founder founders cofounder co-founder solo team background experience years year former formerly previously with and the'.split(' '));
+const lower = (text: string) => text.toLowerCase();
+const named = (word: string, record: string) => new RegExp(`\\b${word.replace(/[-\s]+/g, '[-\\s]?').replace(/(?:s|es)$/, '')}(?:s|es|ed|ing)?\\b`, 'i').test(record);
+export function inventedIn(text: string, material: Material): string[] {
+  const read = recordOf(material);
+  const record = read.join('\n');
+  const found: string[] = [];
+  for (const end of unbackedEnds(text, read)) {
+    const number = /[\d,]+\+?$/.exec(text.slice(0, end))?.[0];
+    if (number) found.push(`${number}${text.slice(end).match(/^\s*[\p{L}'-]+/u)?.[0] ?? ''}`.trim());
+  }
+  for (const hit of text.matchAll(VAGUE)) if (!new RegExp(`\\b${hit[0]}\\b`, 'i').test(record)) found.push(hit[0]);
+  for (const hit of text.matchAll(FEATURE)) if (!named(lower(hit[0]), record)) found.push(hit[0]);
+  const bio = BIO.exec(text);
+  if (bio) {
+    // The material's background lines: its Team section, and any sentence that itself gives a background.
+    const team = read.flatMap((one) => one.split(/\n(?=#{1,6}\s)/)).filter((part) => /^#{1,6}\s.*\b(?:team|founders?|about)\b/i.test(part));
+    const lines = [...team, ...read.flatMap((one) => one.split(/\n|(?<=[.!?])\s+/)).filter((one) => BIO.test(one))].join('\n').toLowerCase();
+    // Every name it gives ("Google", "Ultimaker") and at least one other word of it must be there.
+    const words = (text.match(/[\p{L}][\p{L}'-]{3,}/gu) ?? []).map((word) => word.replace(/^ex-/i, '')).filter((word) => !BIO_PLAIN.has(lower(word)) && !BIO.test(word));
+    const names = (text.slice(1).match(/(?<![.:!?]\s)(?<=\s|-)\p{Lu}[\p{L}'-]+/gu) ?? []).filter((word) => !BIO.test(word));
+    if (!lines || !words.some((word) => lines.includes(lower(word))) || !names.every((word) => lines.includes(lower(word)))) found.push(bio[0]);
+  }
+  const rivals = RIVALS.exec(text);
+  if (rivals && !RIVALS.test(record)) found.push(rivals[0]);
+  const proof = PROOF.exec(text);
+  if (proof && !NOT_YET.test(text.slice(0, proof.index))) found.push(proof[0]);
+  return [...new Set(found)];
+}
+const invented = (text: string, material: Material) => [...claimsIn(text, material), ...inventedIn(text, material)];
+
 // The mend's own lines in the notes, which quote what it took out: never read again as the model's words.
 const ASIDE = /^(?:Headline had a number with no source|Needs a source:|Cut for one idea a slide:|Name an amount|Asked:|Took out )/;
 const noteSentences = (notes: string) => notes.split('\n').flatMap((line) => (ASIDE.test(line.trim()) ? [] : line.split(/(?<=[.!?])\s+/))).map((one) => one.trim()).filter(Boolean);
@@ -81,10 +129,10 @@ export function faults(slides: Slide[], material: Material): string[] {
       if (!sourceOf(number, material, only)) found.push(`${at}: ${number} is not in the material${only ? ` (a traction number must come from ${tractionFrom(material)})` : ''}; use only numbers the material states, or none`);
     }
     for (const text of [slide.headline, ...slide.lines]) {
-      for (const hit of claimsIn(text, material)) found.push(`${at}: "${short(hit)}" is not on record in the material; take it out or put it as an open question`);
+      for (const hit of invented(text, material)) found.push(`${at}: "${short(hit)}" is not on record in the material; take it out or put it as an open question`);
     }
     for (const sentence of noteSentences(slide.notes ?? '')) {
-      for (const hit of claimsIn(sentence, material)) found.push(`${at}: the speaker notes say "${short(hit)}", which nothing in the material says; take it out or put it as an open question`);
+      for (const hit of invented(sentence, material)) found.push(`${at}: the speaker notes say "${short(hit)}", which nothing in the material says; take it out or put it as an open question`);
       for (const number of unsourcedIn(sentence, material)) found.push(`${at}: the speaker notes give ${number}, which is not in the material; use only numbers the material states`);
     }
     if (slide.shape === 'traction' && !material.metrics && !saysNoNumbers(slide)) found.push(`${at}: there is no Metrics card and no Numbers in the Company brief, so the traction slide says "${NO_NUMBERS}"`);
@@ -115,7 +163,7 @@ export function mend(slides: Slide[], material: Material): { slides: Slide[]; sa
       slide.headline = words(kept).length >= 2 ? kept : SHAPE_NAMES[slide.shape];
       said.push(`${at}: took a number with no source out of the headline`);
     }
-    if (claimsIn(slide.headline, material).length) {
+    if (invented(slide.headline, material).length) {
       aside.push('Took out a headline that claimed what nothing on record says.');
       slide.headline = SHAPE_NAMES[slide.shape];
       said.push(`${at}: took a claim nothing on record backs out of the headline`);
@@ -126,7 +174,7 @@ export function mend(slides: Slide[], material: Material): { slides: Slide[]; sa
       const notes = slide.notes.split('\n').map((line) => {
         if (ASIDE.test(line.trim())) return line;
         const kept = line.split(/(?<=[.!?])\s+/).filter((sentence) => {
-          const bad = !!claimsIn(sentence, material).length || !!unsourcedIn(sentence, material).length;
+          const bad = !!invented(sentence, material).length || !!unsourcedIn(sentence, material).length;
           if (bad) cut += 1;
           return !bad;
         });
@@ -151,7 +199,7 @@ export function mend(slides: Slide[], material: Material): { slides: Slide[]; sa
     }
     const lines: string[] = [];
     for (const line of slide.lines) {
-      if (claimsIn(line, material).length) { aside.push('Took out a line that claimed what nothing on record says.'); said.push(`${at}: dropped a line with a claim nothing on record backs`); continue; }
+      if (invented(line, material).length) { aside.push('Took out a line that claimed what nothing on record says.'); said.push(`${at}: dropped a line with a claim nothing on record backs`); continue; }
       if (!sourced(line)) { aside.push(`Needs a source: ${line}`); said.push(`${at}: dropped a line with a number and no source`); continue; }
       lines.push(words(line).length > LINE_WORDS ? `${words(line).slice(0, LINE_WORDS).join(' ')}…` : line);
     }
