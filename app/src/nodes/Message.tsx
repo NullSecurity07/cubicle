@@ -7,6 +7,7 @@ import { SLICES } from '../slices';
 import { Approval } from './Approval';
 import { markDraftOpened, useDraftOpened } from './draftOpened';
 import { Words } from './Rich';
+import { modelTitle } from '../../shared/modelNames';
 
 const VERBS: Record<string, [doing: string, done: string]> = {
   read_doc: ['Reading', 'Read'], write_doc: ['Rewriting', 'Rewrote'], append_doc: ['Adding to', 'Added to'], replace_section: ['Rewriting a section of', 'Rewrote a section of'], create_doc: ['Creating', 'Created'],
@@ -162,7 +163,7 @@ export function Message({ message, live = false, roomId, ...actions }: { message
       {message.text && <div className="md"><Words text={message.text} /></div>}
       {!live && message.provider && (
         <div className="msg__foot">
-          {message.provider} · {message.model}{tokens ? ` · ${compact(tokens)} tokens` : ''}{message.stopped ? ' · stopped' : ''}
+          {modelTitle(message.provider)} · {message.model}{tokens ? ` · ${compact(tokens)} tokens` : ''}{message.stopped ? ' · stopped' : ''}
           <Tools {...actions} />
           {/* What a slice offers to do with this finished reply, where the reply's own actions are. */}
           {message.id && roomId && SLICES.map((slice) => (slice.reply ? <slice.reply key={slice.name} message={{ ...message, id: message.id!, at: message.at ?? 0 }} roomId={roomId} /> : null))}

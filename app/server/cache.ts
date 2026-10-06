@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { ModelClient } from './providers.ts';
 import type { ModelMessage } from './prompt.ts';
 import { writeAtomic } from './fsx.ts';
+import { modelTitle } from '../shared/modelNames.ts';
 
 // What was asked before and answered the same way need not be asked again. Two kinds, both on disk under the
 // workspace's own `cache/` folder, both counted: a side call (a summary, a reflection, a compaction note: never a turn,
@@ -79,7 +80,7 @@ export function sideClient(client: ModelClient, book: Book, now: () => number = 
   return {
     ...client,
     async step(messages, options) {
-      if (!book.admit(client.name)) throw new Error(`${client.name} is resting after failing several times in a row`);
+      if (!book.admit(client.name)) throw new Error(`${modelTitle(client.name)} is resting after failing several times in a row`);
       const key = disk && !options.tools?.length ? hashOf(client.model, normalised(messages)) : '';
       if (disk && key) {
         const kept = await disk.get(key);

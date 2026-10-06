@@ -289,7 +289,7 @@ describe('the free providers set up here', () => {
 describe('a failure in plain words', () => {
   it('says what each model did, never the raw provider text', () => {
     expect(plainFailure("no provider answered — gemini: Request timed out.; groq-qwen: 400 Failed to call a function. See 'failed_generation'.; groq: 429 Too Many Requests; openrouter: prompt too large"))
-      .toBe('gemini timed out, groq-qwen tool call came out malformed, groq busy, openrouter prompt too large');
+      .toBe('Gemini Flash-Lite timed out, Qwen on Groq tool call came out malformed, gpt-oss on Groq busy, Nemotron Super on OpenRouter prompt too large');
   });
 });
 
@@ -329,7 +329,7 @@ describe('the fallback that broke a room (journey 6)', () => {
     expect(plainBreak(GEMINI_400, 'gemini')).toBe('the model rejected the request');
     expect(plainBreak(GROQ_413, 'groq')).toBe('the prompt is too large for groq');
     const plain = plainFailure(`no provider answered — gemini: ${GEMINI_400}; groq-qwen: ${GROQ_413}`);
-    expect(plain).toBe('gemini rejected the request, groq-qwen prompt too large');
+    expect(plain).toBe('Gemini Flash-Lite rejected the request, Qwen on Groq prompt too large');
     expect(scrubProvider('502 upstream for org_01m24v86abcdef, request req_9f8e7d: {"error":"bad"}')).not.toMatch(/org_|req_|\{/);
   });
 
@@ -394,7 +394,7 @@ describe('the last model that can take a turn', () => {
   });
 
   it('says a local model kept off a tool turn as that, not as a failure', () => {
-    expect(plainFailure('no provider answered — gemini: 503 overloaded; ollama: kept off turns with tools')).toBe('gemini down, ollama kept off turns with tools');
+    expect(plainFailure('no provider answered — gemini: 503 overloaded; ollama: kept off turns with tools')).toBe('Gemini Flash-Lite down, Ollama kept off turns with tools');
   });
 
   it('names the models passed over because the prompt would not fit them', async () => {
@@ -484,12 +484,12 @@ describe('the long clock, said (round 5)', () => {
       });
       const failed = complete(messages, { onToken: () => {} }, [gemini]).catch((error: Error) => error);
       await vi.advanceTimersByTimeAsync(90_000);
-      expect(plainFailure((await failed as Error).message)).toBe('gemini said nothing for too long (waited 90 s: last model able)');
+      expect(plainFailure((await failed as Error).message)).toBe('Gemini Flash-Lite said nothing for too long (waited 90 s: last model able)');
     } finally { vi.useRealTimers(); }
   });
 
   it('keeps the short line when the usual clock cut it', () => {
-    expect(plainFailure('no provider answered — gemini: no first word within 20 s (timed out); cloudflare: 503')).toBe('gemini said nothing for too long, cloudflare down');
+    expect(plainFailure('no provider answered — gemini: no first word within 20 s (timed out); cloudflare: 503')).toBe('Gemini Flash-Lite said nothing for too long, Llama 4 Scout on Cloudflare down');
   });
 });
 

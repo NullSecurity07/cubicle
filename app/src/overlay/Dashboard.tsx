@@ -16,6 +16,7 @@ import { PanelShell } from './PanelShell';
 import { QuickAnswer, useQuick } from './QuickAnswer';
 import { firstPlace } from './firstPlace';
 import { TodayFive } from './TodayFive';
+import { modelTitle } from '../../shared/modelNames';
 
 // The founder's one screen: what today holds, what the work has cost, how the teams are doing and what was made.
 // Nothing here is kept by the dashboard. Every row is a door to the place it came from, and going through one closes
@@ -277,11 +278,11 @@ export function Dashboard() {
                 {tokens.byProvider.map((one) => (
                   <li key={one.name} className="dash__provider">
                     <div className="dash__provider-head">
-                      <b>{one.name}<small>{one.model}</small></b>
+                      <b>{modelTitle(one.name)}<small>{one.model}</small></b>
                       <span className={one.planOff || one.needsCard ? 'is-off' : undefined}>{providerLeft(one)}</span>
                     </div>
                     {!one.planOff && !one.needsCard && (one.limits.rpd || one.limits.tpd) ? (
-                      <div className={`dash__meter${one.leftPct <= 5 ? ' is-out' : one.leftPct < 20 ? ' is-low' : ''}`} role="meter" aria-label={`${one.name}: ${one.leftPct}% left`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={one.leftPct}><i style={{ width: `${one.leftPct}%` }} /></div>
+                      <div className={`dash__meter${one.leftPct <= 5 ? ' is-out' : one.leftPct < 20 ? ' is-low' : ''}`} role="meter" aria-label={`${modelTitle(one.name)}: ${one.leftPct}% left`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={one.leftPct}><i style={{ width: `${one.leftPct}%` }} /></div>
                     ) : null}
                     <small>{providerLine(one)}</small>
                   </li>

@@ -13,6 +13,7 @@ import { dotOf, refusedKeys } from './modelDots';
 import { useModels } from './models';
 import { setMissionsOpen, useMissions } from './Missions';
 import { SLICES, sliceCommands } from './slices';
+import { modelTitle } from '../shared/modelNames';
 
 // The name beside a button, and its key when it has one. It shows after a short hover or on keyboard focus (theme.css),
 // in place of the browser's own tooltip, which is slow, plain and always below the pointer. The button keeps its
@@ -72,7 +73,7 @@ function Quota({ place }: { place: string }) {
           {dots.map(({ model, dot }) => (
             <div key={model.name} className="quota__row">
               <span className={`quota__dot ring--${dot.tone}`} />
-              <span className="quota__name">{model.name}<small>{model.model}{model.partnerOnly ? ' · partner only' : ''}</small></span>
+              <span className="quota__name">{modelTitle(model.name)}<small>{model.model}{model.partnerOnly ? ' · partner only' : ''}</small></span>
               <span className="quota__numbers">
                 {dot.tone === 'refused' ? (model.planOff ? 'Plan off' : model.needsCard ? 'Needs a card' : 'Key refused') : dot.tone === 'untested' ? 'Untested' : dot.tone === 'slow' ? 'Slow' : dot.words}
                 <small>{dot.tone === 'refused' ? dot.words : dot.tone === 'untested' ? 'No reply yet today · $0' : dot.tone === 'slow' ? 'No first word twice · asked last for 30 min' : `${model.requests} replies · ${model.tokens.toLocaleString()} tokens · $0`}</small>

@@ -255,7 +255,7 @@ test('a person rewrites a wired doc: the chip shows it, the doc card updates, th
   await expect(reply.locator('.chip--ok summary')).toHaveText('Rewrote Brand doc');
   await expect(reply).toContainText(/Tool said: Wrote \d+ characters\./);
   await expect(node(page, 'brand-doc').locator('textarea.doc')).toHaveValue('# Brand\n\nCalm tools for founders.');
-  await expect(reply.locator('.msg__foot')).toContainText('fake · fake-1 ·');
+  await expect(reply.locator('.msg__foot')).toContainText('Fake · fake-1 ·');
   await expect(reply.locator('.msg__foot')).toContainText('tokens');
 
   await page.reload();

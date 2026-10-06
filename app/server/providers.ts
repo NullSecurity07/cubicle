@@ -4,6 +4,7 @@ import type { Usage } from '../shared/model.ts';
 import models from './models.json' with { type: 'json' };
 import { discoverLocal } from './opencode/config.ts';
 import { headerWait } from './breaker.ts';
+import { modelTitle } from '../shared/modelNames.ts';
 import type { ModelMessage } from './prompt.ts';
 
 // `rpmo`: a hard cap on requests in a calendar month, for a model whose free part is a small credit (Hugging Face's
@@ -148,7 +149,7 @@ export function plainFailure(message: string): string {
   if (!all) return failureWords(message);
   return all[1].split('; ').map((part) => {
     const at = part.indexOf(': ');
-    return at < 0 ? failureWords(part) : `${part.slice(0, at)} ${failureWords(part.slice(at + 2))}`;
+    return at < 0 ? failureWords(part) : `${modelTitle(part.slice(0, at))} ${failureWords(part.slice(at + 2))}`;
   }).join(', ');
 }
 

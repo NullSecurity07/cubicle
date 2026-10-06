@@ -120,7 +120,7 @@ describe('runTurn', () => {
       context: { stage: await store.loadStage(), roomId: 'build', store, granted: new Map() },
       events: { token: () => {}, tool: () => {}, notice: (text) => notices.push(text) },
     });
-    expect(notices).toEqual(['mistral could not answer (its plan allows no requests yet), so script answers.']);
+    expect(notices).toEqual(['Mistral Small could not answer (its plan allows no requests yet), so Script answers.']);
   });
 
   it('tells the founder when another model had to step in', async () => {
@@ -135,7 +135,7 @@ describe('runTurn', () => {
       events: { token: () => {}, tool: () => {}, notice: (text) => notices.push(text) },
     });
     expect(result.provider).toBe('script');
-    expect(notices).toEqual(['gemini could not answer (busy for now), so script answers.']);
+    expect(notices).toEqual(['Gemini Flash-Lite could not answer (busy for now), so Script answers.']);
     expect(usage.hot(broken, 10)).toBe(true);
     void run;
   });
@@ -170,7 +170,7 @@ describe('runTurn', () => {
     expect(window).toBe(result.text);
     expect(shown).toContain('<restart>');
     expect(result.text).not.toMatch(/failed_generation|cut short/);
-    expect(notices.join(' ')).toMatch(/groq-qwen could not answer .*so script answers/);
+    expect(notices.join(' ')).toMatch(/Qwen on Groq could not answer .*so Script answers/);
   });
 
   it('keeps the broken words with a plain reason only when every model fails', async () => {
@@ -604,7 +604,7 @@ describe('a pinned model that cannot hold the prompt', () => {
       events: { token: () => {}, tool: () => {}, notice: (text) => notices.push(text) },
     });
     expect(result.provider).toBe('gemini');
-    expect(notices).toEqual(["groq cannot hold this room's prompt; gemini answers."]);
+    expect(notices).toEqual(["gpt-oss on Groq cannot hold this room's prompt; Gemini Flash-Lite answers."]);
   });
 
   it('is said once a day in a room, not on every turn, and again in another room or on the next day', async () => {
@@ -622,7 +622,7 @@ describe('a pinned model that cannot hold the prompt', () => {
       await turn('once-a');
       await turn('once-a');
       await turn('once-b');
-      expect(notices).toEqual(["once-a: groq cannot hold this room's prompt; gemini answers.", "once-b: groq cannot hold this room's prompt; gemini answers."]);
+      expect(notices).toEqual(["once-a: gpt-oss on Groq cannot hold this room's prompt; Gemini Flash-Lite answers.", "once-b: gpt-oss on Groq cannot hold this room's prompt; Gemini Flash-Lite answers."]);
       vi.setSystemTime(new Date(2026, 8, 28, 10));
       await turn('once-a');
       expect(notices).toHaveLength(3);

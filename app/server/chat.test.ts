@@ -340,7 +340,7 @@ describe('a turn when models fail', () => {
     expect(events.some((one) => 'error' in one)).toBe(true);
     const talk = await store.readChat('build');
     expect(talk.map((one) => one.role)).toEqual(['user', 'assistant']);
-    expect(talk[1].text).toBe('No model could answer this time (gemini down, groq down). Ask again in a minute.');
+    expect(talk[1].text).toBe('No model could answer this time (Gemini Flash-Lite down, gpt-oss on Groq down). Ask again in a minute.');
     expect(talk[1].failed).toBe(true);
   });
 
@@ -349,7 +349,7 @@ describe('a turn when models fail', () => {
     const { store, events } = await turnChat([breaking, busy]);
     const notices = events.filter((one) => 'notice' in one).map((one) => String(one.notice)).join(' ');
     expect(notices).not.toMatch(/failed_generation|Failed to call a function/);
-    expect(notices).toMatch(/groq-qwen could not answer \(its tool call came out malformed\)/);
+    expect(notices).toMatch(/Qwen on Groq could not answer \(its tool call came out malformed\)/);
     const saved = (await store.readChat('build')).at(-1)!;
     expect(saved.text).not.toMatch(/failed_generation/);
   });
@@ -584,7 +584,7 @@ describe('a turn when the only model able cannot hold the room prompt (round 6)'
     const sizes: number[] = [];
     const { store, asked, payloads, notices } = await groqTurn([holding('groq', 18_000, sizes)]);
     expect(asked).toEqual([false, true]);
-    expect(notices).toContain('Groq answers with a short prompt: the documents\' titles and openings only, no playbook, and only the latest talk.');
+    expect(notices).toContain('gpt-oss on Groq answers with a short prompt: the documents\' titles and openings only, no playbook, and only the latest talk.');
     expect(payloads).toEqual([expect.objectContaining({ slim: true })]);
     expect(sizes[0]).toBeLessThan(18_000);
     expect((await store.readChat('marketing')).at(-1)).toMatchObject({ text: 'groq answers.', provider: 'groq' });

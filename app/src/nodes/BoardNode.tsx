@@ -12,6 +12,7 @@ import { CardActions, Frame } from './Frame';
 import { Words } from './Rich';
 import { useWired } from '../flow';
 import { useAttempt } from '../attempt';
+import { modelTitle } from '../../shared/modelNames';
 
 const NAMES: Record<Column, string> = { proposed: 'Proposed', todo: 'To do', doing: 'Doing', review: 'Review', done: 'Done' };
 const active = (task: Task) => task.run?.state === 'running' || task.run?.state === 'waiting';
@@ -147,7 +148,7 @@ export function BoardNode({ id, selected }: NodeProps<BoardNodeType>) {
               {open.run && <div className="taskview__log">{open.run.log.map((entry, index) => <div key={index}>{entry}</div>)}</div>}
               {open.run?.approval && <Approval tool={open.run.approval} />}
               {open.run?.result && <div className="md taskview__result"><Words text={open.run.result} /></div>}
-              {open.run?.provider && <div className="msg__foot">{open.run.provider} · {open.run.model}{open.run.usage ? ` · ${open.run.usage.input + open.run.usage.output} tokens` : ''} · {open.run.state}</div>}
+              {open.run?.provider && <div className="msg__foot">{modelTitle(open.run.provider)} · {open.run.model}{open.run.usage ? ` · ${open.run.usage.input + open.run.usage.output} tokens` : ''} · {open.run.state}</div>}
               {/* Only a finished run of a person's has anything to take away from, and the founder hears in one line what was taken. */}
               {open.run?.state === 'done' && !open.script && (
                 <div className="taskview__learn">
