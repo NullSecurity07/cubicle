@@ -75,6 +75,11 @@ function Row({ row, onSaved }: { row: KeyRow; onSaved: (view: KeysView) => void 
   );
 }
 
+// A line under a group's name, where the group works some way without any key at all.
+const WITHOUT_A_KEY: Record<string, string> = {
+  Email: 'Without a key, a person drafts the email and it opens in your Gmail for you to send.',
+};
+
 // Every key the app knows, grouped by what it opens up, the way Health names those things. A key goes into the .env
 // file this app reads; nothing here ever shows one back.
 export function KeysPanel() {
@@ -122,6 +127,7 @@ export function KeysPanel() {
             {groups.map((group) => (
               <section key={group} className="keys__group" aria-label={group}>
                 <h3 className="keys__group-name">{group}</h3>
+                {WITHOUT_A_KEY[group] && <p className="keys__group-note">{WITHOUT_A_KEY[group]}</p>}
                 <ul className="keys__rows">
                   {rows.filter((row) => row.group === group).map((row) => <Row key={row.name} row={row} onSaved={setView} />)}
                 </ul>

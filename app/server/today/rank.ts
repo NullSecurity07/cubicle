@@ -40,6 +40,7 @@ export const WEIGHTS: Record<string, { weight: number; label: string }> = {
   'proposed-runway': { weight: 35, label: 'A suggested change to the runway' },
   'proposed-bet': { weight: 35, label: 'A suggested bet' },
   'proposed-plan': { weight: 35, label: 'A plan to put on the board' },
+  'mail-draft': { weight: 70, label: 'An email is ready for you to send' },
   'page-changed': { weight: 25, label: 'A watched page changed' },
   'proposed-source': { weight: 20, label: 'A suggested website' },
 };

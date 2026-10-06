@@ -1,13 +1,67 @@
+import type { Attention, Card } from '../../shared/model.ts';
+import { DRAFT_BODY_MOST, draftBody, draftId, gmailLink } from '../../shared/maildraft.ts';
+import type { Browser, Launch } from '../browser.ts';
 import type { Mail } from '../mail.ts';
 import { SETUP_HINT } from '../mail.ts';
+import { wiredCards } from '../prompt.ts';
 import { runCode } from '../sandbox.ts';
-import { speaker, text, type Tool } from './registry.ts';
+import { browserSession } from './web.ts';
+import { speaker, text, type Tool, type ToolContext } from './registry.ts';
 
 const ADDRESS = /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/;
 
+// How a draft reaches the founder: a line in Needs you, and the founder's own Gmail card on the stage when one is
+// wired to the person (`open` answers with that card's id, or null when there is none or it could not open).
+export type Drafting = {
+  raise(entry: Attention): Promise<void>;
+  open?(stage: ToolContext['stage'], roomId: string, url: string): Promise<string | null>;
+};
+
+// The founder's Gmail card wired to the person, if there is one, shown the draft: Gmail's compose page with the
+// fields filled. Opening a page sends nothing; the Send button in it is the founder's.
+export const openInGmailCard = (browser: Pick<Browser, 'act'>, launchFor: (cardId: string, card: Card) => Launch = () => ({})): NonNullable<Drafting['open']> =>
+  async (stage, roomId, url) => {
+    const card = wiredCards(stage, roomId, 'browser').find((one) => one.kind === 'browser' && one.app?.key === 'gmail');
+    if (!card) return null;
+    await browser.act(browserSession(card.id), 'open', { url }, launchFor(card.id, card));
+    return card.id;
+  };
+
 // Tools that reach outside the workspace or run something. Each one waits for the founder's yes.
-export function outwardTools(mail: Mail, filesDir: string): Tool[] {
+export function outwardTools(mail: Mail, filesDir: string, drafting?: Drafting, now: () => number = Date.now): Tool[] {
   return [
+    {
+      name: 'draft_email',
+      description: 'Write an email for the founder to send from their own Gmail. It never sends: it opens a filled-in Gmail draft '
+        + '(in the founder\'s Gmail card when one is connected to you, otherwise behind an "Open in Gmail" button in this chat) '
+        + 'and the founder presses Send. Use it when send_email is not set up, or when the founder wants to send it themselves. '
+        + 'Never say an email drafted this way was sent.',
+      parameters: {
+        type: 'object',
+        properties: { to: { type: 'string', description: 'One address, or several separated by commas (at most 5)' }, subject: { type: 'string' }, body: { type: 'string', description: 'Plain text' } },
+        required: ['to', 'subject', 'body'],
+      },
+      async run(args, context) {
+        const draft = { to: text(args, 'to', 500), subject: text(args, 'subject', 300), body: text(args, 'body', 20_000) };
+        const to = draft.to.split(/[,;\s]+/).filter(Boolean);
+        const bad = to.filter((address) => !ADDRESS.test(address));
+        if (bad.length) throw new Error(`not an email address: ${bad.join(', ')}`);
+        if (to.length > 5) throw new Error('at most 5 recipients');
+        const room = speaker(context);
+        const url = gmailLink(draft);
+        const cardId = drafting?.open ? await drafting.open(context.stage, context.roomId, url).catch(() => null) : null;
+        await drafting?.raise({
+          id: draftId(draft), kind: 'mail-draft', title: `Email to ${to.join(', ')} ready to send`, detail: draft.subject, url,
+          at: now(), ...(room ? { who: room.name, roomId: room.id } : {}), ...(cardId ? { cardId } : {}),
+        }).catch(() => {});
+        const where = cardId
+          ? 'Draft opened in the founder\'s Gmail card. Nothing was sent: the founder reads it there and presses Send.'
+          : 'Draft ready: an "Open in Gmail" button under this step opens it in the founder\'s Gmail. Nothing was sent: the founder presses Send there.';
+        const cut = draftBody(draft.body).cut ? ` The body was longer than ${DRAFT_BODY_MOST} characters, so the draft holds only the first ${DRAFT_BODY_MOST}; tell the founder the rest has to be pasted in.` : '';
+        const keyed = mail.ready() ? ' send_email can also send it for you, with the founder\'s yes.' : '';
+        return { text: `${where} It is in Needs you as well. Say it is drafted, never that it was sent.${cut}${keyed}`, ...(cardId ? { effect: { kind: 'browser-moved' as const, id: cardId } } : {}) };
+      },
+    },
     {
       name: 'send_email',
       approval: true,

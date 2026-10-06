@@ -1,0 +1,65 @@
+import { expect, test, type Page } from '@playwright/test';
+
+// With no mail key, a person drafts and the founder sends: the draft is one press from their own Gmail, from the
+// chat or from Needs you, and opening it is what takes it off the list. Nothing is sent by the app.
+const node = (page: Page, id: string) => page.locator(`.react-flow__node[data-id="${id}"]`);
+
+async function send(page: Page, room: string, text: string) {
+  await expect(node(page, room).locator('.status--idle')).toBeVisible();
+  await node(page, room).locator('.ask textarea').fill(text);
+  await node(page, room).locator('.ask textarea').press('Enter');
+  await expect(node(page, room).locator('.status--idle')).toBeVisible({ timeout: 20_000 });
+}
+
+test.beforeEach(async ({ page }) => {
+  // Gmail itself is never reached: the tab the button opens gets a blank page.
+  await page.context().route('https://mail.google.com/**', (route) => route.fulfill({ status: 200, contentType: 'text/html', body: '<title>Gmail</title>' }));
+  await page.goto('/');
+  await expect(node(page, 'marketing')).toBeVisible();
+});
+
+// Maya's conversation is shared with every other journey, so the drafts are taken back out of it.
+test.afterEach(async ({ page }) => {
+  await page.goto('about:blank');
+  const chat = (await (await page.request.get('/api/rooms/marketing/chat')).json()) as { id: string; text: string }[];
+  const from = chat.findIndex((message) => message.text.startsWith('/tool draft_email'));
+  if (from >= 0) for (const message of chat.slice(from)) await page.request.delete(`/api/rooms/marketing/chat/${message.id}`);
+  for (const entry of (await (await page.request.get('/api/attention')).json()) as { id: string; kind: string }[]) {
+    if (entry.kind === 'mail-draft') await page.request.post(`/api/attention/${encodeURIComponent(entry.id)}/dismiss`);
+  }
+});
+
+test('a drafted email opens in Gmail from the chat or from Needs you, and opening it clears it', async ({ page }) => {
+  await send(page, 'marketing', '/tool draft_email {"to":"lead@example.com","subject":"Hello & welcome","body":"Hi there"}');
+  const room = node(page, 'marketing');
+  await expect(room.locator('.chip--ok summary').last()).toHaveText('Drafted email to lead@example.com');
+  await expect(room.locator('.msg--assistant').last()).toContainText('Nothing was sent');
+  const open = room.getByRole('link', { name: 'Open in Gmail' });
+  await expect(open).toHaveAttribute('href', 'https://mail.google.com/mail/?view=cm&fs=1&to=lead%40example.com&su=Hello%20%26%20welcome&body=Hi%20there');
+  await expect(open).toHaveAttribute('target', '_blank');
+  await expect(room.getByRole('link', { name: 'Other mail app' })).toHaveAttribute('href', /^mailto:lead%40example\.com\?subject=Hello%20%26%20welcome&body=Hi%20there$/);
+
+  const bell = page.getByRole('button', { name: /^Needs you/ });
+  await expect(bell).toHaveAccessibleName('Needs you: 1 waiting');
+  await bell.click();
+  const needs = page.getByRole('dialog', { name: 'Needs you' });
+  await expect(needs.locator('.needs__item--mail-draft')).toContainText('Maya has an email ready for you to send');
+  await expect(needs.locator('.needs__item--mail-draft')).toContainText('Email to lead@example.com ready to send');
+  await page.keyboard.press('Escape');
+
+  // Pressing the chat's button opens Gmail in a new tab and takes the draft off the list.
+  const [tab] = await Promise.all([page.waitForEvent('popup'), open.click()]);
+  await expect(tab).toHaveURL(/mail\.google\.com\/mail\/\?view=cm/);
+  await tab.close();
+  await expect(bell).toHaveAccessibleName('Needs you: nothing waiting');
+
+  // A second draft, opened from Needs you instead.
+  await send(page, 'marketing', '/tool draft_email {"to":"other@example.com","subject":"Second","body":"Again"}');
+  await expect(bell).toHaveAccessibleName('Needs you: 1 waiting');
+  await bell.click();
+  const entry = needs.locator('.needs__item--mail-draft');
+  const [second] = await Promise.all([page.waitForEvent('popup'), entry.getByRole('link', { name: 'Open in Gmail' }).click()]);
+  await expect(second).toHaveURL(/to=other%40example\.com/);
+  await second.close();
+  await expect(bell).toHaveAccessibleName('Needs you: nothing waiting');
+});

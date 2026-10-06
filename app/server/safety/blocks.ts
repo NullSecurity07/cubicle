@@ -7,7 +7,7 @@ export type Where = { tool: string; key: string };
 export type Rule = { id: string; says: string; hits(value: string, where: Where, own: string[]): boolean };
 
 // Tools whose arguments leave this machine one way or another. A key may not travel in one of these.
-const OUTWARD = new Set(['send_email', 'web_search', 'web_fetch', 'browse', 'code_task', 'code_reply', 'read_youtube', 'read_feed', 'read_reddit', 'crawl_site', 'watch_page']);
+const OUTWARD = new Set(['send_email', 'draft_email', 'web_search', 'web_fetch', 'browse', 'code_task', 'code_reply', 'read_youtube', 'read_feed', 'read_reddit', 'crawl_site', 'watch_page']);
 // Where a path or a command can really be acted on. A question typed at a search engine is words, not a file.
 const FILE_TOOLS = new Set(['run_code', 'code_task', 'code_reply', 'write_file', 'read_file']);
 const CODER = new Set(['code_task', 'code_reply']);

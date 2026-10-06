@@ -6,7 +6,7 @@ export type Mail = ReturnType<typeof createMail>;
 type Smtp = (letter: { from: string; to: string[]; subject: string; text: string }) => Promise<unknown>;
 
 const API = 'https://api.agentmail.to/v0';
-export const SETUP_HINT = 'No mail key is set up. If a browser card connected to you is signed in to webmail, write the mail there with browse instead. Otherwise the founder signs in to webmail on a browser card (Show window), or adds AGENTMAIL_API_KEY (free at agentmail.to) to .env for a mailbox per person, '
+export const SETUP_HINT = 'No mail key is set up, so nothing can be sent from here. Use draft_email instead: it opens a filled-in draft in the founder\'s Gmail for them to send. If a browser card connected to you is signed in to webmail, write the mail there with browse instead. Otherwise the founder signs in to webmail on a browser card (Show window), or adds AGENTMAIL_API_KEY (free at agentmail.to) to .env for a mailbox per person, '
   + 'or GMAIL_USER and GMAIL_APP_PASSWORD to send from their own address, then restarts the app.';
 
 // Two ways out. AgentMail gives each person a real mailbox of their own that can also receive; Gmail sends as the founder.
