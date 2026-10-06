@@ -218,3 +218,37 @@ describe('a caption word before it is spoken', () => {
     expect(steps.some((step) => /tl\.to\("#c0".*opacity: 0/.test(step))).toBe(true);
   });
 });
+
+// Journey 12: a frame at 12 s read "ISEVENY". The measured words started "eighty" and "seven" at the same instant,
+// and the two caption lines arrived on top of each other in the one place captions sit.
+describe('two caption lines that start at the same instant', () => {
+  const from = 10.35;
+  const said: [string, number, number][] = [['We', 0, 0.35], ['have', 0.35, 0.3], ['reached', 0.66, 0.77], ['eighty', 1.43, 0.06],
+    ['seven', 1.43, 0.66], ['euros', 2.09, 0.55], ['MRR.', 2.64, 0.36]];
+  const words = said.map(([word, at, seconds]) => ({ word, at: from + at, seconds }));
+
+  it('never shows one line while another is on screen', () => {
+    const lines = capLines(words, 8, 1);
+    expect(lines.map((line) => `${line.words.map((one) => one.word).join(' ')}@${line.at}`)).toMatchInlineSnapshot(`
+      [
+        "We@10.35",
+        "have@10.7",
+        "reached@11.04",
+        "eighty@11.78",
+        "seven@12.12",
+        "euros@12.46",
+        "MRR.@12.99",
+      ]
+    `);
+    for (const [index, line] of lines.entries()) {
+      if (index) expect(line.at - lines[index - 1].at).toBeGreaterThanOrEqual(0.33);
+    }
+    // And the timeline agrees: each line has faded before the next arrives.
+    const steps = capSteps(lines, 14);
+    const time = (pattern: RegExp) => [...steps.join('\n').matchAll(pattern)].map((one) => Number(one[2]));
+    const arrive = time(/fromTo\("#c(\d+)", \{ opacity: 0[^\n]*?\}, ([\d.]+)\);/g);
+    const leave = [...steps.join('\n').matchAll(/to\("#c(\d+)", \{ opacity: 0, duration: ([\d.]+)[^\n]*?\}, ([\d.]+)\);/g)].map((one) => Number(one[3]) + Number(one[2]));
+    expect([arrive.length, leave.length]).toEqual([7, 7]);
+    for (let index = 1; index < arrive.length; index += 1) expect(arrive[index]).toBeGreaterThanOrEqual(leave[index - 1] - 1e-6);
+  });
+});

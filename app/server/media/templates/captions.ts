@@ -104,7 +104,26 @@ export function capLines(words: Word[], perLine: number, mostWords = 3, keywords
       lines.push({ words: held, at: held[0].at, seconds: Math.round((last.at + last.seconds - held[0].at) * 1000) / 1000, pop: popIn(held, wanted) });
     }
   }
-  return lines;
+  return spaced(lines);
+}
+
+// How long a line takes to go, and the least time it is on screen before it may: the gap one line needs before the
+// next arrives in the same place (`capSteps`).
+export const CAP_FADE = 0.12;
+const CAP_GAP = CAP_LEAST + CAP_FADE + 0.02;
+
+// Every line sits in the same place, so a line may not arrive before the one before it has had its fifth of a second
+// and its fade. Measured timings can start two words at the same instant — "eighty seven" heard as one word gave
+// "eighty" and "seven" both 1.43 s — and a pottery film showed "ISEVENY", two lines drawn over each other. A line that
+// would come too soon waits, and is held no shorter for it.
+export function spaced(lines: CapLine[]): CapLine[] {
+  let last = -Infinity;
+  return lines.map((line) => {
+    const at = Math.round(Math.max(line.at, last + CAP_GAP) * 1000) / 1000;
+    const end = line.at + line.seconds;
+    last = at;
+    return at === line.at ? line : { ...line, at, seconds: Math.round(Math.max(CAP_LEAST, end - at) * 1000) / 1000 };
+  });
 }
 
 // The fewest lines a phrase fits in, as even as they come, with no line but the phrase's last ending on a word that
@@ -183,7 +202,7 @@ export function capHtml(lines: CapLine[], fit?: { size: number; room: number }):
 export function capSteps(lines: CapLine[], until: number): string[] {
   const steps: string[] = [];
   const time = (value: number) => value.toFixed(3);
-  const FADE = 0.12;
+  const FADE = CAP_FADE;
   lines.forEach((line, at) => {
     // Every line sits in the same place, so the one going has to be gone before the one coming arrives — overlap
     // them by even a tenth of a second and the two read as one word on top of another.
