@@ -28,7 +28,7 @@ function wavOf(seconds: number, rate = 24_000): Buffer {
 }
 
 // One stand-in Gradio app per Space, built from the endpoints it claims and the messages it will send back.
-type Script = { endpoints: Record<string, string[]>; notes: unknown[] | (() => unknown[]) };
+type Script = { endpoints: Record<string, string[]>; notes: unknown[] | (() => unknown[]); predict?: () => Promise<{ data: unknown }> };
 function apps(plan: Record<string, Script>) {
   const calls: { space: string; endpoint: string; args: Record<string, unknown>; token: string }[] = [];
   const cancels: string[] = [];
@@ -44,6 +44,7 @@ function apps(plan: Record<string, Script>) {
         const notes = typeof script.notes === 'function' ? script.notes() : script.notes;
         return { [Symbol.asyncIterator]: async function* () { for (const note of notes) yield note as never; }, cancel: async () => { cancels.push(space); } } as never;
       },
+      ...(script.predict ? { predict: async (endpoint: string, args: Record<string, unknown>) => { calls.push({ space, endpoint, args, token: options.token }); return script.predict!(); } } : {}),
       close() {},
     };
   };
@@ -189,6 +190,35 @@ describe('free clips from Hugging Face', () => {
     const { connect } = apps({ 'Lightricks/ltx-video-distilled': { endpoints: { '/text_to_video': LTX_TEXT }, notes: done('https://x.hf.space/gradio_api/file=/tmp/out.mp4') } });
     await expect(createClips(keys, connect, served(404)).broll({ prompt: 'a kite', seconds: 4 }, { report: () => {} }))
       .rejects.toThrow('the clip could not be fetched back (404) — these links last only minutes');
+  });
+
+  // What a ZeroGPU Space really does when the day's minutes are gone: the stream ends without one note, and only a
+  // call made in one go rejects, with Gradio's own status note rather than an Error.
+  const SPENT = { type: 'status', stage: 'error', success: false, title: 'ZeroGPU quota exceeded', message: 'You have exceeded your free ZeroGPU quota (120s requested vs. -60s left). Try again in 0:00:00.' };
+
+  it('asks a silent Space once more for the reason, and hears the spent quota instead of "finished without a clip"', async () => {
+    const { calls, connect } = apps({ 'Lightricks/ltx-video-distilled': { endpoints: { '/text_to_video': LTX_TEXT }, notes: [], predict: async () => { throw SPENT; } } });
+    const said: string[] = [];
+    await expect(createClips(keys, connect, served(mp4)).broll({ prompt: 'a kite', seconds: 4 }, { report: (line) => said.push(line) })).rejects.toThrow(QUOTA);
+    expect(calls.map((one) => one.endpoint)).toEqual(['/text_to_video', '/text_to_video']);
+    // The same minutes pay for every Space, so no talking head is asked after the first says they are gone.
+    const presenters = apps({
+      'hugging-apps/leaptalk-talking-head': { endpoints: { '/generate': Object.keys(spaces.presenter[0].params) }, notes: [], predict: async () => { throw SPENT; } },
+      'victor/LongCat-Video-Avatar-1.5': { endpoints: { '/generate': Object.keys(spaces.presenter[1].params) }, notes: done('https://x.hf.space/gradio_api/file=/tmp/out.mp4') },
+    });
+    await expect(createClips(keys, presenters.connect, served(mp4)).presenter({ portrait: Buffer.from([1]), speech: wavOf(1) }, { report: () => {} })).rejects.toThrow(QUOTA);
+    expect(presenters.calls.every((one) => one.space === 'hugging-apps/leaptalk-talking-head')).toBe(true);
+  });
+
+  it('takes the clip when the second asking answers with one', async () => {
+    const { connect } = apps({ 'Lightricks/ltx-video-distilled': { endpoints: { '/text_to_video': LTX_TEXT }, notes: [], predict: async () => ({ data: [{ url: 'https://x.hf.space/gradio_api/file=/tmp/out.mp4' }] }) } });
+    const clip = await createClips(keys, connect, served(mp4)).broll({ prompt: 'a kite', seconds: 4 }, { report: () => {} });
+    expect(clip.bytes.equals(mp4)).toBe(true);
+  });
+
+  it('reads Gradio\'s own status note as words, never "[object Object]"', () => {
+    expect(plainly(SPENT)).toBe(QUOTA);
+    expect(plainly({ stage: 'error', message: 'prompt is required' })).toBe('prompt is required');
   });
 
   it('says so when a Space finishes with nothing', async () => {

@@ -5,7 +5,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { ffReady } from './ff.ts';
 import {
   beatsOf, createMusic, fakeMusic, fits, hashOf, keep, licenceOf, loudness, makeBed, monoOf, MOODS,
-  openverseResults, freesoundResults, pcmOf, sfx, SHAPES, wavOf, type Found,
+  openverseResults, freesoundResults, freesoundSearch, FREESOUND_REFUSED, pcmOf, sfx, SHAPES, wavOf, type Found,
 } from './music.ts';
 import { wavSeconds } from './voice.ts';
 
@@ -73,6 +73,37 @@ describe('what a search is allowed to come back with', () => {
     }, 20);
     expect(found).toHaveLength(1);
     expect(found[0].source).toBe('https://freesound.org/s/11/');
+  });
+
+  it('takes only CC0 from Freesound, even an attribution sound the filter let through', () => {
+    const found = freesoundResults({
+      results: [
+        { id: 21, name: 'Credit me loop', username: 'ann', license: 'https://creativecommons.org/licenses/by/4.0/', duration: 95, tags: ['music'], previews: { 'preview-hq-mp3': 'https://cdn.freesound.org/21.mp3' } },
+        { id: 22, name: 'Calm piano loop', username: 'bo', license: 'http://creativecommons.org/publicdomain/zero/1.0/', duration: 95, tags: ['music'], previews: { 'preview-hq-mp3': 'https://cdn.freesound.org/22.mp3' } },
+      ],
+    }, 20);
+    expect(found.map((one) => one.id)).toEqual(['freesound-22']);
+    expect(found[0].licence).toContain('CC0');
+    expect(found[0].credit).toBe(false);
+  });
+
+  it('asks Freesound for CC0 alone with the key in its header, and says so when the key is refused', async () => {
+    const asked: { url: string; auth: string }[] = [];
+    const ok = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      asked.push({ url: String(input), auth: String((init?.headers as Record<string, string>).authorization) });
+      return new Response(JSON.stringify({ results: [{ id: 5, name: 'Warm guitar loop', username: 'cy', license: 'http://creativecommons.org/publicdomain/zero/1.0/', duration: 60, tags: ['music'], previews: { 'preview-hq-mp3': 'https://cdn.freesound.org/5.mp3' } }] }), { status: 200 });
+    }) as typeof fetch;
+    const got = await freesoundSearch('fs-key', 'warm guitar', 20, ok);
+    expect(got.refused).toBeUndefined();
+    expect(got.found).toHaveLength(1);
+    expect(new URL(asked[0].url).searchParams.get('filter')).toContain('license:"Creative Commons 0"');
+    expect(asked[0].auth).toBe('Token fs-key');
+
+    const refused = await freesoundSearch('bad', 'warm', 20, (async () => new Response('{"detail":"Invalid token"}', { status: 401 })) as typeof fetch);
+    expect(refused).toEqual({ found: [], refused: FREESOUND_REFUSED });
+    // Anything else is just this one search coming back empty, never a crash.
+    expect(await freesoundSearch('k', 'warm', 20, (async () => new Response('', { status: 503 })) as typeof fetch)).toEqual({ found: [] });
+    expect(await freesoundSearch('k', 'warm', 20, (async () => { throw new Error('offline'); }) as typeof fetch)).toEqual({ found: [] });
   });
 
   it('puts the track that sounds like the mood in front of the one that merely matched a word', () => {
@@ -296,6 +327,42 @@ describe.skipIf(await ffReady())('a bed for a real film', () => {
     const made = await music.bed({ mood: 'calm', seconds: 8 }, said);
     expect(made.credit.licence).toContain('CC BY 4.0');
     expect(said.said.join(' ')).toContain('Name them in the film');
+  }, 120_000);
+
+  // Openverse with nothing to offer, so whatever the bed is made of came from Freesound or was written here.
+  const withFreesound = (status: number, asked: string[] = []): typeof fetch => (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.startsWith('https://api.openverse.org/')) return answer({ results: [] });
+    if (url.startsWith('https://freesound.org/apiv2/')) {
+      asked.push(url);
+      if (status !== 200) return new Response('{"detail":"Invalid token"}', { status });
+      return answer({ results: [
+        { id: 41, name: 'Credit me piano', username: 'ann', license: 'https://creativecommons.org/licenses/by/4.0/', duration: 60, tags: ['music', 'piano', 'calm'], previews: { 'preview-hq-mp3': 'https://cdn.freesound.org/41.mp3' } },
+        { id: 42, name: 'Calm piano loop', username: 'bo', license: 'http://creativecommons.org/publicdomain/zero/1.0/', duration: 60, tags: ['music', 'piano', 'calm'], previews: { 'preview-hq-mp3': 'https://cdn.freesound.org/42.mp3' } },
+      ] });
+    }
+    if (url.startsWith('https://cdn.freesound.org/')) return new Response(new Uint8Array(TRACK), { status: 200 });
+    throw new Error(`the test did not expect a call to ${url}`);
+  }) as typeof fetch;
+
+  it('takes a CC0 track from Freesound with the key set, and writes whose it is into the record of credit', async () => {
+    const at = join(dir, 'freesound');
+    const asked: string[] = [];
+    const music = createMusic({ cacheDir: at, env: { STAGE_MUSIC_SEED: 'fs', FREESOUND_API_KEY: 'fs-key' }, http: withFreesound(200, asked) });
+    const made = await music.bed({ mood: 'calm', seconds: 10 }, nothing);
+    expect(new URL(asked[0]).searchParams.get('filter')).toContain('license:"Creative Commons 0"');
+    expect(made.credit).toEqual({ title: 'Calm piano loop', by: 'bo', licence: 'CC0 1.0 (public domain, no attribution asked)', source: 'https://freesound.org/s/42/' });
+    const index = JSON.parse(await readFile(join(at, 'music', 'index.json'), 'utf8')) as { tracks: { id: string; licence: string; source: string }[] };
+    expect(index.tracks.map((one) => one.id)).toEqual(['freesound-42']);
+    expect(await readFile(join(at, 'music', 'CREDITS.md'), 'utf8')).toContain('https://freesound.org/s/42/');
+  }, 120_000);
+
+  it('tells the card when the Freesound key is refused, and still makes the bed', async () => {
+    const music = createMusic({ cacheDir: join(dir, 'freesound-refused'), env: { STAGE_MUSIC_SEED: 'fr', FREESOUND_API_KEY: 'wrong' }, http: withFreesound(401) });
+    const said = lines();
+    const made = await music.bed({ mood: 'calm', seconds: 8 }, said);
+    expect(said.said).toContain(FREESOUND_REFUSED);
+    expect(wavSeconds(made.bytes)).toBeCloseTo(8, 1);
   }, 120_000);
 });
 
