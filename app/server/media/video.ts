@@ -30,7 +30,7 @@ import {
 import { creditOf, filmStock, photoCredits } from './stock.ts';
 import {
   afforded, closeHolds, drawnAs, heldUp, lineUnder, photoOfTheLine, sceneLine, shareOut, shotKey, slotsFor, standInOf, stockQueries, topicOf,
-  ofTheWorld, worldOf, worldScore, type Slot, type Visual,
+  ofTheWorld, packedFor, worldOf, worldScore, type Slot, type Visual,
 } from './visuals.ts';
 import { choosePhoto, closerFor, groundedFor, picturePolicy, seenAs } from './picture-policy.ts';
 import { isDraft, makingWords, secondsEach } from '../../shared/film-time.ts';
@@ -629,8 +629,9 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
               file = chosen.photo.file;
               credit = creditOf(chosen.photo.found);
             }
-            // Drawn first, a picture is drawn from its scene's own things where the brief set them.
-            const drawnFrom = policy === 'drawn-first' ? groundedFor(visual, world) : visual;
+            // Drawn first, a picture is drawn from its scene's own things where the brief set them; and a picture of
+            // the product's food is drawn the way it arrives, in its box, never plated.
+            const drawnFrom = packedFor(policy === 'drawn-first' ? groundedFor(visual, world) : visual, world);
             if (!file) {
               const piece = await drawing.make({ prompt: drawnAs(drawnFrom, bible), shape, ...(draft ? { size: 'draft' } : {}) }, { report: fromMaker, signal: stop });
               if (piece.by === DRAWN_BEFORE) kept += 1;
@@ -717,7 +718,11 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
             stops.set(key, mine);
             const stop = signal ? AbortSignal.any([signal, mine.signal]) : mine.signal;
             pending += 1;
-            pictures.set(key, inHand(() => drawOne(visual, stop)).finally(() => { pending -= 1; }));
+            // A picture that failed is drawn once more before the shot goes without: Journey 17 lost a shot's
+            // picture to one failed drawing and showed bare type in its place.
+            pictures.set(key, inHand(() => drawOne(visual, stop)
+              .then((got) => got ?? (stop.aborted || spent ? undefined : drawOne(visual, stop))))
+              .finally(() => { pending -= 1; }));
           }
           return { needing, owners };
         };
@@ -879,12 +884,16 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
               : {}),
           };
         });
-        holdTheLastPicture(cut, (file) => {
+        // How well a picture sits in the film's world: below nought a stand-in, nought none of its things, and
+        // above that how many of them it has.
+        const mark = (file: string) => {
           const subject = madeFrom.get(file)?.subject;
-          if (subject === undefined) return 0;
-          const score = worldScore(subject, world);
-          return score < 0 ? -1 : 1 + score;
-        });
+          return subject === undefined ? 0 : worldScore(subject, world);
+        };
+        // A shot whose picture never came takes its scene's best other picture, else the nearest one, rather than
+        // going out as bare type by accident; the close holds a recent picture of the film's world.
+        if (fillBareShots(cut, mark)) report('a shot whose picture did not come shows its scene\'s other picture rather than bare type');
+        holdTheLastPicture(cut, mark);
         let total = edit.total;
 
         // The bed. The founder's own track first; failing that whatever the music maker can write for the mood.
@@ -1002,28 +1011,61 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
 export { fakeVideos, fakeVideosOf } from './fake-video.ts';
 export type { VideoAsk, VideoDeps } from './gather.ts';
 
-// The close holds the film's last picture behind its line. Journey 13: a farmers market film ended on four seconds of
+// The close holds a picture of the film behind its line. Journey 13: a farmers market film ended on four seconds of
 // a plain gold gradient behind "Find fresh harvest this weekend", which reads as the film running out of pictures.
-// The close is still set on its own words and nothing new is drawn for it: the picture the film last showed carries
-// on under it, dimmed by its scrim, until the voice and the music end.
+// The close is still set on its own words and nothing new is drawn for it: a picture the film showed carries on
+// under it, dimmed by its scrim, until the voice and the music end — under every shot of the close, not only the
+// last: Journey 17's close opened on a bare gradient and only its second shot had the picture.
 //
-// Given how well each picture sits in the film's world (`score`, by file), the close holds the best of them rather
-// than whichever came last: journey 14's voicemail film closed on eight seconds of a bronze anchor. Of equals, the
-// latest is held, so the film still runs on into its close.
+// Given how well each picture sits in the film's world (`score`, by file: below nought a stand-in), the close holds
+// the latest scene's best picture that is of the world, walking back a scene at a time, rather than the best of the
+// whole film: journey 14's voicemail film closed on eight seconds of a bronze anchor, and Journey 17's on the stew of
+// its second scene, three scenes back. Without a score, the last picture shown is held.
 export function holdTheLastPicture(cut: Shot[], score?: (file: string) => number): void {
   const last = cut.at(-1);
-  if (!last || last.video || last.image || last.bg || !closesOnGround(last.scene.layout, cut.length - 1, cut.length)) return;
+  if (!last || !closesOnGround(last.scene.layout, cut.length - 1, cut.length)) return;
+  let from = cut.length - 1;
+  while (from > 0 && cut[from - 1].scene === last.scene) from -= 1;
+  const bare = cut.slice(from).filter((one) => !one.video && !one.image && !one.bg);
+  if (!bare.length) return;
+  const pictureOf = (one: Shot) => one.bg ?? (one.scene.layout === 'picture' ? one.image : undefined);
+  const mark = (one: Shot) => (score ? score(pictureOf(one)!) : 1);
+  const before = cut.slice(0, from).filter((one) => pictureOf(one));
+  // The latest scene with a picture of the world in it, and its best one; of equals, the later.
   let held: Shot | undefined;
-  let best = -Infinity;
-  for (let index = cut.length - 2; index >= 0; index -= 1) {
-    const one = cut[index];
-    const file = one.bg ?? (one.scene.layout === 'picture' ? one.image : undefined);
-    if (!file) continue;
-    const mark = score ? score(file) : 0;
-    if (mark > best) { held = one; best = mark; }
-    if (!score) break;
+  for (let at = before.length - 1; at >= 0 && !held; at -= 1) {
+    const scene = before[at].scene;
+    const theirs = before.filter((one) => one.scene === scene && mark(one) > 0);
+    held = theirs.reduce<Shot | undefined>((best, one) => (!best || mark(one) >= mark(best) ? one : best), undefined);
+    while (at > 0 && before[at - 1].scene === scene) at -= 1;
   }
+  // No picture of the world at all: the best there is, and the latest of equals, rather than no picture.
+  held ??= before.reduce<Shot | undefined>((best, one) => (!best || mark(one) >= mark(best) ? one : best), undefined);
   if (!held) return;
-  const file = held.bg ?? held.image!;
-  Object.assign(last, { bg: file, bgShared: true, scrim: Math.max(held.scrim ?? 0, 0.55), lift: held.lift, plies: held.plies });
+  const file = pictureOf(held)!;
+  for (const one of bare) Object.assign(one, { bg: file, bgShared: true, scrim: Math.max(held.scrim ?? 0, 0.55), lift: held.lift, plies: held.plies });
+}
+
+// Every shot carries a picture once the film has any. A shot whose own picture failed (drawn twice, or blank twice)
+// takes the best other picture of its own scene, and failing that the nearest picture before it, then after it. The
+// close is `holdTheLastPicture`'s, and a logo or a device scene shows only its own mark or screen. Answers how many
+// shots were filled.
+export function fillBareShots(cut: Shot[], score: (file: string) => number = () => 0): number {
+  const last = cut.at(-1);
+  const closing = (one: Shot) => !!last && one.scene === last.scene && closesOnGround(last.scene.layout, cut.length - 1, cut.length);
+  const pictureOf = (one: Shot) => (one.video ? undefined : one.bg ?? (one.image && (one.scene.layout === 'picture') ? one.image : undefined));
+  let filled = 0;
+  cut.forEach((one, at) => {
+    if (one.video || one.image || one.bg || closing(one) || one.scene.layout === 'logo' || one.scene.layout === 'device') return;
+    const siblings = cut.filter((other) => other !== one && other.scene === one.scene && pictureOf(other));
+    const best = siblings.reduce<Shot | undefined>((top, other) => (!top || score(pictureOf(other)!) > score(pictureOf(top)!) ? other : top), undefined);
+    const near = best ?? [...cut.slice(0, at)].reverse().find((other) => pictureOf(other)) ?? cut.slice(at + 1).find((other) => pictureOf(other) && !closing(other));
+    if (!near) return;
+    const file = pictureOf(near)!;
+    const scrim = Math.max(near.scrim ?? 0, 0.55);
+    if (one.scene.layout === 'picture') Object.assign(one, { image: file, scrim, lift: near.lift, plies: near.plies });
+    else Object.assign(one, { bg: file, bgShared: true, scrim, lift: near.lift, plies: near.plies });
+    filled += 1;
+  });
+  return filled;
 }

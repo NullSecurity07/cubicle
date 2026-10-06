@@ -16,7 +16,7 @@ import { hands } from './turns.ts';
 import { makingWords as estimate } from '../../shared/film-time.ts';
 import { bibleFor, jsonIn, layoutsFor, planPrompt, specPrompt, understandingOf, type Material, type Plan } from './director.ts';
 import { budgetOf, WORDS_A_SECOND } from './spec.ts';
-import { holdTheLastPicture } from './video.ts';
+import { fillBareShots, holdTheLastPicture } from './video.ts';
 
 const film: Spec = {
   title: 'Week eleven',
@@ -920,5 +920,56 @@ describe('the close holds the last picture', () => {
     const bare = [shot({ layout: 'statement', text: 'A', say: 'A.' }), shot({ layout: 'cta', text: 'Go', say: 'Go.' })];
     holdTheLastPicture(bare);
     expect(bare[1].bg).toBeUndefined();
+  });
+});
+
+// Journey 17: the meal-prep film's close opened on a bare gradient, and its second shot held the stew of the film's
+// second scene rather than the delivery box of the scene just before the close.
+describe('every shot carries a picture', () => {
+  const shot = (scene: Scene, over: Partial<Shot> = {}): Shot => ({ scene, seconds: 2, ...over }) as Shot;
+  const canteens: Scene = { layout: 'title', heading: 'Hospital canteens', say: 'Night-shift nurses eat badly.' };
+  const cooks: Scene = { layout: 'picture', image_prompt: 'meals', say: 'ShiftMeals cooks five meals a week.' };
+  const entrance: Scene = { layout: 'steps', heading: 'Sunday delivery', say: 'Your weekly order arrives at the staff entrance.' };
+  const close: Scene = { layout: 'cta', text: 'ShiftMeals', say: 'ShiftMeals, a weekly meal-prep delivery for night-shift nurses.' };
+  const film = () => [
+    shot(canteens, { bg: 'frame-0-0.png', scrim: 0.6 }), shot(canteens, { bg: 'frame-0-1.png', scrim: 0.6 }),
+    shot(cooks, { image: 'frame-1-0.png', scrim: 0.7 }), shot(cooks, { image: 'frame-1-1.png', scrim: 0.7 }),
+    shot(entrance, { bg: 'frame-2-0.png', scrim: 0.7 }),
+    shot(close), shot(close),
+  ];
+  const marks: Record<string, number> = { 'frame-0-0.png': 2, 'frame-0-1.png': 2, 'frame-1-0.png': 4, 'frame-1-1.png': 1, 'frame-2-0.png': 3 };
+
+  it('holds the latest scene\'s picture of the world under every shot of the close, not the best of the whole film', () => {
+    const cut = film();
+    holdTheLastPicture(cut, (file) => marks[file]);
+    expect(cut.slice(-2).map((one) => one.bg)).toEqual(['frame-2-0.png', 'frame-2-0.png']);
+    expect(cut.slice(-2).every((one) => one.bgShared && one.scrim! >= 0.55)).toBe(true);
+  });
+
+  it('walks back past a scene whose only picture is off the world or a stand-in', () => {
+    const cut = film();
+    holdTheLastPicture(cut, (file) => ({ ...marks, 'frame-2-0.png': -1 } as Record<string, number>)[file]);
+    expect(cut.at(-1)!.bg).toBe('frame-1-0.png');
+    expect(cut.at(-2)!.bg).toBe('frame-1-0.png');
+  });
+
+  it('gives a shot whose picture failed its scene\'s best other picture, else the nearest one, and leaves the close to the close', () => {
+    const cut = film();
+    delete cut[2].image;
+    delete cut[4].bg;
+    expect(fillBareShots(cut, (file) => marks[file])).toBe(2);
+    expect(cut[2].image).toBe('frame-1-1.png');
+    expect(cut[4].bg).toBe('frame-1-1.png');
+    expect(cut[4].bgShared).toBe(true);
+    expect(cut.at(-1)!.bg).toBeUndefined();
+    holdTheLastPicture(cut, (file) => marks[file]);
+    expect(cut.at(-1)!.bg).toBe('frame-1-1.png');
+  });
+
+  it('leaves a film with no picture at all as it is', () => {
+    const bare = [shot(canteens), shot(entrance), shot(close)];
+    expect(fillBareShots(bare)).toBe(0);
+    holdTheLastPicture(bare);
+    expect(bare.every((one) => !one.bg && !one.image)).toBe(true);
   });
 });

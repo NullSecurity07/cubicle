@@ -30,6 +30,8 @@ export type Sight = {
   // How sure the studio is that a picture shows `label` rather than something else (`ASKS.about`), between nought
   // and one, or null when it cannot look. What `picture-policy.ts` holds a photograph and a drawn picture to.
   about?(file: string, label: string): Promise<number | null>;
+  // How sure the studio is of each of `labels` against the others, in their order, or null when it cannot look.
+  versus?(file: string, labels: string[]): Promise<number[] | null>;
   // Why the last call came back with nothing, in words for the card: a first download still running, say.
   why(): string | null;
 };
@@ -45,6 +47,8 @@ export const ASKS = {
   // What a scene's own things are scored against: anything else, the old engraving a free library answers with, and
   // the outdoors a library's "night" or "meal" turns up. Journey 16's engraving and campfire scored 0.02 and 0.04.
   about: ['a photograph of something else', 'an old drawing, painting or engraving', 'a landscape or a scene outdoors'],
+  // What a drawn picture of somebody at work is scored against beside its own scene. Journey 17's nurse lay on the floor.
+  lying: 'a person lying on the floor',
 } as const;
 
 // Measured on this studio's own stills, not guessed. The portrait that opened a real reel scored 0.56 facing; two
@@ -254,6 +258,17 @@ export function createSight(cacheDir: string): Sight {
         const ask = await within(looker(), PATIENCE);
         if (ask === 'late') { said = LEARNING; return null; }
         return await inTurn(async () => (await ask(file, [label, ...ASKS.about])).find((one) => one.label === label)?.score ?? 0);
+      } catch { return null; }
+    },
+    async versus(file, labels) {
+      if (resting() || labels.some((one) => !one.trim())) return null;
+      try {
+        const ask = await within(looker(), PATIENCE);
+        if (ask === 'late') { said = LEARNING; return null; }
+        return await inTurn(async () => {
+          const answer = await ask(file, labels);
+          return labels.map((label) => answer.find((one) => one.label === label)?.score ?? 0);
+        });
       } catch { return null; }
     },
     async plies(file) {
