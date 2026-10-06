@@ -2,6 +2,7 @@ import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { MorningNote, PlanProposal } from '../../shared/partner.ts';
 import type { PartnerCall } from './call.ts';
+import type { Correction } from './corrections.ts';
 import type { Inputs } from './economics.ts';
 import { writeAtomic } from '../fsx.ts';
 import { readBook } from '../rescue.ts';
@@ -36,6 +37,9 @@ export type PartnerState = {
   refreshTried?: string;
   // The last slip on the brief's goal a refresh answered, without its count of days: a slip is looked at once.
   slipSeen?: string;
+  // What the founder corrected in chat ("50 print jobs a month, not 50 paying hosts"), newest last: what they said is
+  // wrong is never said again, and the unit they gave is the one break-even is counted in (corrections.ts).
+  corrections?: Correction[];
 };
 
 export function partnerState(workspace: string) {

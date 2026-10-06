@@ -7,6 +7,11 @@ const item = (kind: Attention['kind'], title: string): Attention => ({ id: `${ki
 const parts = (extra: Partial<StandingParts> = {}): StandingParts => ({ verdicts: [], numbers: '', open: [], planned: [], flagCounts: [], decided: [], learned: [], ...extra });
 
 describe('the standing facts', () => {
+  it('carries what the founder corrected right under the verdict, so the wrong figure is never said again', () => {
+    const block = standingBlock(parts({ call: ['Your verdict on 2026-10-06: keep going.'], corrected: ['- "50 print jobs a month", not "50 paying hosts" (founder, 2026-10-06)'], verdicts: ['- Spec, Pia: FIT'] }), []);
+    expect(block).toContain('The founder corrected (their word stands over any figure before it; never say the wrong one again):\n- "50 print jobs a month", not "50 paying hosts" (founder, 2026-10-06)\nTeam verdicts:');
+  });
+
   it('says what waits in Needs you by kind and count, never the morning note, and says so when nothing does', () => {
     expect(waitingLine([])).toBe('Waiting in Needs you: nothing. Never tell the founder something waits there.');
     expect(waitingLine([item('morning-note', 'Morning note: call three users')])).toBe('Waiting in Needs you: nothing. Never tell the founder something waits there.');

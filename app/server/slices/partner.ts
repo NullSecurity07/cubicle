@@ -21,6 +21,7 @@ import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import { createReviews, granted } from '../partner/review.ts';
 import { readRefresh, refreshAsk, refreshDue, refreshOpening, refreshText, slipOn } from '../partner/refresh.ts';
 import { goalsIn } from '../partner/goal.ts';
+import { correctionLines, correctionsIn, inUnits, keepCorrections, unitFix, unitsFix } from '../partner/corrections.ts';
 import { markClaims } from '../tools/evidence.ts';
 import { createWatch, fakeWatchReply, watchBudget, type Budget } from '../partner/watch.ts';
 import { draftId, gmailLink } from '../../shared/maildraft.ts';
@@ -213,9 +214,11 @@ export function createPartner(options: PartnerOptions = {}) {
       return companyId ? companyDocOf(on, companyId) : companyDocOf(on);
     };
     // The brief's Numbers worked out with calc (server/partner/economics.ts), or nothing when they do not hold enough.
+    // A unit the founder put right in chat ("50 print jobs a month, not 50 paying hosts") is the one it is said in.
+    const fixesNow = async () => unitFix((await state.read().catch(() => null))?.corrections ?? []);
     const economicsNow = async (stage?: Stage) => {
       const doc = await companyNow(stage);
-      return doc ? economicsOf(sectionText(await deps.store.readDoc(doc.id).catch(() => ''), 'Numbers')) : null;
+      return doc ? inUnits(economicsOf(sectionText(await deps.store.readDoc(doc.id).catch(() => ''), 'Numbers')), await fixesNow()) : null;
     };
     // The founder challenging the verdict standing in this room is held to the verdict's four lines too, so a kill
     // signal changed under pushback replaces the check (server/partner/call.ts).
@@ -341,7 +344,7 @@ export function createPartner(options: PartnerOptions = {}) {
       // So is what the founder said no to: a no given a moment ago is in the very next turn.
       // So is the partner's own verdict: one refreshed or changed under pushback a moment ago is the one said.
       const [parts, promised, declined, held] = await Promise.all([standing, promises.list().catch(() => []), saidNoFor(deps.workspace).lines().catch(() => []), state.read().catch(() => null)]);
-      return { ...parts, promised: promised.filter((one) => one.status === 'open').map(promiseLine), declined, call: verdictLines(held?.call) };
+      return { ...parts, promised: promised.filter((one) => one.status === 'open').map(promiseLine), declined, call: verdictLines(held?.call), corrected: correctionLines(held?.corrections ?? []) };
     }
     async function standingFor(stage: Stage, partnerId: string) {
       // Bets are read from the ledger, never from Needs you rows: a row can outlive the take by a refresh.
@@ -466,6 +469,13 @@ export function createPartner(options: PartnerOptions = {}) {
       const stage = await deps.store.loadStage();
       const me = stage.rooms.find((one) => one.id === payload.roomId && one.partner);
       if (!me || payload.reply.stopped || !payload.reply.text.trim()) return next(payload);
+      // What the founder put right is kept before anything is worked out, so this very reply is held to it.
+      const corrected = correctionsIn(payload.query);
+      if (corrected.length) {
+        await state.change((draft) => { draft.corrections = keepCorrections(draft.corrections ?? [], corrected, localDay(now())); }).catch(() => {});
+        standing = null;
+      }
+      const fixes = await fixesNow();
       // "What now" is answered across the rooms: held to the standing facts in code, asked once more if it names too
       // few of them (server/partner/synthesis.ts).
       if (asksWhatNext(payload.query)) {
@@ -488,7 +498,7 @@ export function createPartner(options: PartnerOptions = {}) {
           ]);
           const evidence = [company, block, payload.query, ...chat.slice(-30).map((one) => one.text ?? ''), ...payload.reply.tools.map((tool) => tool.result ?? '')].join('\n');
           const said = [company, payload.query, ...chat.slice(-30).filter((one) => one.role === 'user' && !one.from).map((one) => one.text ?? ''), ...payload.reply.tools.filter((tool) => tool.ok !== false).map((tool) => tool.result ?? '')];
-          const economics = company ? economicsOf(sectionText(company, 'Numbers')) : null;
+          const economics = company ? inUnits(economicsOf(sectionText(company, 'Numbers')), fixes) : null;
           const { reply, call, askedAgain } = await holdCall(payload.query, payload.reply, payload.again, today, evidence, said, economics, company ? sectionText(company, 'Numbers') : '', pushed, goalsIn(company, today));
           if (call) {
             // The working rides with the turn as the calc tool's own results, so the guard and the founder see where
@@ -516,7 +526,7 @@ export function createPartner(options: PartnerOptions = {}) {
       try {
         const doc = await companyNow(stage);
         let company = doc ? await deps.store.readDoc(doc.id) : '';
-        if (doc && (facts.numbers.length || facts.idea || facts.customer)) {
+        if (doc && (facts.numbers.length || facts.idea || facts.customer || facts.denied?.length)) {
           const kept = keepFacts(company, facts, localDay(now()));
           let line = '';
           if (kept.kept.length && wired(stage, me.id, [doc.id]).length) {
@@ -532,7 +542,7 @@ export function createPartner(options: PartnerOptions = {}) {
         // What customers will read carries no source tags, placeholders or company money, and is not called ready while it does.
         if (forCustomers(payload.query)) text = customerReply(text, numbers);
         // Runway and break-even come from calc on the brief's numbers, never from the model (server/partner/economics.ts).
-        text = runwayFix(figuresFix(text, economicsOf(sectionText(company, 'Numbers'))), numbers);
+        text = unitsFix(runwayFix(figuresFix(text, inUnits(economicsOf(sectionText(company, 'Numbers')), fixes)), numbers), fixes);
         // Sent to Needs you with nothing waiting there: said under the reply.
         const rows = await deps.attention.list().catch(() => []);
         const ledger = await book.list().catch(() => null);
