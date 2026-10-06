@@ -267,3 +267,18 @@ describe('what a team doc says about the world', () => {
     expect(out.text).toContain('Marked as a view: "Likely a painkiller for designers who test often."');
   });
 });
+
+// Journey 13: a new "Customer notes" doc said the pilot offices loved the boxes, and nothing on record said so.
+describe('customer feedback in a new doc', () => {
+  it('is marked "(assumption)" when nothing read says it, and the writer is told to say "no feedback on record"', async () => {
+    const { store, context } = await setup();
+    const read = ['Make a new doc with customer notes: what we actually know about our five pilot offices.', 'Brief: local produce boxes, 5 pilot offices, 3 paying.'];
+    const turn = { ...context, sources: () => read, evidence: () => ({ read, said: read }) };
+    const text = '# Customer notes\n\n**Office manager feedback:** HR/Office managers report it acts as a popular perk and talking point in the office.\n\n5 pilot offices, 3 paying.';
+    const out = await runTool(docTools, 'create_doc', JSON.stringify({ title: 'Customer notes', text }), turn);
+    expect(out.ok).toBe(true);
+    expect(out.text).toMatch(/^Created "Customer notes"\. Marked as an assumption, since no notes read say it: .*no feedback on record/);
+    const id = (out.effect as { id: string }).id;
+    expect(await store.readDoc(id)).toContain('talking point in the office (assumption).\n\n5 pilot offices, 3 paying.');
+  });
+});

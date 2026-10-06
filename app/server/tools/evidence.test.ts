@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { evidenceCheck, heardFrom, markClaims, markUnbacked, readableSources } from './evidence.ts';
+import { evidenceCheck, heardFrom, markClaims, markFeedback, markUnbacked, readableSources } from './evidence.ts';
 
 const TEMPLATE = '# Evaluation\n\n## 2. Three specific ways it dies\n\n1. — survivable? — cheapest test:\n\n## 3. Is the pain real?\n\nVitamin — painkiller — hair on fire:\n\nWhat it costs them per month:\n\nReal customer conversations done (of ten to twenty):\n\n## 5. Verdict\n\nOne word (STRONG / WEAK / PIVOT REQUIRED):\n';
 // Journey 10's founder: twelve beta users, two paying, forty playtest sessions logged. Nobody talked to anyone.
@@ -150,5 +150,47 @@ describe('a claim that the product works', () => {
   });
   it('is marked "(assumption)" in a reason when nothing backs it', () => {
     expect(markClaims('The product itself works. 3 pay.', [FOUNDER])).toBe('The product itself works (assumption). 3 pay.');
+  });
+});
+
+// Journey 13: Lena's customer notes put feedback in the pilot offices' mouths that nobody ever gave.
+describe('feedback put in customers\' mouths', () => {
+  const PICKUP = '**Engagement:** Strong initial pickup on Tuesday evenings; staff appreciate the convenience and freshness of local produce.';
+  const PERK = '**Office manager feedback:** HR/Office managers report it acts as a popular perk and talking point in the office.';
+  const BRIEF13 = '# Company brief\n\nWe deliver boxes of local produce to offices on Tuesdays for evening pickup. 5 pilot offices, 3 paying.';
+  const ASK = 'Make a new doc with customer notes: what we actually know about our five pilot offices and what we still need to find out about churn after month three.';
+  const plain = (line: string, read = [BRIEF13, ASK]) => markFeedback({ before: '# Customer notes\n', after: `# Customer notes\n\n${line}`, read });
+
+  it('is marked "(assumption)" in a plain doc when nothing read says it', () => {
+    expect(plain(PICKUP).text).toContain('freshness of local produce (assumption).');
+    expect(plain(PERK).text).toContain('talking point in the office (assumption).');
+    expect(plain(`${PICKUP}\n${PERK}`).marked).toHaveLength(2);
+  });
+  it('stands when notes read say it, by shared words', () => {
+    const notes = 'Interview notes, Acme office: the office manager said the box is a nice perk and people talk about it at lunch.';
+    expect(plain(PERK, [BRIEF13, notes]).marked).toEqual([]);
+    expect(plain('Staff appreciate the freshness of the produce.', [BRIEF13, 'Survey: 7 of 9 staff said the freshness was the best part.']).marked).toEqual([]);
+    // A record about something else backs nothing.
+    expect(plain(PERK, [BRIEF13, 'The founder said churn after month three is the worry.']).marked).toHaveLength(1);
+    expect(plain('Customers love it.', ['Founder: our customers love it.']).marked).toEqual([]);
+  });
+  it('leaves alone questions, things to find out and "no feedback on record"', () => {
+    for (const line of [
+      'Do office managers report it as a perk?',
+      'Find out whether staff appreciate the Tuesday slot.',
+      'Office manager feedback: no feedback on record.',
+      'We do not know if the boxes are popular yet.',
+      'Five pilot offices, three of them paying.',
+    ]) expect(plain(line).marked).toEqual([]);
+  });
+  it('is refused on a team doc under any heading, and marked when hedged', () => {
+    const before = '# Evaluation\n\n## Notes\n\n';
+    const run = (line: string) => evidenceCheck({ before, after: `${before}${line}\n`, counts: [BRIEF13, ASK], said: [ASK] });
+    expect(() => run(PERK)).toThrow(/"Office managers report" in "Notes".*no feedback on record/s);
+    expect(run('Office managers probably see it as a popular perk.').text).toContain('popular perk (assumption).');
+  });
+  it('is marked in a partner\'s reason', () => {
+    expect(markClaims('Keep going because staff engagement remains high.', [ASK])).not.toContain('(assumption)');
+    expect(markClaims('Keep going: the offices report strong engagement.', [ASK])).toContain('(assumption)');
   });
 });
