@@ -26,6 +26,7 @@ export const WHAT: Record<Attention['kind'], string> = {
   'backup-failed': 'The daily backup failed',
   'morning-note': 'left you the morning note', 'bet-check': 'A bet to check', 'proposed-bet': 'suggests a bet', 'proposed-plan': 'suggests tasks from a plan',
   promise: 'Something you said you would do',
+  'review-flag': 'reviewed a team doc',
   'mail-draft': 'has an email ready for you to send',
 };
 export const ago = (at: number, now = Date.now()) => {

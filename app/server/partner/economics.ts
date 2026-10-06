@@ -10,7 +10,10 @@ import { calculate } from '../tools/calc.ts';
 
 type Row = { label: string; line: string; amounts: { value: number; at: number }[] };
 export type Working = { label: 'Break-even' | 'Runway'; expression: string; values: string; result: string; line: string };
-export type Economics = { working: Working[]; breakEven?: number; current?: number; unit?: string };
+// `inputs`: the brief's own monthly figures as read, for a review that works a colleague's sums out again and a
+// verdict refresh that sees how far they moved since the call.
+export type Inputs = { price?: number; cost?: number; fixed?: number; net?: number; cash?: number; paying?: number };
+export type Economics = { working: Working[]; breakEven?: number; current?: number; unit?: string; inputs?: Inputs; currency?: string };
 
 const AMOUNT = /[$€£]?\s?(\d[\d,]*(?:\.\d+)?)\s*(k\b)?/gi;
 function rowsOf(numbers: string): Row[] {
@@ -45,6 +48,8 @@ export function economicsOf(numbers: string): Economics | null {
   const paying = find(rows, /\bpaying\b|\bcustomers\b|\bsubscribers\b/i, /\bprice\b|\bcost\b/i);
   const working: Working[] = [];
   const out: Economics = { working };
+  const currency = /[$€£]/.exec(numbers)?.[0];
+  if (currency) out.currency = currency;
   const work = (label: Working['label'], expression: string, values: string, said: (value: string) => string) => {
     const worked = calculate(expression, values);
     const result = `${worked.worked} = ${worked.display}`;
@@ -56,6 +61,8 @@ export function economicsOf(numbers: string): Economics | null {
   const f = fixed ? monthly(fixed) : undefined;
   const n = paying?.amounts[0].value;
   if (n !== undefined && paying) { out.current = n; out.unit = unitOf(paying.label); }
+  const inputs: Inputs = { price: p, cost: c, fixed: f, net: net ? monthly(net) : undefined, cash: cash?.amounts[0].value, paying: n };
+  out.inputs = Object.fromEntries(Object.entries(inputs).filter(([, value]) => value !== undefined)) as Inputs;
   const units = out.unit ?? 'paying customers';
   if (p !== undefined && c !== undefined && f !== undefined) {
     if (p - c <= 0) {

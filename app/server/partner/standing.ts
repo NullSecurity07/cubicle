@@ -33,6 +33,7 @@ const WAITING: Partial<Record<AttentionKind, [one: string, many: string]>> = {
   'proposed-bet': ['bet to take or leave', 'bets to take or leave'],
   'bet-check': ['bet to check', 'bets to check'],
   'proposed-plan': ['plan to put on the board', 'plans to put on the board'],
+  'review-flag': ['team doc flagged to fix', 'team docs flagged to fix'],
   'proposed-task': ['task to accept', 'tasks to accept'],
   approval: ['action to approve', 'actions to approve'],
   'run-approval': ['run to approve', 'runs to approve'],

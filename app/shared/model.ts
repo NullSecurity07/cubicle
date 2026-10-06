@@ -162,6 +162,8 @@ export type AttentionKind = 'approval' | 'run-approval' | 'proposed-task' | 'pro
   | 'morning-note' | 'bet-check' | 'proposed-bet' | 'proposed-plan'
   // Something the founder said they would do, on its day and after.
   | 'promise'
+  // The partner read a colleague's doc and found something to fix before the founder acts on it.
+  | 'review-flag'
   // An email a person drafted, waiting in the founder's Gmail for them to send (`url` opens the draft).
   | 'mail-draft';
 export type Attention = {

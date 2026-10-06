@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import type { Attention } from '../../../shared/model';
 import { overlay } from '../../overlay/store';
-import { answerBet, answerPlan, closeBet, closePromise, morningDone } from './api';
+import { emit } from '../../bus';
+import { answerBet, answerPlan, answerReview, closeBet, closePromise, morningDone } from './api';
 import { takeBetLabel } from './words';
 
 // What the founder can do from Needs you about the partner's things: read the morning note where it was written and
@@ -30,6 +31,20 @@ export function PartnerNeed({ entry, attempt }: { entry: Attention; attempt: (wo
     <button type="button" className="primary" onClick={() => attempt(closeBet(item, 'worked'))}>It worked</button>
   </>;
   if (entry.kind === 'proposed-plan') return <PlanNeed item={item} attempt={attempt} />;
+  // Fix puts the founder in the colleague's room with the partner's ask sent there, as the command bar would.
+  if (entry.kind === 'review-flag') {
+    const fix = () => attempt(answerReview(item, true).then((answer) => {
+      if (!answer.roomId || !answer.ask) return;
+      overlay.close({ kind: 'panel', name: 'needs' });
+      overlay.close({ kind: 'panel', name: 'dashboard' });
+      overlay.open({ kind: 'focus', id: answer.roomId });
+      emit('ask', { roomId: answer.roomId, text: answer.ask });
+    }));
+    return <>
+      <button type="button" onClick={() => attempt(answerReview(item, false))}>Ignore</button>
+      <button type="button" className="primary" onClick={fix}>Fix</button>
+    </>;
+  }
   // Only the founder closes their own promise.
   if (entry.kind === 'promise') return <>
     <button type="button" onClick={() => attempt(closePromise(item, false))}>Drop it</button>
