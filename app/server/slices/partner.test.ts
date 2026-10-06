@@ -839,6 +839,48 @@ describe('the partner slice: a verdict that commits', () => {
   });
 });
 
+// Journey 14: the founder pushed back ("a kill signal that can actually fail"); the partner named "< 10" in loose prose,
+// nothing read it, and the check stayed on "< 2".
+describe('the partner slice: pushback on the verdict', () => {
+  const CALLBACK = '## Numbers\n\n- Price: €49 per practice per month\n- Practices contacted: 40\n- Pilots running: 3\n- Paying practices: 2\n- Cash in the bank: €4,000\n- Monthly burn: €900\n';
+  const PUSH = "I don't buy it. Your kill signal is 'paying practices below 2 by 3 November', and I already have 2, so it can only fire if I lose one. Give me a sharper call and a kill signal that can actually fail.";
+  it('holds the answer to the four lines and replaces the stored call and the check in Needs you', async () => {
+    const { deps, part, workspace } = await installed({}, { now: () => new Date('2026-10-06T10:00').getTime(), ask: async () => SHAPED });
+    await withRooms(deps, [room('p1', 'Iris', { partner: true })]);
+    await part.tick!();
+    const company = companyDocOf(await deps.store.loadStage())!;
+    await deps.store.writeDoc(company.id, `${await deps.store.readDoc(company.id)}`.replace('## Numbers', CALLBACK.trim()));
+    const base = { tools: [], provider: 'p', model: 'm', usage: { input: 1, output: 1 }, stopped: false };
+    // The first verdict's "< 2" cannot fail with 2 paying; asked again, the partner keeps it, so none is named yet.
+    await deps.seams.run('turn:reply', { roomId: 'p1', query: 'Give me your verdict: keep going, pivot, or stop?',
+      reply: { ...base, text: 'My call: keep going.\nWhy: 2 paying practices out of 40 contacted.\nKill signal: paying practices < 2 by 2026-11-03.\nThis week: convert the 3 pilots.' },
+      again: async () => ({ ...base, text: 'Kill signal: paying practices < 2 by 2026-11-03.' }) });
+    expect((await partnerState(workspace).read()).call?.signal).toBeUndefined();
+    // Asked again, a kill signal that can fail is kept as the check.
+    await deps.seams.run('turn:reply', { roomId: 'p1', query: 'Your verdict again: keep going or stop?',
+      reply: { ...base, text: 'My call: keep going.\nWhy: 2 paying practices out of 40 contacted.\nKill signal: paying practices < 3 by 2026-11-03.\nThis week: convert the 3 pilots.' } });
+    expect((await partnerState(workspace).read()).call?.signal).toEqual({ what: 'paying practices < 3', by: '2026-11-03' });
+    const system = (await deps.seams.run('turn:before', { roomId: 'p1', source: 'chat', query: PUSH, messages: [{ role: 'system', content: 'You are someone.' }] })).messages[0].content as string;
+    expect(system).toContain('The founder is pushing back on your verdict.');
+    expect(system).toContain('Kill signal: one number the founder can measure');
+    const nudges: string[] = [];
+    const out = (await deps.seams.run('turn:reply', { roomId: 'p1', query: PUSH,
+      reply: { ...base, text: 'Fair. Here is a sharper one.\n\n### New Kill Signal\n- **Metric:** Paying practices < 10\n- **Check Date:** 2026-11-03' },
+      again: async (_first, nudge) => { nudges.push(nudge); return { ...base, text: 'My call: keep going.\nWhy: 2 paying practices out of 40 contacted.\nKill signal: paying practices < 10 by 2026-11-03.\nThis week: convert the 3 pilots.' }; } })).reply.text;
+    expect(nudges).toHaveLength(1);
+    expect(out).toContain('Kill signal: paying practices < 10 by 2026-11-03.');
+    expect(out).toContain('*Kill signal moved: "paying practices < 10" by 2026-11-03 takes the place of "paying practices < 3" by 2026-11-03 as the check in Needs you.*');
+    expect((await partnerState(workspace).read()).call?.signal).toEqual({ what: 'paying practices < 10', by: '2026-11-03' });
+    const open = (await promisesBook(workspace).list()).filter((one) => one.check && one.status === 'open');
+    expect(open.map((one) => one.what)).toEqual(['paying practices < 10']);
+    expect(promisesAttention(open, '2026-11-03')[0].title).toBe('Check: paying practices < 10 by 2026-11-03?');
+    // An ordinary question in the room is not held to the four lines.
+    const plain = (await deps.seams.run('turn:reply', { roomId: 'p1', query: 'What should the text to patients say?', reply: { ...base, text: 'Short and friendly.' } })).reply.text;
+    expect(plain).toBe('Short and friendly.');
+    await part.close!();
+  });
+});
+
 // Journey 13: Tom's Unit Economics had a net burn of €1,380 worked out with calc (the boxes' cost left out) and the
 // partner never looked. Now a colleague's finished doc write is reviewed on the next tick, unasked; and the verdict is
 // made again, unasked, when the brief's numbers moved more than a tenth since the call.

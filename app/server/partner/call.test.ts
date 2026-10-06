@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TurnResult } from '../loop.ts';
 import { economicsOf } from './economics.ts';
-import { asksVerdict, callNudge, callShape, checkTitle, deadSignal, holdCall, killOf, NO_SIGNAL, plusDays, readCall, renderCall, thresholdOf, unsourcedIn } from './call.ts';
+import { asksVerdict, callNudge, callShape, checkTitle, deadSignal, holdCall, killOf, NO_SIGNAL, plusDays, pushesBack, readCall, renderCall, thresholdOf, unsourcedIn } from './call.ts';
 
 const today = '2026-10-06';
 const brief = '## Numbers\n- Beta users: 12 (2 paying)\n- Price: €39 a month\n- MRR: €78\n- Cash: €9,800\n- Burn: €1,650 a month\n- Runway: 5.9 months';
@@ -183,5 +183,15 @@ describe('a kill signal that can fail', () => {
     const still = await holdCall('your verdict?', first, async () => turn('Kill signal: paying practices < 2 by 2026-11-03'), today, CALLBACK, [CALLBACK], null, CALLBACK);
     expect(still.call?.signal).toBeUndefined();
     expect(still.reply.text).toContain(`Kill signal: ${NO_SIGNAL}.`);
+  });
+});
+
+describe('pushback on the verdict', () => {
+  it('hears the founder challenging the call or its kill signal, and not an ordinary question', () => {
+    expect(pushesBack("I don't buy it. Your kill signal is 'paying practices below 2 by 3 November', and I already have 2, so it can only fire if I lose one. Give me a sharper call and a kill signal that can actually fail.")).toBe(true);
+    expect(pushesBack('I disagree with your call.')).toBe(true);
+    expect(pushesBack('That kill signal is too easy.')).toBe(true);
+    expect(pushesBack('What is the kill signal we hold ourselves to?')).toBe(false);
+    expect(pushesBack("I don't buy the new logo.")).toBe(false);
   });
 });

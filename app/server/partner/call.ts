@@ -35,6 +35,14 @@ const between = (from: string, to: string) => Math.round((new Date(`${to}T12:00`
 // "should we kill it?", "go or no-go".
 export const asksVerdict = (said: string) => /\bverdict\b|\bkeep going\b[^.!\n]*\b(?:pivot|stop|quit|kill|change course)\b|\bshould (?:i|we) (?:keep going|continue|stop|quit|kill|shut|give up|pivot)\b|\bkill (?:it|this|the (?:idea|company|project|product))\b|\bgo or no[- ]go\b/i.test(said);
 
+// Journey 14: "I don't buy it. Your kill signal ... can only fire if I lose one. Give me a sharper call and a kill
+// signal that can actually fail." The partner gave a new kill signal in loose prose; nothing read it, and the check
+// stayed on the old one. The founder challenging the call or its kill signal is a verdict ask too.
+const CHALLENGE = /\b(?:(?:i\s+)?don'?t buy|disagree|not convinced|unconvinced|push(?:ing)? back|sharper|tighter|(?:can(?:not|'t)|could(?:n'?t| not)|never) (?:actually |really )?(?:fail|fire)|that'?s (?:just )?hope|rethink|reconsider|(?:is|seems|looks) (?:wrong|weak|soft|too easy)|too (?:soft|easy|weak))\b/i;
+const CALL_WORDS = /\bkill (?:signal|criterion|metric|switch|line)\b|\byour (?:call|verdict)\b|\bthe (?:call|verdict)\b|\bkeep going\b|\btripwire\b/i;
+export const pushesBack = (said: string) => CHALLENGE.test(said) && CALL_WORDS.test(said);
+export const PUSHBACK_LINE = 'The founder is pushing back on your verdict. Answer their point in a line or two, then give the four lines again: keep the call or change it, and a kill signal that can fail from where the company stands today.';
+
 export const callShape = (today: string, worked = false) => `The founder asks for your verdict on the company. Start your answer with these four lines, each on its own line with its label, then at most a few short lines more:\n`
   + 'My call: keep going, change course or stop (one of the three).\n'
   + `Why: the strongest reason, using only numbers from the Company document, the chat or what you read this turn${worked ? ', and the break-even and runway working given you below' : ''}. Never a number you worked out or guessed.\n`
@@ -220,8 +228,9 @@ export const checkTitle = (signal: KillSignal) => `Check: ${signal.what} by ${si
 // `said` is what may back a claim of evidence in the reason ("the product works"): the founder's words, the Company
 // document and this turn's tool results, never the partner's own past replies. One nothing backs stays, marked
 // "(assumption)" (server/tools/evidence.ts).
-export async function holdCall(asked: string, first: TurnResult, again: ((first: TurnResult, nudge: string) => Promise<TurnResult>) | undefined, today: string, evidence: string, said: string[] = [evidence], economics?: Economics | null, numbers = ''): Promise<{ reply: TurnResult; call: PartnerCall | null; askedAgain: boolean }> {
-  if (first.stopped || !asksVerdict(asked)) return { reply: first, call: null, askedAgain: false };
+// `pushed`: the founder pushed back on the verdict standing (pushesBack), which is held to the same four lines.
+export async function holdCall(asked: string, first: TurnResult, again: ((first: TurnResult, nudge: string) => Promise<TurnResult>) | undefined, today: string, evidence: string, said: string[] = [evidence], economics?: Economics | null, numbers = '', pushed = false): Promise<{ reply: TurnResult; call: PartnerCall | null; askedAgain: boolean }> {
+  if (first.stopped || (!pushed && !asksVerdict(asked))) return { reply: first, call: null, askedAgain: false };
   // The brief's working is on record for the reason: its figures are calc results, not the partner's guesses.
   const working = economics?.working.map((one) => one.line) ?? [];
   const held = [evidence, ...working].join('\n');

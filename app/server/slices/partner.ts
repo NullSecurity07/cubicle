@@ -13,7 +13,7 @@ import { saysSomething } from '../missions.ts';
 import { FAKE_MORNING, MOST_TRIES, morningDue, morningInputs, morningMessage, writeMorning, type MorningSources } from '../partner/morning.ts';
 import { addPlan, boardFor, boardForPlan, NO_BOARD, planAttention, stepsFrom } from '../partner/plans.ts';
 import { asksWhatNext, holdSynthesis, standingFacts } from '../partner/synthesis.ts';
-import { asksVerdict, callShape, holdCall } from '../partner/call.ts';
+import { asksVerdict, callShape, holdCall, PUSHBACK_LINE, pushesBack } from '../partner/call.ts';
 import { economicsBlock, economicsOf, workingTools } from '../partner/economics.ts';
 import { chaseLine, keptPromiseLine, promiseLine, promisesAttention, promisesBook, promisesIn } from '../partner/promises.ts';
 import { metricsOnDisk, sinceHeadline } from '../partner/since.ts';
@@ -216,6 +216,9 @@ export function createPartner(options: PartnerOptions = {}) {
       const doc = await companyNow(stage);
       return doc ? economicsOf(sectionText(await deps.store.readDoc(doc.id).catch(() => ''), 'Numbers')) : null;
     };
+    // The founder challenging the verdict standing in this room is held to the verdict's four lines too, so a kill
+    // signal changed under pushback replaces the check (server/partner/call.ts).
+    const pushedBack = async (roomId: string, query: string) => !asksVerdict(query) && pushesBack(query) && (await state.read()).call?.roomId === roomId;
     // The morning turn spends a model call every day, so a fake run (the browser tests) only takes one when asked:
     // STAGE_PARTNER_MORNING=1, or the founder's own "morning note".
     // A check run that moved the clock (server/clock-offset.ts) wants the next day's note too: it is living that day.
@@ -441,8 +444,10 @@ export function createPartner(options: PartnerOptions = {}) {
         if (forCustomers(payload.query)) out = withSystem(out, CUSTOMER_LINE);
         // A verdict on the company comes in four lines, held to them after (the reply seam below). The brief's numbers
         // are worked out with calc first (break-even, runway), so the call is made with them in view.
-        if (asksVerdict(payload.query)) {
+        const pushed = await pushedBack(payload.roomId, payload.query).catch(() => false);
+        if (asksVerdict(payload.query) || pushed) {
           const economics = await economicsNow(stage).catch(() => null);
+          if (pushed) out = withSystem(out, PUSHBACK_LINE);
           out = withSystem(out, callShape(localDay(now()), !!economics));
           if (economics) out = withSystem(out, economicsBlock(economics));
         }
@@ -468,8 +473,10 @@ export function createPartner(options: PartnerOptions = {}) {
       // A verdict on the company commits: the call, the reason on record, a kill signal with its day, the first move.
       // A part missing is asked for once; the kill signal waits in Needs you for its day (server/partner/call.ts).
       let checkLine = '';
-      if (asksVerdict(payload.query)) {
+      const pushed = await pushedBack(me.id, payload.query).catch(() => false);
+      if (asksVerdict(payload.query) || pushed) {
         try {
+          const before = (await state.read()).call;
           const today = localDay(now());
           const doc = await companyNow(stage);
           const [company, block, chat] = await Promise.all([
@@ -479,7 +486,7 @@ export function createPartner(options: PartnerOptions = {}) {
           const evidence = [company, block, payload.query, ...chat.slice(-30).map((one) => one.text ?? ''), ...payload.reply.tools.map((tool) => tool.result ?? '')].join('\n');
           const said = [company, payload.query, ...chat.slice(-30).filter((one) => one.role === 'user' && !one.from).map((one) => one.text ?? ''), ...payload.reply.tools.filter((tool) => tool.ok !== false).map((tool) => tool.result ?? '')];
           const economics = company ? economicsOf(sectionText(company, 'Numbers')) : null;
-          const { reply, call, askedAgain } = await holdCall(payload.query, payload.reply, payload.again, today, evidence, said, economics, company ? sectionText(company, 'Numbers') : '');
+          const { reply, call, askedAgain } = await holdCall(payload.query, payload.reply, payload.again, today, evidence, said, economics, company ? sectionText(company, 'Numbers') : '', pushed);
           if (call) {
             // The working rides with the turn as the calc tool's own results, so the guard and the founder see where
             // each figure in the reason came from.
@@ -492,7 +499,10 @@ export function createPartner(options: PartnerOptions = {}) {
             if (call.signal) {
               await promises.add({ what: call.signal.what, due: call.signal.by, roomId: me.id, check: true });
               await deps.attention.refresh().catch(() => {});
-              checkLine = `*Kept as a check: it comes to Needs you on ${call.signal.by}.*`;
+              // A new kill signal takes the old one's place as the one check, and the founder is told which went.
+              const moved = before?.signal && (before.signal.what !== call.signal.what || before.signal.by !== call.signal.by);
+              checkLine = moved ? `*Kill signal moved: "${call.signal.what}" by ${call.signal.by} takes the place of "${before!.signal!.what}" by ${before!.signal!.by} as the check in Needs you.*`
+                : `*Kept as a check: it comes to Needs you on ${call.signal.by}.*`;
             }
           }
         } catch (error) { console.error(`partner verdict: ${(error as Error).message}`); }
