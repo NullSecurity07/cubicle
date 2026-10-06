@@ -773,3 +773,32 @@ describe('a sign-off for followers, outside a social post', () => {
     expect(spec.scenes.at(-1)?.text).toMatch(/follow for more/i);
   });
 });
+
+// Journey 13: "a 20 s documentary about a farmers market with real footage clips", Footage on Stock and generated,
+// came back all stills: the director may use one clip and used none, and nothing put one in.
+describe('a clip, where the brief asked for real footage', () => {
+  const want = (over: Partial<Want> = {}): Want => ({
+    seconds: 20, pace: 'calm', purpose: 'explainer', captions: false,
+    bible: 'quiet documentary photography, soft window light', layouts: [...LAYOUTS], reel: false, ...over,
+  });
+  const stills: Spec = {
+    title: 'Market',
+    scenes: [
+      { layout: 'picture', image_prompt: 'a crate of tomatoes at dawn', say: 'Why do grocery tomatoes taste like water?' },
+      { layout: 'picture', image_prompt: 'wooden stalls piled with greens at a busy farmers market', say: 'Here the growers sell what they picked yesterday.' },
+      { layout: 'cta', text: 'Find fresh harvest this weekend', say: 'Find fresh harvest this weekend.' },
+    ],
+  };
+
+  it('makes one scene in the middle a clip of what its picture was of', () => {
+    const { spec, notes } = repair(stills, want({ footage: true }));
+    expect(spec.scenes.map((one) => one.layout)).toEqual(['picture', 'clip', 'cta']);
+    expect(spec.scenes[1].clip_prompt).toContain('farmers market');
+    expect(notes.join(' ')).toContain('real footage');
+  });
+
+  it('leaves the stills alone when footage was not asked for, or no clip can be had', () => {
+    expect(repair(stills, want()).spec.scenes.some((one) => one.layout === 'clip')).toBe(false);
+    expect(repair(stills, want({ footage: true, layouts: LAYOUTS.filter((one) => one !== 'clip') })).spec.scenes.some((one) => one.layout === 'clip')).toBe(false);
+  });
+});

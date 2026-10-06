@@ -40,6 +40,9 @@ export type Want = {
   // Whether the brief asked for somebody on camera. A film that was asked for one and shows a photograph instead is
   // the thing a founder wrote "no talking, no body and hand movement" about.
   person?: boolean;
+  // Whether the brief asked for real moving footage ("with real footage clips of the stalls"). A film that was asked
+  // for clips and plans none is a slideshow nobody asked for.
+  footage?: boolean;
   // The one line of visual direction every drawn picture in this film is prefixed with, so six pictures look like
   // six frames of one film rather than six stock photos.
   bible: string;
@@ -530,6 +533,20 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
       note('the brief asks for somebody on camera, so one scene is a person moving rather than a picture of one');
       scenes = scenes.map((one, index) => (index === at
         ? { ...one, layout: canMove, ...(canMove === 'presenter' ? { portrait_prompt: one.portrait_prompt ?? `${want.bible}. somebody talking to camera` } : { clip_prompt: one.clip_prompt ?? `${want.bible}. somebody talking to camera` }) }
+        : one));
+    }
+  }
+
+  // 2b4. Footage, where footage was asked for. The director is told it may use one clip and often uses none; a brief
+  //      that says "real footage clips" gets one, in the middle of the film, of what that scene's picture was of.
+  if (want.footage && can('clip') && !scenes.some((one) => one.layout === 'clip' || one.layout === 'footage' || one.layout === 'presenter')) {
+    const moving = (one: Scene) => one.layout === 'picture' && !one.asset && !one.person;
+    const middle = scenes.findIndex((one, index) => index > 0 && index < scenes.length - 1 && moving(one));
+    const at = middle >= 0 ? middle : scenes.findIndex(moving);
+    if (at >= 0) {
+      note('the brief asks for real footage, so one scene is a moving clip rather than a still');
+      scenes = scenes.map((one, index) => (index === at
+        ? { ...one, layout: 'clip' as Layout, clip_prompt: (one.clip_prompt ?? one.image_prompt ?? one.text ?? one.say ?? '').slice(0, 240), seconds: Math.min(5, Math.max(3, one.seconds ?? 4)) }
         : one));
     }
   }

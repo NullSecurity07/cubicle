@@ -1,7 +1,7 @@
 import { digestOf } from './hash.ts';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { NONE_ANSWERED, peopleIn, pexels, remember, served, type Found, type Stock, type StockKind } from './stock.ts';
+import { missedClip, NONE_ANSWERED, peopleIn, pexels, remember, served, type Found, type Stock, type StockKind } from './stock.ts';
 import { nounsOf, numberish } from './visuals.ts';
 
 // Real photographs and real footage with no key at all.
@@ -351,11 +351,13 @@ export function stockChain(sources: Stock[]): Stock {
     },
     used: () => sources.flatMap((one) => one.used()),
     heard: () => lines.splice(0),
+    footageFrom: () => live().filter((one) => one.moving).map((one) => (one.name === 'pexels' ? 'Pexels' : one.name)),
   };
 }
 
 // The library a film gets: Pexels first when the founder has a key, then the two that need none.
 export function photoLibrary(env: NodeJS.ProcessEnv = process.env, http: typeof fetch = fetch, dir = '.cache/stock'): Stock {
   const free = [openverse(http, dir), commons(http, dir)];
-  return stockChain(env.PEXELS_API_KEY?.trim() ? [pexels(env, http, dir), ...free] : free);
+  const chain = stockChain(env.PEXELS_API_KEY?.trim() ? [pexels(env, http, dir), ...free] : free);
+  return { ...chain, noClip: () => missedClip(dir) };
 }

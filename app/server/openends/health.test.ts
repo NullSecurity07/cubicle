@@ -254,6 +254,9 @@ describe('the rows for keys and for slices', () => {
     expect(some.filter((one) => one.ok).map((one) => one.name)).toEqual(['Email', 'Drawing pictures', 'Making clips', 'Real photographs', 'More music']);
     expect(JSON.stringify(some)).not.toContain('secret');
     expect(keyChecks({ STAGE_IMAGE_BACKEND: 'local' }, '/nowhere').find((one) => one.name === 'Drawing pictures')!.ok).toBe(true);
+    // A clip asked for and found nowhere is counted on the photographs row, so a founder can see why a film is stills.
+    expect(keyChecks({}, '/nowhere', {}, 2).find((one) => one.name === 'Real photographs')!.detail).toContain('2 clips asked for found no free footage today');
+    expect(keyChecks({}, '/nowhere').find((one) => one.name === 'Real photographs')!.detail).not.toContain('clip');
   });
 
   // Journey 12: the row said "films use drawn pictures only" on the day a film used two Openverse photographs.

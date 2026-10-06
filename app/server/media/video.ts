@@ -359,16 +359,32 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
               }
             }
             // Real footage of the scene's own things, filmed by somebody and credited, cut to the film's frame.
+            let missed = '';
             if (!shot.video && realClips && !noFf && !signal?.aborted) {
-              const real = await photoLibrary.clip({
-                query: scene.clip_prompt ?? scene.text ?? '', shape, seconds: scene.seconds ?? 4,
-                speaker: !!scene.person, names: [material.brand?.name ?? ''].filter(Boolean),
-              }, signal);
+              // Asked like a photograph: the clip's own things beside the film's topic, then the topic alone, and
+              // a clip that is of neither, or of a place or a day the brief never named, is refused.
+              const wanted = { line: scene.clip_prompt ?? scene.text ?? '', subject: scene.clip_prompt ?? '' };
+              let real = null as Awaited<ReturnType<typeof photoLibrary.clip>>;
+              for (const query of stockQueries(wanted, topic)) {
+                real = await photoLibrary.clip({
+                  query, shape, seconds: scene.seconds ?? 4,
+                  speaker: !!scene.person, names: [material.brand?.name ?? ''].filter(Boolean),
+                  fits: (one) => photoOfTheLine(one.what, wanted, topic, asked.prompt),
+                }, signal);
+                if (real || signal?.aborted) break;
+              }
+              if (!real) missed = await photoLibrary.noClip();
+              if (missed) report(missed);
               if (real) {
                 const raw = `stock-clip-${index}-raw.${real.ext}`;
                 const cut = `stock-clip-${index}.mp4`;
                 await writeFile(join(at, 'assets', raw), real.bytes);
-                await normalise({ from: join(at, 'assets', raw), to: join(at, 'assets', cut), width, height, seconds: scene.seconds ?? 4, mute: true, signal })
+                // A third of the way in, where a clip has started rather than shows its title card, when it is long
+                // enough to have one.
+                const length = real.found.seconds ?? 0;
+                const want = scene.seconds ?? 4;
+                const start = length > want * 2 ? Math.min(Math.round(length / 3), Math.max(0, length - want - 1)) : 0;
+                await normalise({ from: join(at, 'assets', raw), to: join(at, 'assets', cut), width, height, start, seconds: want, mute: true, signal })
                   .then(() => {
                     shot.video = cut;
                     clipCredits.set(cut, creditOf(real.found));
@@ -377,7 +393,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
               }
             }
             if (!shot.video) {
-              said(index, why ? `the clip could not be made (${why}), so the scene is a picture instead` : 'no real footage of it was found, so the scene is a picture instead');
+              said(index, why ? `the clip could not be made (${why}), so the scene is a picture instead` : `${missed || 'no real footage of it was found'}, so the scene is a picture instead`);
               shot.scene = fallbackOf(scene);
             }
           }
