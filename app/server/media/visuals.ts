@@ -1,6 +1,7 @@
 import { foreignIn } from './places.ts';
 import { content, countWords, STOP, type Layout, type Scene } from './spec.ts';
 import { inStyle, noFace, photographic, trimTo } from './critic.ts';
+import { LONGEST_PICTURE } from './editor.ts';
 import { framingOf, lensPhrase, SIZE_PHRASE, SIZES_OF, type Lens, type Size } from './moves.ts';
 
 // The pictures.
@@ -178,13 +179,13 @@ const NOT_THINGS = new Set(['nothing', 'anything', 'everything', 'something', 'n
   'own', 'only', 'small', 'big', 'new', 'good', 'great', 'real', 'whole', 'every', 'each', 'other', 'same', 'first', 'last',
   'never', 'always', 'still', 'even', 'also', 'again', 'beside', 'without', 'within', 'across', 'through', 'free',
   'private', 'local', 'automatically', 'did', 'does', 'done', 'going', 'said', 'says', 'able', 'less', 'much', 'many']);
-const THING_STEM = (word: string) => word.replace(/(?:ing|ed|s)$/, '').replace(/e$/, '');
+export const THING_STEM = (word: string) => word.replace(/(?:ing|ed|s)$/, '').replace(/e$/, '');
 export function nounsOf(line: string): string[] {
   SUMMONS_TEXT.lastIndex = 0;
   return [...new Set(content(line ?? '').filter((word) => !NOT_THINGS.has(word) && !/(?:ly|ing|ed)$/.test(word)
     && !new RegExp(SUMMONS_TEXT.source, 'i').test(word)))];
 }
-const hasNoun = (text: string, nouns: string[]): boolean => {
+export const hasNoun = (text: string, nouns: string[]): boolean => {
   const mine = new Set(content(text ?? '').map(THING_STEM));
   return nouns.some((noun) => mine.has(THING_STEM(noun)));
 };
@@ -828,19 +829,29 @@ export { afforded, SECONDS_AWAY, SECONDS_HERE } from '../../shared/film-time.ts'
 // `have` is the shots whose picture is already drawn or being drawn. They were started while the narration was
 // still being listened back to, from a cut that was guessed; the measured cut may rank its shots a little
 // differently, and a picture already paid for is never thrown away to draw its neighbour instead.
-export function shareOut(lengths: number[], many: number, have: ReadonlySet<number> = new Set()): number[] {
+// No picture is on screen longer than `LONGEST_PICTURE` seconds, however few the film can afford: a run of shots sharing
+// one picture that would pass it takes a picture of its own at the shot that would. Journey 16 held one jar of meal
+// prep for twelve seconds under three scenes. A single shot longer than that is split by the editor.
+export function shareOut(lengths: number[], many: number, have: ReadonlySet<number> = new Set(), most = LONGEST_PICTURE): number[] {
   if (many >= lengths.length) return lengths.map((_one, at) => at);
   const order = lengths.map((seconds, at) => ({ seconds, at }))
     .sort((a, b) => (a.at === 0 ? -1 : b.at === 0 ? 1 : b.seconds - a.seconds || a.at - b.at));
   const kept = [...have].filter((at) => at >= 0 && at < lengths.length);
   const drawn = new Set([...kept, ...order.map((one) => one.at).filter((at) => !have.has(at))].slice(0, Math.max(many, kept.length)));
+  // A shot before the first drawn one shares it, so the opening is the first drawn picture's too.
+  if (!drawn.has(0) && lengths.length) {
+    const first = Math.min(...drawn);
+    if (!drawn.size || lengths.slice(0, first).reduce((sum, one) => sum + one, 0) + (lengths[first] ?? 0) > most) drawn.add(0);
+  }
   const owners: number[] = [];
   let last = -1;
+  let held = 0;
   for (let at = 0; at < lengths.length; at += 1) {
-    if (drawn.has(at)) last = at;
+    if (!drawn.has(at) && last >= 0 && held + lengths[at] > most) drawn.add(at);
+    if (drawn.has(at)) { if (last >= 0) held = 0; last = at; }
+    held += lengths[at];
     owners.push(last);
   }
-  // A shot before the first drawn one takes the first drawn one.
   const first = owners.find((one) => one >= 0) ?? 0;
   return owners.map((one) => (one >= 0 ? one : first));
 }

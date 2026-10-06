@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { blankness, isBlank, liftFor, lighten, meanLight, scrimFor } from './contrast.ts';
+import { SUBJECT_PRESENT } from './picture-policy.ts';
 import { facesLens, fault, isLettered, type Plies, type Sight } from './sight.ts';
 import type { Scene } from './spec.ts';
 import { PACK, type Pack } from './templates/index.ts';
@@ -17,12 +18,15 @@ export type Finished = { file: string; visual: Visual; hold?: number; lift?: num
 
 // What one film's pictures share while they are finished: how many have been drawn a second time, and which
 // faults the card has already been told about.
-export type Looking = { redrawn: number; told: Set<string> };
-export const looking = (): Looking => ({ redrawn: 0, told: new Set() });
+export type Looking = { redrawn: number; told: Set<string>; absent?: number };
+export const looking = (): Looking => ({ redrawn: 0, told: new Set(), absent: 0 });
 
 // Twice a film at most: a redraw is most of a minute, and a studio that doubts every picture it draws is a studio
 // that takes twice as long to make the same film.
 export const REDRAWS = 2;
+// A drawn picture that does not show its own scene's things is drawn once more, closer, up to this many a film. It
+// is its own count, so a stranger at the lens in one picture never spends the redraw an empty corridor needed.
+export const ABSENT_REDRAWS = 3;
 
 export async function finishPicture(one: {
   // The folder the picture sits in, and its name there.
@@ -31,6 +35,9 @@ export async function finishPicture(one: {
   sight?: Sight; state: Looking; stop?: AbortSignal; report: (line: string) => void;
   // Draws the visual again and hands back the new file's name in the same folder. Without one nothing is redrawn.
   redraw?: (again: Visual) => Promise<string>;
+  // What a drawn picture must be seen to show (`seenAs`), and the visual it is drawn again from when it does not.
+  // A photograph has already been looked at before it was taken, and goes without.
+  subject?: { label: string; closer: Visual };
 }): Promise<Finished> {
   const { dir, visual, scene, pack, paint, sight, state, stop } = one;
   let file = one.file;
@@ -62,6 +69,22 @@ export async function finishPicture(one: {
       if (better) { file = second; kept = again; }
       if (!state.told.has(why)) { state.told.add(why); one.report(`a picture came back with ${why}, so it was drawn again${isLettered(seen) && facesLens(seen) ? ' without either' : ''}`); }
     } catch { /* the first picture stands: a film with a face in it beats a film with a hole in it */ }
+  }
+  // Then whether it is of its scene at all. A picture model handed "a busy dental front desk phone flashing red"
+  // drew an empty clinic corridor, which no rule about faces or writing catches. The studio's eyes score the
+  // picture against the scene's own things and a few generic pictures; under the line it is drawn once more, closer
+  // on the thing, and the better of the two by the same score is kept.
+  if (one.subject && sight?.about && one.redraw && !stop?.aborted && (state.absent ?? 0) < ABSENT_REDRAWS) {
+    const present = await sight.about(join(dir, file), one.subject.label).catch(() => null);
+    if (present !== null && present < SUBJECT_PRESENT) {
+      state.absent = (state.absent ?? 0) + 1;
+      try {
+        const second = await one.redraw(one.subject.closer);
+        const after = await sight.about(join(dir, second), one.subject.label).catch(() => null);
+        if (after !== null && after > present) { file = second; kept = one.subject.closer; }
+        one.report(`scene ${visual.scene + 1}: the picture did not show ${one.subject.label.replace(/^a photograph of /, '')} (${present.toFixed(2)}), so it was drawn again closer${after !== null ? ` (${after.toFixed(2)})` : ''}`);
+      } catch { /* the first picture stands */ }
+    }
   }
   const path = join(dir, file);
   // A graded look over a picture that came back dark is how "dim and murky" happens. The shadows are raised in the

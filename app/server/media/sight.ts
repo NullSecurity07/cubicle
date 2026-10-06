@@ -27,6 +27,9 @@ export type Sight = {
   warm(): void;
   look(file: string): Promise<Seen | null>;
   plies(file: string): Promise<Plies | null>;
+  // How sure the studio is that a picture shows `label` rather than something else (`ASKS.about`), between nought
+  // and one, or null when it cannot look. What `picture-policy.ts` holds a photograph and a drawn picture to.
+  about?(file: string, label: string): Promise<number | null>;
   // Why the last call came back with nothing, in words for the card: a first download still running, say.
   why(): string | null;
 };
@@ -39,6 +42,9 @@ export type Sight = {
 export const ASKS = {
   gaze: ['a person looking straight at the camera', 'a person looking away from the camera', 'a photograph with no people in it'],
   text: ['handwriting on paper, a sign, a screen of text or a document', 'a photograph of a place, a thing or a person'],
+  // What a scene's own things are scored against: anything else, the old engraving a free library answers with, and
+  // the outdoors a library's "night" or "meal" turns up. Journey 16's engraving and campfire scored 0.02 and 0.04.
+  about: ['a photograph of something else', 'an old drawing, painting or engraving', 'a landscape or a scene outdoors'],
 } as const;
 
 // Measured on this studio's own stills, not guessed. The portrait that opened a real reel scored 0.56 facing; two
@@ -240,6 +246,14 @@ export function createSight(cacheDir: string): Sight {
           const text = await ask(file, [...ASKS.text]);
           return { facing: score(gaze, ASKS.gaze[0]), lettered: score(text, ASKS.text[0]) };
         });
+      } catch { return null; }
+    },
+    async about(file, label) {
+      if (resting() || !label.trim()) return null;
+      try {
+        const ask = await within(looker(), PATIENCE);
+        if (ask === 'late') { said = LEARNING; return null; }
+        return await inTurn(async () => (await ask(file, [label, ...ASKS.about])).find((one) => one.label === label)?.score ?? 0);
       } catch { return null; }
     },
     async plies(file) {

@@ -3,6 +3,10 @@ import { content, type Layout, type Scene } from './spec.ts';
 import { nearestPhrase, phrasesIn, type Phrase, type Word } from './timings.ts';
 import type { Pace } from './templates/looks.ts';
 
+// The longest any one picture is on screen, in seconds: a single shot here, and a run of shots sharing a picture in
+// `visuals.ts` (`shareOut`).
+export const LONGEST_PICTURE = 6;
+
 // The editor.
 //
 // Everything before this decides what the film says. This decides when it cuts, and it is the pass that was
@@ -51,7 +55,7 @@ export const CUTTING: Record<string, Cutting> = {
   editorial: { min: 1.5, mean: 3.4, spread: 1.0, max: 6.0, changes: [2, 4], hold: [4, 8], punch: [1.04, 1.08], sfx: 4, duck: [15, 20] },
   // The long-form register holds longer than anything else here and lets the pictures do the arguing: two to four
   // changes in ten seconds, a hold of up to eight on the payoff, and a push so slow it reads as a camera.
-  documentary: { min: 1.5, mean: 3.8, spread: 1.1, max: 6.5, changes: [2, 4], hold: [4, 8], punch: [1.04, 1.08], sfx: 4, duck: [15, 20] },
+  documentary: { min: 1.5, mean: 3.8, spread: 1.1, max: 6.0, changes: [2, 4], hold: [4, 8], punch: [1.04, 1.08], sfx: 4, duck: [15, 20] },
   sketch: { min: 1.5, mean: 3.2, spread: 0.9, max: 6.0, changes: [3, 5], hold: [4, 6], punch: [1.03, 1.06], sfx: 4, duck: [18, 22] },
   brand: { min: 1.5, mean: 3.0, spread: 0.9, max: 6.0, changes: [3, 5], hold: [4, 6], punch: [1.04, 1.08], sfx: 4, duck: [18, 22] },
 };
@@ -161,7 +165,9 @@ function cutOnce(takes: Take[], words: Word[], style: Cutting, opts: { sfxOn?: b
     // opening headline unchanged for five. So the opening is cut inside whatever the distribution would have
     // said, whenever there is room to cut it at all.
     const hook = take.index === 0 && !take.moving && span > HOOK_CHANGE + 0.01 && span >= style.min * 2;
-    const whole = !hook && (take.moving || take.index === payoff || span <= style.mean * 1.35);
+    // The payoff holds as one shot only up to `LONGEST_PICTURE`: past that, one picture under a long line is the twelve
+    // seconds of one jar Journey 16 sat through, and the line gets two pictures of the same world instead.
+    const whole = !hook && (take.moving || (take.index === payoff && span <= LONGEST_PICTURE) || span <= style.mean * 1.35);
     const edges = whole ? [] : splitPoints(take.from, span, style, inner, take.index, words, hook ? HOOK_CHANGE : 0);
     const points = [take.from, ...edges, take.from + span];
     for (let at = 0; at < points.length - 1; at += 1) {
