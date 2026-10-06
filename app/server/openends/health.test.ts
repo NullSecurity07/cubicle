@@ -39,15 +39,15 @@ describe('keys', () => {
   it('say how many free providers can answer, and which names would bring the rest', async () => {
     const none = row(await setup(), 'Free providers');
     expect(none.ok).toBe(false);
-    expect(none.detail).toMatch(/^0 of 17 keyed; unset: GROQ_API_KEY, CEREBRAS_API_KEY, GEMINI_API_KEY, NVIDIA_API_KEY, /);
+    expect(none.detail).toMatch(/^0 of 20 keyed; unset: GROQ_API_KEY, CEREBRAS_API_KEY, GEMINI_API_KEY, NVIDIA_API_KEY, /);
     // A token without its account id is not a provider yet, and the id is named as missing.
     const env = { GROQ_API_KEY: 'sk-secret', GEMINI_API_KEY: 'AIza-secret', CLOUDFLARE_API_TOKEN: 'cf-secret' };
     const some = freeProviders(env);
     expect(some.ok).toBe(true);
     // groq, groq-qwen and gemini: the second Groq model is its own day's worth on the same key.
-    expect(some.detail).toMatch(/^3 of 17 keyed; unset: CEREBRAS_API_KEY, NVIDIA_API_KEY, ZAI_API_KEY, AI_GATEWAY_API_KEY, CLOUDFLARE_ACCOUNT_ID, OLLAMA_API_KEY, SAMBANOVA_API_KEY, MISTRAL_API_KEY, OPENROUTER_API_KEY$/);
+    expect(some.detail).toMatch(/^3 of 20 keyed; unset: CEREBRAS_API_KEY, NVIDIA_API_KEY, ZAI_API_KEY, AI_GATEWAY_API_KEY, CLOUDFLARE_ACCOUNT_ID, OLLAMA_API_KEY, SAMBANOVA_API_KEY, MISTRAL_API_KEY, OPENROUTER_API_KEY, HF_TOKEN$/);
     expect(JSON.stringify(some)).not.toContain('secret');
-    expect(freeProviders({ ...env, CLOUDFLARE_ACCOUNT_ID: 'abc' }).detail).toMatch(/^6 of 17 keyed/);
+    expect(freeProviders({ ...env, CLOUDFLARE_ACCOUNT_ID: 'abc' }).detail).toMatch(/^6 of 20 keyed/);
     expect(freeProviders({ GROQ_API_KEY: 'a' }).ok).toBe(true);
     expect(freeProviders({ GEMINI_API_KEY: 'a' }).ok).toBe(false);
     // Each key is counted once in the Models line, though three models read Groq's.
@@ -288,7 +288,7 @@ describe('a model whose free turns for the day are used (round 5)', () => {
 
 describe('the keys that would add a fallback, in Health (round 5)', () => {
   it('is a row while any is unset, and gone once all are', async () => {
-    expect(row(await setup(), 'Keys that would add a fallback')).toMatchObject({ ok: true, detail: expect.stringMatching(/^NVIDIA at build\.nvidia\.com \(nemotron-3-super-120b-a12b, kimi-k3\); Mistral/) });
+    expect(row(await setup(), 'Keys that would add a fallback')).toMatchObject({ ok: true, detail: expect.stringMatching(/^NVIDIA at build\.nvidia\.com \(nemotron-3-ultra-550b-a55b, nemotron-3-super-120b-a12b, kimi-k3\); Mistral/) });
     const all = { NVIDIA_API_KEY: 'n', MISTRAL_API_KEY: 'm', CEREBRAS_API_KEY: 'c', OPENROUTER_API_KEY: 'o' };
     expect(row(await setup({ env: all }), 'Keys that would add a fallback')).toBeUndefined();
   });

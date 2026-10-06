@@ -14,28 +14,42 @@ const title = (name: string) => name[0].toUpperCase() + name.slice(1);
 // right after Gemini, ahead of Cloudflare's copy: every turn it takes leaves Cloudflare's neurons to the pictures.
 // NVIDIA is now its own Nemotron 3 Super, quick to answer; Kimi on the same key (`nvidia-kimi`) took two minutes to
 // a first word, so it is not among these and is reached only when they cannot answer.
-export const STRONG = ['gemini', 'ollama-cloud', 'cloudflare-gpt-oss', 'nvidia', 'mistral', 'sambanova'];
+// 2026-10-06: Gemini 3.5 Flash (`gemini-flash`) answers the partner ahead of Flash-Lite and nobody else; NVIDIA's
+// Nemotron 3 Ultra stands right behind Gemini (a tool call in 2.8 s), then Ollama's cloud (now Nemotron 3 Ultra too, one
+// request at a time), Super on NVIDIA, and gpt-oss on Ollama behind the models that took its place. Mistral and SambaNova
+// keep their places for a founder whose plan or card turns them on; with no key they are simply not there.
+// The whole order a turn is tried in, with every key set:
+//   partner:   gemini-flash, gemini, nvidia-ultra, ollama-cloud, cloudflare-gpt-oss, nvidia, ollama-gpt-oss, mistral,
+//              sambanova, openrouter-qwen, cloudflare-qwen, then the rest as listed in models.json, groq and cerebras,
+//              and Hugging Face (`hf`) last of all
+//   colleague: gemini, nvidia-ultra, ollama-cloud, nvidia, ollama-gpt-oss, mistral, sambanova, cloudflare-gpt-oss, then
+//              the same tail
+// Side calls: groq-small, then nvidia-lightning (Nemotron 3.5 Lightning, a tool call in 1.9 s), then the turn order.
+export const STRONG = ['gemini-flash', 'gemini', 'nvidia-ultra', 'ollama-cloud', 'cloudflare-gpt-oss', 'nvidia', 'ollama-gpt-oss', 'mistral', 'sambanova'];
 // A colleague's turns take the same strong models with gpt-oss on Cloudflare last among them: its 25 requests a day
 // are kept for the partner, whose calls matter most, where a busy team would spend them by mid-morning.
-const COLLEAGUE = ['gemini', 'ollama-cloud', 'nvidia', 'mistral', 'sambanova', 'cloudflare-gpt-oss'];
+const COLLEAGUE = ['gemini', 'nvidia-ultra', 'ollama-cloud', 'nvidia', 'ollama-gpt-oss', 'mistral', 'sambanova', 'cloudflare-gpt-oss'];
 export const tierOrder = (partner = false) => [...(partner ? STRONG : COLLEAGUE), ...SECOND];
 // Behind them, the Qwens that also held a room prompt: OpenRouter's (only there when its key is set), then
 // Cloudflare's, which invented one claim. Everything else follows in the order it is listed.
 export const SECOND = ['openrouter-qwen', 'cloudflare-qwen'];
 // gpt-oss at low reasoning effort (Groq, Cerebras) drafted a raise plan for a company with no users: last.
 export const LOW_EFFORT = ['groq', 'cerebras'];
+// Paid out of a small monthly credit, so it is the very last of all: only when nothing free can answer.
+export const LAST = ['hf'];
 // Where a model stands in that order; a sort by it is stable, so the listed order breaks ties.
 export const tier = (client: ModelClient, partner = false) => {
   const name = providerOf(client.name);
   const at = tierOrder(partner).indexOf(name);
   const rest = STRONG.length + SECOND.length;
-  return at >= 0 ? at : LOW_EFFORT.includes(name) ? rest + 1 : rest;
+  return at >= 0 ? at : LAST.includes(name) ? rest + 2 : LOW_EFFORT.includes(name) ? rest + 1 : rest;
 };
 
 // A turn is a person answering; a side call is one of the calls around it (a summary, a reflection, a compaction
 // note). Side calls go to the small side model first and may be answered from the cache; a turn never reaches either.
 type CallRoute = 'turn' | 'side';
-type Want = { pinned?: string; promptChars: number; tools: boolean; vision?: boolean; kind?: CallRoute };
+// `partner`: the partner's own turn, the only one a partner-only model may answer.
+type Want = { pinned?: string; promptChars: number; tools: boolean; vision?: boolean; kind?: CallRoute; partner?: boolean };
 
 // One provider's keys take turns: within the places the order already gives that provider, the key that has carried
 // least goes first, the last minute counting before the day, so `groq` and `groq#2` share the load instead of the
@@ -62,7 +76,10 @@ export function spread(order: ModelClient[], usage: UsageBook): ModelClient[] {
 // The order in which to try models for one call, and a line for the founder when it is not the usual one.
 // A pinned model always goes first; the rest stay behind it only as a net for a hard failure.
 // Auto keeps the configured order but moves any model that is out of room, or about to be, to the back.
-export function route(clients: ModelClient[], usage: UsageBook, want: Want) {
+export function route(all: ModelClient[], usage: UsageBook, want: Want) {
+  // A partner-only model is not there for anyone else; one whose month is used (`rpmo`) is not there at all, even when it
+  // is all there is: its credit is the founder's money.
+  const clients = all.filter((client) => (want.partner || !client.partnerOnly) && !(client.limits.rpmo && usage.spent?.(client)));
   // A side call keeps the order it was given: summaries read the list backwards on purpose.
   if ((want.kind ?? 'turn') === 'turn') return rank([...clients.filter((client) => !client.side)].sort((a, b) => tier(a) - tier(b)), usage, want);
   const found = rank(clients, usage, want);

@@ -19,7 +19,7 @@ describe('a model on this machine, for the people', () => {
 
   it('stands last among the clients, needs no key, and is marked as local', () => {
     const clients = realClients({ GROQ_API_KEY: 'a', GEMINI_API_KEY: 'g' } as NodeJS.ProcessEnv, { baseURL: 'http://127.0.0.1:11435/v1', model: 'qwen2.5:7b' });
-    expect(clients.map((one) => one.name)).toEqual(['groq', 'groq-small', 'gemini', 'groq-qwen', 'ollama']);
+    expect(clients.map((one) => one.name)).toEqual(['groq', 'groq-small', 'gemini', 'gemini-flash', 'groq-qwen', 'ollama']);
     expect(clients.at(-1)).toMatchObject({ name: 'ollama', model: 'qwen2.5:7b', local: true, tools: true, limits: {} });
     expect(clients.slice(0, -1).every((one) => !one.local)).toBe(true);
     expect(realClients({} as NodeJS.ProcessEnv, { baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen2.5:3b' }).map((one) => one.name)).toEqual(['ollama']);

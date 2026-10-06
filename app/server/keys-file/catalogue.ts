@@ -48,8 +48,12 @@ const SERVICES: KeyInfo[] = [
 
 // One row a name. A name two groups need (Cloudflare draws pictures and answers as a model) is shown once, in the
 // first group that needs it.
+// A key a service needs first stays in that service's group: the Hugging Face token makes the clips, and the model it
+// also reaches (`hf`) is a paid last resort, not a reason to file it under Models.
+const SERVICE_FIRST = new Set(['HF_TOKEN']);
+
 export function catalogue(entries: { name: string; keyEnv: string; baseURL: string; local?: boolean }[] = ENTRIES): KeyInfo[] {
-  const models: KeyInfo[] = entries.filter((entry) => !entry.local).flatMap((entry) => needs(entry).map((name) => ({
+  const models: KeyInfo[] = entries.filter((entry) => !entry.local).flatMap((entry) => needs(entry).filter((name) => !SERVICE_FIRST.has(name)).map((name) => ({
     name, group: 'Models', label: PROVIDERS[name]?.label ?? entry.name, where: PROVIDERS[name]?.where, restart: true,
   })));
   const seen = new Set<string>();
@@ -63,12 +67,14 @@ export const SETTINGS = ['STAGE_BACKUP_DIR'];
 // research): NVIDIA and Mistral are strong on their own, Cerebras and OpenRouter hold a whole room prompt.
 export const FALLBACK_KEYS = ['NVIDIA_API_KEY', 'MISTRAL_API_KEY', 'CEREBRAS_API_KEY', 'OPENROUTER_API_KEY'];
 
-// The ones not set here, as "NVIDIA at build.nvidia.com (nemotron-3-super-120b-a12b, kimi-k3)", or null when every one is set.
-export function fallbackList(isSet: (name: string) => boolean, entries: { keyEnv: string; model: string }[] = ENTRIES): string | null {
+// The ones not set here, as "NVIDIA at build.nvidia.com (nemotron-3-ultra-550b-a55b, nemotron-3-super-120b-a12b, kimi-k3)",
+// or null when every one is set. Only models that take a turn are named: a side model (Lightning on NVIDIA) never
+// stands behind Gemini on one.
+export function fallbackList(isSet: (name: string) => boolean, entries: { keyEnv: string; model: string; side?: boolean }[] = ENTRIES): string | null {
   const unset = FALLBACK_KEYS.filter((name) => !isSet(name));
   if (!unset.length) return null;
   return unset.map((name) => {
-    const models = entries.filter((entry) => entry.keyEnv === name).map((entry) => entry.model.split('/').pop());
+    const models = entries.filter((entry) => entry.keyEnv === name && !entry.side).map((entry) => entry.model.split('/').pop());
     return `${PROVIDERS[name]?.label ?? name}${PROVIDERS[name] ? ` at ${PROVIDERS[name].where}` : ''} (${models.join(', ')})`;
   }).join('; ');
 }

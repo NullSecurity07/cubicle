@@ -9,7 +9,7 @@ export { STRONG, SECOND, LOW_EFFORT };
 const title = (name: string) => name[0].toUpperCase() + name.slice(1);
 
 export function partnerRoute(clients: ModelClient[], usage: UsageBook, want: { promptChars: number; tools: boolean; vision?: boolean }) {
-  const { order } = route(clients, usage, { ...want, kind: 'turn' });
+  const { order } = route(clients, usage, { ...want, kind: 'turn', partner: true });
   const roomy = (client: ModelClient) => usage.left(client) > FLOOR && !usage.hot(client, want.promptChars);
   // Roomy before resting, hosted before this machine, then by strength; the router's order breaks ties.
   const key = (client: ModelClient) => [roomy(client) ? 0 : 1, client.local ? 1 : 0, tier(client, true), order.indexOf(client)];

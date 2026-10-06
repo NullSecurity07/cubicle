@@ -220,16 +220,39 @@ describe('Cloudflare\'s neuron pool, one an account, pictures included (round 6)
 });
 
 describe('one order for every turn, the partner\'s (pass 8)', () => {
-  const listed = () => ['groq', 'cerebras', 'gemini', 'nvidia', 'zai-flash', 'vercel', 'cloudflare-gpt-oss', 'sambanova', 'mistral', 'openrouter-qwen', 'ollama-cloud'].map((name) => client(name, { maxPromptChars: 100_000 }));
+  const listed = () => ['groq', 'cerebras', 'gemini-flash', 'gemini', 'nvidia-ultra', 'nvidia', 'zai-flash', 'vercel', 'cloudflare-gpt-oss', 'ollama-cloud', 'ollama-gpt-oss', 'sambanova', 'mistral', 'openrouter-qwen', 'hf']
+    .map((name) => client(name, { maxPromptChars: 100_000, ...(name === 'gemini-flash' ? { partnerOnly: true } : {}) }));
 
-  it('asks a colleague\'s models Gemini, gpt-oss on Ollama, NVIDIA, Mistral, SambaNova, then gpt-oss on Cloudflare, the rest as listed, and the low-effort gpt-oss last', () => {
+  it('asks a colleague\'s models Gemini, Nemotron Ultra on NVIDIA, then on Ollama, Super, gpt-oss on Ollama, Mistral, SambaNova, gpt-oss on Cloudflare, the rest as listed, the low-effort gpt-oss, and Hugging Face last', () => {
     expect(names(route(listed(), createUsage(null), { promptChars: 10, tools: true })))
-      .toEqual(['gemini', 'ollama-cloud', 'nvidia', 'mistral', 'sambanova', 'cloudflare-gpt-oss', 'openrouter-qwen', 'zai-flash', 'vercel', 'groq', 'cerebras']);
+      .toEqual(['gemini', 'nvidia-ultra', 'ollama-cloud', 'nvidia', 'ollama-gpt-oss', 'mistral', 'sambanova', 'cloudflare-gpt-oss', 'openrouter-qwen', 'zai-flash', 'vercel', 'groq', 'cerebras', 'hf']);
   });
 
-  it('keeps gpt-oss on Cloudflare third for the partner, whose calls its 25 a day are kept for, behind the same gpt-oss on Ollama', () => {
-    expect(tierOrder(true).slice(0, 6)).toEqual(['gemini', 'ollama-cloud', 'cloudflare-gpt-oss', 'nvidia', 'mistral', 'sambanova']);
-    expect(names(partnerRoute(listed(), createUsage(null), { promptChars: 10, tools: true })).slice(0, 5)).toEqual(['gemini', 'ollama-cloud', 'cloudflare-gpt-oss', 'nvidia', 'mistral']);
+  it('puts Gemini 3.5 Flash first for the partner and keeps gpt-oss on Cloudflare behind the two Nemotron Ultras for them', () => {
+    expect(tierOrder(true).slice(0, 9)).toEqual(['gemini-flash', 'gemini', 'nvidia-ultra', 'ollama-cloud', 'cloudflare-gpt-oss', 'nvidia', 'ollama-gpt-oss', 'mistral', 'sambanova']);
+    expect(names(partnerRoute(listed(), createUsage(null), { promptChars: 10, tools: true })))
+      .toEqual(['gemini-flash', 'gemini', 'nvidia-ultra', 'ollama-cloud', 'cloudflare-gpt-oss', 'nvidia', 'ollama-gpt-oss', 'mistral', 'sambanova', 'openrouter-qwen', 'zai-flash', 'vercel', 'cerebras', 'hf']);
+  });
+
+  it('never gives the partner-only model to a colleague, a pin or a side call', () => {
+    const usage = createUsage(null);
+    expect(names(route(listed(), usage, { promptChars: 10, tools: true, pinned: 'gemini-flash' }))).not.toContain('gemini-flash');
+    expect(names(route(listed(), usage, { promptChars: 10, tools: false, kind: 'side' }))).not.toContain('gemini-flash');
+    expect(usage.info(listed()).map((row) => row.name)).not.toContain('gemini-flash');
+  });
+
+  it('leaves Hugging Face out once its 30 requests of the month are used, even when it is all there is, and counts them across days', () => {
+    let at = Date.parse('2026-10-06T12:00:00Z');
+    const usage = createUsage(null, () => at);
+    const hf = client('hf', { limits: { rpm: 10, rpmo: 30 } });
+    for (let i = 0; i < 29; i += 1) { usage.record('hf'); at += 3_600_000; }
+    expect(usage.left(hf)).toBeCloseTo(1 / 30);
+    expect(names(route([hf], usage, { promptChars: 10, tools: true }))).toEqual(['hf']);
+    usage.record('hf');
+    expect(names(route([client('gemini'), hf], usage, { promptChars: 10, tools: true }))).toEqual(['gemini']);
+    expect(route([hf], usage, { promptChars: 10, tools: true }).order).toEqual([]);
+    at = Date.parse('2026-11-01T00:30:00Z');
+    expect(names(route([hf], usage, { promptChars: 10, tools: true }))).toEqual(['hf']);
   });
 
   it('leaves side calls in the order they were given', () => {
@@ -263,8 +286,9 @@ describe('a stalled Gemini and a stalled NVIDIA, with real clients on a fake clo
     });
   };
   const setUp = (skip: string[] = []) => {
-    // The quick Nemotron on the NVIDIA key is left out: these are about the slow Kimi beside it.
-    const clients = realClients(env).filter((one) => !skip.includes(one.name) && one.name !== 'nvidia');
+    // The quick Nemotrons on the NVIDIA key and the partner's Gemini 3.5 Flash are left out: these are about the slow
+    // Gemini and the slow Kimi.
+    const clients = realClients(env).filter((one) => !skip.includes(one.name) && !['nvidia', 'nvidia-ultra', 'gemini-flash'].includes(one.name));
     for (const one of clients) script(one, one.name === 'gemini' || one.name === 'nvidia-kimi');
     return { clients, usage: createUsage(null) };
   };
@@ -333,5 +357,28 @@ describe('a stalled Gemini and a stalled NVIDIA, with real clients on a fake clo
       expect(third.by).toBe('cloudflare');
       expect(third.seconds).toBeLessThan(1);
     } finally { vi.useRealTimers(); }
+  });
+});
+
+describe('an empty stream from NVIDIA (2026-10-06)', () => {
+  it('passes the turn to the next model and holds nothing against the key: one empty reply is not a failure', async () => {
+    const clients = realClients({ NVIDIA_API_KEY: 'nvapi-x' } as NodeJS.ProcessEnv).filter((one) => ['nvidia-ultra', 'nvidia'].includes(one.name));
+    expect(clients.map((one) => one.name)).toEqual(['nvidia-ultra', 'nvidia']);
+    for (const one of clients) {
+      (one.openai!.chat.completions as unknown as { create: unknown }).create = () => ({
+        withResponse: async () => {
+          // Ultra's throttled answer: a chunk naming who speaks and nothing else, then the end.
+          async function* chunks() { if (one.name === 'nvidia') yield { choices: [{ delta: { content: 'Super answers.' } }] }; else yield { choices: [{ delta: { role: 'assistant' } }] }; }
+          return { data: chunks(), response: { headers: new Headers() } };
+        },
+      });
+    }
+    const usage = createUsage(null);
+    const failures: string[] = [];
+    const reply = await complete([{ role: 'user', content: 'hi' }], { onToken: () => {} }, clients, ({ client: one, error }) => { failures.push(one.name); usage.failed(one.name, error); }, (one) => usage.admit(one.name));
+    expect(reply).toMatchObject({ text: 'Super answers.', client: { name: 'nvidia' } });
+    expect(failures).toEqual([]);
+    expect(usage.breaker('nvidia-ultra')).toBe('closed');
+    expect(usage.resting('nvidia-ultra')).toBe(false);
   });
 });

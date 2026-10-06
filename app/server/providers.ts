@@ -6,7 +6,10 @@ import { discoverLocal } from './opencode/config.ts';
 import { headerWait } from './breaker.ts';
 import type { ModelMessage } from './prompt.ts';
 
-type Limits = { rpm?: number; rpd?: number; tpm?: number; tpd?: number };
+// `rpmo`: a hard cap on requests in a calendar month, for a model whose free part is a small credit (Hugging Face's
+// router gives $0.10 a month): once it is used the model is never asked again that month, so the credit cannot drain
+// without anyone seeing it.
+type Limits = { rpm?: number; rpd?: number; tpm?: number; tpd?: number; rpmo?: number };
 export type ToolSpec = { name: string; description: string; parameters: Record<string, unknown> };
 // `args` is the raw JSON text the model wrote. `extra` is whatever else the provider attached to the call;
 // it goes back unchanged on the next step, because some providers reject a call they cannot recognise.
@@ -35,6 +38,9 @@ export type ModelClient = {
   // A small model kept for the calls around a turn (a summary, a reflection, a compaction note): it is asked first
   // for those, so the big model's per-minute tokens stay with the people, and it never answers a turn.
   side?: boolean;
+  // A stronger model kept for the partner's turns alone (Gemini 3.5 Flash, whose free day is small): a colleague, a pin
+  // or a side call never reaches it, so its day is all the partner's.
+  partnerOnly?: boolean;
   // How many requests this key may have out at once, when the provider says (Z.ai's flash model and Ollama's cloud
   // take one at a time), and whether that many are out now. A busy client is passed over, never queued behind.
   concurrency?: number;
@@ -348,7 +354,7 @@ export function collectCalls(calls: ToolCall[], parts: CallPart[]) {
   }
 }
 
-export type Entry = (typeof models)[number] & { side?: boolean; sharedPool?: boolean; pool?: string; vision?: boolean; streamUsage?: boolean; callSignature?: string; shortCallIds?: boolean; firstWordMs?: number; concurrency?: number; extra?: Record<string, unknown>; limits?: Limits };
+export type Entry = (typeof models)[number] & { side?: boolean; partnerOnly?: boolean; sharedPool?: boolean; pool?: string; vision?: boolean; streamUsage?: boolean; callSignature?: string; shortCallIds?: boolean; firstWordMs?: number; concurrency?: number; extra?: Record<string, unknown>; limits?: Limits };
 
 // What the free providers give, as their own pages said on 2026-09-24. A line with only `rpm` has no published daily
 // cap. Groq and Cerebras count each model apart, so `groq-qwen` and `cerebras-qwen` are a second day's worth on the
@@ -363,6 +369,15 @@ export type Entry = (typeof models)[number] & { side?: boolean; sharedPool?: boo
 // Scout) and needs the account id in its address; gpt-oss spends about 236 of them on a 25k-character request, Qwen
 // about 394 and Scout 166. Their `rpd` (25, 5, 10 requests, a tool turn being two or three) come to about 9,500 at
 // most, and the turns stop at 9,000 neurons counted from the answers, so the pictures keep the rest of the pool. SambaNova is 20 requests a day: the last resort.
+// Probed live on 2026-10-06 with the keys already set: NVIDIA's Nemotron 3 Ultra (550B) made a tool call in 2.8 s and
+// is the strongest free model behind Gemini, though one call that day came back as an empty stream, which `complete`
+// takes as "answered with nothing" and passes to the next model without a mark against the key; Super stays behind it.
+// Nemotron 3.5 Lightning (30B) made one in 1.9 s and is the side model behind Groq's small one. Gemini 3.5 Flash made
+// one in 2.0 s and reasons better than Flash-Lite, but Google publishes no free daily figure for it and sends no quota
+// headers, so its 250 a day is the free Flash day of the models before it, a guess its 429s correct; it answers only
+// the partner. Ollama's cloud now runs Nemotron 3 Ultra (a whole reply in 16 s, ahead of gpt-oss there), gpt-oss on
+// the same key behind it. Hugging Face's router gives $0.10 of credit a month: DeepSeek V4.1 Flash on it is the very
+// last model, 30 requests a month at most. OpenRouter's free models share one 50-a-day pool on a key (`pool`).
 export const ENTRIES = models as Entry[];
 
 // Every name in the environment an entry needs: its key, then whatever its address carries as `${NAME}`.
@@ -409,7 +424,7 @@ function keysOf(env: NodeJS.ProcessEnv, keyEnv: string): { key: string; at: numb
   return [...(env[keyEnv] ? [{ key: env[keyEnv]!, at: 1 }] : []), ...spare.sort((one, other) => one.at - other.at)];
 }
 
-type Shape = { model: string; maxPromptChars: number; maxTokens: number; tools: boolean; side?: boolean; sharedPool?: boolean; vision?: boolean; streamUsage?: boolean; callSignature?: string; shortCallIds?: boolean; firstWordMs?: number; concurrency?: number; extra?: Record<string, unknown>; limits?: Limits; local?: boolean };
+type Shape = { model: string; maxPromptChars: number; maxTokens: number; tools: boolean; side?: boolean; partnerOnly?: boolean; sharedPool?: boolean; vision?: boolean; streamUsage?: boolean; callSignature?: string; shortCallIds?: boolean; firstWordMs?: number; concurrency?: number; extra?: Record<string, unknown>; limits?: Limits; local?: boolean };
 
 // How long a hosted model may keep silent before its first word: a hanging Gemini costs this, not the whole 45 s
 // request timeout, and the next model is asked. Once anything streams, the model has all the time the request has.
@@ -439,6 +454,7 @@ function clientOf(name: string, entry: Shape, api: OpenAI, firstWordMs?: number,
     limits: entry.limits ?? {},
     ...(entry.local ? { local: true } : {}),
     ...(entry.side ? { side: true } : {}),
+    ...(entry.partnerOnly ? { partnerOnly: true } : {}),
     ...(entry.sharedPool ? { sharedPool: true } : {}),
     ...(entry.concurrency ? { concurrency: entry.concurrency, busy } : {}),
     ...(firstWordMs ? { firstWordMs } : {}),
