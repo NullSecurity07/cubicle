@@ -11,6 +11,8 @@ import type { Music } from './music.ts';
 import type { Sight } from './sight.ts';
 import { readProject, VIEWPORTS } from './sources.ts';
 import type { Spec } from './spec.ts';
+import { productFacts } from './grounding.ts';
+export { productFacts };
 import type { Stock } from './stock.ts';
 import { voiceStudioSays } from '../../shared/wiring.ts';
 import { OMNI_ENGINE } from './omnivoice.ts';
@@ -134,8 +136,23 @@ export const docsFor = (stage: Stage, cardId?: string, roomId?: string, granted:
 // launch") or by a name the doc itself carries (its title, or a capitalised name near its top, like "Playtestr").
 const US = /\b(?:we|we're|our|ours|us|company|startup|product|app|platform|tool|team|founders?|customers?|users?|launch\w*|pitch\w*|investors?|brand|business|traction|demo|mvp)\b/i;
 const PLAIN = new Set(['the', 'a', 'an', 'and', 'company', 'brief', 'doc', 'document', 'notes', 'our', 'we', 'it', 'this', 'what', 'who', 'how', 'why', 'one', 'pitch', 'plan', 'summary']);
+//
+// Or by what the product is: an ask that names two of the things the brief says the product deals in ("voicemail
+// chaos at a dental practice front desk" over a brief whose product turns a dental practice's voicemail into booked
+// appointments) is about the company even with no "our" in it. Journey 14's film was that ask, read without the
+// brief, and said the practice's staff reply by hand to a product that texts the caller back on its own.
+const ASK_PLAIN = new Set(['film', 'video', 'explainer', 'second', 'seconds', 'minute', 'about', 'with', 'that', 'this', 'their',
+  'your', 'from', 'into', 'real', 'footage', 'clip', 'clips', 'photographs', 'pictures', 'make', 'show', 'showing', 'short', 'using']);
+const stemOf = (word: string): string => word.replace(/(?:'s|ing|ed|es|s)$/, '');
+export function namesTheProduct(brief: string, facts: string): boolean {
+  const theirs = new Set((facts.toLowerCase().match(/[a-z][a-z'-]{3,}/g) ?? []).map(stemOf));
+  const shared = new Set((brief.toLowerCase().match(/[a-z][a-z'-]{3,}/g) ?? [])
+    .filter((word) => !ASK_PLAIN.has(word)).map(stemOf).filter((word) => word.length >= 4 && theirs.has(word)));
+  return shared.size >= 2;
+}
 export function aboutTheCompany(brief: string, doc: { title?: string; text?: string } = {}): boolean {
   if (US.test(brief)) return true;
+  if (doc.text && namesTheProduct(brief, productFacts(doc.text))) return true;
   const said = new Set((brief.toLowerCase().match(/[a-z][a-z0-9'-]{2,}/g) ?? []));
   const names = [
     ...(doc.title ?? '').split(/[^A-Za-z0-9'-]+/),
@@ -143,22 +160,6 @@ export function aboutTheCompany(brief: string, doc: { title?: string; text?: str
     ...((doc.text ?? '').slice(0, 600).match(/\b[A-Z][A-Za-z0-9]{2,}\b/g) ?? []),
   ].map((one) => one.toLowerCase()).filter((one) => one.length >= 3 && !PLAIN.has(one));
   return names.some((one) => said.has(one));
-}
-
-// What the product is and does, out of a company brief: the "What the company does" line and the first paragraph
-// under an Idea, Product or Customer heading, else the brief's first real paragraph. These are the facts a film about
-// the company is held to, and the things of its world.
-export function productFacts(text: string): string {
-  const body = (text ?? '').replace(/\r/g, '');
-  const facts: string[] = [];
-  const does = /^\s*what (?:the company|we|it) does:\s*(.+)$/im.exec(body)?.[1];
-  if (does) facts.push(does.trim());
-  for (const hit of body.matchAll(/^#{1,4}\s*(?:idea|product|the product|customer|customers|what it does)\s*$\n+([^#\n][^\n]*)/gim)) facts.push(hit[1].trim());
-  if (!facts.length) {
-    const first = body.split(/\n\s*\n/).map((one) => one.trim()).find((one) => !one.startsWith('#') && one.split(/\s+/).length >= 8);
-    if (first) facts.push(first.replace(/\s+/g, ' '));
-  }
-  return facts.join('\n');
 }
 
 // The company's private money in a film's material: cash, revenue, burn and the sentences that carry them stay out
@@ -311,6 +312,12 @@ export async function gather(deps: VideoDeps, asked: VideoAsk, at: string, repor
       if (!reached.includes(id) && !aboutTheCompany(asked.prompt ?? '', { title, text })) continue;
       const kept = money ? text : withoutMoney(text);
       if (kept.trim()) { material.lines.push(`${title}:\n${kept.slice(0, 2400)}`); material.using.push(title); }
+      // What the product is, out of a company brief, when nothing wired said it already: the film argues it and is
+      // held to it.
+      if (kept.trim() && !material.pitch) {
+        const facts = productFacts(kept);
+        if (facts && /what (?:the company|we|it) does:|^#{1,4}\s*(?:idea|product)/im.test(kept)) material.pitch = facts;
+      }
     }
 
     // The product's own screens. Two addresses at most, and a handful of shots each: this is the slow part.

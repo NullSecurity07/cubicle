@@ -212,6 +212,9 @@ export function planPrompt(understanding: Understanding, asked: Asked, material:
     material.lines.length
       ? 'Everything specific this film says — every feature, every number, every name — must come out of the material below, and every beat must carry the words it came from in "source", quoted exactly. Say it in your own words; the quotation is what proves it, not what you read out. A beat whose claim you cannot quote is a beat you must not write.'
       : 'There is no material behind this film, so it may say only what is generally true. No brand name, no product name, no customer, and no statistics at all — not a percentage, not a multiple, not a sum of money. A number nobody measured is a lie with a decimal point in it. Leave "source" out.',
+    material.lines.length
+      ? 'The product works exactly the way the material says it does. Where the material says the product does something itself, no beat has a person — staff, the front desk, the viewer — do it by hand, tap a button for it or reply instead.'
+      : '',
     'A number belongs in this film only if it changes something for the person watching — money, time, how many people, how much better. How many kinds of something the product has is an inventory, not a number worth a scene.',
     understanding.pack === 'sketch'
       ? 'This film is drawn by hand from end to end, so the style bible describes one drawing and every picture in the film is that same drawing.'

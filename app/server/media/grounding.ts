@@ -25,7 +25,26 @@ export type Sources = {
   lines: string[];
   // The brief's own sentences and clauses, as the founder wrote them. A line of theirs is never swapped for another.
   said?: string[];
+  // What the product is and does, sentence by sentence, as the material says it (`productFacts`). A line that says
+  // it works otherwise is a contradiction (`against-brief.ts`).
+  facts?: string[];
 };
+
+// What the product is and does, out of a company brief: the "What the company does" line and the first paragraph
+// under an Idea, Product or Customer heading, else the brief's first real paragraph. These are the facts a film about
+// the company is held to, and the things of its world.
+export function productFacts(text: string): string {
+  const body = (text ?? '').replace(/\r/g, '');
+  const facts: string[] = [];
+  const does = /^\s*what (?:the company|we|it) does:\s*(.+)$/im.exec(body)?.[1];
+  if (does) facts.push(does.trim());
+  for (const hit of body.matchAll(/^#{1,4}\s*(?:idea|product|the product|customer|customers|what it does)\s*$\n+([^#\n][^\n]*)/gim)) facts.push(hit[1].trim());
+  if (!facts.length) {
+    const first = body.split(/\n\s*\n/).map((one) => one.trim()).find((one) => !one.startsWith('#') && one.split(/\s+/).length >= 8);
+    if (first) facts.push(first.replace(/\s+/g, ' '));
+  }
+  return facts.join('\n');
+}
 
 export const flat = (text: string): string => text.toLowerCase().replace(/[^\p{L}\p{N}%$£€.]+/gu, ' ').replace(/\s{2,}/g, ' ').trim();
 
@@ -38,7 +57,9 @@ export function sourcesOf(material: Material, brief: string): Sources {
     material.brand?.name ?? '',
   ].filter(Boolean);
   const body = parts.join('\n');
-  return { corpus: flat(body), brief: flat(brief), has: material.lines.length > 0, lines: sentencesIn(body).slice(0, 40), said: clausesOf(brief) };
+  const facts = [material.pitch ?? '', productFacts(material.lines.join('\n\n'))].join('\n')
+    .split(/\n+|(?<=[.!?])\s+/).map((one) => one.trim()).filter((one) => one.split(/\s+/).length >= 4);
+  return { corpus: flat(body), brief: flat(brief), has: material.lines.length > 0, lines: sentencesIn(body).slice(0, 40), said: clausesOf(brief), facts: [...new Set(facts)] };
 }
 
 // The brief cut where the founder paused: sentences, and the clauses a semicolon or a colon sets apart. A clause
