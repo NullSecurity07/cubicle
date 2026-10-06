@@ -13,7 +13,7 @@ export type CoderCard = { id: string; dir: string; name: string; session?: strin
 type Deps = {
   engine: Engine;
   say(cardId: string, event: CoderEvent): void;
-  approvals: { ask(id: string, signal?: AbortSignal): Promise<Answer>; answer(id: string, answer: Answer): boolean };
+  approvals: { ask(id: string, signal?: AbortSignal, about?: Attention): Promise<Answer>; answer(id: string, answer: Answer, by?: 'founder'): boolean };
   attention: { raise(entry: Attention): Promise<void>; clear(id: string): Promise<void> };
   // Writes the card's session into the saved stage, so the same conversation carries on after a restart.
   remember(cardId: string, session: string): Promise<void>;
@@ -591,7 +591,7 @@ export function createCoder(deps: Deps) {
     async answer(cardId: string, permissionId: string, reply: 'once' | 'always' | 'reject', message?: string) {
       const card = held(cardId);
       if (!card.permissions.some((one) => one.id === permissionId)) throw new Error('that question is not waiting any more');
-      approvals.answer(`coder:${permissionId}`, { ok: reply !== 'reject', args: { reply, ...(message ? { message } : {}) } });
+      approvals.answer(`coder:${permissionId}`, { ok: reply !== 'reject', args: { reply, ...(message ? { message } : {}) } }, 'founder');
       await new Promise((settle) => setImmediate(settle));
     },
 

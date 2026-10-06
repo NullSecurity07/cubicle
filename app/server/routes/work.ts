@@ -6,6 +6,7 @@ import type { createDecisions } from '../decisions.ts';
 import type { createFounder } from '../founder.ts';
 import { answer, body, openFeed, type Route } from '../http.ts';
 import { missionsOf } from '../missions.ts';
+import { overlap, proposalOf, SAID_NO_OVERLAP, saidNoFor } from '../partner/saidno.ts';
 import type { Recall } from '../playbook.ts';
 import type { Turn } from '../reflect.ts';
 import type { RoomFeed } from '../rooms-feed.ts';
@@ -13,6 +14,7 @@ import type { createSources } from '../sources.ts';
 import type { Skills } from '../skills.ts';
 import { allChats, type Store } from '../store.ts';
 import { threadsOf } from '../threads.ts';
+import { leadAddresses } from '../tools/outward.ts';
 import type { createTrace } from '../trace.ts';
 
 // "Learn this": the founder asking for the reflection a turn can also set off by itself, on work already finished.
@@ -45,8 +47,20 @@ export function workRoutes(deps: {
     if (path === '/api/decisions' && req.method === 'GET') return answer(res, 200, await decisions.list());
     if (path === '/api/decisions' && req.method === 'POST') return answer(res, 200, await decisions.record(await body(req)));
     const ruled = /^\/api\/decisions\/([a-z0-9-]{1,100})(?:\/(decide))?$/.exec(path);
-    if (ruled && ruled[2] === 'decide' && req.method === 'POST') return answer(res, 200, await decisions.decide(ruled[1], await body(req)));
-    if (ruled && !ruled[2] && req.method === 'DELETE') { await decisions.remove(ruled[1]); return answer(res, 200, { ok: true }); }
+    // A proposed decision declined, or decided against what its proposer would pick, is a no kept in the said-no log.
+    if (ruled && ruled[2] === 'decide' && req.method === 'POST') {
+      const made = await decisions.decide(ruled[1], await body(req));
+      if (made.recommendation && made.chosen && overlap(made.chosen, made.recommendation) < SAID_NO_OVERLAP) {
+        await saidNoFor(workspace).record({ tool: 'propose_decision', subject: `${made.title}: ${made.recommendation}`, ...(made.proposedBy ? { who: made.proposedBy } : {}), ...(made.why ? { reason: made.why } : {}) }).catch(() => {});
+      }
+      return answer(res, 200, made);
+    }
+    if (ruled && !ruled[2] && req.method === 'DELETE') {
+      const held = (await decisions.list()).find((one) => one.id === ruled[1]);
+      await decisions.remove(ruled[1]);
+      if (held?.status === 'proposed') await saidNoFor(workspace).record({ tool: 'propose_decision', subject: held.title, ...(held.proposedBy ? { who: held.proposedBy } : {}) }).catch(() => {});
+      return answer(res, 200, { ok: true });
+    }
     // The playbook. Everything in it was written without asking, so everything in it can be edited, switched off,
     // put back or thrown away by the founder, and the panel hears about every change on one feed.
     if (path === '/api/skills' && req.method === 'GET') return answer(res, 200, await skills.list());
@@ -105,7 +119,19 @@ export function workRoutes(deps: {
     // Every id on this list has a colon in it (`approval:call-1`, `run-failed:t2:5`), and a colon travels here as
     // `%3A`. Without the `%` and the decoding, Dismiss reached nothing at all and the founder pressed it for nothing.
     const dismissed = /^\/api\/attention\/([\w.:%-]{1,160})\/dismiss$/.exec(path)?.[1];
-    if (dismissed && req.method === 'POST') { await attention.dismiss(decodeURIComponent(dismissed)); return answer(res, 200, { ok: true }); }
+    if (dismissed && req.method === 'POST') {
+      const id = decodeURIComponent(dismissed);
+      const held = (await attention.list()).find((one) => one.id === id);
+      await attention.dismiss(id);
+      // A drafted email waved away is a no to it, kept so the same email is not drafted for the founder again.
+      if (held?.kind === 'mail-draft') {
+        const to = /^Email to (.+) ready to send$/.exec(held.title)?.[1] ?? '';
+        const stage = await store.loadStage();
+        const proposal = proposalOf('draft_email', { to, subject: held.detail ?? '' }, await leadAddresses(workspace)(stage).catch(() => []));
+        if (proposal) await saidNoFor(workspace).record({ ...proposal, ...(held.who ? { who: held.who } : {}) }).catch(() => {});
+      }
+      return answer(res, 200, { ok: true });
+    }
     const droppedSource = /^\/api\/sources\/([a-z0-9-]{1,100})\/drop$/.exec(path)?.[1];
     if (droppedSource && req.method === 'POST') { await sources.drop(droppedSource); return answer(res, 200, { ok: true }); }
     return false;

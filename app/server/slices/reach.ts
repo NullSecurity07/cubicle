@@ -90,7 +90,7 @@ export default {
     const phone = createPhone({
       api, outbox, reach, book, topics, stage: () => deps.store.loadStage(),
       ask: (roomId, said) => bridge(roomId, said),
-      answer: (id, answer) => deps.approvals.answer(id, answer),
+      answer: (id, answer) => deps.approvals.answer(id, answer, 'founder'),
       busy: () => deps.busy,
       hear: async (sound, _mime, report) => heard(await samplesOf(sound, run), report),
       say: async (roomId, said) => oggOf(await speak(sayable(said) || 'There is code in the written reply.', await voiceOf(roomId)), run),

@@ -284,6 +284,21 @@ describe('runTurn with seams', () => {
     expect(events.some((event) => event.waiting)).toBe(false);
   });
 
+  it('puts a call to the founder first when the seam asks, in its words, even a call that needs no yes', async () => {
+    const seams = createSeams();
+    seams.on('tool:before', async (payload, next) => next({ ...payload, ask: 'You said no to this on 3 Oct. Ask again?', approved: true }));
+    const plain = echo();
+    const asked: string[] = [];
+    await go(scripted([[{ name: 'echo', args: { say: 'hi' } }], 'fine']), seams, { tools: [plain], approve: async (event) => { asked.push(event.question ?? ''); return { ok: true }; } });
+    expect(asked).toEqual(['You said no to this on 3 Oct. Ask again?']);
+    expect(plain.ran).toEqual([{ say: 'hi' }]);
+    const gated = echo(true);
+    const { reply } = await go(scripted([[{ name: 'echo', args: { say: 'hi' } }], 'fine']), seams, { tools: [gated], approve: async (event) => { asked.push(event.question ?? ''); return { ok: false }; } });
+    expect(asked.at(-1)).toBe('You said no to this on 3 Oct. Ask again?');
+    expect(gated.ran).toEqual([]);
+    expect(reply.tools[0]).toMatchObject({ ok: false });
+  });
+
   it('lets the arguments be rewritten before the tool sees them', async () => {
     const seams = createSeams();
     seams.on('tool:before', async (payload, next) => next({ ...payload, call: { ...payload.call, args: { say: 'rewritten' } } }));
