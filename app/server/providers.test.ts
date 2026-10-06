@@ -478,7 +478,7 @@ describe('the long clock, said (round 5)', () => {
   it('adds how long the last model able was waited for to "said nothing for too long"', async () => {
     vi.useFakeTimers();
     try {
-      const [gemini] = realClients({ GEMINI_API_KEY: 'g', STAGE_FIRST_TOKEN_MS: '40' } as NodeJS.ProcessEnv);
+      const gemini = realClients({ GEMINI_API_KEY: 'g', STAGE_FIRST_TOKEN_MS: '40' } as NodeJS.ProcessEnv).find((one) => one.name === 'gemini')!;
       (gemini.openai!.chat.completions as unknown as { create: unknown }).create = (_body: unknown, { signal }: { signal: AbortSignal }) => ({
         withResponse: () => new Promise((_done, fail) => signal.addEventListener('abort', () => fail(new Error('Request was aborted.')), { once: true })),
       });

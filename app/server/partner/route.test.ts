@@ -72,12 +72,20 @@ describe('the partner route from the keys in .env', () => {
   const names = (keys: Record<string, string>, promptChars = 25_000) => partnerRoute(realClients(keys as NodeJS.ProcessEnv), createUsage(null), { promptChars, tools: true }).order.map((one) => one.name);
 
   it('has no OpenRouter model at all while its key is empty, as it is today', () => {
-    expect(names({ ...env, OPENROUTER_API_KEY: '' })).toEqual(['gemini', 'cloudflare-gpt-oss', 'cloudflare-qwen', 'cloudflare']);
+    expect(names({ ...env, OPENROUTER_API_KEY: '' })).toEqual(['gemini-flash', 'gemini', 'cloudflare-gpt-oss', 'cloudflare-qwen', 'cloudflare']);
   });
 
   it('puts OpenRouter\'s free Qwen between the two Cloudflare models once the key is set', () => {
-    expect(names({ ...env, OPENROUTER_API_KEY: 'o' })).toEqual(['gemini', 'cloudflare-gpt-oss', 'openrouter-qwen', 'cloudflare-qwen', 'cloudflare', 'openrouter']);
+    expect(names({ ...env, OPENROUTER_API_KEY: 'o' })).toEqual(['gemini-flash', 'gemini', 'cloudflare-gpt-oss', 'openrouter-qwen', 'cloudflare-qwen', 'cloudflare', 'openrouter']);
     expect(realClients({ OPENROUTER_API_KEY: 'o' } as NodeJS.ProcessEnv).find((one) => one.name === 'openrouter-qwen')).toMatchObject({ model: 'dots-studio/dots-3-note-preview:free', tools: true, limits: { rpd: 50 } });
+  });
+
+  it('gives the partner every model set up, Gemini 3.5 Flash first and Hugging Face last, and the side models none of it (2026-10-06)', () => {
+    const all = { ...env, NVIDIA_API_KEY: 'n', OLLAMA_API_KEY: 'l', MISTRAL_API_KEY: 'm', SAMBANOVA_API_KEY: 's', OPENROUTER_API_KEY: 'o', HF_TOKEN: 'h' };
+    const order = names(all);
+    expect(order.slice(0, 11)).toEqual(['gemini-flash', 'gemini', 'nvidia-ultra', 'ollama-cloud', 'cloudflare-gpt-oss', 'nvidia', 'ollama-gpt-oss', 'mistral', 'sambanova', 'openrouter-qwen', 'cloudflare-qwen']);
+    expect(order.at(-1)).toBe('hf');
+    expect(order).not.toContain('nvidia-lightning');
   });
 
   it('leaves Groq off a small partner turn too, where it would fit', () => {

@@ -10,7 +10,8 @@ describe('the keys the app knows', () => {
     expect(new Set(names).size).toBe(names.length);
     for (const name of new Set(ENTRIES.flatMap(needs))) {
       const row = rows.find((one) => one.name === name);
-      expect(row?.group, name).toBe('Models');
+      // The Hugging Face token makes the clips first; the paid last-resort model on it does not move it.
+      expect(row?.group, name).toBe(name === 'HF_TOKEN' ? 'Making clips' : 'Models');
       expect(row?.where, name).toBeTruthy();
     }
   });
@@ -34,7 +35,7 @@ describe('the keys the app knows', () => {
 describe('the keys that would add a fallback (round 5)', () => {
   it('names each free sign-up that is not set, with where to make it and the models it brings', () => {
     const line = fallbackLine(() => false)!;
-    expect(line).toBe('Keys that would add a fallback, each a free sign-up: NVIDIA at build.nvidia.com (nemotron-3-super-120b-a12b, kimi-k3); Mistral at console.mistral.ai (mistral-small-latest); '
+    expect(line).toBe('Keys that would add a fallback, each a free sign-up: NVIDIA at build.nvidia.com (nemotron-3-ultra-550b-a55b, nemotron-3-super-120b-a12b, kimi-k3); Mistral at console.mistral.ai (mistral-small-latest); '
       + 'Cerebras at cloud.cerebras.ai (gpt-oss-120b, qwen-3.8-27b); OpenRouter at openrouter.ai/keys (nemotron-3-super-120b-a12b:free, dots-3-note-preview:free).');
   });
 

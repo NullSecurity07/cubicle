@@ -29,7 +29,8 @@ type ToolCount = { results: number; before: number; after: number };
 type CacheCount = { hits: number; misses: number; tokensSaved: number };
 // `kinds`, `tools` and `cache` came later: a day written before them still reads, as a day without them.
 // `pictures`: by neuron pool, the pictures drawn on it today and the neurons they cost.
-type State = { day: string; providers: Record<string, Count>; kinds?: Record<string, Count>; tools?: Record<string, ToolCount>; cache?: Record<string, CacheCount>; pictures?: Record<string, { drawn: number; neurons: number }> };
+// `month`: requests by key this calendar month, kept across days for a model with a monthly cap (`rpmo`).
+type State = { day: string; month?: { at: string; requests: Record<string, number> }; providers: Record<string, Count>; kinds?: Record<string, Count>; tools?: Record<string, ToolCount>; cache?: Record<string, CacheCount>; pictures?: Record<string, { drawn: number; neurons: number }> };
 type Seen = { at: number; tokens: number };
 // A key refused (`dead`) or answering again. `planless`: refused because its plan allows no requests at all yet;
 // `unpaid`: refused until the account has a card or payment method on file.
@@ -50,6 +51,7 @@ const WINDOW = 60_000;
 // Of Cloudflare's 10,000 free neurons a day, what the turns may spend; the rest is the pictures'.
 export const NEURONS_FOR_TURNS = 9000;
 const today = (now: number) => new Date(now).toISOString().slice(0, 10);
+const thisMonth = (now: number) => new Date(now).toISOString().slice(0, 7);
 
 // A picture drawn on Cloudflare spends the same day's neurons the turns do, so every usage book with a workspace hears
 // of it and counts it into that pool: the turns then stop at 9,000 with the pictures in, not beside them.
@@ -108,7 +110,10 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     return was;
   };
 
-  const roll = () => { if (state.day !== today(now())) state = { day: today(now()), providers: {} }; };
+  // A new day starts the day's counts again; the month's go on until the month ends.
+  const monthOf = (month?: State['month']) => (month?.at === thisMonth(now()) ? { month } : {});
+  const roll = () => { if (state.day !== today(now())) state = { day: today(now()), providers: {}, ...monthOf(state.month) }; };
+  const monthly = (name: string) => (state.month?.at === thisMonth(now()) ? state.month.requests[name] ?? 0 : 0);
   const count = (name: string) => (state.providers[name] ??= { requests: 0, input: 0, output: 0 });
   const window = (name: string) => (recent[name] = (recent[name] ?? []).filter((seen) => now() - seen.at < WINDOW));
   const save = () => {
@@ -138,7 +143,7 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
       ? header.quota.remainingRequests / header.quota.limitRequests : 1;
     const pool = neuronPool(client);
     const fromNeurons = pool ? share(poolNeurons(pool), NEURONS_FOR_TURNS) : 1;
-    return Math.min(share(pooled(client.name), client.limits.rpd), share(used.input + used.output, client.limits.tpd), fromHeader, fromNeurons);
+    return Math.min(share(pooled(client.name), client.limits.rpd), share(used.input + used.output, client.limits.tpd), fromHeader, fromNeurons, share(monthly(client.name), client.limits.rpmo));
   }
 
   if (folder) {
@@ -172,6 +177,7 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
       try {
         const saved = JSON.parse(await readFile(path, 'utf8')) as State;
         if (saved.day === today(now())) state = saved;
+        else state = { ...state, ...monthOf(saved.month) };
       } catch { /* first run, or a damaged file: start the day at zero */ }
       if (!keysPath) return;
       try {
@@ -218,6 +224,8 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
       used.input += usage?.input ?? 0;
       used.output += usage?.output ?? 0;
       if (usage?.neurons) used.neurons = (used.neurons ?? 0) + usage.neurons;
+      if (state.month?.at !== thisMonth(now())) state.month = { at: thisMonth(now()), requests: {} };
+      state.month.requests[name] = (state.month.requests[name] ?? 0) + 1;
       window(name).push({ at: now(), tokens: (usage?.input ?? 0) + (usage?.output ?? 0) });
       if (quota) quotas[name] = { at: now(), quota };
       save();
@@ -282,11 +290,13 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     today() { roll(); return { kinds: { ...state.kinds }, tools: { ...state.tools }, cache: { ...state.cache } }; },
     left,
     // True once this key has made as many requests today as its published daily allowance: the day's free turns are used.
+    // A key with a monthly cap (`rpmo`) is spent once the month's requests reach it, whatever the day.
     // A key on Cloudflare's neuron pool is also spent once the answers on that pool have cost 9,000 neurons today,
     // whichever model asked: the rest of the 10,000 stays with the pictures.
     spent(client: ModelClient) {
       roll();
       if (client.limits.rpd && pooled(client.name) >= client.limits.rpd) return true;
+      if (client.limits.rpmo && monthly(client.name) >= client.limits.rpmo) return true;
       const pool = neuronPool(client);
       return !!pool && poolNeurons(pool) >= NEURONS_FOR_TURNS;
     },
@@ -319,11 +329,12 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     },
     // Several keys for one provider are one provider to the founder: the rings show what they have done together and
     // what is left of the two days' worth between them. It is also the name a person is pinned to.
-    // The side model is no one's to pin, so the picker never lists it; the insights ask for it with `withSide`.
+    // The side model is no one's to pin, so the picker never lists it; the insights ask for it with `withSide`. Nor is a
+    // partner-only model: pinned to a colleague it would never answer.
     info(clients: ModelClient[], withSide = false): ModelInfo[] {
       roll();
       const rows = new Map<string, { info: ModelInfo; keys: number; off: number; card: number; slow: number }>();
-      for (const client of clients.filter((one) => withSide || !one.side)) {
+      for (const client of clients.filter((one) => withSide || (!one.side && !one.partnerOnly))) {
         const name = providerOf(client.name);
         const used = count(client.name);
         const row = rows.get(name) ?? { info: { name, model: client.model, ready: true, left: 0, requests: 0, tokens: 0 }, keys: 0, off: 0, card: 0, slow: 0 };

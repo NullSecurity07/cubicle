@@ -35,10 +35,11 @@ export function keyPools(env: NodeJS.ProcessEnv): { provider: string; keys: numb
 }
 
 // How many of the free providers can answer here, and which names in .env would bring the rest. A provider is one
-// line in models.json (the side model is not one); it counts once everything it needs is set, the Cloudflare account
+// line in models.json (the side model is not one, nor the partner's own Gemini 3.5 Flash, which hands nobody else
+// a turn); it counts once everything it needs is set, the Cloudflare account
 // id as much as its token. Two that can call tools is the floor: one alone has nobody to hand over to at its limit.
 export function freeProviders(env: NodeJS.ProcessEnv): Check {
-  const lines = ENTRIES.filter((entry) => !entry.side);
+  const lines = ENTRIES.filter((entry) => !entry.side && !entry.partnerOnly);
   const keyed = lines.filter((entry) => !unset(entry, env).length);
   const missing = [...new Set(lines.flatMap((entry) => unset(entry, env)))];
   const callers = keyed.filter((entry) => entry.tools).length;
