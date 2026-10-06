@@ -69,3 +69,27 @@ test('a refused draft is never called drafted, and Gmail is named only beside a 
   await expect(said).not.toContainText('Drafted the reply');
   await expect(said.getByRole('link', { name: 'Open in Gmail' })).toHaveCount(0);
 });
+
+// Journey 16: after a refused propose_decision the partner said "I have proposed the decision ... and it now waits in
+// your list"; nothing was in the list. A refused tool that makes something is never reported as done.
+test('a refused decision is never said to wait in the list', async ({ page }) => {
+  await page.goto('/');
+  const room = node(page, 'marketing');
+  await expect(room).toBeVisible();
+  const propose = '/tool propose_decision {"title":"Pause subscriptions for the refused-decision check","context":"Paying is down.","options":["Pause","Keep going"],"recommendation":"Pause"}';
+  await send(page, 'marketing', propose);
+  await expect(room.locator('.chip--ok').last()).toBeVisible();
+  // The founder takes it out of the list: a no, kept.
+  const held = ((await (await page.request.get('/api/decisions')).json()) as { id: string; title: string }[]).find((one) => one.title.startsWith('Pause subscriptions for the refused-decision check'))!;
+  await page.request.delete(`/api/decisions/${held.id}`);
+
+  await send(page, 'marketing', `${propose}\n/say I have proposed the decision to pause subscriptions, and it now waits in your list.`);
+  await expect(room.locator('.approval__title').last()).toHaveText(/^You said no to this on/);
+  await room.getByRole('button', { name: "Don't" }).last().click();
+  const said = room.locator('.msg--assistant').last();
+  await expect(said).toContainText('The decision was not proposed: you said no to this.');
+  await expect(said).not.toContainText('waits in your list');
+  const chat = (await (await page.request.get('/api/rooms/marketing/chat')).json()) as { id: string; text: string }[];
+  const from = chat.findIndex((message) => message.text.includes('refused-decision check'));
+  if (from >= 0) for (const message of chat.slice(from)) await page.request.delete(`/api/rooms/marketing/chat/${message.id}`);
+});
