@@ -115,11 +115,12 @@ export type FilmStock = {
   missing: boolean;
   // True when the library can be asked for real moving footage too (Wikimedia Commons, or Pexels with a key).
   clips: boolean;
-  take(ask: { query: string; shape?: string; speaker?: boolean; names?: string[]; fits?: (one: Found) => boolean }, signal?: AbortSignal):
+  // `fits` refuses a photograph; `rank` orders the ones that fit, best first (the film's world, `worldScore`).
+  take(ask: { query: string; shape?: string; speaker?: boolean; names?: string[]; fits?: (one: Found) => boolean; rank?: (one: Found) => number }, signal?: AbortSignal):
     Promise<{ found: Found; ext: string; bytes: Buffer } | null>;
   // A few seconds of real footage of the scene's own things, or null. Same rules as a photograph: never the speaker,
   // never beside a named product's claim.
-  clip(ask: { query: string; shape?: string; speaker?: boolean; names?: string[]; seconds?: number; fits?: (one: Found) => boolean }, signal?: AbortSignal):
+  clip(ask: { query: string; shape?: string; speaker?: boolean; names?: string[]; seconds?: number; fits?: (one: Found) => boolean; rank?: (one: Found) => number }, signal?: AbortSignal):
     Promise<{ found: Found; ext: string; bytes: Buffer } | null>;
   // Why the clips asked for since the last call found nothing, in one line, or '' when one was found; the miss is
   // counted for Health.
@@ -145,13 +146,14 @@ export function filmStock(library: Stock | undefined, pack: string, report: (lin
   const say = (line: string) => { if (line && !said.has(line)) { said.add(line); report(line); } };
   const hear = () => { for (const line of stock?.heard?.() ?? []) say(line); };
   const misses: ClipMiss[] = [];
-  const one = async (kind: StockKind, ask: { query: string; shape?: string; speaker?: boolean; names?: string[]; fits?: (one: Found) => boolean; seconds?: number }, signal?: AbortSignal) => {
+  const one = async (kind: StockKind, ask: { query: string; shape?: string; speaker?: boolean; names?: string[]; fits?: (one: Found) => boolean; rank?: (one: Found) => number; seconds?: number }, signal?: AbortSignal) => {
     if (!on || stock!.ready() || troubled || signal?.aborted) return null;
     try {
       const all = await stock!.find({ query: ask.query, kind, shape: ask.shape, many: kind === 'video' ? 12 : 6 }, signal);
       const found = broll(all, { speaker: ask.speaker, names: ask.names })
         .filter((one) => !ask.fits || ask.fits(one))
         .filter((one) => kind !== 'video' || !one.seconds || one.seconds >= Math.min(3, ask.seconds ?? 3));
+      if (ask.rank) found.sort((a, b) => ask.rank!(b) - ask.rank!(a));
       hear();
       if (kind === 'video' && !found.length) misses.push({ query: ask.query, seen: all.length, fit: 0 });
       if (!found.length) return null;

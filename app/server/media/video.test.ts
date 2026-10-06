@@ -900,6 +900,19 @@ describe('the close holds the last picture', () => {
     expect(cut.at(-1)!.scrim).toBeGreaterThanOrEqual(0.55);
   });
 
+  // Journey 14: the voicemail film closed on a bronze anchor because it was the last picture shown.
+  it('holds the best picture of the film\'s world under the close, never a stand-in, the latest of equals', () => {
+    const cut = [
+      shot({ layout: 'statement', text: 'Phones ring', say: 'Phones ring.' }, { bg: 'frame-0-0.jpg', scrim: 0.2 }),
+      shot({ layout: 'statement', text: 'Desk', say: 'At the desk.' }, { bg: 'frame-1-0.jpg', scrim: 0.3 }),
+      shot({ layout: 'statement', text: 'Weight', say: 'The weight of it.' }, { bg: 'frame-2-0.jpg', scrim: 0.3 }),
+      shot({ layout: 'cta', text: 'Book a pilot', say: 'Book a pilot.' }),
+    ];
+    const marks: Record<string, number> = { 'frame-0-0.jpg': 3, 'frame-1-0.jpg': 3, 'frame-2-0.jpg': -1 };
+    holdTheLastPicture(cut, (file) => marks[file]);
+    expect(cut.at(-1)!.bg).toBe('frame-1-0.jpg');
+  });
+
   it('leaves a close alone that has a picture already, or a film with no picture at all', () => {
     const own = [shot({ layout: 'picture', image_prompt: 'x', say: 'X.' }, { image: 'stock-0.jpg' }), shot({ layout: 'cta', text: 'Go', say: 'Go.' }, { bg: 'mine.png' })];
     holdTheLastPicture(own);

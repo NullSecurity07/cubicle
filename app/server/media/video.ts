@@ -29,7 +29,8 @@ import {
 } from './spec.ts';
 import { creditOf, filmStock, photoCredits } from './stock.ts';
 import {
-  afforded, drawnAs, heldUp, lineUnder, photoOfTheLine, sceneLine, shareOut, shotKey, slotsFor, stockQueries, topicOf, type Slot, type Visual,
+  afforded, closeHolds, drawnAs, heldUp, lineUnder, photoOfTheLine, sceneLine, shareOut, shotKey, slotsFor, standInOf, stockQueries, topicOf,
+  worldOf, worldScore, type Slot, type Visual,
 } from './visuals.ts';
 import { isDraft, makingWords, secondsEach } from '../../shared/film-time.ts';
 import { filmMemory, storyboardKey, subjectKey, type KeptSubject } from './remembered.ts';
@@ -43,7 +44,7 @@ import {
 } from './templates/index.ts';
 import { camOf } from './templates/layouts.ts';
 import { hushPcm, sceneClock, timeWords, type Hush, type Part, type Word } from './timings.ts';
-import { gather, narratorOf, takeLine, type VideoAsk, type VideoDeps } from './gather.ts';
+import { gather, narratorOf, productFacts, takeLine, type VideoAsk, type VideoDeps } from './gather.ts';
 import { settleLength } from './length.ts';
 import { readAround } from './take.ts';
 import { carryExtras, chromePath, drawingFor, editPlan, renderProject, stageVendor, withJobDir } from './render.ts';
@@ -203,6 +204,9 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         const photoLibrary = filmStock(deps.stock, pack, report);
         // What the film is about, in the brief's own nouns: what every photograph in it may be of.
         const topic = topicOf(asked.prompt);
+        // The film's world: the brief's own things and, for a film about the company, the product's. Every picture
+        // and photograph is of the line and of this world, and nothing a museum would catalogue gets in unasked.
+        const world = worldOf(asked.prompt, productFacts(material.lines.join('\n\n')));
         // A moving shot the film was going to have can still be real footage somebody filmed when no AI clip can be
         // made, which costs nothing and needs no key (Wikimedia Commons).
         const realClips = mayUseAi && photoLibrary.clips;
@@ -369,7 +373,8 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
                 real = await photoLibrary.clip({
                   query, shape, seconds: scene.seconds ?? 4,
                   speaker: !!scene.person, names: [material.brand?.name ?? ''].filter(Boolean),
-                  fits: (one) => photoOfTheLine(one.what, wanted, topic, asked.prompt),
+                  fits: (one) => photoOfTheLine(one.what, wanted, topic, asked.prompt, world),
+                  rank: (one) => worldScore(one.what, world),
                 }, signal);
                 if (real || signal?.aborted) break;
               }
@@ -603,7 +608,8 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
                 photo = await photoLibrary.take({
                   query, shape,
                   speaker: !!scene.person || scene.layout === 'presenter', names: [material.brand?.name ?? ''].filter(Boolean),
-                  fits: (one) => photoOfTheLine(one.what, visual, topic, asked.prompt),
+                  fits: (one) => photoOfTheLine(one.what, visual, topic, asked.prompt, world),
+                  rank: (one) => worldScore(one.what, world),
                 }, stop);
                 if (photo || stop.aborted) break;
               }
@@ -682,9 +688,9 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           const known = await memory.subjects([...keys.values()]);
           const unknown = wanted.filter((one) => {
             const before = known.get(keys.get(one.at)!);
-            return !before || !heldUp({ ...one, ...before });
+            return !before || !heldUp({ ...one, ...before }) || !!standInOf(before.subject, world.named);
           });
-          const written = unknown.length ? await photograph(unknown, bible, angle, deps.think, { report, signal }) : [];
+          const written = unknown.length ? await photograph(unknown, bible, angle, deps.think, { report, signal }, world) : [];
           await memory.keepSubjects(written.filter((one) => one.subject.trim())
             .map((one): [string, KeptSubject] => [keys.get(one.at)!, { subject: one.subject, metaphor: one.metaphor }]));
           for (const slot of wanted) {
@@ -692,7 +698,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
             // A subject remembered from an earlier film is held to today's rules like a new one: one that does not
             // hold up is written again rather than drawn again.
             const remembered = before ? { ...slot, ...before } : undefined;
-            const visual = remembered && heldUp(remembered) ? remembered : written.find((one) => one.at === slot.at) ?? slot;
+            const visual = remembered && heldUp(remembered) && !standInOf(remembered.subject, world.named) ? remembered : written.find((one) => one.at === slot.at) ?? slot;
             const key = shotKey(visual);
             const mine = new AbortController();
             stops.set(key, mine);
@@ -791,8 +797,17 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // A scene whose picture never arrived becomes the words it carries, so a founder with no picture key still
         // gets a film, and every scene is as long as the line said over it.
         const drewFor = new Map<number, Drawn & { shared: boolean }>();
+        // The close holds the film's best picture of its world, never the weakest one and never the picture of the
+        // shot before it carried on.
+        // A picture that passed the critic is of the film; one of its world's things in it counts for more.
+        const scores = new Map([...made].map(([which, piece]) => {
+          const score = worldScore(madeFrom.get(piece.file)?.subject ?? '', world);
+          return [which, score < 0 ? -1 : 1 + score] as const;
+        }));
+        const holding = closeHolds(owners, scores);
+        if (holding.at(-1) !== owners.at(-1)) report("the close holds the film's best picture of its subject rather than the one before it");
         needing.forEach(({ at: order }, which) => {
-          const owner = owners[which];
+          const owner = holding[which];
           const piece = made.get(owner);
           if (piece) drewFor.set(order, { ...piece, shared: owner !== which });
         });
@@ -851,7 +866,12 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
               : {}),
           };
         });
-        holdTheLastPicture(cut);
+        holdTheLastPicture(cut, (file) => {
+          const subject = madeFrom.get(file)?.subject;
+          if (subject === undefined) return 0;
+          const score = worldScore(subject, world);
+          return score < 0 ? -1 : 1 + score;
+        });
         let total = edit.total;
 
         // The bed. The founder's own track first; failing that whatever the music maker can write for the mood.
@@ -973,14 +993,24 @@ export type { VideoAsk, VideoDeps } from './gather.ts';
 // a plain gold gradient behind "Find fresh harvest this weekend", which reads as the film running out of pictures.
 // The close is still set on its own words and nothing new is drawn for it: the picture the film last showed carries
 // on under it, dimmed by its scrim, until the voice and the music end.
-export function holdTheLastPicture(cut: Shot[]): void {
+//
+// Given how well each picture sits in the film's world (`score`, by file), the close holds the best of them rather
+// than whichever came last: journey 14's voicemail film closed on eight seconds of a bronze anchor. Of equals, the
+// latest is held, so the film still runs on into its close.
+export function holdTheLastPicture(cut: Shot[], score?: (file: string) => number): void {
   const last = cut.at(-1);
   if (!last || last.video || last.image || last.bg || !closesOnGround(last.scene.layout, cut.length - 1, cut.length)) return;
+  let held: Shot | undefined;
+  let best = -Infinity;
   for (let index = cut.length - 2; index >= 0; index -= 1) {
     const one = cut[index];
     const file = one.bg ?? (one.scene.layout === 'picture' ? one.image : undefined);
     if (!file) continue;
-    Object.assign(last, { bg: file, bgShared: true, scrim: Math.max(one.scrim ?? 0, 0.55), lift: one.lift, plies: one.plies });
-    return;
+    const mark = score ? score(file) : 0;
+    if (mark > best) { held = one; best = mark; }
+    if (!score) break;
   }
+  if (!held) return;
+  const file = held.bg ?? held.image!;
+  Object.assign(last, { bg: file, bgShared: true, scrim: Math.max(held.scrim ?? 0, 0.55), lift: held.lift, plies: held.plies });
 }

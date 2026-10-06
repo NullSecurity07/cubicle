@@ -145,6 +145,22 @@ export function aboutTheCompany(brief: string, doc: { title?: string; text?: str
   return names.some((one) => said.has(one));
 }
 
+// What the product is and does, out of a company brief: the "What the company does" line and the first paragraph
+// under an Idea, Product or Customer heading, else the brief's first real paragraph. These are the facts a film about
+// the company is held to, and the things of its world.
+export function productFacts(text: string): string {
+  const body = (text ?? '').replace(/\r/g, '');
+  const facts: string[] = [];
+  const does = /^\s*what (?:the company|we|it) does:\s*(.+)$/im.exec(body)?.[1];
+  if (does) facts.push(does.trim());
+  for (const hit of body.matchAll(/^#{1,4}\s*(?:idea|product|the product|customer|customers|what it does)\s*$\n+([^#\n][^\n]*)/gim)) facts.push(hit[1].trim());
+  if (!facts.length) {
+    const first = body.split(/\n\s*\n/).map((one) => one.trim()).find((one) => !one.startsWith('#') && one.split(/\s+/).length >= 8);
+    if (first) facts.push(first.replace(/\s+/g, ' '));
+  }
+  return facts.join('\n');
+}
+
 // The company's private money in a film's material: cash, revenue, burn and the sentences that carry them stay out
 // of a film unless the brief asks for them. A public film is not where the bank balance is read out unasked.
 const MONEY_ASK = /\b(?:money|cash|revenue|mrr|arr|runway|burn|metrics?|numbers?|traction|growth|raise|raising|investors?|fundrais\w*|valuation|financ\w*|profit\w*|sales|pricing|price|pitch\w*)\b/i;
