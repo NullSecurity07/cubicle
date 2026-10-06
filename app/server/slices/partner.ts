@@ -26,7 +26,7 @@ import { createWatch, fakeWatchReply, watchBudget, type Budget } from '../partne
 import { draftId, gmailLink } from '../../shared/maildraft.ts';
 import { leadAddresses, noAddress } from '../tools/outward.ts';
 import { saidNoFor } from '../partner/saidno.ts';
-import { staleNeeds, standingBlock, standingParts, stillWaiting, teamVerdict, type StandingParts } from '../partner/standing.ts';
+import { staleNeeds, standingBlock, standingParts, stillWaiting, teamVerdict, verdictLines, type StandingParts } from '../partner/standing.ts';
 import { companyFacts, keepFacts, keptLine, runwayFix } from '../partner/keep.ts';
 import { CUSTOMER_LINE, customerReply, forCustomers } from '../partner/audience.ts';
 import { wired } from '../prompt.ts';
@@ -339,8 +339,9 @@ export function createPartner(options: PartnerOptions = {}) {
       }
       // The founder's open promises are read fresh too: one closed a moment ago is gone from the next turn.
       // So is what the founder said no to: a no given a moment ago is in the very next turn.
-      const [parts, promised, declined] = await Promise.all([standing, promises.list().catch(() => []), saidNoFor(deps.workspace).lines().catch(() => [])]);
-      return { ...parts, promised: promised.filter((one) => one.status === 'open').map(promiseLine), declined };
+      // So is the partner's own verdict: one refreshed or changed under pushback a moment ago is the one said.
+      const [parts, promised, declined, held] = await Promise.all([standing, promises.list().catch(() => []), saidNoFor(deps.workspace).lines().catch(() => []), state.read().catch(() => null)]);
+      return { ...parts, promised: promised.filter((one) => one.status === 'open').map(promiseLine), declined, call: verdictLines(held?.call) };
     }
     async function standingFor(stage: Stage, partnerId: string) {
       // Bets are read from the ledger, never from Needs you rows: a row can outlive the take by a refresh.

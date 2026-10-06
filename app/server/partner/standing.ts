@@ -1,6 +1,7 @@
 import type { Attention, AttentionKind, Decision } from '../../shared/model.ts';
 import type { Stage } from '../../shared/model.ts';
 import { filled, sectionBody, verdictOf } from '../tools/verdict.ts';
+import { NO_SIGNAL, type PartnerCall } from './call.ts';
 import { decisionLine, learnedSection } from './company.ts';
 import { isWeak, type TeamVerdict } from './pushback.ts';
 import { betLine, gatherCompany, type CompanyGather, type MorningSources } from './morning.ts';
@@ -19,7 +20,20 @@ const DECIDED_MOST = 4;
 // `learned`: one line per closed bet, as What we learned in the Company document has it.
 // `promised`: the founder's open promises, one line each, read fresh every turn.
 // `declined`: what the founder said no to lately, one line each (server/partner/saidno.ts), read fresh every turn.
-export type StandingParts = Pick<CompanyGather, 'verdicts' | 'numbers' | 'open' | 'planned' | 'flagCounts'> & { decided: string[]; learned: string[]; promised?: string[]; declined?: string[] };
+// `call`: the partner's own verdict on record, read from the partner's notes every turn (verdictLines).
+export type StandingParts = Pick<CompanyGather, 'verdicts' | 'numbers' | 'open' | 'planned' | 'flagCounts'> & { decided: string[]; learned: string[]; promised?: string[]; declined?: string[]; call?: string[] };
+
+// Journey 14, day 2: "what did we decide yesterday, and what kill signal do we hold ourselves to?" The partner said
+// nothing was decided and gave the runway it had got wrong; retain had kept nothing from day 1, since it asks the model
+// on this machine only every third turn, and the pushback that moved the kill signal was one it skipped. The verdict
+// is on record in code (the call, the reason, the kill signal, the first move), so it is in every turn without a model.
+export function verdictLines(call: (PartnerCall & { day: string }) | undefined): string[] {
+  if (!call?.decision) return [];
+  return [
+    `Your verdict on ${call.day}: ${call.decision}.${call.why ? ` Why: ${call.why.replace(/[\s.]+$/, '')}.` : ''}`,
+    `Kill signal: ${call.signal ? `${call.signal.what} by ${call.signal.by}` : NO_SIGNAL}.${call.move ? ` This week: ${call.move.replace(/[\s.]+$/, '')}.` : ''}`,
+  ];
+}
 
 export async function standingParts(from: MorningSources): Promise<StandingParts> {
   const got = await gatherCompany(from, { verdictChars: LINE_MOST });
@@ -77,6 +91,7 @@ const cut = (line: string) => (line.length > LINE_MOST ? `${line.slice(0, LINE_M
 // Needs you is read fresh every turn and goes right under the verdicts, so a cap never takes it away.
 export function standingBlock(parts: StandingParts, waiting: Attention[]): string {
   const sections: [string, string[]][] = [
+    ['Your own verdict on record (quote it as it stands when asked what was decided; never make up another):', parts.call ?? []],
     ['Team verdicts:', parts.verdicts],
     ['', [waitingLine(waiting)]],
     ['Company Numbers:', parts.numbers ? parts.numbers.split('\n').filter((line) => line.trim()) : ['- none written yet']],

@@ -875,6 +875,9 @@ describe('the partner slice: pushback on the verdict', () => {
     const open = (await promisesBook(workspace).list()).filter((one) => one.check && one.status === 'open');
     expect(open.map((one) => one.what)).toEqual(['paying practices < 10']);
     expect(promisesAttention(open, '2026-11-03')[0].title).toBe('Check: paying practices < 10 by 2026-11-03?');
+    // Day 2, no model on this machine: the verdict and the kill signal as they stand are in the partner's next turn.
+    const recall = (await deps.seams.run('turn:before', { roomId: 'p1', source: 'chat', query: 'Remind me: what did we decide yesterday, and what is the kill signal we hold ourselves to?', messages: [{ role: 'system', content: 'You are someone.' }] })).messages[0].content as string;
+    expect(recall).toContain('Your own verdict on record (quote it as it stands when asked what was decided; never make up another):\nYour verdict on 2026-10-06: keep going. Why: 2 paying practices out of 40 contacted.\nKill signal: paying practices < 10 by 2026-11-03. This week: convert the 3 pilots.');
     // An ordinary question in the room is not held to the four lines.
     const plain = (await deps.seams.run('turn:reply', { roomId: 'p1', query: 'What should the text to patients say?', reply: { ...base, text: 'Short and friendly.' } })).reply.text;
     expect(plain).toBe('Short and friendly.');
