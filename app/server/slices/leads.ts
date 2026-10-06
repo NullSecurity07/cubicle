@@ -13,6 +13,7 @@ import { wired } from '../prompt.ts';
 import { withSystem, type Handler } from '../seams.ts';
 import { offerWhenWired } from '../slice-kit.ts';
 import { text, type Tool, type ToolContext } from '../tools/registry.ts';
+import { contactLine, leadContacts, type LeadContact } from '../tools/outward.ts';
 
 // The Leads card: the founder's list of people to sell to, a light CRM on the stage. People wired to it add, score,
 // note and move leads, and may find new ones with OpenOutreach. Only the founder marks a lead contacted, by hand or
@@ -28,6 +29,15 @@ const cardsOf = leadsCardIds;
 const cardOf = (context: ToolContext) => wired(context.stage, context.roomId, cardsOf(context.stage))[0];
 const need = (context: ToolContext) => { const id = cardOf(context); if (!id) throw new Error(NO_CARD); return id; };
 const nameOf = (context: ToolContext) => context.stage.rooms.find((room) => room.id === context.roomId)?.name ?? 'a person';
+
+// The addresses on the Leads card a person reaches, at most twenty, to draft to as they stand.
+export const ADDRESSES_MOST = 20;
+export function addressesLine(contacts: LeadContact[], isWired: boolean): string {
+  const shown = contacts.slice(0, ADDRESSES_MOST);
+  const more = contacts.length > shown.length ? `\n  (${contacts.length - shown.length} more: list_leads shows them)` : '';
+  return `- Email addresses on the Leads card ${isWired ? 'wired to you' : 'on the stage'}. Write to a lead at the address given here, exactly; never make one up:\n`
+    + `${shown.map((one) => `  - ${contactLine(one)}`).join('\n')}${more}`;
+}
 
 // One line a lead, short enough for a weak model to hold twenty of them.
 export function leadLine(lead: Lead): string {
@@ -145,11 +155,19 @@ export default {
     const unopen = hub.open(opening);
 
     // A person wired to a Leads card is told it is there, in one line, beside the other cards they can reach.
+    // With it, the addresses the card holds, so a draft goes to the address on record and none is guessed. Journey 14:
+    // Rosa, wired to a card with Dr. Anna Weber's address, drafted to dr.anna.weber@example.com without a look.
     const before: Handler<'turn:before'> = async (payload, next) => {
       if (payload.messages[0]?.role !== 'system') return next(payload);
       const stage = await deps.store.loadStage().catch(() => null);
-      if (!stage || !wired(stage, payload.roomId, cardsOf(stage)).length) return next(payload);
-      return next(withSystem(payload, HINT));
+      if (!stage) return next(payload);
+      const isWired = !!wired(stage, payload.roomId, cardsOf(stage)).length;
+      const contacts = await leadContacts(deps.workspace)(stage, payload.roomId).catch(() => null);
+      const lines = [
+        ...(isWired ? [HINT] : []),
+        ...(contacts?.length ? [addressesLine(contacts, isWired)] : []),
+      ];
+      return lines.length ? next(withSystem(payload, lines.join('\n'))) : next(payload);
     };
     // An email the founder said yes to, to somebody on a wired Leads card, is the founder contacting them; one a
     // person drafted is written on the thread of whoever it is to, so the founder opening it in Gmail can count too.

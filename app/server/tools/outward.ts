@@ -3,7 +3,7 @@ import { DRAFT_BODY_MOST, draftBody, draftId, gmailLink } from '../../shared/mai
 import type { Browser, Launch } from '../browser.ts';
 import type { Mail } from '../mail.ts';
 import { SETUP_HINT } from '../mail.ts';
-import { wiredCards } from '../prompt.ts';
+import { wired, wiredCards } from '../prompt.ts';
 import { findCompanyDoc } from '../../shared/partner.ts';
 import { leadsCardIds, leadsFor } from '../leads/store.ts';
 import { runCode } from '../sandbox.ts';
@@ -19,7 +19,10 @@ export type Drafting = {
   open?(stage: ToolContext['stage'], roomId: string, url: string): Promise<string | null>;
   // The addresses on the Leads cards on the stage.
   onRecord?(stage: ToolContext['stage']): Promise<string[]>;
+  // The people on the Leads card this person reaches (`leadContacts`), or null when there is none.
+  contacts?(stage: ToolContext['stage'], roomId: string): Promise<LeadContact[] | null>;
 };
+export type LeadContact = { name: string; company: string; email: string };
 
 // An address a person invents looks like a real one: journey 13's Tom drafted to office@example.com, which nothing
 // had ever given. An address goes in a draft only when it is on record: in something this turn read, the founder's
@@ -39,9 +42,43 @@ async function onRecord(context: ToolContext, drafting?: Drafting): Promise<Set<
 // The emails on every Leads card on the stage, read through the same shared list the Leads card keeps.
 export const leadAddresses = (workspace: string) => async (stage: ToolContext['stage']) =>
   (await Promise.all(leadsCardIds(stage).map((id) => leadsFor(workspace).list(id)))).flat().flatMap((lead) => (lead.person.email ? [lead.person.email] : []));
+// The Leads cards a person reaches: those wired to their room, or the one on the stage when there is only one.
+// Journey 14: Rosa was wired to a Leads card holding Dr. Anna Weber's address, guessed another, and was told "no
+// Leads card".
+export const reachedLeadsCards = (stage: ToolContext['stage'], roomId: string): string[] => {
+  const all = leadsCardIds(stage);
+  const near = wired(stage, roomId, all);
+  return near.length ? near : all.length === 1 ? all : [];
+};
+// The people with an address on those cards, or null when the person reaches no Leads card.
+export const leadContacts = (workspace: string) => async (stage: ToolContext['stage'], roomId: string): Promise<LeadContact[] | null> => {
+  const ids = reachedLeadsCards(stage, roomId);
+  if (!ids.length) return null;
+  return (await Promise.all(ids.map((id) => leadsFor(workspace).list(id)))).flat()
+    .flatMap((lead) => (lead.person.email ? [{ name: lead.person.name, company: lead.company.name, email: lead.person.email }] : []));
+};
+export const contactLine = (one: LeadContact) => `${one.name}${one.company ? ` at ${one.company}` : ''}: ${one.email}`;
+// The leads a guessed address was meant for: those whose name shares a word with the part before the @.
+const meantFor = (address: string, contacts: LeadContact[]) => {
+  const local = address.split('@')[0].toLowerCase().split(/[^a-z]+/).filter((part) => part.length > 2 && !/^(?:dr|mr|mrs|ms|prof)$/.test(part));
+  const hits = contacts.filter((one) => one.name.toLowerCase().split(/[^\p{L}]+/u).some((part) => part.length > 2 && local.includes(part)));
+  return hits.length ? hits : contacts;
+};
 export const noAddress = (address: string) => `no address on record for ${address}`;
-const unknownAddress = (address: string) => `${noAddress(address)}: nothing read this turn, no Leads card, no founder message and not the Company brief gives it`
-  + `${GUESSED.test(address) ? `, and "${address.split('@')[0]}@" put before their domain is a guess` : ''}. Ask the founder for it, or find it on their site, then draft again. Do not write a guessed address.`;
+const unknownAddress = (address: string, contacts: LeadContact[] | null) => {
+  const guess = GUESSED.test(address) ? `, and "${address.split('@')[0]}@" put before their domain is a guess` : '';
+  if (contacts === null) {
+    return `${noAddress(address)}: nothing read this turn, no Leads card, no founder message and not the Company brief gives it${guess}. `
+      + 'Ask the founder for it, or find it on their site, then draft again. Do not write a guessed address.';
+  }
+  if (!contacts.length) {
+    return `${noAddress(address)}: the Leads card you reach holds no address for anyone, and nothing read this turn, no founder message and not the Company brief gives it${guess}. `
+      + 'Ask the founder for it, or find it on their site, then draft again. Do not write a guessed address.';
+  }
+  const named = meantFor(address, contacts).slice(0, 5);
+  return `${noAddress(address)}${guess}: it is not on the Leads card you reach. The card gives ${named.map(contactLine).join('; ')}. `
+    + 'Draft again to the address the card gives for the person you mean, or ask the founder. Do not write a guessed address.';
+};
 
 // The founder's Gmail card wired to the person, if there is one, shown the draft: Gmail's compose page with the
 // fields filled. Opening a page sends nothing; the Send button in it is the founder's.
@@ -75,7 +112,10 @@ export function outwardTools(mail: Mail, filesDir: string, drafting?: Drafting, 
         if (to.length > 5) throw new Error('at most 5 recipients');
         const known = await onRecord(context, drafting);
         const unknown = known ? to.filter((address) => !known.has(address.toLowerCase())) : [];
-        if (unknown.length) throw new Error(unknown.map(unknownAddress).join(' '));
+        if (unknown.length) {
+          const contacts = drafting?.contacts ? await drafting.contacts(context.stage, context.roomId).catch(() => null) : null;
+          throw new Error(unknown.map((address) => unknownAddress(address, contacts)).join(' '));
+        }
         const room = speaker(context);
         const url = gmailLink(draft);
         const cardId = drafting?.open ? await drafting.open(context.stage, context.roomId, url).catch(() => null) : null;
