@@ -16,10 +16,11 @@ import { asksWhatNext, holdSynthesis, standingFacts } from '../partner/synthesis
 import { asksVerdict, callShape, holdCall, PUSHBACK_LINE, pushesBack } from '../partner/call.ts';
 import { economicsBlock, economicsOf, figuresFix, workingTools } from '../partner/economics.ts';
 import { chaseLine, keptPromiseLine, promiseLine, promisesAttention, promisesBook, promisesIn } from '../partner/promises.ts';
-import { metricsOnDisk, sinceHeadline } from '../partner/since.ts';
+import { gatherSince, metricsOnDisk, sinceHeadline } from '../partner/since.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import { createReviews, granted } from '../partner/review.ts';
-import { readRefresh, refreshAsk, refreshDue, refreshOpening, refreshText } from '../partner/refresh.ts';
+import { readRefresh, refreshAsk, refreshDue, refreshOpening, refreshText, slipOn } from '../partner/refresh.ts';
+import { goalsIn } from '../partner/goal.ts';
 import { markClaims } from '../tools/evidence.ts';
 import { createWatch, fakeWatchReply, watchBudget, type Budget } from '../partner/watch.ts';
 import { draftId, gmailLink } from '../../shared/maildraft.ts';
@@ -611,18 +612,22 @@ export function createPartner(options: PartnerOptions = {}) {
       const partner = partnerOf(stage);
       if (!partner || deps.busy.has(partner.id)) return;
       const economics = await economicsNow(stage).catch(() => null);
-      const due = refreshDue(held.call, economics?.inputs, today);
+      const doc = await companyNow(stage);
+      const company = doc ? await deps.store.readDoc(doc.id).catch(() => '') : '';
+      // The brief's dated goal, and what changed since yesterday that slips on it, each said once (server/partner/goal.ts).
+      const goal = goalsIn(company, today)[0];
+      const slip = slipOn(goal, goal ? await gatherSince(sourcesFor(stage, partner.id, company)).catch(() => []) : []);
+      const slipKey = slip?.replace(/\d+ days? late/, '').trim();
+      const due = refreshDue(held.call, economics?.inputs, today, { goal, slip: slipKey && held.slipSeen !== slipKey ? slip : undefined });
       if (!due) return;
       const taken = await granted(budget, 'verdict refresh');
       if (!taken.ok) return;
-      await state.change((draft) => { draft.refreshTried = today; });
+      await state.change((draft) => { draft.refreshTried = today; if (due.why === 'slip') draft.slipSeen = slipKey; });
       const opening = refreshOpening(held.call, economics, due.moved);
-      const messages: ModelMessage[] = [...await deps.promptFor(stage, partner.id, [], true), { role: 'user', content: refreshAsk(held.call, opening, economics, today, due.why) }];
+      const messages: ModelMessage[] = [...await deps.promptFor(stage, partner.id, [], true), { role: 'user', content: refreshAsk(held.call, opening, economics, today, { ...due, goal }) }];
       // No model answered: the turn never ran, so it goes back to the day's budget, and tomorrow tries again.
       const answered = await ask(messages).catch((error: Error) => { taken.release(); throw error; });
       const reply = typeof answered === 'string' ? { text: answered } as { text: string; provider?: string; model?: string } : answered;
-      const doc = await companyNow(stage);
-      const company = doc ? await deps.store.readDoc(doc.id).catch(() => '') : '';
       const fresh = readRefresh(reply, today, `${company}\n${opening}`, economics, sectionText(company, 'Numbers'));
       if (!fresh) return;
       // A new call with no kill signal of its own keeps the one standing.

@@ -6,10 +6,11 @@ import { readableDocIds, wiredDocIds } from '../prompt.ts';
 import { addedTwice, appendToSection, headings, replaceSection, rewriteLoss } from './sections.ts';
 import { docTitle } from './doc-title.ts';
 import { text, type Tool, type ToolContext } from './registry.ts';
-import { shortDay } from '../clock.ts';
+import { localDay, now as clockNow, shortDay } from '../clock.ts';
 import { dropFlagged, figureCheck, HELD_BACK, holdVerdict, verdictStanding, type Receipt } from '../truth.ts';
 import { findCompanyDoc } from '../../shared/partner.ts';
 import { derivedRows } from '../partner/economics.ts';
+import { goalMoved } from '../partner/goal.ts';
 import { evidenceCheck, markFeedback, markSaid, markUnbacked, markUnworked, readableSources, unbackedEnds } from './evidence.ts';
 import { filled, guardWrite, sectionBody, standingVerdict, unmarked, verdictState, WHOLE } from './verdict.ts';
 
@@ -255,6 +256,10 @@ async function checkWrite(context: ToolContext, id: string, before: string, writ
   // Journey 14: the partner's brief update kept "Runway: 4.4 (unsourced) months (4,000 / 900, calc)", a wrong figure under
   // two labels that disagree. The Company brief's runway and break-even are calc's on its own Numbers, whoever writes.
   if (findCompanyDoc(context.stage.docs)?.id === id) {
+    // Journey 14 too: the update moved "this quarter" to "by 3 November 2026" unasked. A goal's day moves only with
+    // the old day kept and a reason on the line (server/partner/goal.ts).
+    const moved = goalMoved(before, after, localDay(clockNow()));
+    if (moved) throw new Error(`not written: ${moved}`);
     const worked = derivedRows(after, sectionBody(after, 'Numbers') ?? '');
     after = worked.text;
     if (worked.set.length) done = `${done} Set from calc on the brief's own Numbers: ${worked.set.map((one) => `"${one}"`).join(', ')}. Quote these, not your own figures.`;

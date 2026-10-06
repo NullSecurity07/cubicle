@@ -79,7 +79,7 @@ const MONTH = `(${MONTHS.join('|')})[a-z]*\\.?`;
 // A day written out in full: "2026-11-03", "3 November 2026", "November 3, 2026".
 const DATED = new RegExp(`\\b(20\\d\\d)-(\\d\\d)-(\\d\\d)\\b|\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+${MONTH}\\s+(20\\d\\d)\\b|\\b${MONTH}\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(20\\d\\d)\\b`, 'i');
 const pad = (n: number) => String(n).padStart(2, '0');
-function dayIn(text: string): { day: string; at: number; end: number } | null {
+export function dayIn(text: string): { day: string; at: number; end: number } | null {
   const found = DATED.exec(text);
   if (!found) return null;
   const [year, month, date] = found[1] ? [Number(found[1]), Number(found[2]), Number(found[3])]

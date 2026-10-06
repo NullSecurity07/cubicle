@@ -14,6 +14,7 @@ import { hub } from '../events.ts';
 import { todayFive } from '../today/rank.ts';
 import partner, { createPartner, type PartnerOptions } from './partner.ts';
 import { createUnasked, createUsage } from '../usage.ts';
+import { moveClock } from '../clock.ts';
 
 const ROOT = resolve(import.meta.dirname, '../../..');
 const room = (id: string, name: string, extra: Partial<Room> = {}): Room => ({ id, name, role: 'x', accent: '#fff', brief: '', x: 0, y: 0, w: 1, h: 1, ...extra });
@@ -965,6 +966,35 @@ describe('the partner slice: reviewing colleagues and refreshing the verdict', (
     await again.tick!();
     expect(asks.filter((one) => one.includes('A week has passed since your verdict.'))).toHaveLength(1);
     await again.close!();
+  });
+});
+
+// Journey 14: the brief's goal day came and went with the verdict untouched. Lived with the clock moved, as a check run
+// that lives day 15 does.
+describe('the partner slice: the verdict looked at again on the brief\'s goal', () => {
+  it('makes the call again once the goal\'s day has passed, with the clock moved ahead', async () => {
+    const day = (text: string) => new Date(text).getTime() - Date.now();
+    moveClock(day('2026-10-15T10:00'));
+    try {
+      const asks: string[] = [];
+      const reply = 'My call: change course\nWhy: 2 paying practices.\nKill signal: paying practices < 6 by 2026-11-20\nThis week: call the 3 pilots.';
+      const { deps, part } = await installed({}, { ask: async (messages) => { asks.push(String(messages.at(-1)?.content)); return asks.at(-1)!.includes('Make the call again') ? reply : SHAPED; }, budget: { take: () => ({ ok: true }) } });
+      await withRooms(deps, [room('p1', 'Iris', { partner: true })]);
+      await part.tick!();
+      const company = companyDocOf(await deps.store.loadStage())!;
+      await deps.store.writeDoc(company.id, '# Company brief\n\nGoal: 10 paying practices by 20 October 2026.\n\n## Numbers\n\n- Paying practices: 2\n');
+      const base = { tools: [], provider: 'p', model: 'm', usage: { input: 1, output: 1 }, stopped: false };
+      await deps.seams.run('turn:reply', { roomId: 'p1', query: 'Your verdict: keep going or stop?', reply: { ...base, text: 'My call: keep going.\nWhy: 2 paying practices.\nKill signal: paying practices < 4 by 2026-11-05.\nThis week: call the 3 pilots.' } });
+      moveClock(day('2026-10-20T10:00'));
+      await part.tick!();
+      expect(asks.filter((one) => one.includes('has passed its day'))).toHaveLength(0);
+      moveClock(day('2026-10-21T10:00'));
+      await part.tick!();
+      const asked = asks.find((one) => one.includes('Make the call again'))!;
+      expect(asked).toContain('The Company brief\'s goal, 10 paying practices by 20 October 2026 (2026-10-20), has passed its day.');
+      expect((await deps.store.readChat('p1')).at(-1)!.text).toContain('My call: **change course**.');
+      await part.close!();
+    } finally { moveClock(0); }
   });
 });
 

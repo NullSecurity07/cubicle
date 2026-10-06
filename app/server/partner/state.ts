@@ -34,6 +34,8 @@ export type PartnerState = {
   call?: PartnerCall & { at: number; day: string; roomId: string; basis?: Inputs };
   // The day the partner last tried to refresh its verdict unasked: one try a day.
   refreshTried?: string;
+  // The last slip on the brief's goal a refresh answered, without its count of days: a slip is looked at once.
+  slipSeen?: string;
 };
 
 export function partnerState(workspace: string) {

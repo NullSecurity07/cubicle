@@ -315,4 +315,15 @@ describe('a write to the Company brief', () => {
     expect(doc).not.toContain('4.4');
     expect(out.text).toContain('Set from calc on the brief\'s own Numbers: "Runway: 5 months (calc: round(4000 / (900 - 2 * 49), 1) = 5)"');
   });
+
+  it('refuses a write that moves the goal\'s day with no reason and the old day gone', async () => {
+    const { store, context } = await setup();
+    await store.replaceDoc('company-brief', '# Company brief\n\nGoal this quarter: 10 paying practices.\n\n## Bets\n');
+    const wired = { ...context, stage: { ...context.stage, wires: [...context.stage.wires, { id: 'w-brief', from: 'marketing', fromHandle: 'r', to: 'company-brief', toHandle: 'l' }] }, sources: () => ['Goal this quarter: 10 paying practices.'] };
+    const write = (text: string) => runTool(docTools, 'replace_section', JSON.stringify({ doc: 'Company brief', heading: 'Bets', text }), wired as never);
+    const out = await write('- Goal: 10 paying practices by 3 November 2026.');
+    expect(out.ok).toBe(false);
+    expect(out.text).toContain('the goal "10 paying practices" moves from this quarter to 3 November 2026');
+    expect((await write('- Goal: 10 paying practices by 3 November 2026 (was this quarter; moved because the founder asked for an earlier check).')).ok).toBe(true);
+  });
 });
