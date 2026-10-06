@@ -19,6 +19,11 @@ async function bar(page: Page, words: string, pick: string) {
 
 const broke: string[] = [];
 let brief = '';
+// The lines each team room held before the check: what a check or Sam's review adds to Maya's or Dev's thread is cut
+// after it, so a later journey that counts a room's chips or conversations sees only its own.
+const ROOMS = ['marketing', 'build'];
+const before = new Map<string, Set<string>>();
+const lines = async (page: Page, room: string) => (await (await page.request.get(`/api/rooms/${room}/chat`)).json()) as { id: string }[];
 test.beforeEach(async ({ page }) => {
   test.setTimeout(90_000);
   broke.length = 0;
@@ -28,6 +33,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('.react-flow__node[data-id="marketing"]')).toBeVisible({ timeout: 30_000 });
   brief = ((await (await page.request.get('/api/docs/company-brief')).json()) as { text: string }).text;
+  for (const room of ROOMS) before.set(room, new Set((await lines(page, room)).map((one) => one.id)));
 });
 
 test.afterEach(async ({ page }) => {
@@ -37,6 +43,13 @@ test.afterEach(async ({ page }) => {
   await page.request.put('/api/docs/company-brief', { data: { text: brief } });
   await page.request.put('/api/stage', { data: { ...stage, rooms: stage.rooms.filter((room) => !gone.has(room.id)), docs: stage.docs.filter((doc) => !gone.has(doc.id)), wires: stage.wires.filter((wire) => !gone.has(wire.from) && !gone.has(wire.to)) } });
   for (const name of ['partner.json', 'bets.json', 'today.json', 'promises.json', 'reviews.json', 'partner-watch.json', 'unasked.json']) await rm(join(WORKSPACE, name), { force: true });
+  for (const room of ROOMS) {
+    const kept = before.get(room) ?? new Set();
+    for (const one of (await lines(page, room)).filter((line) => !kept.has(line.id))) {
+      // A reply still being written answers 409: wait for the person to finish, then cut the line.
+      await expect.poll(async () => (await page.request.delete(`/api/rooms/${room}/chat/${one.id}`)).status(), { timeout: 30_000 }).not.toBe(409);
+    }
+  }
   expect(broke).toEqual([]);
 });
 
