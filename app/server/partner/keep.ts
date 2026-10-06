@@ -10,7 +10,11 @@ import { addToSection, sectionText } from './company.ts';
 // `sure`: a count said as a plain statement of where the company stands ("we have 3 paying users"), which may take the
 // place of a count already in the document; one said in passing may only fill an empty place.
 export type CompanyFact = { label: string; value: string; sure?: boolean };
-export type CompanyFacts = { numbers: CompanyFact[]; idea?: string; customer?: string };
+// `denied`: a figure the founder said is not so ("one host is not €12 a month of revenue"): never written, and a row
+// that holds it is taken out (journey 15 wrote that very figure in as the founder's MRR).
+export type CompanyFacts = { numbers: CompanyFact[]; idea?: string; customer?: string; denied?: CompanyFact[] };
+// Said right after a "not": "is not €12", "isn't 50 users", "and not €900".
+const DENIED = /\b(?:not|never|isn'?t|aren'?t|wasn'?t|weren'?t)\s+(?:even\s+|really\s+|actually\s+)?$/i;
 
 const MONEY = /([$€£])\s?(\d[\d,]*(?:\.\d+)?)(?:\s?(k|m)\b)?((?:\s?\/\s?(?:month|mo|year|yr))|\s(?:per|a|an)\s(?:month|year|user|seat))?/gi;
 const WORD_COUNTS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty'];
@@ -68,6 +72,7 @@ const capital = (text: string) => `${text.charAt(0).toUpperCase()}${text.slice(1
 
 export function companyFacts(said: string): CompanyFacts {
   const numbers: CompanyFact[] = [];
+  const denied: CompanyFact[] = [];
   const put = (label: string, value: string) => { if (!numbers.some((one) => one.label === label)) numbers.push({ label, value }); };
   let idea: string | undefined;
   let named: string | undefined;
@@ -87,6 +92,11 @@ export function companyFacts(said: string): CompanyFacts {
       const after = plain.slice(match.index + match[0].length).split(/[,;]|\band\b|\bbut\b|[$€£]/)[0].slice(0, 24);
       const value = match[0].trim();
       const period = !!match[4];
+      if (DENIED.test(plain.slice(0, match.index))) {
+        const label = BURN.test(before) ? 'Burn' : CASH.test(before) || CASH.test(after) ? 'Cash' : MRR.test(before) || MRR.test(after) ? 'MRR' : /\bpric(?:e|ing)\b/i.test(before) ? 'Price' : '';
+        if (label) denied.push({ label, value });
+        continue;
+      }
       if (BURN.test(before) && period) { if (!/^\s*(?:on|for)\b/i.test(after)) put('Burn', value); }
       else if (CASH.test(before) || CASH.test(after)) put('Cash', value);
       else if (MRR.test(before) || MRR.test(after)) put('MRR', value);
@@ -96,6 +106,7 @@ export function companyFacts(said: string): CompanyFacts {
     const choice = /\boptions?\b|\s\bor\b\s/i.test(plain);
     for (const match of plain.matchAll(COUNT)) {
       const lead = plain.slice(0, match.index);
+      if (DENIED.test(lead)) continue;
       // "an update for our 3 beta users" names who a thing is for, not how many there are now; "until 10 paying
       // users", "once we reach 50", "our goal is 100", "at 20 users", "two of the 5 users" name a target or a part.
       if (/\b(?:to|for|with)\s+(?:(?:our|my|the|all|your)\s+)?$/i.test(lead) || TARGET_BEFORE.test(lead)) continue;
@@ -110,7 +121,7 @@ export function companyFacts(said: string): CompanyFacts {
   }
   idea ??= named;
   const customer = idea ? /\bfor\s+(.+?)(?=\s+(?:that|who|which|to|so|by|with|from)\b|[,;:.]|$)/i.exec(idea.replace(/^[^:]*:\s*/, (head) => (/\bfor\b/i.test(head) ? head : '')))?.[1] : undefined;
-  return { numbers, ...(idea ? { idea } : {}), ...(customer && !TIME.test(customer) ? { customer: customer.trim() } : {}) };
+  return { numbers, ...(denied.length ? { denied } : {}), ...(idea ? { idea } : {}), ...(customer && !TIME.test(customer) ? { customer: customer.trim() } : {}) };
 }
 
 // Where a Numbers line for one label is: "- Cash: €4,200 (founder, 2026-09-27)".
@@ -133,6 +144,23 @@ export function keepFacts(text: string, facts: CompanyFacts, day: string): { tex
   const kept: string[] = [];
   const stamp = ` (founder, ${day})`;
   const changed: CompanyFact[] = [];
+  // A figure the founder said is not so leaves its row: "MRR: €12 a month" goes when they say it is not €12 a month,
+  // unless the same message gives the figure that is.
+  if (facts.denied?.length) {
+    const gone: CompanyFact[] = [];
+    const rows = sectionText(next, 'Numbers').split('\n').filter((row) => {
+      const found = /^\s*[-*]\s+([^:]{1,40}):\s*(.+?)\s*$/.exec(row);
+      const hit = found && facts.denied!.find((one) => !facts.numbers.some((fact) => fact.label === one.label)
+        && (lineOf(one.label).test(row) || !!MONEY_ROWS[one.label]?.test(found[1])) && amount(found[2]) === amount(one.value));
+      if (hit) gone.push(hit);
+      return !hit;
+    });
+    const swapped = gone.length ? replaceSection(next, 'Numbers', rows.join('\n').trim()) : null;
+    if (swapped && 'text' in swapped) {
+      next = swapped.text;
+      kept.push(`Numbers (${gone.map((one) => `${one.label} ${one.value}`).join(', ')} taken out: the founder said it is not so)`);
+    }
+  }
   if (facts.numbers.length) {
     const rows = sectionText(next, 'Numbers').split('\n');
     const added: string[] = [];

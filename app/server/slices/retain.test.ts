@@ -201,4 +201,18 @@ describe('the parts of retain', () => {
     expect(localExtract([hosted])).toBeUndefined();
     expect(localExtract([hosted, { name: 'ollama', local: true } as unknown as ModelClient])).toBeTypeOf('function');
   });
+
+  // Journey 15: the founder said "break-even is 50 print jobs a month, not 50 paying hosts", and the notes kept
+  // "Break-even point: 50 paying hosts" and said it again after.
+  it('takes a figure the founder corrected out of the notes, and never keeps it again', async () => {
+    const { retain, memory } = await setup('- Break-even point: 50 paying hosts\n- The founder wants a kill signal tied to the 10-jobs goal');
+    await memory.remember('marketing', '(kept on its own) Break-even point: 50 paying hosts');
+    await memory.remember('marketing', '(kept on its own) Price is €12 per print job');
+    const query = "I don't buy it. Break-even is 50 print jobs a month, not 50 paying hosts: one host is not €12 a month of revenue. Tie the kill signal to my 10-jobs goal.";
+    const kept = await retain.retain(turn({ query, text: 'Fair: break-even is 50 print jobs a month. Kill signal tied to the 10-jobs goal.' }));
+    const { notes } = await memory.read('marketing');
+    expect(notes).not.toContain('50 paying hosts');
+    expect(notes).toContain('Price is €12 per print job');
+    expect(kept.join('\n')).not.toContain('paying hosts');
+  });
 });

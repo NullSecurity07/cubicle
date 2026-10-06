@@ -9,7 +9,7 @@ import { localDay, now as clockNow } from '../clock.ts';
 import { writeAtomic } from '../fsx.ts';
 import type { ModelMessage } from '../prompt.ts';
 import type { Unasked } from '../usage.ts';
-import { plusDays } from './call.ts';
+import { plusDays, thresholdOf } from './call.ts';
 import type { FounderPromise } from './promises.ts';
 import { saidNoFor, type Proposal as SaidNoProposal } from './saidno.ts';
 
@@ -64,6 +64,23 @@ export function towardLine(start: number, latest: number, line: number): Toward 
 }
 export const trending = (toward: Toward | null | undefined): toward is Toward => !!toward && toward.share >= HALF;
 
+// Journey 15: kill signal "fewer than 10 print jobs done", readings 7 then 9, and Needs you said the number was
+// "trending to the kill line" with a cold-outreach task. 7 to 9 is progress: towardLine measured the share of the way
+// to the line without asking which side of it loses. A kill line has a losing side: under it for "below / fewer than"
+// (a number the company wants up), over it for "above / more than". Only a move toward the losing side counts: from
+// the safe side, half-way to the line or past it; from the losing side already (the company has yet to reach it), any
+// move further away. `away`: on the losing side and moving further from the line.
+export type KillToward = Toward & { away?: boolean };
+export function killToward(start: number, latest: number, line: number, below: boolean): KillToward | null {
+  const worse = below ? latest < start : latest > start;
+  if (!worse) return null;
+  const losing = below ? start < line : start > line;
+  if (losing) return { start, latest, line, share: 1, crossed: false, away: true };
+  return towardLine(start, latest, line);
+}
+// Which side of a kill signal's line loses: "fewer than 10", "below 5" and a bare count to reach lose under it.
+export const losesBelow = (what: string) => thresholdOf(what)?.below ?? !/\b(?:above|over|more than|greater than|higher than|exceeds?)\b|>/i.test(what);
+
 // The reading a line is measured from (the last one on or before the day it was set, else the first one after) and the
 // latest one. Null while no newer reading has come in since: nothing has moved yet.
 export function readingsSince(points: MetricPoint[], since: string): { start: MetricPoint; latest: MetricPoint } | null {
@@ -99,7 +116,8 @@ export function killLineOf(what: string, metrics: Metric[]): { metric: Metric; l
 // ---------------------------------------------------------------- what wakes the partner
 
 // What the turn must end in. The address is code's, never the model's: a lead's own address, on record.
-export type Output = { kind: 'email'; to: string; name: string } | { kind: 'task' } | { kind: 'task-or-decision' } | { kind: 'task-or-drop'; promiseId: string; what: string };
+// `said`: the lead's own words when they wrote back, which the reply answers.
+export type Output = { kind: 'email'; to: string; name: string; said?: string } | { kind: 'task' } | { kind: 'task-or-decision' } | { kind: 'task-or-drop'; promiseId: string; what: string };
 // One trigger. `key` is the event, never raised twice; `trigger` is what it is about, which has one open row at most
 // (a lead that replies again while the last reply's row waits is not a second row). `money` orders the day when the
 // budget cannot cover all of them (a number going to the kill line first). `number` is the figure, read in code.
@@ -116,15 +134,15 @@ export function metricSparks(cards: MetricsCard[], kill: FounderPromise | undefi
     const lineOf = killLineOf(kill.what, all.map((one) => one.metric));
     const card = lineOf && all.find((one) => one.metric === lineOf.metric)!.card;
     const read = lineOf && readingsSince(lineOf.metric.points, kill.said);
-    const toward = read && towardLine(read.start.value, read.latest.value, lineOf!.line);
+    const toward = read && killToward(read.start.value, read.latest.value, lineOf!.line, losesBelow(kill.what));
     if (lineOf && read && trending(toward)) {
       const { metric } = lineOf;
       const said = (value: number) => formatValue(value, metric.unit);
       const number = `${metric.label}: ${said(read.latest.value)} on ${read.latest.at}, from ${said(read.start.value)} on ${read.start.at}; the kill line is ${said(lineOf.line)} (${kill.what}, checked on ${kill.due}).`;
       found.push({
         key: `kill:${kill.id}:${metric.key}`, trigger: `kill:${metric.key}`, kind: 'metric', at, money: 100, cardId: card!.cardId, number,
-        why: toward.crossed ? `${metric.label} crossed the kill line` : `${metric.label} is trending to the kill line`,
-        facts: `${toward.crossed ? 'The number has crossed the kill line' : `The number is trending to the kill line: ${Math.round(toward.share * 100)}% of the way from where it stood at your verdict`}.\n${number}\n${kill.due >= localDay(at) ? `The verdict's check is on ${kill.due}.` : `The verdict's check day, ${kill.due}, has passed.`}`,
+        why: toward.crossed ? `${metric.label} crossed the kill line` : toward.away ? `${metric.label} is moving away from the kill line it has to clear` : `${metric.label} is trending to the kill line`,
+        facts: `${toward.crossed ? 'The number has crossed the kill line' : toward.away ? 'The number has not cleared the kill line yet and moved the wrong way since your verdict' : `The number is trending to the kill line: ${Math.round(toward.share * 100)}% of the way from where it stood at your verdict`}.\n${number}\n${kill.due >= localDay(at) ? `The verdict's check is on ${kill.due}.` : `The verdict's check day, ${kill.due}, has passed.`}`,
         out: { kind: 'task-or-decision' },
       });
     }
@@ -153,12 +171,15 @@ export function leadSparks(leads: (Lead & { cardId: string })[], seen: Record<st
   return leads.filter((lead) => lead.stage === 'replied' && seen[lead.id] !== 'replied').map((lead) => {
     const who = `${lead.person.name}${lead.person.title ? `, ${lead.person.title}` : ''} at ${lead.company.name}`;
     const notes = lead.notes.slice(-4).map((note) => `- ${localDay(note.at)} ${note.by}: ${note.text}`).join('\n');
+    // Their own words, as the thread has them: journey 15's draft to a lead who asked how pickup works and whether one
+    // trial job was possible proposed a call instead, because the turn never saw what she wrote.
+    const said = lead.thread?.filter((one) => one.kind === 'replied' && one.text?.trim()).at(-1)?.text?.replace(/\s+/g, ' ').trim().slice(0, 1200);
     return {
       key: `lead:${lead.id}:replied:${lead.updatedAt}`, trigger: `lead:${lead.id}`, kind: 'lead' as const, at, money: 80, cardId: lead.cardId,
       why: `${lead.person.name} moved to ${STAGE_NAMES.replied}`,
       number: `${lead.person.name} (${lead.company.name}) moved from ${STAGE_NAMES[(seen[lead.id] ?? 'new') as Lead['stage']] ?? 'New'} to ${STAGE_NAMES.replied}.`,
-      facts: `A lead replied: ${who}.${lead.person.email ? ` Address on record: ${lead.person.email}.` : ' No email address is on record for them.'}${notes ? `\nNotes on the lead:\n${notes}` : ''}`,
-      out: lead.person.email ? { kind: 'email' as const, to: lead.person.email, name: lead.person.name } : { kind: 'task' as const },
+      facts: `A lead replied: ${who}.${lead.person.email ? ` Address on record: ${lead.person.email}.` : ' No email address is on record for them.'}${said ? `\nWhat ${lead.person.name} wrote, word for word:\n"${said}"` : ''}${notes ? `\nNotes on the lead:\n${notes}` : ''}`,
+      out: lead.person.email ? { kind: 'email' as const, to: lead.person.email, name: lead.person.name, ...(said ? { said } : {}) } : { kind: 'task' as const },
     };
   });
 }
@@ -206,7 +227,9 @@ export function watchAsk(spark: Spark, today: string): string {
   const due = `Due: YYYY-MM-DD, a day from ${today} to ${plusDays(today, 7)}`;
   const task = `Task: the task for the founder, in a few words\n${due}`;
   const out = spark.out.kind === 'email'
-    ? `Subject: the email's subject\nBody: the reply to ${spark.out.name}, plain text, under 120 words, proposing a 20-minute call, signed by the founder. Every line after "Body:" is the email.`
+    ? `Subject: the email's subject\nBody: the reply to ${spark.out.name}, plain text, under 120 words, signed by the founder. ${spark.out.said
+      ? `It answers what ${spark.out.name.split(' ')[0]} wrote above, each question they asked in turn and in their own words; it proposes a call only if they asked for one.`
+      : 'It thanks them and proposes one concrete next step.'} It is an email to them: no "My call", "Why", "Kill signal" or "This week" lines, nothing of your verdict or your notes. Every line after "Body:" is the email.`
     : spark.out.kind === 'task-or-decision' ? `Then EITHER\n${task}\nOR, when the move is a call the founder makes rather than work they do,\nDecision: what the founder decides, in one line`
     : spark.out.kind === 'task-or-drop' ? `Then EITHER\n${task}\nOR, when letting it go is right,\nDrop: one line on why`
     : task;
@@ -230,7 +253,8 @@ export function proposalOf(spark: Spark, reply: string, today: string): Pick<Pro
   let draft: Draft;
   if (spark.out.kind === 'email') {
     const body = /^\s*(?:\*\*)?Body(?:\*\*)?\s*:\s*([\s\S]+)$/im.exec(reply)?.[1]?.trim() ?? '';
-    draft = { kind: 'email', to: spark.out.to, subject: tidy(line(reply, 'Subject'), 140) || 'Thanks for getting back to me', body: body.slice(0, 2000) || `Hi ${spark.out.name.split(' ')[0]},\n\nThanks for your reply. Would a 20-minute call this week work for you?\n\nBest,` };
+    const fallback = spark.out.said ? `Hi ${spark.out.name.split(' ')[0]},\n\nThanks for your reply.\n\nBest,` : `Hi ${spark.out.name.split(' ')[0]},\n\nThanks for your reply. Would a 20-minute call this week work for you?\n\nBest,`;
+    draft = { kind: 'email', to: spark.out.to, subject: tidy(line(reply, 'Subject'), 140) || 'Thanks for getting back to me', body: emailBody(body).slice(0, 2000) || fallback };
   } else if (spark.out.kind === 'task-or-drop' && line(reply, 'Drop') && !line(reply, 'Task')) {
     draft = { kind: 'drop', promiseId: spark.out.promiseId, what: spark.out.what };
   } else if (spark.out.kind === 'task-or-decision' && line(reply, 'Decision') && !line(reply, 'Task')) {
@@ -238,6 +262,11 @@ export function proposalOf(spark: Spark, reply: string, today: string): Pick<Pro
   } else draft = { kind: 'task', title: taskTitle, due };
   return { move, ...(read ? { read } : {}), draft };
 }
+
+// The partner's verdict shape never goes to a customer: journey 15's email to a lead ended "My call: Send the reply
+// to Mira today ...". A line labelled as the verdict's, or as the watch's own Move, Task or Due, is not the email's.
+const NOT_EMAIL = /^\s*(?:\*\*)?(?:my call|the call|verdict|why|kill signal|this week|move|task|due|decision|drop|read)(?:\*\*)?\s*:/i;
+export const emailBody = (body: string) => body.split('\n').filter((one) => !NOT_EMAIL.test(one)).join('\n').replace(/\n{3,}/g, '\n\n').trim();
 
 const fallbackMove = (spark: Spark) => spark.kind === 'metric' ? 'Find out this week what is moving the number, before the check day.'
   : spark.kind === 'lead' ? 'Reply today and propose a short call.'

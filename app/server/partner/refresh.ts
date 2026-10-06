@@ -1,5 +1,5 @@
 import type { TurnResult } from '../loop.ts';
-import { readCall, renderCall, callShape, type PartnerCall, type Decision } from './call.ts';
+import { readCall, renderCall, callShape, type GoalDay, type PartnerCall, type Decision } from './call.ts';
 import { economicsBlock, type Economics, type Inputs } from './economics.ts';
 import type { Goal } from './goal.ts';
 
@@ -80,7 +80,7 @@ const WHY_SAID = (due: Pick<Due, 'why' | 'goal' | 'slip'>) => (due.why === 'move
 export function refreshAsk(call: Held, opening: string, economics: Economics | null, today: string, why: Why | Pick<Due, 'why' | 'goal' | 'slip'>): string {
   const due = typeof why === 'string' ? { why } : why;
   return `${WHY_SAID(due)} Make the call again, unasked, on the numbers as they stand now.${due.why === 'goal' || due.why === 'slip' ? ' Never move the goal\'s day yourself: if it should move, say so and why, and the founder decides.' : ''}\n`
-    + `Your verdict then:\n${renderCall(call)}\n\n${opening}\n\n${callShape(today, !!economics)}${economics ? `\n\n${economicsBlock(economics)}` : ''}`;
+    + `Your verdict then:\n${renderCall(call)}\n\n${opening}\n\n${callShape(today, !!economics, 'goal' in due && due.goal ? [due.goal] : [])}${economics ? `\n\n${economicsBlock(economics)}` : ''}`;
 }
 
 // The refresh as the founder reads it: the old call quoted and what changed, "still" or "now" the call, then the four lines.
@@ -92,8 +92,8 @@ export function refreshText(opening: string, old: Decision | undefined, fresh: P
 
 // The new call read from the reply, held to the same four lines as an asked verdict; null when it has no call at all.
 // A kill signal that could not fail from where the company stands (deadSignal) is not taken: the one standing stays.
-export function readRefresh(reply: Pick<TurnResult, 'text'>, today: string, evidence: string, economics: Economics | null, numbers = ''): PartnerCall | null {
-  const read = readCall(reply.text, today, `${evidence}\n${(economics?.working ?? []).map((one) => one.line).join('\n')}`, economics, numbers);
+export function readRefresh(reply: Pick<TurnResult, 'text'>, today: string, evidence: string, economics: Economics | null, numbers = '', goals: GoalDay[] = []): PartnerCall | null {
+  const read = readCall(reply.text, today, `${evidence}\n${(economics?.working ?? []).map((one) => one.line).join('\n')}`, economics, numbers, goals);
   if (!read.decision) return null;
   return {
     decision: read.decision, ...(read.why && !read.unsourced.length ? { why: read.why } : {}), ...(read.signal ? { signal: read.signal } : {}), ...(read.move ? { move: read.move } : {}),

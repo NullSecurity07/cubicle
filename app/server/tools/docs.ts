@@ -533,6 +533,22 @@ export const docTools: Tool[] = [
     async run(args, context) {
       // A short name, never the ask: the model often hands the whole request over as the title.
       const title = docTitle(text(args, 'title', 200));
+      // One doc per title. Journey 15: Otto's create_doc was tried again after each guard bounce and the stage showed
+      // "Runway" three times. A title made this turn takes the new text in the same doc; one already on the stage is
+      // the one to write to, never a second beside it.
+      const same = (other: string) => other.trim().toLowerCase() === title.trim().toLowerCase();
+      const made = [...context.granted].find(([, one]) => same(one))?.[0];
+      if (made) {
+        const before = await context.store.readDoc(made).catch(() => '');
+        const again = await checkWrite(context, made, before, text(args, 'text'), `"${title}" was already made this turn, so this text went into it: no second "${title}".`);
+        await context.store.writeDoc(made, again.text);
+        return { text: again.said, effect: { kind: 'doc-changed', id: made } };
+      }
+      const there = context.stage.docs.find((doc) => same(doc.title));
+      if (there) {
+        const wired = wiredDocIds(context.stage, context.roomId).includes(there.id);
+        return { text: `A document called "${there.title}" is already on the stage, so no second one was made. ${wired ? `Write to it with write_doc, replace_section or append_doc ("${there.title}").` : 'It is not wired to you: ask the founder for a wire to change it, or give the new one another title.'}` };
+      }
       const id = `doc-${Math.random().toString(36).slice(2, 8)}`;
       // A new doc has no rules, so its text is marked, never refused.
       const checked = await checkWrite(context, id, '', text(args, 'text'), `Created "${title}".`);

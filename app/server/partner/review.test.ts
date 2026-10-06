@@ -66,3 +66,32 @@ describe('the partner reviews a colleague\'s doc', () => {
     expect(released).toBe(1);
   });
 });
+
+// Journey 15: Otto's turn made three "Runway" docs, the review called each "Fit for the founder.", and the runway rested
+// on an invented MRR; Pia's spec said break-even in paying hosts.
+describe('the review of journey 15\'s docs', () => {
+  const PRINTNEAR = '- Price: €12 per print job (paid by the maker)\n- Print jobs done: 4\n- Paying hosts: 1\n- Cash: €2,500\n- Burn: €600 a month';
+  const ASKED = 'Otto, write the Runway doc from the Company brief.';
+  it('flags a doc whose title another doc on the stage carries', () => {
+    const review = reviewDoc({ text: '# Runway\n\n- Runway: 4.2 months (calc: round(2500 / 600, 1) = 4.2)', numbers: PRINTNEAR, read: [ASKED, 'round(2500 / 600, 1) = 4.2'], said: [ASKED], title: 'Runway', twins: 2 });
+    expect(review.flags).toEqual([{ kind: 'duplicate', said: '3 documents on the stage are called "Runway": keep one and take the others away, so nobody reads the wrong one.', short: '3 docs are called "Runway"' }]);
+    expect(review.verdict).toBe('Fix first: 3 docs are called "Runway".');
+    expect(reviewDoc({ text: '# Runway\n\n- Runway: 4.2 months', before: '# Runway\n\n- Runway: 4.2 months', numbers: PRINTNEAR, read: [], said: [], title: 'Runway', twins: 1 }).verdict).toBe('Fix first: 2 docs are called "Runway".');
+  });
+
+  it('flags a derived figure no calc gave, even one near the right figure, and passes one that calc gave', () => {
+    expect(reviewDoc({ text: '# Runway\n\n- Monthly runway at net burn: 4.3 months', numbers: PRINTNEAR, read: [ASKED], said: [ASKED] }).verdict).toMatch(/^Fix first: /);
+    // Read from the partner's own words, not worked out: still no calc behind it.
+    const near = reviewDoc({ text: '# Runway\n\n- Monthly runway at net burn: 4.3 months', numbers: PRINTNEAR, read: [ASKED, 'Sam: runway is 4.3 months at the net burn.'], said: [ASKED] });
+    expect(near.flags.map((flag) => flag.short)).toEqual(['a derived figure has no calc']);
+    expect(near.flags[0].said).toContain('"Monthly runway at net burn: 4.3 months" is a sum with no calc behind it');
+    const worked = reviewDoc({ text: '# Runway\n\n- Runway: 4.2 months', numbers: PRINTNEAR, read: [ASKED, 'round(2500 / 600, 1) = 4.2'], said: [ASKED] });
+    expect(worked.verdict).toBe('Fit for the founder.');
+  });
+
+  it('flags break-even said in the wrong unit, with the brief\'s working', () => {
+    const review = reviewDoc({ text: '# Spec\n\n- Break-even: 50 paying hosts', numbers: PRINTNEAR, read: [ASKED, 'ceil(600 / 12) = 50'], said: [ASKED] });
+    expect(review.flags).toEqual([{ kind: 'sense', said: 'Break-even is 50 print jobs a month, not 50 paying hosts: ceil(600 / 12) = 50 (calc).', short: 'break-even is 50 print jobs a month, not 50 paying hosts' }]);
+    expect(reviewDoc({ text: '# Spec\n\n- Break-even: 50 print jobs a month', numbers: PRINTNEAR, read: [ASKED, 'ceil(600 / 12) = 50'], said: [ASKED] }).verdict).toBe('Fit for the founder.');
+  });
+});

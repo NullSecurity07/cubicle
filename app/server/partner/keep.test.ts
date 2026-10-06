@@ -8,6 +8,31 @@ import { companyFacts, keepFacts, keptLine, runwayFix } from './keep.ts';
 export const DAY_ONE = "I'm building Ledgerly: $29/month bookkeeping for EU solo consultants that drafts VAT returns from bank feeds. "
   + 'We have 3 paying beta users; two of them asked for invoicing. I have €4,200 in the bank and burn €1,100/month. I\'m a solo technical founder. Tear it apart.';
 
+// Journey 15: the founder said "one host is not €12 a month of revenue" and the brief gained "- MRR: €12 a month
+// (founder, 2026-10-06)", which fed the Runway doc and the deck.
+describe('a figure the founder says is not so', () => {
+  const PUSHBACK = "I don't buy it. You gave me no kill signal at all, and break-even is 50 print jobs a month, not 50 paying hosts: one host is not €12 a month of revenue. Give me a sharper call with a kill signal that can actually fail, tied to my 10-jobs goal.";
+  const BRIEF = '# Company brief\n\n## Numbers\n\n- Price: €12 per print job (paid by the maker)\n- Paying hosts: 1\n- Cash: €2,500\n- Burn: €600 a month\n\n## Decisions\n';
+  it('is never written into the brief as the founder\'s', () => {
+    const facts = companyFacts(PUSHBACK);
+    expect(facts.numbers).toEqual([]);
+    expect(facts.denied).toEqual([{ label: 'MRR', value: '€12 a month' }]);
+    expect(keepFacts(BRIEF, facts, '2026-10-06')).toEqual({ text: BRIEF, kept: [] });
+  });
+
+  it('takes its row out of the brief, however it got there, and a corrected figure takes its place', () => {
+    const wrong = BRIEF.replace('- Burn: €600 a month', '- Burn: €600 a month\n- MRR: €12 a month (founder, 2026-10-06)');
+    const out = keepFacts(wrong, companyFacts(PUSHBACK), '2026-10-06');
+    expect(out.text).toContain('- Paying hosts: 1\n- Cash: €2,500\n- Burn: €600 a month\n');
+    expect(out.text).not.toContain('MRR');
+    expect(out.kept).toEqual(['Numbers (MRR €12 a month taken out: the founder said it is not so)']);
+    const put = keepFacts(wrong, companyFacts('MRR is not €12 a month. MRR is €0 a month.'), '2026-10-07');
+    expect(put.text).toContain('- MRR: €0 a month (founder, 2026-10-07)');
+    expect(put.text).not.toContain('€12 a month (founder');
+    expect(companyFacts('Burn is €600 a month, not €900 a month.').numbers).toEqual([{ label: 'Burn', value: '€600 a month' }]);
+  });
+});
+
 describe('company facts in what the founder says', () => {
   it('reads the price, cash, burn, the users and the one line of what the company does', () => {
     expect(companyFacts(DAY_ONE)).toEqual({

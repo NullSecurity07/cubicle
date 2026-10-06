@@ -79,4 +79,21 @@ describe('runway and break-even only from calc', () => {
     // A net burn the founder gave stays as given.
     expect(derivedRows('- Cash: $48,000\n- Net burn: $6,000 a month').text).toBe('- Cash: $48,000\n- Net burn: $6,000 a month');
   });
+
+  // Journey 15: price €12 per print job, 1 paying host. Break-even came out as "50 paying hosts" and the runway netted
+  // 1 × €12 off the burn as if a host paid €12 a month.
+  it('counts break-even in what the price is paid for, and never nets a count of jobs done off the burn', () => {
+    const numbers = '- Price: €12 per print job (paid by the maker)\n- Printers listed: 9\n- Print jobs done: 4\n- Paying hosts: 1\n- Cash: €2,500\n- Burn: €600 a month\n- Makers contacted: 60';
+    const economics = economicsOf(numbers)!;
+    expect(economics.unit).toBe('print jobs a month');
+    expect(economics.working.map((one) => one.line)).toEqual([
+      'Break-even: ceil(600 / 12) = 50 print jobs a month to cover the burn (the brief gives no cost per unit); the brief has 4 (print jobs done)',
+      'Runway: round(2500 / 600, 1) = 4.2 months at the burn (the brief gives no print jobs a month to net it)',
+    ]);
+    expect(JSON.stringify(economics)).not.toContain('paying hosts');
+    expect(derivedRows(`${numbers}\n- Break-even: 50 paying hosts`).text).toContain('- Break-even: 50 print jobs a month (calc: ceil(600 / 12) = 50)');
+    // A price a month per paying office, and one per the very thing the paying row counts, stay the paying unit.
+    expect(economicsOf('- Price: €240 per office a month\n- Paying offices: 5\n- Burn: €2,100 a month')!.unit).toBe('paying offices');
+    expect(economicsOf('- Price: €40 per office\n- Paying offices: 5\n- Burn: €2,100 a month\n- Cash: €9,000')!.working[1].expression).toBe('round(cash / (burn - paying * price), 1)');
+  });
 });

@@ -200,3 +200,9 @@ export function dueOf(label: string, today: string, start?: string): string | un
 }
 // A doc is a plan when its title or its first heading says so.
 export const isPlanDoc = (title: string, text: string) => /\bplan(?:s|ning)?\b/i.test(title) || /\bplan(?:s|ning)?\b/i.test(HEADING.exec(text.split('\n').find((line) => HEADING.test(line)) ?? '')?.[1] ?? '');
+
+// The one line a notice or a Needs you row leads with, of what changed since yesterday. Only something pressing leads
+// (a slip, a late task, a moved number, a check near): what simply happened yesterday (a lead's email, a doc written)
+// is in the note's list, and the day's first move heads the row instead.
+const PRESSING = /^(?:Slipped|Late on the board|Moved|Kill-signal check (?:in \d|today|tomorrow|overdue))\b/;
+export const sinceHeadline = (since: string[] | undefined) => since?.find((line) => PRESSING.test(line));

@@ -21,7 +21,8 @@ const DECIDED_MOST = 4;
 // `promised`: the founder's open promises, one line each, read fresh every turn.
 // `declined`: what the founder said no to lately, one line each (server/partner/saidno.ts), read fresh every turn.
 // `call`: the partner's own verdict on record, read from the partner's notes every turn (verdictLines).
-export type StandingParts = Pick<CompanyGather, 'verdicts' | 'numbers' | 'open' | 'planned' | 'flagCounts'> & { decided: string[]; learned: string[]; promised?: string[]; declined?: string[]; call?: string[] };
+// `corrected`: what the founder put right in chat, one line each (server/partner/corrections.ts), read fresh every turn.
+export type StandingParts = Pick<CompanyGather, 'verdicts' | 'numbers' | 'open' | 'planned' | 'flagCounts'> & { decided: string[]; learned: string[]; promised?: string[]; declined?: string[]; call?: string[]; corrected?: string[] };
 
 // Journey 14, day 2: "what did we decide yesterday, and what kill signal do we hold ourselves to?" The partner said
 // nothing was decided and gave the runway it had got wrong; retain had kept nothing from day 1, since it asks the model
@@ -92,6 +93,7 @@ const cut = (line: string) => (line.length > LINE_MOST ? `${line.slice(0, LINE_M
 export function standingBlock(parts: StandingParts, waiting: Attention[]): string {
   const sections: [string, string[]][] = [
     ['Your own verdict on record (quote it as it stands when asked what was decided; never make up another):', parts.call ?? []],
+    ['The founder corrected (their word stands over any figure before it; never say the wrong one again):', parts.corrected ?? []],
     ['Team verdicts:', parts.verdicts],
     ['', [waitingLine(waiting)]],
     ['Company Numbers:', parts.numbers ? parts.numbers.split('\n').filter((line) => line.trim()) : ['- none written yet']],
