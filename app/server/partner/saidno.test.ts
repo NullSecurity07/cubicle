@@ -5,7 +5,8 @@ import { describe, expect, it } from 'vitest';
 import { createApprovals, putToFounder } from '../approvals.ts';
 import { standingBlock } from './standing.ts';
 import { citedFacts, standingFacts } from './synthesis.ts';
-import { chatNo, checkAgainst, createSaidNo, overlap, proposalOf, promptLine, sameProposal, SAID_NO_MOST, suggestionIn, type SaidNoEntry } from './saidno.ts';
+import { saidNoProposal } from './watch.ts';
+import { againstNo, chatNo, checkAgainst, createSaidNo, ruledOutBy, ruledOutLine, standingNosIn, overlap, proposalOf, promptLine, sameProposal, SAID_NO_MOST, suggestionIn, type SaidNoEntry } from './saidno.ts';
 
 const DAY = 86_400_000;
 const OCT_3 = Date.UTC(2026, 9, 3, 12);
@@ -21,13 +22,33 @@ describe('the said-no match', () => {
     expect(sameProposal(entry({ tool: 'chat' }), { tool: 'propose_decision', subject: 'Cut the price to 29' })).toBe(true);
   });
 
-  it('takes an email by its lead whatever the subject, and the same subject to another address as another email', () => {
+  it('takes an email as the same only to the same lead and about much the same thing', () => {
     const declined = { ...proposalOf('draft_email', { to: 'ana@acme.io', subject: 'Quick intro' }, ['ana@acme.io'])!, at: OCT_3, id: 'x', asked: 0 } as SaidNoEntry;
     expect(declined.key).toBe('lead:ana@acme.io');
-    expect(sameProposal(declined, proposalOf('send_email', { to: 'Ana@acme.io', subject: 'Following up on pricing' }, ['ana@acme.io'])!)).toBe(true);
+    expect(sameProposal(declined, proposalOf('send_email', { to: 'Ana@acme.io', subject: 'Following up on pricing' }, ['ana@acme.io'])!)).toBe(false);
+    expect(sameProposal(declined, proposalOf('send_email', { to: 'Ana@acme.io', subject: 'Quick intro!' }, ['ana@acme.io'])!)).toBe(true);
+    expect(sameProposal(declined, proposalOf('send_email', { to: 'bo@acme.io', subject: 'Quick intro' }, ['bo@acme.io'])!)).toBe(false);
     const plain = { ...proposalOf('send_email', { to: 'bob@x.io', subject: 'Launch day' })!, at: OCT_3, id: 'y', asked: 0 } as SaidNoEntry;
     expect(sameProposal(plain, proposalOf('send_email', { to: 'eve@x.io', subject: 'Launch day' })!)).toBe(false);
     expect(sameProposal(plain, proposalOf('draft_email', { to: 'bob@x.io', subject: 'Launch day!' })!)).toBe(true);
+  });
+
+  it("a Don't on an intro email to a lead leaves a follow-up about a meeting fresh, and the same intro is asked again", () => {
+    const leads = ['mira@fablab.example'];
+    const intro = { ...proposalOf('draft_email', { to: 'mira@fablab.example', subject: 'Intro: PrintNear for FabLab members' }, leads)!, at: OCT_3, id: 'm', asked: 0 } as SaidNoEntry;
+    const meeting = proposalOf('draft_email', { to: 'mira@fablab.example', subject: 'Follow-up about our meeting next week' }, leads)!;
+    expect(checkAgainst([intro], meeting, OCT_3 + DAY).verdict).toBe('fresh');
+    const again = proposalOf('draft_email', { to: 'mira@fablab.example', subject: 'Intro: PrintNear for FabLab members' }, leads)!;
+    expect(checkAgainst([intro], again, OCT_3 + DAY)).toMatchObject({ verdict: 'reask' });
+    expect(promptLine([intro])).toContain('email to mira@fablab.example about "Intro: PrintNear for FabLab members"');
+  });
+
+  it("a Don't on a watch proposal holds that proposal, not every email to the lead", () => {
+    const watched = saidNoProposal({ move: 'reply', draft: { kind: 'email', to: 'Mira@fablab.example', subject: 'Re: a 20-minute call about PrintNear', body: 'Would a call work?' } });
+    const held = { ...watched, at: OCT_3, id: 'w', asked: 0 } as SaidNoEntry;
+    const answer = proposalOf('draft_email', { to: 'mira@fablab.example', subject: 'How pickup works and one trial job' }, ['mira@fablab.example'])!;
+    expect(checkAgainst([held], answer, OCT_3 + DAY).verdict).toBe('fresh');
+    expect(checkAgainst([held], saidNoProposal({ move: 'reply', draft: { kind: 'email', to: 'mira@fablab.example', subject: 'Re: a 20-minute call about PrintNear', body: '' } }), OCT_3 + DAY).verdict).toBe('reask');
   });
 
   it('is fresh, then asked again once with the no quoted, then declined, and only inside fourteen days', () => {
@@ -107,5 +128,47 @@ describe('said no in the standing facts', () => {
     expect(block).toContain(`The founder said no to (never put one to them again as new):\n${line}`);
     const facts = standingFacts({ verdicts: [], numbers: '', open: [], planned: [], flagCounts: [], decided: [], learned: [], declined: [line] });
     expect(citedFacts('You said no to the €29 cut last week, so keep the price and chase the three pilots.', facts).map((fact) => fact.kind)).toEqual(['declined']);
+  });
+});
+
+// Journey 15: "Don't propose cold outreach to more makers this week" kept nothing, and the refresh and the next
+// morning's note proposed contacting more makers.
+describe('a standing no said in chat', () => {
+  it('reads what the founder rules out and why, without the time it was said for', () => {
+    expect(standingNosIn('No to the task of contacting 10 more makers, because we are at 9 jobs and the last one comes from a host. Don\'t propose cold outreach to more makers this week.')).toEqual([
+      { subject: 'contacting 10 more makers', reason: 'we are at 9 jobs and the last one comes from a host' },
+      { subject: 'cold outreach to more makers', reason: 'we are at 9 jobs and the last one comes from a host' },
+    ]);
+    expect(standingNosIn('No more discounts.')).toEqual([{ subject: 'discounts' }]);
+    expect(standingNosIn('Sounds good, go ahead.')).toEqual([]);
+    expect(standingNosIn('No problem, do it.')).toEqual([]);
+  });
+
+  it('holds a move against it by the no\'s own words, and lets a move that keeps to it through', () => {
+    const no = 'cold outreach to more makers';
+    expect(againstNo(no, 'Contact 40 more local makers to secure the remaining 6 print jobs.')).toBe(true);
+    expect(againstNo(no, 'Reach out to 10 more makers today.')).toBe(true);
+    expect(againstNo(no, 'Close that final print job without cold outreach to makers.')).toBe(false);
+    expect(againstNo(no, 'Update the Company brief from 4 to 9 jobs.')).toBe(false);
+    expect(againstNo(no, 'Email Mira the pickup answer.')).toBe(false);
+  });
+
+  it('finds the no a move breaks inside the window and says it as the founder ruled it out', () => {
+    const entry = { id: 'n', tool: 'chat', subject: 'cold outreach to more makers', at: OCT_3, asked: 0, reason: 'we are at 9 jobs' } as SaidNoEntry;
+    expect(ruledOutBy([entry], 'Contact 40 more local makers', OCT_3 + DAY)).toBe(entry);
+    expect(ruledOutBy([entry], 'Contact 40 more local makers', OCT_3 + 15 * DAY)).toBeUndefined();
+    expect(ruledOutLine(entry)).toBe("You ruled out cold outreach to more makers on 3 Oct ('we are at 9 jobs')");
+  });
+
+  it('gives a reason said just after a Don\'t to the no that had none', async () => {
+    let clock = OCT_3;
+    const book = createSaidNo(await mkdtemp(join(tmpdir(), 'saidno-why-')), () => clock);
+    await book.record({ tool: 'propose_task', subject: 'Reply to Mira proposing a 20-minute call' });
+    clock += 60_000;
+    expect(await book.explain('she asked how pickup works')).toMatchObject({ reason: 'she asked how pickup works' });
+    clock += 60 * 60_000;
+    await book.record({ tool: 'propose_task', subject: 'Contact more makers' });
+    clock += 20 * 60_000;
+    expect(await book.explain('too late')).toBeNull();
   });
 });

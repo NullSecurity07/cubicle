@@ -12,6 +12,7 @@ import { learnedSection, sectionText } from './company.ts';
 import { economicsOf, figuresFix } from './economics.ts';
 import { runwayFix } from './keep.ts';
 import type { FounderPromise } from './promises.ts';
+import { ruledOutBy, ruledOutLine, saidNoFor, type SaidNoEntry } from './saidno.ts';
 import { gatherSince, sinceText, type SinceInput } from './since.ts';
 import type { PartnerState } from './state.ts';
 
@@ -223,16 +224,23 @@ export async function writeMorning(input: {
   const { sources } = input;
   const since = await gatherSince(sources);
   const facts = await gatherMorning(sources, since);
+  // What the founder ruled out stands against every move here, held in code (journey 15: "no cold outreach" at day 3,
+  // and the day-4 note said "Reach out to 10 more makers").
+  const nos = await saidNoFor(sources.workspace).list().catch(() => [] as SaidNoEntry[]);
+  const against = (move: string) => ruledOutBy(nos, move, sources.now);
   const messages: ModelMessage[] = [...await input.promptFor(sources.stage, sources.partnerId), { role: 'user', content: `${MORNING_ASK}\n\n${facts}` }];
   const once = async (these: ModelMessage[]) => {
     const answered = await input.ask(these);
     const said = typeof answered === 'string' ? { text: answered } as { text: string; provider?: string; model?: string } : answered;
     const read = readMorning(said.text);
-    return { ...said, read, fault: read ? shapeFault(read, sources.company ?? '', sources.stage) : LOST_SHAPE };
+    const ruled = read?.things.map(against).find(Boolean);
+    return { ...said, read, fault: read ? shapeFault(read, sources.company ?? '', sources.stage) : LOST_SHAPE, ruled };
   };
   let reply = await once(messages);
   // At fault: asked once more in the same try, with the reason in front of it, not the same prompt half an hour on.
-  if (reply.fault) reply = await once([...messages, { role: 'assistant', content: reply.text }, { role: 'user', content: `${reply.fault} Write the note again, in exactly the same shape.` }]);
+  // A move against the founder's no is asked again the same way; still there after, it is dropped below.
+  const again = reply.fault ?? (reply.ruled ? `${ruledOutLine(reply.ruled)}, and a move proposes it: give a move that does not.` : null);
+  if (again) reply = await once([...messages, { role: 'assistant', content: reply.text }, { role: 'user', content: `${again} Write the note again, in exactly the same shape.` }]);
   const { provider, model, fault } = reply;
   if (!reply.read || (fault && !input.last)) return null;
   // Runway is never rounded toward the better side, in the note either.
@@ -241,7 +249,10 @@ export async function writeMorning(input: {
   const economics = economicsOf(numbers);
   const reads = [numbers, ...(economics?.working ?? []).map((one) => one.result), ...since];
   const fix = (line: string) => confirmedFix(runwayFix(figuresFix(line, economics), numbers), reads);
-  const read: Morning = { things: reply.read.things.map(fix), risk: fix(reply.read.risk), question: fix(reply.read.question) };
+  // A move still set against a no after the second ask is dropped, and the note says which no it kept to.
+  const dropped = [...new Set(reply.read.things.map(against).filter((one): one is SaidNoEntry => !!one))];
+  const things = reply.read.things.filter((thing) => !against(thing));
+  const read: Morning = { things: things.map(fix), risk: fix(reply.read.risk), question: fix(reply.read.question) };
   // The truth net, as every turn has it: a figure in the note that nothing it was given holds is flagged under it,
   // and the note is posted all the same, so the founder sees both.
   // Checked as posted: the reshaped note, not the raw reply, so the flags name only what the founder reads.
@@ -252,6 +263,7 @@ export async function writeMorning(input: {
   const checked = messages.map((message, index) => (index === messages.length - 1 ? { ...message, content: `${MORNING_ASK}\n\n${withoutFlagged(facts)}` } : message));
   const flags = checkReply({ reply: morningText(read), receipts: [], sources: turnSources(checked) });
   if (fault) flags.push(`Note check: ${fault.split(':')[0].replace(/^The /, 'the ')}, even when asked again.`);
+  for (const one of dropped) flags.push(`${ruledOutLine(one)}, so a move that proposed it was dropped.`);
   return { ...read, since, day: localDay(sources.now), at: sources.now, roomId: sources.partnerId, who: input.name, ...(flags.length ? { flags } : {}), ...(provider ? { provider } : {}), ...(model ? { model } : {}) };
 }
 

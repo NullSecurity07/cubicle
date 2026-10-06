@@ -60,6 +60,13 @@ export function overlap(a: string, b: string): number {
 // most of the same words.
 export function sameProposal(entry: Pick<SaidNoEntry, 'tool' | 'subject' | 'key' | 'to'>, proposal: Proposal): boolean {
   if (entry.tool !== 'chat' && proposal.tool !== 'chat' && familyOf(entry.tool) !== familyOf(proposal.tool)) return false;
+  // An email is the same email only to the same lead and about much the same thing. Journey 15: one Don't on an intro
+  // to a lead, keyed by the lead alone, refused every email to her after it, the answer to her own question too.
+  if (familyOf(entry.tool) === 'email' && familyOf(proposal.tool) === 'email') {
+    if (entry.key && proposal.key && entry.key.toLowerCase() !== proposal.key.toLowerCase()) return false;
+    if (entry.to && proposal.to && entry.to !== proposal.to) return false;
+    return overlap(entry.subject, proposal.subject) >= SAID_NO_OVERLAP;
+  }
   if (entry.key && proposal.key && entry.key.toLowerCase() === proposal.key.toLowerCase()) return true;
   if (entry.to && proposal.to && entry.to !== proposal.to) return false;
   return overlap(entry.subject, proposal.subject) >= SAID_NO_OVERLAP;
@@ -94,9 +101,12 @@ export function proposalOf(tool: string, args: Record<string, unknown>, leads: I
 }
 
 // One line per no, the way a prompt and the standing facts say it.
-export const saidNoLine = (entry: SaidNoEntry) => `- "${short(entry.subject, 90)}" (${entry.who ? `${entry.who}, ` : ''}${saidOn(entry.at)}${entry.reason ? `: ${short(entry.reason, 80)}` : ''})`;
+// What was said no to, with its kind where the subject alone does not say it: an email names whom it was to.
+export const whatSaidNo = (entry: Pick<SaidNoEntry, 'tool' | 'subject' | 'to'>) => (familyOf(entry.tool) === 'email' && entry.to
+  ? `email to ${entry.to} about "${short(entry.subject, 90)}"` : `"${short(entry.subject, 90)}"`);
+export const saidNoLine = (entry: SaidNoEntry) => `- ${whatSaidNo(entry)} (${entry.who ? `${entry.who}, ` : ''}${saidOn(entry.at)}${entry.reason ? `: ${short(entry.reason, 80)}` : ''})`;
 export const reaskLine = (entry: SaidNoEntry) => `You said no to this on ${saidOn(entry.at)}${entry.reason ? `: '${short(entry.reason, 120)}'` : ''}. Ask again?`;
-export const declinedLine = (entry: SaidNoEntry) => `Already declined: the founder said no to "${short(entry.subject, 90)}" on ${saidOn(entry.at)}${entry.reason ? ` ('${short(entry.reason, 120)}')` : ''} `
+export const declinedLine = (entry: SaidNoEntry) => `Already declined: the founder said no to ${whatSaidNo(entry)} on ${saidOn(entry.at)}${entry.reason ? ` ('${short(entry.reason, 120)}')` : ''} `
   + 'and again when it was put to them once more, so it was not raised. Do not propose it again. If something has changed, say what in your reply and let the founder ask for it.';
 export const promptLine = (entries: SaidNoEntry[]) => (entries.length
   ? `The founder said no to:\n${entries.slice(0, SAID_NO_SHOWN).map(saidNoLine).join('\n')}\nDo not put these to the founder again unless something has changed, and then say what changed.`
@@ -154,6 +164,15 @@ export function createSaidNo(workspace: string, now: () => number = clockNow) {
       });
     },
     check: async (proposal: Proposal) => checkAgainst(await read(), proposal, now()),
+    // A reason said in chat just after a Don't that gave none: journey 15's founder pressed Don't (no place for a
+    // reason) and said why in the next message, and the no kept nothing to quote.
+    explain: (reason: string, within = 15 * 60_000) => change((entries) => {
+      const held = entries.filter((one) => !one.reason && one.at >= now() - within).sort((a, b) => b.at - a.at)[0];
+      if (held) held.reason = short(reason, 300);
+      return held ? { ...held } : null;
+    }),
+    // Whether a move the partner would put to the founder unasked is one they ruled out, inside the window.
+    ruledOut: async (move: string) => ruledOutBy(await read(), move, now()),
     // The proposal went back to the founder once.
     asked: (id: string) => change((entries) => { const held = entries.find((one) => one.id === id); if (held) held.asked += 1; }),
     // The founder said yes to it after all: the no no longer stands.
@@ -184,3 +203,53 @@ export function chatNo(reply: string): { reason?: string } | null {
 // A proposal put in words, for a chat no to stand against: the sentence that suggests something.
 const SUGGESTS = /[^.!?\n]*\b(?:i (?:propose|suggest|recommend)|we should|you should|shall (?:i|we)|should (?:i|we)|want me to|how about|let'?s)\b[^.!?\n]*[.!?]?/i;
 export const suggestionIn = (text: string) => SUGGESTS.exec(text)?.[0]?.trim() ?? '';
+
+// A standing no said in so many words: "Don't propose cold outreach to more makers this week", "No to the task of
+// contacting 10 more makers, because…", "No more discounts." What it rules out, without the time it was said for.
+const RULES_OUT = [
+  /\b(?:don'?t|do not|never|stop)\s+(?:propose|proposing|suggest|suggesting|recommend|recommending|raise|raising|bring(?:ing)? up|push(?:ing)?|plan(?:ning)?)\s+(.+)/i,
+  /^\s*no\s+to\s+(.+)/i,
+  /^\s*no\s+more\s+(.+)/i,
+];
+const WHEN_SAID = /\s+(?:this|next)\s+(?:week|month)$|\s+(?:today|tomorrow|again|anymore|any more|for now|from now on|until further notice)$/i;
+export function standingNosIn(text: string): { subject: string; reason?: string }[] {
+  const because = /\b(?:because|since)\s+([^.!?\n]+)/i.exec(text)?.[1]?.trim();
+  const found: { subject: string; reason?: string }[] = [];
+  for (const sentence of text.split(/(?<=[.!?\n])\s*/)) {
+    for (const rule of RULES_OUT) {
+      const said = rule.exec(sentence)?.[1];
+      if (!said) continue;
+      let subject = said.split(/,|\s+because\b|\s+since\b|\s+as\s+(?:we|i|it|they)\b|[.!?\n]/i)[0].trim().replace(/^(?:the task of|the idea of|your|the|any)\s+/i, '');
+      for (let at = 0; at < 3; at += 1) subject = subject.replace(WHEN_SAID, '').trim();
+      if (subjectWords(subject).length) found.push({ subject: short(subject, 160), ...(because ? { reason: short(because, 300) } : {}) });
+      break;
+    }
+  }
+  return found;
+}
+
+// A move set against a standing no, by the no's own words: most of what the founder ruled out is in the move. Words
+// that say the same act count as one ("contact", "reach out", "outreach", "email"), and what a move says it will do
+// without ("close the job without cold outreach") is not part of it.
+const SAME_ACT: Record<string, string> = {
+  contact: 'reach', contacting: 'reach', contacted: 'reach', outreach: 'reach', reach: 'reach', reaching: 'reach', email: 'reach', emailing: 'reach',
+  message: 'reach', messaging: 'reach', ping: 'reach', dm: 'reach', call: 'call', calls: 'call', calling: 'call', meeting: 'call', meet: 'call',
+  discount: 'discount', discounts: 'discount', discounting: 'discount', cut: 'cut', cutting: 'cut', lower: 'cut', lowering: 'cut',
+};
+const NOT_THE_ACT = new Set(['propose', 'suggest', 'task', 'tasks', 'week', 'today', 'again', 'move', 'moves', 'idea', 'thing', 'things']);
+const canon = (word: string) => SAME_ACT[word] ?? SAME_ACT[word.replace(/s$/, '')] ?? (word.length > 4 ? word.replace(/(?:ing|s)$/, '') : word);
+const actWords = (text: string) => new Set(subjectWords(text).filter((word) => !NOT_THE_ACT.has(word) && !/^\d/.test(word)).map(canon));
+const WITHOUT = /\b(?:without|instead of|rather than|not|no|never|avoid(?:ing)?|skip(?:ping)?|stop(?:ping)?)\b[^.,;]*/gi;
+export function againstNo(no: string, move: string): boolean {
+  const ruled = actWords(no);
+  if (!ruled.size) return false;
+  const doing = actWords(move.replace(WITHOUT, ' '));
+  const shared = [...ruled].filter((word) => doing.has(word)).length;
+  return shared / ruled.size >= SAID_NO_OVERLAP && (ruled.size > 1 || shared === 1);
+}
+export function ruledOutBy(entries: SaidNoEntry[], move: string, now: number): SaidNoEntry | undefined {
+  const since = now - SAID_NO_WINDOW_DAYS * DAY;
+  return entries.filter((one) => one.at >= since && againstNo(one.subject, move)).sort((a, b) => b.at - a.at)[0];
+}
+// How the note says a move was dropped for it: "You ruled out cold outreach to more makers on 6 Oct."
+export const ruledOutLine = (entry: SaidNoEntry) => `You ruled out ${entry.tool === 'chat' ? short(entry.subject, 90) : `"${short(entry.subject, 90)}"`} on ${saidOn(entry.at)}${entry.reason ? ` ('${short(entry.reason, 100)}')` : ''}`;

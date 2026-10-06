@@ -38,7 +38,7 @@ test.afterEach(async ({ page }) => {
   const from = chat.findIndex((message) => message.text.startsWith('/tool draft_email'));
   if (from >= 0) for (const message of chat.slice(from)) await page.request.delete(`/api/rooms/marketing/chat/${message.id}`);
   for (const entry of (await (await page.request.get('/api/attention')).json()) as { id: string; kind: string }[]) {
-    if (entry.kind === 'mail-draft') await page.request.post(`/api/attention/${encodeURIComponent(entry.id)}/dismiss`);
+    if (entry.kind === 'mail-draft') await page.request.post(`/api/attention/${encodeURIComponent(entry.id)}/dismiss`, { data: { opened: true } });
   }
   const stage = await (await page.request.get('/api/stage')).json();
   await page.request.put('/api/stage', { data: { ...stage, cards: (stage.cards as { id: string }[]).filter((card) => card.id !== LEADS && card.id !== BOARD), wires: (stage.wires as { id: string }[]).filter((wire) => wire.id !== `marketing-${LEADS}`) } });

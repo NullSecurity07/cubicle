@@ -663,8 +663,10 @@ export const fakeClient: ModelClient = {
         return { text: '', calls: [{ id: callId(), name: 'generate_image', args: JSON.stringify({ prompt: 'an influencer talking to camera' }) }], usage: { input: 10, output: 5 } };
       }
     }
+    // `/say <words>` puts words in its mouth after the tools, so a browser test can watch a reply that claims too much.
+    const scripted = /^\/say (.+)$/m.exec(heard)?.[1];
     const reply = last?.role === 'tool'
-      ? `Tool said: ${last.content}`
+      ? scripted ?? `Tool said: ${last.content}`
       : heard.startsWith('/markdown') ? '**Bold plan**\n\n- one\n- two'
       : heard.startsWith('/rich') ? 'A flow:\n\n```mermaid\ngraph TD; Idea-->Build; Build-->Launch;\n```\n\nA page:\n\n```html\n<!doctype html><html><body><h1 id="t">Landing</h1><script>document.getElementById("t").textContent += " page";</script></body></html>\n```'
       : last?.role === 'user' && last.images?.length ? `I can see ${last.images.length} picture: ${last.images[0].name.split('/').pop()}.`

@@ -25,7 +25,7 @@ import { markClaims } from '../tools/evidence.ts';
 import { createWatch, fakeWatchReply, watchBudget, type Budget } from '../partner/watch.ts';
 import { draftId, gmailLink } from '../../shared/maildraft.ts';
 import { leadAddresses, noAddress } from '../tools/outward.ts';
-import { saidNoFor } from '../partner/saidno.ts';
+import { ruledOutLine, saidNoFor } from '../partner/saidno.ts';
 import { staleNeeds, standingBlock, standingParts, stillWaiting, teamVerdict, verdictLines, type StandingParts } from '../partner/standing.ts';
 import { companyFacts, keepFacts, keptLine, runwayFix } from '../partner/keep.ts';
 import { CUSTOMER_LINE, customerReply, forCustomers } from '../partner/audience.ts';
@@ -633,11 +633,15 @@ export function createPartner(options: PartnerOptions = {}) {
       if (!fresh) return;
       // A new call with no kill signal of its own keeps the one standing.
       const fresher = { ...fresh, ...(!fresh.signal && held.call.signal ? { signal: held.call.signal } : {}) };
-      const call = fresher.why ? { ...fresher, why: markClaims(fresher.why, [company, ...(fresher.working ?? [])]) } : fresher;
+      const marked = fresher.why ? { ...fresher, why: markClaims(fresher.why, [company, ...(fresher.working ?? [])]) } : fresher;
+      // The week's move is held to what the founder ruled out (journey 15: "Contact 40 more makers" minutes after "no
+      // cold outreach"): one set against a standing no is dropped, and the refresh says which no it kept to.
+      const ruled = marked.move ? await saidNoFor(deps.workspace).ruledOut(marked.move).catch(() => undefined) : undefined;
+      const call = ruled ? { ...marked, move: undefined } : marked;
       const at = now();
       const moves = call.signal && (call.signal.what !== held.call.signal?.what || call.signal.by !== held.call.signal?.by);
       const kept = moves && call.signal && await promises.add({ what: call.signal.what, due: call.signal.by, roomId: partner.id, check: true });
-      const text = `${figuresFix(refreshText(opening, held.call.decision, call), economics)}${kept ? `\n\n*Kill signal moved: it comes to Needs you on ${call.signal!.by}.*` : ''}`;
+      const text = `${figuresFix(refreshText(opening, held.call.decision, call), economics)}${kept ? `\n\n*Kill signal moved: it comes to Needs you on ${call.signal!.by}.*` : ''}${ruled ? `\n\n*${ruledOutLine(ruled)}, so the move "${marked.move}" was dropped.*` : ''}`;
       await deps.store.appendChat(partner.id, { id: newMessageId(), role: 'assistant', text, at, ...(reply.provider ? { provider: reply.provider } : {}), ...(reply.model ? { model: reply.model } : {}) });
       await state.change((draft) => { draft.call = { ...call, at, day: today, roomId: partner.id, ...(economics?.inputs ? { basis: economics.inputs } : {}) }; });
       markVerdict(partner.id, at);
