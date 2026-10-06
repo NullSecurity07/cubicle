@@ -1,6 +1,7 @@
 import type { TurnResult } from '../loop.ts';
 import { readCall, renderCall, callShape, type PartnerCall, type Decision } from './call.ts';
 import { economicsBlock, type Economics, type Inputs } from './economics.ts';
+import type { Goal } from './goal.ts';
 
 // A verdict is a call on the numbers as they stood that day. Journey 13's "keep going" was made at 3 paying offices;
 // a week on, with a price changed or a fourth office paying, nobody looked at it again unless the founder asked. The
@@ -30,12 +31,29 @@ export function movedSince(basis: Inputs, now: Inputs): Moved[] {
   });
 }
 
-// Whether the call is due a fresh look today, and why: the numbers moved, or a week went by.
-export function refreshDue(call: Held | undefined, now: Inputs | undefined, today: string): { why: 'moved' | 'week'; moved: Moved[] } | null {
+export type Why = 'moved' | 'goal' | 'slip' | 'week';
+// Journey 14: the brief's goal stayed as it was for two days of verdict, pushback and a slip; nothing looked again.
+// `goal`: the Company brief's dated goal (server/partner/goal.ts), due a look once its day passed after the call.
+// `slip`: what changed since yesterday that slips on that goal (server/partner/since.ts), not yet looked at.
+export type Due = { why: Why; moved: Moved[]; goal?: Goal; slip?: string };
+// Whether the call is due a fresh look today, and why: the numbers moved, the goal's day passed or the goal slipped,
+// or a week went by.
+export function refreshDue(call: Held | undefined, now: Inputs | undefined, today: string, on: { goal?: Goal; slip?: string } = {}): Due | null {
   if (!call?.decision) return null;
   const moved = call.basis && now ? movedSince(call.basis, now) : [];
   if (moved.length) return { why: 'moved', moved };
+  if (on.goal && on.goal.by < today && call.day <= on.goal.by) return { why: 'goal', moved: [], goal: on.goal };
+  if (on.slip && call.day < today) return { why: 'slip', moved: [], slip: on.slip };
   return between(call.day, today) >= WEEK ? { why: 'week', moved: [] } : null;
+}
+
+const STEMS = (text: string) => text.toLowerCase().replace(/\d+/g, ' ').split(/[^a-z]+/).filter((word) => word.length > 3).map((word) => word.replace(/s$/, ''));
+// The line of what changed since yesterday that slips on the goal: a promise slipped, a number moved the wrong way or
+// a check overdue, about what the goal counts.
+export function slipOn(goal: Goal | undefined, since: string[]): string | undefined {
+  if (!goal) return undefined;
+  const words = STEMS(goal.what);
+  return since.find((line) => /^(?:Slipped:|Kill-signal check overdue:)|\(worse\)\.?$/.test(line) && STEMS(line).some((word) => words.includes(word)));
 }
 
 const shortDay = (day: string) => new Date(`${day}T12:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
@@ -55,8 +73,13 @@ export function refreshOpening(call: Held, economics: Economics | null, moved: M
 }
 
 // What the partner is asked to answer, with the old call and the working now in front of it.
-export function refreshAsk(call: Held, opening: string, economics: Economics | null, today: string, why: 'moved' | 'week'): string {
-  return `${why === 'moved' ? 'The numbers behind your verdict moved.' : 'A week has passed since your verdict.'} Make the call again, unasked, on the numbers as they stand now.\n`
+const WHY_SAID = (due: Pick<Due, 'why' | 'goal' | 'slip'>) => (due.why === 'moved' ? 'The numbers behind your verdict moved.'
+  : due.why === 'goal' ? `The Company brief's goal, ${due.goal!.what} by ${due.goal!.said} (${due.goal!.by}), has passed its day.`
+    : due.why === 'slip' ? `Since yesterday, on the brief's goal (${due.goal ? `${due.goal.what} by ${due.goal.said}` : 'its goal'}): ${due.slip}`
+      : 'A week has passed since your verdict.');
+export function refreshAsk(call: Held, opening: string, economics: Economics | null, today: string, why: Why | Pick<Due, 'why' | 'goal' | 'slip'>): string {
+  const due = typeof why === 'string' ? { why } : why;
+  return `${WHY_SAID(due)} Make the call again, unasked, on the numbers as they stand now.${due.why === 'goal' || due.why === 'slip' ? ' Never move the goal\'s day yourself: if it should move, say so and why, and the founder decides.' : ''}\n`
     + `Your verdict then:\n${renderCall(call)}\n\n${opening}\n\n${callShape(today, !!economics)}${economics ? `\n\n${economicsBlock(economics)}` : ''}`;
 }
 
@@ -68,8 +91,9 @@ export function refreshText(opening: string, old: Decision | undefined, fresh: P
 }
 
 // The new call read from the reply, held to the same four lines as an asked verdict; null when it has no call at all.
-export function readRefresh(reply: Pick<TurnResult, 'text'>, today: string, evidence: string, economics: Economics | null): PartnerCall | null {
-  const read = readCall(reply.text, today, `${evidence}\n${(economics?.working ?? []).map((one) => one.line).join('\n')}`, economics);
+// A kill signal that could not fail from where the company stands (deadSignal) is not taken: the one standing stays.
+export function readRefresh(reply: Pick<TurnResult, 'text'>, today: string, evidence: string, economics: Economics | null, numbers = ''): PartnerCall | null {
+  const read = readCall(reply.text, today, `${evidence}\n${(economics?.working ?? []).map((one) => one.line).join('\n')}`, economics, numbers);
   if (!read.decision) return null;
   return {
     decision: read.decision, ...(read.why && !read.unsourced.length ? { why: read.why } : {}), ...(read.signal ? { signal: read.signal } : {}), ...(read.move ? { move: read.move } : {}),

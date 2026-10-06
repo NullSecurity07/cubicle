@@ -13,19 +13,20 @@ import { saysSomething } from '../missions.ts';
 import { FAKE_MORNING, MOST_TRIES, morningDue, morningInputs, morningMessage, writeMorning, type MorningSources } from '../partner/morning.ts';
 import { addPlan, boardFor, boardForPlan, NO_BOARD, planAttention, stepsFrom } from '../partner/plans.ts';
 import { asksWhatNext, holdSynthesis, standingFacts } from '../partner/synthesis.ts';
-import { asksVerdict, callShape, holdCall } from '../partner/call.ts';
-import { economicsBlock, economicsOf, workingTools } from '../partner/economics.ts';
+import { asksVerdict, callShape, holdCall, PUSHBACK_LINE, pushesBack } from '../partner/call.ts';
+import { economicsBlock, economicsOf, figuresFix, workingTools } from '../partner/economics.ts';
 import { chaseLine, keptPromiseLine, promiseLine, promisesAttention, promisesBook, promisesIn } from '../partner/promises.ts';
-import { metricsOnDisk, sinceHeadline } from '../partner/since.ts';
+import { gatherSince, metricsOnDisk, sinceHeadline } from '../partner/since.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import { createReviews, granted } from '../partner/review.ts';
-import { readRefresh, refreshAsk, refreshDue, refreshOpening, refreshText } from '../partner/refresh.ts';
+import { readRefresh, refreshAsk, refreshDue, refreshOpening, refreshText, slipOn } from '../partner/refresh.ts';
+import { goalsIn } from '../partner/goal.ts';
 import { markClaims } from '../tools/evidence.ts';
 import { createWatch, fakeWatchReply, watchBudget, type Budget } from '../partner/watch.ts';
 import { draftId, gmailLink } from '../../shared/maildraft.ts';
 import { leadAddresses, noAddress } from '../tools/outward.ts';
 import { saidNoFor } from '../partner/saidno.ts';
-import { staleNeeds, standingBlock, standingParts, stillWaiting, teamVerdict, type StandingParts } from '../partner/standing.ts';
+import { staleNeeds, standingBlock, standingParts, stillWaiting, teamVerdict, verdictLines, type StandingParts } from '../partner/standing.ts';
 import { companyFacts, keepFacts, keptLine, runwayFix } from '../partner/keep.ts';
 import { CUSTOMER_LINE, customerReply, forCustomers } from '../partner/audience.ts';
 import { wired } from '../prompt.ts';
@@ -216,6 +217,9 @@ export function createPartner(options: PartnerOptions = {}) {
       const doc = await companyNow(stage);
       return doc ? economicsOf(sectionText(await deps.store.readDoc(doc.id).catch(() => ''), 'Numbers')) : null;
     };
+    // The founder challenging the verdict standing in this room is held to the verdict's four lines too, so a kill
+    // signal changed under pushback replaces the check (server/partner/call.ts).
+    const pushedBack = async (roomId: string, query: string) => !asksVerdict(query) && pushesBack(query) && (await state.read()).call?.roomId === roomId;
     // The morning turn spends a model call every day, so a fake run (the browser tests) only takes one when asked:
     // STAGE_PARTNER_MORNING=1, or the founder's own "morning note".
     // A check run that moved the clock (server/clock-offset.ts) wants the next day's note too: it is living that day.
@@ -335,8 +339,9 @@ export function createPartner(options: PartnerOptions = {}) {
       }
       // The founder's open promises are read fresh too: one closed a moment ago is gone from the next turn.
       // So is what the founder said no to: a no given a moment ago is in the very next turn.
-      const [parts, promised, declined] = await Promise.all([standing, promises.list().catch(() => []), saidNoFor(deps.workspace).lines().catch(() => [])]);
-      return { ...parts, promised: promised.filter((one) => one.status === 'open').map(promiseLine), declined };
+      // So is the partner's own verdict: one refreshed or changed under pushback a moment ago is the one said.
+      const [parts, promised, declined, held] = await Promise.all([standing, promises.list().catch(() => []), saidNoFor(deps.workspace).lines().catch(() => []), state.read().catch(() => null)]);
+      return { ...parts, promised: promised.filter((one) => one.status === 'open').map(promiseLine), declined, call: verdictLines(held?.call) };
     }
     async function standingFor(stage: Stage, partnerId: string) {
       // Bets are read from the ledger, never from Needs you rows: a row can outlive the take by a refresh.
@@ -441,8 +446,10 @@ export function createPartner(options: PartnerOptions = {}) {
         if (forCustomers(payload.query)) out = withSystem(out, CUSTOMER_LINE);
         // A verdict on the company comes in four lines, held to them after (the reply seam below). The brief's numbers
         // are worked out with calc first (break-even, runway), so the call is made with them in view.
-        if (asksVerdict(payload.query)) {
+        const pushed = await pushedBack(payload.roomId, payload.query).catch(() => false);
+        if (asksVerdict(payload.query) || pushed) {
           const economics = await economicsNow(stage).catch(() => null);
+          if (pushed) out = withSystem(out, PUSHBACK_LINE);
           out = withSystem(out, callShape(localDay(now()), !!economics));
           if (economics) out = withSystem(out, economicsBlock(economics));
         }
@@ -468,8 +475,10 @@ export function createPartner(options: PartnerOptions = {}) {
       // A verdict on the company commits: the call, the reason on record, a kill signal with its day, the first move.
       // A part missing is asked for once; the kill signal waits in Needs you for its day (server/partner/call.ts).
       let checkLine = '';
-      if (asksVerdict(payload.query)) {
+      const pushed = await pushedBack(me.id, payload.query).catch(() => false);
+      if (asksVerdict(payload.query) || pushed) {
         try {
+          const before = (await state.read()).call;
           const today = localDay(now());
           const doc = await companyNow(stage);
           const [company, block, chat] = await Promise.all([
@@ -479,7 +488,7 @@ export function createPartner(options: PartnerOptions = {}) {
           const evidence = [company, block, payload.query, ...chat.slice(-30).map((one) => one.text ?? ''), ...payload.reply.tools.map((tool) => tool.result ?? '')].join('\n');
           const said = [company, payload.query, ...chat.slice(-30).filter((one) => one.role === 'user' && !one.from).map((one) => one.text ?? ''), ...payload.reply.tools.filter((tool) => tool.ok !== false).map((tool) => tool.result ?? '')];
           const economics = company ? economicsOf(sectionText(company, 'Numbers')) : null;
-          const { reply, call, askedAgain } = await holdCall(payload.query, payload.reply, payload.again, today, evidence, said, economics);
+          const { reply, call, askedAgain } = await holdCall(payload.query, payload.reply, payload.again, today, evidence, said, economics, company ? sectionText(company, 'Numbers') : '', pushed);
           if (call) {
             // The working rides with the turn as the calc tool's own results, so the guard and the founder see where
             // each figure in the reason came from.
@@ -492,7 +501,10 @@ export function createPartner(options: PartnerOptions = {}) {
             if (call.signal) {
               await promises.add({ what: call.signal.what, due: call.signal.by, roomId: me.id, check: true });
               await deps.attention.refresh().catch(() => {});
-              checkLine = `*Kept as a check: it comes to Needs you on ${call.signal.by}.*`;
+              // A new kill signal takes the old one's place as the one check, and the founder is told which went.
+              const moved = before?.signal && (before.signal.what !== call.signal.what || before.signal.by !== call.signal.by);
+              checkLine = moved ? `*Kill signal moved: "${call.signal.what}" by ${call.signal.by} takes the place of "${before!.signal!.what}" by ${before!.signal!.by} as the check in Needs you.*`
+                : `*Kept as a check: it comes to Needs you on ${call.signal.by}.*`;
             }
           }
         } catch (error) { console.error(`partner verdict: ${(error as Error).message}`); }
@@ -518,7 +530,8 @@ export function createPartner(options: PartnerOptions = {}) {
         const numbers = `${sectionText(company, 'Numbers')}\n${payload.query}`;
         // What customers will read carries no source tags, placeholders or company money, and is not called ready while it does.
         if (forCustomers(payload.query)) text = customerReply(text, numbers);
-        text = runwayFix(text, numbers);
+        // Runway and break-even come from calc on the brief's numbers, never from the model (server/partner/economics.ts).
+        text = runwayFix(figuresFix(text, economicsOf(sectionText(company, 'Numbers'))), numbers);
         // Sent to Needs you with nothing waiting there: said under the reply.
         const rows = await deps.attention.list().catch(() => []);
         const ledger = await book.list().catch(() => null);
@@ -600,19 +613,23 @@ export function createPartner(options: PartnerOptions = {}) {
       const partner = partnerOf(stage);
       if (!partner || deps.busy.has(partner.id)) return;
       const economics = await economicsNow(stage).catch(() => null);
-      const due = refreshDue(held.call, economics?.inputs, today);
+      const doc = await companyNow(stage);
+      const company = doc ? await deps.store.readDoc(doc.id).catch(() => '') : '';
+      // The brief's dated goal, and what changed since yesterday that slips on it, each said once (server/partner/goal.ts).
+      const goal = goalsIn(company, today)[0];
+      const slip = slipOn(goal, goal ? await gatherSince(sourcesFor(stage, partner.id, company)).catch(() => []) : []);
+      const slipKey = slip?.replace(/\d+ days? late/, '').trim();
+      const due = refreshDue(held.call, economics?.inputs, today, { goal, slip: slipKey && held.slipSeen !== slipKey ? slip : undefined });
       if (!due) return;
       const taken = await granted(budget, 'verdict refresh');
       if (!taken.ok) return;
-      await state.change((draft) => { draft.refreshTried = today; });
+      await state.change((draft) => { draft.refreshTried = today; if (due.why === 'slip') draft.slipSeen = slipKey; });
       const opening = refreshOpening(held.call, economics, due.moved);
-      const messages: ModelMessage[] = [...await deps.promptFor(stage, partner.id, [], true), { role: 'user', content: refreshAsk(held.call, opening, economics, today, due.why) }];
+      const messages: ModelMessage[] = [...await deps.promptFor(stage, partner.id, [], true), { role: 'user', content: refreshAsk(held.call, opening, economics, today, { ...due, goal }) }];
       // No model answered: the turn never ran, so it goes back to the day's budget, and tomorrow tries again.
       const answered = await ask(messages).catch((error: Error) => { taken.release(); throw error; });
       const reply = typeof answered === 'string' ? { text: answered } as { text: string; provider?: string; model?: string } : answered;
-      const doc = await companyNow(stage);
-      const company = doc ? await deps.store.readDoc(doc.id).catch(() => '') : '';
-      const fresh = readRefresh(reply, today, `${company}\n${opening}`, economics);
+      const fresh = readRefresh(reply, today, `${company}\n${opening}`, economics, sectionText(company, 'Numbers'));
       if (!fresh) return;
       // A new call with no kill signal of its own keeps the one standing.
       const fresher = { ...fresh, ...(!fresh.signal && held.call.signal ? { signal: held.call.signal } : {}) };
@@ -620,7 +637,7 @@ export function createPartner(options: PartnerOptions = {}) {
       const at = now();
       const moves = call.signal && (call.signal.what !== held.call.signal?.what || call.signal.by !== held.call.signal?.by);
       const kept = moves && call.signal && await promises.add({ what: call.signal.what, due: call.signal.by, roomId: partner.id, check: true });
-      const text = `${refreshText(opening, held.call.decision, call)}${kept ? `\n\n*Kill signal moved: it comes to Needs you on ${call.signal!.by}.*` : ''}`;
+      const text = `${figuresFix(refreshText(opening, held.call.decision, call), economics)}${kept ? `\n\n*Kill signal moved: it comes to Needs you on ${call.signal!.by}.*` : ''}`;
       await deps.store.appendChat(partner.id, { id: newMessageId(), role: 'assistant', text, at, ...(reply.provider ? { provider: reply.provider } : {}), ...(reply.model ? { model: reply.model } : {}) });
       await state.change((draft) => { draft.call = { ...call, at, day: today, roomId: partner.id, ...(economics?.inputs ? { basis: economics.inputs } : {}) }; });
       markVerdict(partner.id, at);

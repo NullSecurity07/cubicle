@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TurnResult } from '../loop.ts';
 import { economicsOf } from './economics.ts';
-import { asksVerdict, callNudge, callShape, checkTitle, holdCall, killOf, NO_SIGNAL, plusDays, readCall, renderCall, unsourcedIn } from './call.ts';
+import { asksVerdict, callNudge, callShape, checkTitle, deadSignal, holdCall, killOf, NO_SIGNAL, plusDays, pushesBack, readCall, renderCall, thresholdOf, unsourcedIn } from './call.ts';
 
 const today = '2026-10-06';
 const brief = '## Numbers\n- Beta users: 12 (2 paying)\n- Price: €39 a month\n- MRR: €78\n- Cash: €9,800\n- Burn: €1,650 a month\n- Runway: 5.9 months';
@@ -147,5 +147,51 @@ describe('a verdict held to the brief\'s break-even', () => {
     expect(labelled.reply.text).not.toContain('Gap:');
     const silent = await holdCall('your verdict?', turn(blind), async () => turn('My call: keep going.'), today, harvest, [harvest], economics);
     expect(silent.reply.text).toContain('Gap: break-even is 34 paying offices and the company has 3; nothing said yet closes that gap.');
+  });
+});
+
+// Journey 14's Company brief: 2 paying practices already, so "< 2" could only fire if one left.
+const CALLBACK = '- Price: €49 per practice per month\n- Practices contacted: 40\n- Pilots running: 3\n- Paying practices: 2\n- Cash in the bank: €4,000\n- Monthly burn: €900';
+describe('a kill signal that can fail', () => {
+  it('reads the threshold and which way it fires', () => {
+    expect(thresholdOf('paying practices < 2')).toEqual({ metric: 'paying practices', below: true, value: 2 });
+    expect(thresholdOf('Paying practices still below 10')).toEqual({ metric: 'Paying practices', below: true, value: 10 });
+    expect(thresholdOf('fewer than 10 paying practices')).toEqual({ metric: 'paying practices', below: true, value: 10 });
+    expect(thresholdOf('monthly burn above €1,200')).toEqual({ metric: 'monthly burn', below: false, value: 1200 });
+    expect(thresholdOf('6 paying users')).toEqual({ metric: 'paying users', below: true, value: 6 });
+    expect(thresholdOf('more traction')).toBeNull();
+  });
+
+  it('turns down a threshold on the winning side of today, or out of reach, and keeps one the company could miss', () => {
+    const by = '2026-11-03';
+    expect(deadSignal({ what: 'paying practices < 2', by }, CALLBACK)).toContain('Paying practices is 2 now (Company brief), so "paying practices < 2" can only fire if it falls back');
+    expect(deadSignal({ what: 'paying practices < 1', by }, CALLBACK)).toContain('can only fire');
+    expect(deadSignal({ what: 'Paying practices < 10', by }, CALLBACK)).toBeNull();
+    expect(deadSignal({ what: 'paying practices < 500', by }, CALLBACK)).toContain('out of reach');
+    expect(deadSignal({ what: 'monthly burn above €1,200', by }, CALLBACK)).toContain('can only fire if it rises back');
+    expect(deadSignal({ what: 'monthly burn above €800', by }, CALLBACK)).toBeNull();
+    // A number the brief does not hold is not judged.
+    expect(deadSignal({ what: 'reply rate < 20%', by }, CALLBACK)).toBeNull();
+  });
+
+  it('asks once for a real one, and says none is named when the second is no better', async () => {
+    const first = turn('My call: keep going.\nWhy: 2 paying practices out of 40 contacted.\nKill signal: paying practices < 2 by 2026-11-03.\nThis week: convert the 3 pilots.');
+    const nudges: string[] = [];
+    const fixed = await holdCall('your verdict?', first, async (_, nudge) => { nudges.push(nudge); return turn('Kill signal: paying practices < 10 by 2026-11-03'); }, today, CALLBACK, [CALLBACK], null, CALLBACK);
+    expect(nudges[0]).toContain('can only fire if it falls back');
+    expect(fixed.call?.signal).toEqual({ what: 'paying practices < 10', by: '2026-11-03' });
+    const still = await holdCall('your verdict?', first, async () => turn('Kill signal: paying practices < 2 by 2026-11-03'), today, CALLBACK, [CALLBACK], null, CALLBACK);
+    expect(still.call?.signal).toBeUndefined();
+    expect(still.reply.text).toContain(`Kill signal: ${NO_SIGNAL}.`);
+  });
+});
+
+describe('pushback on the verdict', () => {
+  it('hears the founder challenging the call or its kill signal, and not an ordinary question', () => {
+    expect(pushesBack("I don't buy it. Your kill signal is 'paying practices below 2 by 3 November', and I already have 2, so it can only fire if I lose one. Give me a sharper call and a kill signal that can actually fail.")).toBe(true);
+    expect(pushesBack('I disagree with your call.')).toBe(true);
+    expect(pushesBack('That kill signal is too easy.')).toBe(true);
+    expect(pushesBack('What is the kill signal we hold ourselves to?')).toBe(false);
+    expect(pushesBack("I don't buy the new logo.")).toBe(false);
   });
 });

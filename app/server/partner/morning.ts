@@ -9,6 +9,7 @@ import { checkReply, FLAG_LINE, stripFlagged, turnSources } from '../truth.ts';
 import { gatherMonth } from '../slices/month.ts';
 import { cardOf } from './bets.ts';
 import { learnedSection, sectionText } from './company.ts';
+import { economicsOf, figuresFix } from './economics.ts';
 import { runwayFix } from './keep.ts';
 import type { FounderPromise } from './promises.ts';
 import { gatherSince, sinceText, type SinceInput } from './since.ts';
@@ -172,10 +173,29 @@ export async function gatherMorning(from: MorningSources, since?: string[]): Pro
     ...(got.verdicts.length ? ['Team verdicts:', ...got.verdicts] : []),
     ...(got.flagged.length ? [`Flagged by the truth net since ${got.yesterday} (figures nothing backed):`, ...got.flagged] : []),
     `Company Numbers:\n${got.numbers || '- none written'}`,
+    // The one runway and break-even: worked with calc here, never a figure a person or the partner said in a room.
+    ...(working(from.company).length ? ['Worked with calc from the Company Numbers (the only runway and break-even to use; a figure said in a room is not one):', ...working(from.company)] : []),
     'On the board for today:', ...(got.planned.length ? got.planned.slice(0, 12) : ['- nothing dated today']),
     'Bets:', ...(got.open.length || got.closed.length ? [...got.open, ...got.closed].map(betLine) : ['- none on record']),
     ...(got.closed.length ? ['What we learned (closed bets):', ...learnedSection(got.closed)] : []),
   ].join('\n');
+}
+
+const working = (company = '') => (economicsOf(sectionText(company, 'Numbers'))?.working ?? []).map((one) => `- ${one.line}`);
+
+// Journey 14's note: "the confirmed 4.4-month runway calculated by Ops". Ops had worked out 4.99; 4.4 was the partner's
+// own wrong sum, and nothing read confirmed it. "Confirmed" (or verified, validated) stands only beside figures a read
+// gives: the Company Numbers, the calc working, the metrics and what changed since yesterday. Else the word goes: "the
+// confirmed X" is "the X", and "Ops confirmed X" is "Ops said X".
+const CONFIRMED = /\b(the|a|an|our|your|its|their)\s+(?:confirmed|verified|validated)\s+|\b(?:confirmed|verified|validated)\b/gi;
+const FIGURES = /\d[\d,]*(?:\.\d+)?/g;
+export function confirmedFix(line: string, read: string[]): string {
+  if (!/\b(?:confirmed|verified|validated)\b/i.test(line)) return line;
+  const held = read.join('\n').replace(/(?<=\d),(?=\d{3}\b)/g, '');
+  const figures = (line.replace(/(?<=\d),(?=\d{3}\b)/g, '').match(FIGURES) ?? []).map((one) => one.replace(/[.,]+$/, ''));
+  const backed = figures.length > 0 && figures.every((one) => new RegExp(`(?<![\\d.])${one.replace('.', '\\.')}(?![\\d]|\\.\\d)`).test(held));
+  if (backed) return line;
+  return line.replace(CONFIRMED, (_whole, article?: string) => (article ? `${article} ` : 'said')).replace(/\s{2,}/g, ' ');
 }
 
 // The facts without the truth net's flagged block, which runs from its heading to the Company numbers.
@@ -217,7 +237,10 @@ export async function writeMorning(input: {
   if (!reply.read || (fault && !input.last)) return null;
   // Runway is never rounded toward the better side, in the note either.
   const numbers = `${sectionText(sources.company ?? '', 'Numbers')}`;
-  const fix = (line: string) => runwayFix(line, numbers);
+  // Runway and break-even as the calc working gives them, never as a room said them; "confirmed" only beside a read.
+  const economics = economicsOf(numbers);
+  const reads = [numbers, ...(economics?.working ?? []).map((one) => one.result), ...since];
+  const fix = (line: string) => confirmedFix(runwayFix(figuresFix(line, economics), numbers), reads);
   const read: Morning = { things: reply.read.things.map(fix), risk: fix(reply.read.risk), question: fix(reply.read.question) };
   // The truth net, as every turn has it: a figure in the note that nothing it was given holds is flagged under it,
   // and the note is posted all the same, so the founder sees both.

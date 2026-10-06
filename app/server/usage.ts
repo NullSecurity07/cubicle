@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { CheckOutcome, KeyCheck, ModelInfo, Usage } from '../shared/model.ts';
-import { createBreaker, planless, refused, unpaid } from './breaker.ts';
+import { createBreaker, limitWords, planless, refused, unpaid } from './breaker.ts';
 import { fromCache, onCache } from './cache.ts';
 import { neuronPoolOf, PICTURE_POOL, poolOf, providerOf, type ModelClient, type Quota } from './providers.ts';
 import { writeAtomic } from './fsx.ts';
@@ -31,7 +31,9 @@ type CacheCount = { hits: number; misses: number; tokensSaved: number };
 // `kinds`, `tools` and `cache` came later: a day written before them still reads, as a day without them.
 // `pictures`: by neuron pool, the pictures drawn on it today and the neurons they cost.
 // `month`: requests by key this calendar month, kept across days for a model with a monthly cap (`rpmo`).
-type State = { day: string; month?: { at: string; requests: Record<string, number> }; providers: Record<string, Count>; kinds?: Record<string, Count>; tools?: Record<string, ToolCount>; cache?: Record<string, CacheCount>; pictures?: Record<string, { drawn: number; neurons: number }> };
+type State = { day: string; month?: { at: string; requests: Record<string, number> }; providers: Record<string, Count>; kinds?: Record<string, Count>; tools?: Record<string, ToolCount>; cache?: Record<string, CacheCount>; pictures?: Record<string, { drawn: number; neurons: number }>;
+  // Models a turn's own 429 said were out of today's free requests: spent until the day rolls over, whatever the count says.
+  outToday?: string[] };
 type Seen = { at: number; tokens: number };
 // A key refused (`dead`) or answering again. `planless`: refused because its plan allows no requests at all yet;
 // `unpaid`: refused until the account has a card or payment method on file.
@@ -144,6 +146,7 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
       ? header.quota.remainingRequests / header.quota.limitRequests : 1;
     const pool = neuronPool(client);
     const fromNeurons = pool ? share(poolNeurons(pool), NEURONS_FOR_TURNS) : 1;
+    if (state.outToday?.includes(client.name)) return 0;
     return Math.min(share(pooled(client.name), client.limits.rpd), share(used.input + used.output, client.limits.tpd), fromHeader, fromNeurons, share(monthly(client.name), client.limits.rpmo));
   }
 
@@ -235,8 +238,14 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     cool(name: string, milliseconds = WINDOW) { cooling[name] = now() + milliseconds; },
     // A request that failed: a 429 rests the key (as long as it asked, or three seconds doubling), five 5xx or
     // timeouts in a row open its breaker, a 401 or 403 rests it six hours as dead. See breaker.ts.
+    // Journey 14: Gemini Flash's ring said "100% left" all day while every partner turn said its daily limit was reached:
+    // the count is ours and the provider's day is not, so a 429 that says the day is used marks it spent until tomorrow.
     failed(name: string, error: unknown) {
       const rest = breaker.failed(name, error);
+      if ((error as { status?: number })?.status === 429 && !planless(error) && limitWords(error) === "today's free limit reached") {
+        roll();
+        if (!state.outToday?.includes(name)) { state.outToday = [...state.outToday ?? [], name]; save(); }
+      }
       if (refused(error)) {
         const status = (error as { status?: number })?.status;
         forget(name);
@@ -296,6 +305,7 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     // whichever model asked: the rest of the 10,000 stays with the pictures.
     spent(client: ModelClient) {
       roll();
+      if (state.outToday?.includes(client.name)) return true;
       if (client.limits.rpd && pooled(client.name) >= client.limits.rpd) return true;
       if (client.limits.rpmo && monthly(client.name) >= client.limits.rpmo) return true;
       const pool = neuronPool(client);

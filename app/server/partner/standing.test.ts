@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Attention } from '../../shared/model.ts';
 import type { Stage } from '../../shared/model.ts';
-import { NOTHING_WAITING, staleNeeds, STANDING_HEAD, STANDING_MOST, standingBlock, teamVerdict, waitingLine, type StandingParts } from './standing.ts';
+import { NOTHING_WAITING, staleNeeds, STANDING_HEAD, STANDING_MOST, standingBlock, teamVerdict, verdictLines, waitingLine, type StandingParts } from './standing.ts';
 
 const item = (kind: Attention['kind'], title: string): Attention => ({ id: `${kind}:${title}`, kind, title, at: 1 });
 const parts = (extra: Partial<StandingParts> = {}): StandingParts => ({ verdicts: [], numbers: '', open: [], planned: [], flagCounts: [], decided: [], learned: [], ...extra });
@@ -58,5 +58,16 @@ describe('what the reply is held to', () => {
     for (const said of ['Decline the proposal and move on.', 'Accept the tasks Dev proposed.', 'Approve the bet before Friday.']) expect(staleNeeds(said, []), said).toBe(`${said}\n\n${NOTHING_WAITING}`);
     expect(staleNeeds(j7, [item('proposed-decision', 'Build invoicing feature this week?')])).toBe(j7);
     expect(staleNeeds('Check the pricing pages of the three competitors.', [])).toBe('Check the pricing pages of the three competitors.');
+  });
+});
+
+describe('the partner\'s own verdict in the standing facts', () => {
+  it('is said as it stands, kill signal and all, and says when no kill signal is named', () => {
+    expect(verdictLines({ decision: 'keep going', why: '2 paying practices.', signal: { what: 'paying practices < 10', by: '2026-11-03' }, move: 'convert the 3 pilots.', day: '2026-10-06' }))
+      .toEqual(['Your verdict on 2026-10-06: keep going. Why: 2 paying practices.', 'Kill signal: paying practices < 10 by 2026-11-03. This week: convert the 3 pilots.']);
+    expect(verdictLines({ decision: 'stop', day: '2026-10-06' })).toEqual(['Your verdict on 2026-10-06: stop.', 'Kill signal: no kill signal named yet.']);
+    expect(verdictLines(undefined)).toEqual([]);
+    const block = standingBlock({ verdicts: [], numbers: '', open: [], planned: [], flagCounts: [], decided: [], learned: [], call: verdictLines({ decision: 'stop', day: '2026-10-06' }) }, []);
+    expect(block.split('\n')[1]).toBe('Your own verdict on record (quote it as it stands when asked what was decided; never make up another):');
   });
 });

@@ -14,6 +14,7 @@ import { hub } from '../events.ts';
 import { todayFive } from '../today/rank.ts';
 import partner, { createPartner, type PartnerOptions } from './partner.ts';
 import { createUnasked, createUsage } from '../usage.ts';
+import { moveClock } from '../clock.ts';
 
 const ROOT = resolve(import.meta.dirname, '../../..');
 const room = (id: string, name: string, extra: Partial<Room> = {}): Room => ({ id, name, role: 'x', accent: '#fff', brief: '', x: 0, y: 0, w: 1, h: 1, ...extra });
@@ -839,6 +840,51 @@ describe('the partner slice: a verdict that commits', () => {
   });
 });
 
+// Journey 14: the founder pushed back ("a kill signal that can actually fail"); the partner named "< 10" in loose prose,
+// nothing read it, and the check stayed on "< 2".
+describe('the partner slice: pushback on the verdict', () => {
+  const CALLBACK = '## Numbers\n\n- Price: €49 per practice per month\n- Practices contacted: 40\n- Pilots running: 3\n- Paying practices: 2\n- Cash in the bank: €4,000\n- Monthly burn: €900\n';
+  const PUSH = "I don't buy it. Your kill signal is 'paying practices below 2 by 3 November', and I already have 2, so it can only fire if I lose one. Give me a sharper call and a kill signal that can actually fail.";
+  it('holds the answer to the four lines and replaces the stored call and the check in Needs you', async () => {
+    const { deps, part, workspace } = await installed({}, { now: () => new Date('2026-10-06T10:00').getTime(), ask: async () => SHAPED });
+    await withRooms(deps, [room('p1', 'Iris', { partner: true })]);
+    await part.tick!();
+    const company = companyDocOf(await deps.store.loadStage())!;
+    await deps.store.writeDoc(company.id, `${await deps.store.readDoc(company.id)}`.replace('## Numbers', CALLBACK.trim()));
+    const base = { tools: [], provider: 'p', model: 'm', usage: { input: 1, output: 1 }, stopped: false };
+    // The first verdict's "< 2" cannot fail with 2 paying; asked again, the partner keeps it, so none is named yet.
+    await deps.seams.run('turn:reply', { roomId: 'p1', query: 'Give me your verdict: keep going, pivot, or stop?',
+      reply: { ...base, text: 'My call: keep going.\nWhy: 2 paying practices out of 40 contacted.\nKill signal: paying practices < 2 by 2026-11-03.\nThis week: convert the 3 pilots.' },
+      again: async () => ({ ...base, text: 'Kill signal: paying practices < 2 by 2026-11-03.' }) });
+    expect((await partnerState(workspace).read()).call?.signal).toBeUndefined();
+    // Asked again, a kill signal that can fail is kept as the check.
+    await deps.seams.run('turn:reply', { roomId: 'p1', query: 'Your verdict again: keep going or stop?',
+      reply: { ...base, text: 'My call: keep going.\nWhy: 2 paying practices out of 40 contacted.\nKill signal: paying practices < 3 by 2026-11-03.\nThis week: convert the 3 pilots.' } });
+    expect((await partnerState(workspace).read()).call?.signal).toEqual({ what: 'paying practices < 3', by: '2026-11-03' });
+    const system = (await deps.seams.run('turn:before', { roomId: 'p1', source: 'chat', query: PUSH, messages: [{ role: 'system', content: 'You are someone.' }] })).messages[0].content as string;
+    expect(system).toContain('The founder is pushing back on your verdict.');
+    expect(system).toContain('Kill signal: one number the founder can measure');
+    const nudges: string[] = [];
+    const out = (await deps.seams.run('turn:reply', { roomId: 'p1', query: PUSH,
+      reply: { ...base, text: 'Fair. Here is a sharper one.\n\n### New Kill Signal\n- **Metric:** Paying practices < 10\n- **Check Date:** 2026-11-03' },
+      again: async (_first, nudge) => { nudges.push(nudge); return { ...base, text: 'My call: keep going.\nWhy: 2 paying practices out of 40 contacted.\nKill signal: paying practices < 10 by 2026-11-03.\nThis week: convert the 3 pilots.' }; } })).reply.text;
+    expect(nudges).toHaveLength(1);
+    expect(out).toContain('Kill signal: paying practices < 10 by 2026-11-03.');
+    expect(out).toContain('*Kill signal moved: "paying practices < 10" by 2026-11-03 takes the place of "paying practices < 3" by 2026-11-03 as the check in Needs you.*');
+    expect((await partnerState(workspace).read()).call?.signal).toEqual({ what: 'paying practices < 10', by: '2026-11-03' });
+    const open = (await promisesBook(workspace).list()).filter((one) => one.check && one.status === 'open');
+    expect(open.map((one) => one.what)).toEqual(['paying practices < 10']);
+    expect(promisesAttention(open, '2026-11-03')[0].title).toBe('Check: paying practices < 10 by 2026-11-03?');
+    // Day 2, no model on this machine: the verdict and the kill signal as they stand are in the partner's next turn.
+    const recall = (await deps.seams.run('turn:before', { roomId: 'p1', source: 'chat', query: 'Remind me: what did we decide yesterday, and what is the kill signal we hold ourselves to?', messages: [{ role: 'system', content: 'You are someone.' }] })).messages[0].content as string;
+    expect(recall).toContain('Your own verdict on record (quote it as it stands when asked what was decided; never make up another):\nYour verdict on 2026-10-06: keep going. Why: 2 paying practices out of 40 contacted.\nKill signal: paying practices < 10 by 2026-11-03. This week: convert the 3 pilots.');
+    // An ordinary question in the room is not held to the four lines.
+    const plain = (await deps.seams.run('turn:reply', { roomId: 'p1', query: 'What should the text to patients say?', reply: { ...base, text: 'Short and friendly.' } })).reply.text;
+    expect(plain).toBe('Short and friendly.');
+    await part.close!();
+  });
+});
+
 // Journey 13: Tom's Unit Economics had a net burn of €1,380 worked out with calc (the boxes' cost left out) and the
 // partner never looked. Now a colleague's finished doc write is reviewed on the next tick, unasked; and the verdict is
 // made again, unasked, when the brief's numbers moved more than a tenth since the call.
@@ -923,6 +969,35 @@ describe('the partner slice: reviewing colleagues and refreshing the verdict', (
     await again.tick!();
     expect(asks.filter((one) => one.includes('A week has passed since your verdict.'))).toHaveLength(1);
     await again.close!();
+  });
+});
+
+// Journey 14: the brief's goal day came and went with the verdict untouched. Lived with the clock moved, as a check run
+// that lives day 15 does.
+describe('the partner slice: the verdict looked at again on the brief\'s goal', () => {
+  it('makes the call again once the goal\'s day has passed, with the clock moved ahead', async () => {
+    const day = (text: string) => new Date(text).getTime() - Date.now();
+    moveClock(day('2026-10-15T10:00'));
+    try {
+      const asks: string[] = [];
+      const reply = 'My call: change course\nWhy: 2 paying practices.\nKill signal: paying practices < 6 by 2026-11-20\nThis week: call the 3 pilots.';
+      const { deps, part } = await installed({}, { ask: async (messages) => { asks.push(String(messages.at(-1)?.content)); return asks.at(-1)!.includes('Make the call again') ? reply : SHAPED; }, budget: { take: () => ({ ok: true }) } });
+      await withRooms(deps, [room('p1', 'Iris', { partner: true })]);
+      await part.tick!();
+      const company = companyDocOf(await deps.store.loadStage())!;
+      await deps.store.writeDoc(company.id, '# Company brief\n\nGoal: 10 paying practices by 20 October 2026.\n\n## Numbers\n\n- Paying practices: 2\n');
+      const base = { tools: [], provider: 'p', model: 'm', usage: { input: 1, output: 1 }, stopped: false };
+      await deps.seams.run('turn:reply', { roomId: 'p1', query: 'Your verdict: keep going or stop?', reply: { ...base, text: 'My call: keep going.\nWhy: 2 paying practices.\nKill signal: paying practices < 4 by 2026-11-05.\nThis week: call the 3 pilots.' } });
+      moveClock(day('2026-10-20T10:00'));
+      await part.tick!();
+      expect(asks.filter((one) => one.includes('has passed its day'))).toHaveLength(0);
+      moveClock(day('2026-10-21T10:00'));
+      await part.tick!();
+      const asked = asks.find((one) => one.includes('Make the call again'))!;
+      expect(asked).toContain('The Company brief\'s goal, 10 paying practices by 20 October 2026 (2026-10-20), has passed its day.');
+      expect((await deps.store.readChat('p1')).at(-1)!.text).toContain('My call: **change course**.');
+      await part.close!();
+    } finally { moveClock(0); }
   });
 });
 
