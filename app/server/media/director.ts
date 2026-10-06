@@ -77,6 +77,9 @@ const CUES: { was: RegExp; is: Partial<Understanding> }[] = [
   { was: /\b(no music|silent|without music)\b/i, is: { mood: 'none' } },
 ];
 
+// Words that make a brief a social post or an advert, the only films that close on what a platform offers.
+const SOCIAL = /\b(?:reel|tiktok|short-?form|shorts|influencer|creator|instagram|insta|ig|youtube shorts|social|followers?|feed|post|story|stories|linkedin|twitter|x post|ad|advert|commercial|promo)\b/i;
+
 // "15 second", "15s", "a minute", "half a minute", "thirty seconds".
 export function secondsIn(brief: string): number | undefined {
   const named: [RegExp, number][] = [[/\bhalf a minute\b/i, 30], [/\ba minute and a half\b/i, 90], [/\bninety seconds\b/i, 90], [/\b(?:one |a )?minute\b/i, 60], [/\btwo minutes\b/i, 120]];
@@ -141,7 +144,10 @@ export function understandingOf(raw: unknown, asked: Asked, read: Partial<Unders
   // "15 second", "calm" are not hints, they are instructions — and the model only fills what neither of those found.
   // A free model asked to read "15 second clip of influencer talking" called it a product explainer, which is how a
   // reel ends up looking like a slide deck.
-  const purpose = set(asked.purpose) ?? read.purpose ?? (isPurpose(said.purpose) ? said.purpose : undefined) ?? 'explainer';
+  // A model's "reel" or "ad" counts only when the brief reads as a social post or an advert: a documentary about a
+  // pottery class came back a reel that closed on "Follow for more".
+  const modelPurpose = isPurpose(said.purpose) && (!['reel', 'ad'].includes(said.purpose) || SOCIAL.test(asked.brief ?? '')) ? said.purpose : undefined;
+  const purpose = set(asked.purpose) ?? read.purpose ?? modelPurpose ?? 'explainer';
   const preset = PURPOSE[purpose];
   const seconds = (() => {
     const want = typeof asked.seconds === 'number' ? asked.seconds : read.seconds ?? Number(said.seconds);

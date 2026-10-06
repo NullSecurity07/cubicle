@@ -746,3 +746,30 @@ describe('the camera', () => {
     for (const at of [0, 2]) expect(mended.scenes[at]).toMatchObject({ shot: expect.any(String), lens: expect.any(Number), move: expect.any(String) });
   });
 });
+
+// Journey 12: a pottery documentary closed on "Follow for more", a creator's sign-off on a film nobody posts.
+describe('a sign-off for followers, outside a social post', () => {
+  const want = (over: Partial<Want> = {}): Want => ({
+    seconds: 20, pace: 'calm', purpose: 'explainer', captions: false,
+    bible: 'quiet documentary photography, soft window light', layouts: [...LAYOUTS], reel: false, ...over,
+  });
+  const pottery: Spec = {
+    title: 'Pottery Lessons',
+    scenes: [
+      { layout: 'statement', text: 'Clay on the wheel', say: 'A lump of clay turns on the wheel.' },
+      { layout: 'statement', text: 'Hands find the shape', say: 'Wet hands find the shape of a bowl.' },
+      { layout: 'cta', text: 'Follow for more', say: 'Follow for more.' },
+    ],
+  };
+
+  it('closes a documentary on something plain instead', () => {
+    const { spec, notes } = repair(pottery, want());
+    expect(JSON.stringify(spec.scenes)).not.toMatch(/follow for more/i);
+    expect(notes.join(' ')).toContain('sign-off for followers');
+  });
+
+  it('keeps it on a reel', () => {
+    const { spec } = repair(pottery, want({ purpose: 'reel', reel: true }));
+    expect(spec.scenes.at(-1)?.text).toMatch(/follow for more/i);
+  });
+});

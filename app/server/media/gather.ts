@@ -114,15 +114,45 @@ export function sourcesFor(stage: Stage, cardId?: string, roomId?: string): Card
 // pinned doc (which every person reads each turn, wired or not, as `readableDocIds` in prompt.ts says), and the
 // ones that person wrote this very turn, which no wire covers yet and are not on the stage until the page puts them
 // there. Pinned and wired docs come in the stage's own order; the ones written this turn follow.
-export const docsFor = (stage: Stage, cardId?: string, roomId?: string, granted: string[] = []): string[] => {
+//
+// `pinned: false` leaves a pinned doc out unless a wire or this turn reaches it: a film reads one only when it is
+// about the company (`aboutTheCompany`), which `gather` decides once it has read the doc.
+export const docsFor = (stage: Stage, cardId?: string, roomId?: string, granted: string[] = [], options: { pinned?: boolean } = {}): string[] => {
   const ends = new Set((stage.wires ?? []).flatMap((wire) => {
     if ((cardId && wire.from === cardId) || (roomId && wire.from === roomId)) return [wire.to];
     if ((cardId && wire.to === cardId) || (roomId && wire.to === roomId)) return [wire.from];
     return [];
   }));
-  const onStage = (stage.docs ?? []).filter((doc) => doc.pinned || ends.has(doc.id)).map((doc) => doc.id);
+  const withPinned = options.pinned !== false;
+  const onStage = (stage.docs ?? []).filter((doc) => (withPinned && doc.pinned) || ends.has(doc.id)).map((doc) => doc.id);
   return [...new Set([...onStage, ...granted])];
 };
+
+// Whether a brief is about the company, which is when a pinned doc nobody wired belongs in the film. "A documentary
+// about a pottery class" is about pottery: a real run read the pinned Company brief anyway and narrated the company's
+// cash in the bank over a pottery film. The company is named by the brief's own words ("our", "the product", "a
+// launch") or by a name the doc itself carries (its title, or a capitalised name near its top, like "Playtestr").
+const US = /\b(?:we|we're|our|ours|us|company|startup|product|app|platform|tool|team|founders?|customers?|users?|launch\w*|pitch\w*|investors?|brand|business|traction|demo|mvp)\b/i;
+const PLAIN = new Set(['the', 'a', 'an', 'and', 'company', 'brief', 'doc', 'document', 'notes', 'our', 'we', 'it', 'this', 'what', 'who', 'how', 'why', 'one', 'pitch', 'plan', 'summary']);
+export function aboutTheCompany(brief: string, doc: { title?: string; text?: string } = {}): boolean {
+  if (US.test(brief)) return true;
+  const said = new Set((brief.toLowerCase().match(/[a-z][a-z0-9'-]{2,}/g) ?? []));
+  const names = [
+    ...(doc.title ?? '').split(/[^A-Za-z0-9'-]+/),
+    // Capitalised words near the top: the names the doc is about, and the sentence openers PLAIN and the brief ignore.
+    ...((doc.text ?? '').slice(0, 600).match(/\b[A-Z][A-Za-z0-9]{2,}\b/g) ?? []),
+  ].map((one) => one.toLowerCase()).filter((one) => one.length >= 3 && !PLAIN.has(one));
+  return names.some((one) => said.has(one));
+}
+
+// The company's private money in a film's material: cash, revenue, burn and the sentences that carry them stay out
+// of a film unless the brief asks for them. A public film is not where the bank balance is read out unasked.
+const MONEY_ASK = /\b(?:money|cash|revenue|mrr|arr|runway|burn|metrics?|numbers?|traction|growth|raise|raising|investors?|fundrais\w*|valuation|financ\w*|profit\w*|sales|pricing|price|pitch\w*)\b/i;
+const MONEY = /\b(?:mrr|arr|cash|in the bank|revenue|runway|burn(?:ing)?|burn rate|valuation|profit|loss|bank balance|funding|raised|raising|pre-seed|seed round|investors?|salary|salaries|debt|loan)\b/i;
+export function asksForMoney(brief: string): boolean { return MONEY_ASK.test(brief); }
+export function withoutMoney(text: string): string {
+  return text.split('\n').map((line) => line.split(/(?<=[.!?])\s+/).filter((one) => !MONEY.test(one)).join(' ')).filter((line, index, all) => line.trim() || (index > 0 && all[index - 1].trim())).join('\n').trim();
+}
 
 // A wired voice studio, read as the film's narrator: the voice the founder set on it, and for OmniVoice the design,
 // the language and the recording it clones (`ref` is where that recording really is on disk, `refText` its words
@@ -217,14 +247,14 @@ export async function gather(deps: VideoDeps, asked: VideoAsk, at: string, repor
           const text = await library.read(card.noteId);
           if (text?.trim()) {
             const title = (await library.list()).find((one) => one.id === card.noteId)?.title ?? card.noteId;
-            material.lines.push(`${title}:\n${text.slice(0, 2400)}`);
+            material.lines.push(`${title}:\n${(asksForMoney(asked.prompt ?? '') ? text : withoutMoney(text)).slice(0, 2400)}`);
             material.using.push(title);
           }
         }
         else if (card.kind === 'browser') {
           const where = await deps.browser?.where(`card-${card.id}`).catch(() => null);
           if (where && !/^about:/.test(where)) addresses.push({ url: where, own: false, label: where });
-        } else if (card.kind === 'note' && card.text?.trim()) { material.lines.push(`A note on the stage:\n${card.text.slice(0, 1600)}`); material.using.push('a note'); }
+        } else if (card.kind === 'note' && card.text?.trim()) { material.lines.push(`A note on the stage:\n${(asksForMoney(asked.prompt ?? '') ? card.text : withoutMoney(card.text)).slice(0, 1600)}`); material.using.push('a note'); }
         else if (card.kind === 'image' && card.path) {
           const bytes = await deps.readFile?.(card.path).catch(() => null);
           if (bytes) { const name = `picture-${files.size + 1}`; await writeFile(join(at, 'assets', `${name}.png`), bytes); files.set(name, { file: `${name}.png`, kind: 'image', where: 'job' }); material.assets.push({ name, kind: 'image', what: 'a picture the founder put on the stage — use it as a scene' }); }
@@ -254,11 +284,17 @@ export async function gather(deps: VideoDeps, asked: VideoAsk, at: string, repor
     }
     // Documents wired to the card are words, the same as a note is — and so are the ones wired to whoever asked.
     const granted = asked.granted ?? [];
+    // A pinned doc nobody wired is read only for a film about the company; one about anything else is about that.
+    const reached = stage ? docsFor(stage, asked.cardId, asked.roomId, granted.map((one) => one.id), { pinned: false }) : [];
     const readable = stage ? docsFor(stage, asked.cardId, asked.roomId, granted.map((one) => one.id)) : [];
+    const money = asksForMoney(asked.prompt ?? '');
     for (const id of readable) {
       const title = stage?.docs.find((doc) => doc.id === id)?.title ?? granted.find((one) => one.id === id)?.title ?? 'a document';
       const text = await deps.readDoc?.(id).catch(() => '');
-      if (text?.trim()) { material.lines.push(`${title}:\n${text.slice(0, 2400)}`); material.using.push(title); }
+      if (!text?.trim()) continue;
+      if (!reached.includes(id) && !aboutTheCompany(asked.prompt ?? '', { title, text })) continue;
+      const kept = money ? text : withoutMoney(text);
+      if (kept.trim()) { material.lines.push(`${title}:\n${kept.slice(0, 2400)}`); material.using.push(title); }
     }
 
     // The product's own screens. Two addresses at most, and a handful of shots each: this is the slow part.

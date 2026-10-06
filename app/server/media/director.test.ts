@@ -58,6 +58,12 @@ describe('what the director understood', () => {
     expect(mind).toMatchObject({ purpose: 'pitch', shape: 'wide', seconds: 45, pace: 'calm', pack: 'editorial', mood: 'warm' });
   });
 
+  it('takes a model\'s "reel" only when the brief reads as a social post', () => {
+    const brief = 'A 20 second documentary clip about a pottery class, with real photographs.';
+    expect(understandingOf({ purpose: 'reel' }, { brief }, readBrief(brief)).purpose).toBe('explainer');
+    expect(understandingOf({ purpose: 'reel' }, { brief: 'a clip for my instagram' }, readBrief('a clip for my instagram')).purpose).toBe('reel');
+  });
+
   it('falls back to what the purpose has always meant when nobody said anything at all', () => {
     const mind = understandingOf({}, { brief: 'something about our product' }, {});
     expect(mind).toMatchObject({ purpose: 'explainer', shape: 'wide', seconds: 60, pace: 'calm', pack: 'clean', captions: false });
@@ -301,9 +307,12 @@ describe('what the card is wired to, used without being asked', () => {
     expect(lines).toContain('Pricing notes:\nWe charge nine dollars a seat.');
     // docs: wired, pinned and written this turn, never one nobody pointed at.
     expect(lines).toContain('Wired doc:\nThe wired words.');
-    expect(lines).toContain('Pinned doc:\nThe pinned words.');
     expect(lines).toContain('Just written:\nWritten this turn.');
     expect(lines).not.toContain('Nobody pointed here');
+    // A pinned doc nobody wired is read only for a film about the company: "a film" is about nothing of ours.
+    expect(lines).not.toContain('The pinned words.');
+    const ours = await gather(deps, { prompt: 'a film about our product', cardId: 'studio-3', roomId: 'marketing' }, at, () => {});
+    expect(ours.material.lines.join('\n')).toContain('Pinned doc:\nThe pinned words.');
     // image and image studio: pictures the film may use.
     expect(material.assets.filter((one) => one.kind === 'image').map((one) => one.what).join(' ')).toMatch(/put on the stage[\s\S]*a desk at dawn|a desk at dawn[\s\S]*put on the stage/);
     // link and source: pages to photograph, each at every screen size, two pages at most, so the browser's page
