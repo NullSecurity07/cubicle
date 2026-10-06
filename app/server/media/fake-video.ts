@@ -62,7 +62,9 @@ export const fakeVideosOf = (deps: { stage?: () => Promise<Stage> } = {}): Maker
       film: { title: spec.title, width: 1280, height: 720, fps: FPS, shots: [{ seconds: 1, ground: PACK.clean.paint.ground, words: spec.title }] },
       files: [],
     };
-    return { ext: 'mp4', bytes: Buffer.from(CLIP, 'base64'), poster: { ext: 'png', bytes: Buffer.from(POSTER, 'base64') }, ...(edit ? { edit, record: fakeRecord(spec, asked.narrate !== false, reading.voice ?? DEFAULT_VOICE, reading.engine) } : {}) };
+    // A full film credits the photograph it is made with, as a real one credits each library's picture beside the file.
+    const credits = edit ? 'Photographs\n- "A pottery wheel" by A Photographer, CC BY 2.0 · Openverse — https://example.org/photo/1\n' : undefined;
+    return { ext: 'mp4', bytes: Buffer.from(CLIP, 'base64'), poster: { ext: 'png', bytes: Buffer.from(POSTER, 'base64') }, ...(credits ? { credits } : {}), ...(edit ? { edit, record: fakeRecord(spec, asked.narrate !== false, reading.voice ?? DEFAULT_VOICE, reading.engine) } : {}) };
   },
 });
 export const fakeVideos: Maker = fakeVideosOf();
