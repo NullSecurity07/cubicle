@@ -450,7 +450,8 @@ export function createPartner(options: PartnerOptions = {}) {
         if (asksVerdict(payload.query) || pushed) {
           const economics = await economicsNow(stage).catch(() => null);
           if (pushed) out = withSystem(out, PUSHBACK_LINE);
-          out = withSystem(out, callShape(localDay(now()), !!economics));
+          const brief = await companyNow(stage).then((doc) => (doc ? deps.store.readDoc(doc.id) : '')).catch(() => '');
+          out = withSystem(out, callShape(localDay(now()), !!economics, goalsIn(brief, localDay(now()))));
           if (economics) out = withSystem(out, economicsBlock(economics));
         }
       }
@@ -488,7 +489,7 @@ export function createPartner(options: PartnerOptions = {}) {
           const evidence = [company, block, payload.query, ...chat.slice(-30).map((one) => one.text ?? ''), ...payload.reply.tools.map((tool) => tool.result ?? '')].join('\n');
           const said = [company, payload.query, ...chat.slice(-30).filter((one) => one.role === 'user' && !one.from).map((one) => one.text ?? ''), ...payload.reply.tools.filter((tool) => tool.ok !== false).map((tool) => tool.result ?? '')];
           const economics = company ? economicsOf(sectionText(company, 'Numbers')) : null;
-          const { reply, call, askedAgain } = await holdCall(payload.query, payload.reply, payload.again, today, evidence, said, economics, company ? sectionText(company, 'Numbers') : '', pushed);
+          const { reply, call, askedAgain } = await holdCall(payload.query, payload.reply, payload.again, today, evidence, said, economics, company ? sectionText(company, 'Numbers') : '', pushed, goalsIn(company, today));
           if (call) {
             // The working rides with the turn as the calc tool's own results, so the guard and the founder see where
             // each figure in the reason came from.
@@ -629,7 +630,7 @@ export function createPartner(options: PartnerOptions = {}) {
       // No model answered: the turn never ran, so it goes back to the day's budget, and tomorrow tries again.
       const answered = await ask(messages).catch((error: Error) => { taken.release(); throw error; });
       const reply = typeof answered === 'string' ? { text: answered } as { text: string; provider?: string; model?: string } : answered;
-      const fresh = readRefresh(reply, today, `${company}\n${opening}`, economics, sectionText(company, 'Numbers'));
+      const fresh = readRefresh(reply, today, `${company}\n${opening}`, economics, sectionText(company, 'Numbers'), goalsIn(company, today));
       if (!fresh) return;
       // A new call with no kill signal of its own keeps the one standing.
       const fresher = { ...fresh, ...(!fresh.signal && held.call.signal ? { signal: held.call.signal } : {}) };

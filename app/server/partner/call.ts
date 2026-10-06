@@ -20,8 +20,10 @@ export type CallField = 'call' | 'why' | 'kill signal' | 'date' | 'this week' | 
 // `dead`: why the kill signal said cannot do its job (it cannot fire from where the company stands, or cannot be met).
 export type ReadCall = PartnerCall & { missing: CallField[]; unsourced: string[]; rest: string; closes?: string; dead?: string };
 
-// A day of two to six weeks from today: soon enough to matter, long enough for the number to move.
-export const SOONEST = 14;
+// A day of one to six weeks from today: soon enough to matter, long enough for the number to move. Journey 15: the
+// founder's goal was 13 days out and a floor of 14 refused the kill signal on the goal's own day twice, then took one
+// two days past it. The founder's dated goal is always a day the signal may name (goalDays).
+export const SOONEST = 7;
 export const LATEST = 42;
 const DAY = 86_400_000;
 export const plusDays = (day: string, days: number) => {
@@ -43,10 +45,17 @@ const CALL_WORDS = /\bkill (?:signal|criterion|metric|switch|line)\b|\byour (?:c
 export const pushesBack = (said: string) => CHALLENGE.test(said) && CALL_WORDS.test(said);
 export const PUSHBACK_LINE = 'The founder is pushing back on your verdict. Answer their point in a line or two, then give the four lines again: keep the call or change it, and a kill signal that can fail from where the company stands today.';
 
-export const callShape = (today: string, worked = false) => `The founder asks for your verdict on the company. Start your answer with these four lines, each on its own line with its label, then at most a few short lines more:\n`
+// The founder's dated goals, as the brief has them (server/partner/goal.ts): `what` is the count ("10 print jobs done").
+export type GoalDay = { what: string; by: string };
+const window = (today: string, goals: GoalDay[]) => {
+  const ahead = goals.filter((goal) => between(today, goal.by) > 0).map((goal) => goal.by);
+  return `a day from ${plusDays(today, SOONEST)} to ${plusDays(today, LATEST)}${ahead.length ? `, or the founder's goal day ${[...new Set(ahead)].join(' or ')}` : ''} (today is ${today})`;
+};
+
+export const callShape = (today: string, worked = false, goals: GoalDay[] = []) => `The founder asks for your verdict on the company. Start your answer with these four lines, each on its own line with its label, then at most a few short lines more:\n`
   + 'My call: keep going, change course or stop (one of the three).\n'
   + `Why: the strongest reason, using only numbers from the Company document, the chat or what you read this turn${worked ? ', and the break-even and runway working given you below' : ''}. Never a number you worked out or guessed.\n`
-  + `Kill signal: one number the founder can measure and the threshold that would change your call, then "by YYYY-MM-DD", a day from ${plusDays(today, SOONEST)} to ${plusDays(today, LATEST)} (today is ${today}).\n`
+  + `Kill signal: one number the founder can measure and the threshold that would change your call, then "by YYYY-MM-DD", ${window(today, goals)}.${goalRule(goals)}\n`
   + 'This week: the first move, one thing the founder does this week.';
 
 const LABELS: { field: 'call' | 'why' | 'kill' | 'week' | 'gap'; label: RegExp }[] = [
@@ -90,16 +99,29 @@ export function dayIn(text: string): { day: string; at: number; end: number } | 
   return { day: `${year}-${pad(month)}-${pad(date)}`, at: found.index, end: found.index + found[0].length };
 }
 
+// The words that name what a count is ("print jobs" of "10 print jobs done"), one form for one and many.
+const nouns = (text: string) => new Set((text.toLowerCase().match(/[a-z]{4,}/g) ?? []).filter((word) => !/^(?:done|than|fewer|less|more|under|below|above|over|least|most|with|from|paying|total)$/.test(word)).map((word) => word.replace(/s$/, '')));
+// The goal a kill signal is about: one sharing a word of what it counts.
+export function goalOf(what: string, goals: GoalDay[]): GoalDay | undefined {
+  const words = nouns(what);
+  return goals.find((goal) => [...nouns(goal.what)].some((word) => words.has(word)));
+}
+const goalRule = (goals: GoalDay[]) => (goals.length ? ` A signal on the goal's own number is checked on or before its day (${goals.map((goal) => `${goal.what} by ${goal.by}`).join('; ')}), never after it.` : '');
+
 // A kill signal as said: the thing and its threshold before the day, and whatever follows the day. Without a number
-// besides the day it measures nothing; without a day of two to six weeks ahead it has no date.
-export function killOf(text: string, today: string): { signal?: KillSignal; missing: CallField[] } {
+// besides the day it measures nothing; without a day of one to six weeks ahead (or the founder's own goal day) it has
+// no date, and a day past the goal it is about is no date either: the check comes after the goal has been missed.
+export function killOf(text: string, today: string, goals: GoalDay[] = []): { signal?: KillSignal; missing: CallField[] } {
   const day = dayIn(text);
   const what = tidy((day ? text.slice(0, day.at) : text).replace(/\b(?:by|on|before|until|at)\s*(?:the\s+)?$/i, '')).replace(/[\s,;:.(-]+$/, '');
   const then = day ? tidy(text.slice(day.end)).replace(/^[).,;\s]+/, '').replace(/[\s.]+$/, '') : '';
   const missing: CallField[] = [];
   if (!/\d/.test(what)) missing.push('kill signal');
   const ahead = day ? between(today, day.day) : -1;
-  if (!day || ahead < SOONEST || ahead > LATEST) missing.push('date');
+  const onGoal = !!day && ahead > 0 && goals.some((goal) => goal.by === day.day);
+  const subject = goalOf(what, goals);
+  const late = !!day && !!subject && between(subject.by, day.day) > 0 && between(today, subject.by) > 0;
+  if (!day || late || (!onGoal && (ahead < SOONEST || ahead > LATEST))) missing.push('date');
   if (missing.length) return { missing };
   return { signal: { what, by: day!.day, ...(then ? { then } : {}) }, missing };
 }
@@ -163,7 +185,7 @@ const WORKING = /^(?:break[- ]?even|runway)\s*:/i;
 
 // The verdict in a reply: each labelled line read, what is missing named, and the reply's other lines kept as they are.
 // `numbers`: the Company brief's Numbers section, which a kill signal is held against (deadSignal).
-export function readCall(text: string, today: string, evidence: string, economics?: Economics | null, numbers = ''): ReadCall {
+export function readCall(text: string, today: string, evidence: string, economics?: Economics | null, numbers = '', goals: GoalDay[] = []): ReadCall {
   const said: Partial<Record<'call' | 'why' | 'kill' | 'week' | 'gap', string>> = {};
   const rest: string[] = [];
   for (const line of text.split('\n')) {
@@ -179,7 +201,7 @@ export function readCall(text: string, today: string, evidence: string, economic
   const why = said.why || undefined;
   const unsourced = why ? unsourcedIn(why, evidence) : [];
   if (!why || unsourced.length) missing.push('why');
-  const kill: { signal?: KillSignal; missing: CallField[] } = said.kill ? killOf(said.kill, today) : { missing: ['kill signal', 'date'] };
+  const kill: { signal?: KillSignal; missing: CallField[] } = said.kill ? killOf(said.kill, today, goals) : { missing: ['kill signal', 'date'] };
   const dead = kill.signal ? deadSignal(kill.signal, numbers) : null;
   if (dead) kill.missing.push('kill signal');
   missing.push(...kill.missing);
@@ -192,12 +214,12 @@ export function readCall(text: string, today: string, evidence: string, economic
 }
 
 // The second look asks only for what is missing, each line with its rule.
-export function callNudge(read: Pick<ReadCall, 'missing' | 'unsourced' | 'dead'>, today: string, economics?: Economics | null): string {
+export function callNudge(read: Pick<ReadCall, 'missing' | 'unsourced' | 'dead'>, today: string, economics?: Economics | null, goals: GoalDay[] = []): string {
   const lines: string[] = [];
   if (read.missing.includes('how the gap closes') && economics) lines.push(`Gap: your call is keep going, but break-even is ${economics.breakEven} ${economics.unit} and the company has ${economics.current}. In one line, say how that gap closes (price, cost, or reaching ${economics.breakEven} by when), or change the call.`);
   if (read.missing.includes('call')) lines.push('My call: keep going, change course or stop (one of the three).');
   if (read.missing.includes('why')) lines.push(`Why: the strongest reason, with only numbers the Company document, the chat or what you read gives${read.unsourced.length ? ` (nothing on record gives ${read.unsourced.join(', ')})` : ''}.`);
-  if (read.missing.includes('kill signal') || read.missing.includes('date')) lines.push(`Kill signal: one number the founder can measure and the threshold that would change your call, then "by YYYY-MM-DD", a day from ${plusDays(today, SOONEST)} to ${plusDays(today, LATEST)} (today is ${today}).${read.dead ? ` ${read.dead}` : ''}`);
+  if (read.missing.includes('kill signal') || read.missing.includes('date')) lines.push(`Kill signal: one number the founder can measure and the threshold that would change your call, then "by YYYY-MM-DD", ${window(today, goals)}.${goalRule(goals)}${read.dead ? ` ${read.dead}` : ''}`);
   if (read.missing.includes('this week')) lines.push('This week: the first move, one thing the founder does this week.');
   const names = read.missing.filter((one, index, all) => all.indexOf(one) === index && !(one === 'date' && all.includes('kill signal')));
   // A gap asked about may change the call itself, so the call line is answered again with it.
@@ -229,20 +251,20 @@ export const checkTitle = (signal: KillSignal) => `Check: ${signal.what} by ${si
 // document and this turn's tool results, never the partner's own past replies. One nothing backs stays, marked
 // "(assumption)" (server/tools/evidence.ts).
 // `pushed`: the founder pushed back on the verdict standing (pushesBack), which is held to the same four lines.
-export async function holdCall(asked: string, first: TurnResult, again: ((first: TurnResult, nudge: string) => Promise<TurnResult>) | undefined, today: string, evidence: string, said: string[] = [evidence], economics?: Economics | null, numbers = '', pushed = false): Promise<{ reply: TurnResult; call: PartnerCall | null; askedAgain: boolean }> {
+export async function holdCall(asked: string, first: TurnResult, again: ((first: TurnResult, nudge: string) => Promise<TurnResult>) | undefined, today: string, evidence: string, said: string[] = [evidence], economics?: Economics | null, numbers = '', pushed = false, goals: GoalDay[] = []): Promise<{ reply: TurnResult; call: PartnerCall | null; askedAgain: boolean }> {
   if (first.stopped || (!pushed && !asksVerdict(asked))) return { reply: first, call: null, askedAgain: false };
   // The brief's working is on record for the reason: its figures are calc results, not the partner's guesses.
   const working = economics?.working.map((one) => one.line) ?? [];
   const held = [evidence, ...working].join('\n');
-  const read = readCall(first.text, today, held, economics, numbers);
+  const read = readCall(first.text, today, held, economics, numbers, goals);
   let call: PartnerCall = { decision: read.decision, why: read.why, signal: read.signal, move: read.move, ...(read.closes ? { gap: read.closes } : {}) };
   let reply = first;
   let gapOpen = read.missing.includes('how the gap closes');
   const askedAgain = !!read.missing.length && !!again;
   if (askedAgain) {
-    const second = await again!(first, callNudge(read, today, economics));
+    const second = await again!(first, callNudge(read, today, economics, goals));
     if (!second.stopped) {
-      const more = readCall(second.text, today, held, economics, numbers);
+      const more = readCall(second.text, today, held, economics, numbers, goals);
       // Asked how the gap closes, the partner may change the call: the second call stands then. Their line on how it
       // closes is kept as the Gap line, labelled or not.
       const closes = more.closes ?? (economics ? more.rest.split('\n').map((line) => plain(line)).find((line) => saysGap(line, economics)) : undefined);

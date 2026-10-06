@@ -17,7 +17,8 @@ describe('a verdict ask', () => {
   });
 
   it('asks for the four lines with a window of days counted from today', () => {
-    expect(callShape(today)).toContain('from 2026-10-20 to 2026-11-17 (today is 2026-10-06)');
+    expect(callShape(today)).toContain('from 2026-10-13 to 2026-11-17 (today is 2026-10-06)');
+    expect(callShape(today, false, [{ what: '10 print jobs done', by: '2026-10-19' }])).toContain("or the founder's goal day 2026-10-19 (today is 2026-10-06)");
     expect(plusDays('2026-12-25', 14)).toBe('2027-01-08');
   });
 });
@@ -45,6 +46,32 @@ describe('reading a verdict', () => {
     expect(killOf('6 paying users by 3 November 2026', today).signal).toEqual({ what: '6 paying users', by: '2026-11-03' });
     expect(killOf('6 paying users by November 17, 2026.', today).signal).toEqual({ what: '6 paying users', by: '2026-11-17' });
     expect(killOf('6 paying users by 2026-02-30', today).missing).toEqual(['date']);
+  });
+
+  // Journey 15: goal "10 print jobs done by 2026-10-19", 13 days out. The kill signal on the goal's own day was refused
+  // twice and "no kill signal named yet" shipped; on day 2 one was taken two days past the goal.
+  it('takes a day a week out, always the founder\'s goal day, and never a day past the goal the signal is about', () => {
+    const goals = [{ what: '10 print jobs done', by: '2026-10-19' }];
+    expect(killOf('fewer than 7 print jobs done by 2026-10-13', today).signal?.by).toBe('2026-10-13');
+    expect(killOf('fewer than 7 print jobs done by 2026-10-12', today).missing).toEqual(['date']);
+    expect(killOf('fewer than 10 print jobs done by 2026-10-19', today, goals).signal).toEqual({ what: 'fewer than 10 print jobs done', by: '2026-10-19' });
+    expect(killOf('fewer than 10 print jobs done by 2026-10-21', '2026-10-07', goals).missing).toEqual(['date']);
+    // A goal day only 4 days off is still the founder's own day.
+    expect(killOf('fewer than 10 print jobs done by 2026-10-19', '2026-10-15', goals).signal?.by).toBe('2026-10-19');
+    // Another number may run past the goal's day.
+    expect(killOf('fewer than 3 paying hosts by 2026-10-30', today, goals).signal?.by).toBe('2026-10-30');
+  });
+
+  it('keeps the verdict\'s kill signal on the goal day and asks again for one set past it', async () => {
+    const goals = [{ what: '10 print jobs done', by: '2026-10-19' }];
+    const said = 'My call: keep going.\nWhy: 4 print jobs done.\nKill signal: fewer than 7 print jobs done by 2026-10-19.\nThis week: contact 40 makers.';
+    const out = await holdCall('your verdict?', turn(said), async () => { throw new Error('not asked'); }, today, '4 print jobs done', ['4 print jobs done'], null, '', false, goals);
+    expect(out.call?.signal).toEqual({ what: 'fewer than 7 print jobs done', by: '2026-10-19' });
+    expect(out.reply.text).not.toContain(NO_SIGNAL);
+    const nudges: string[] = [];
+    await holdCall('your verdict?', turn(said.replace('2026-10-19', '2026-10-21')), async (_, nudge) => { nudges.push(nudge); return turn('Kill signal: fewer than 10 print jobs done by 2026-10-19'); }, '2026-10-07', '4', ['4'], null, '', false, goals);
+    expect(nudges[0]).toContain("or the founder's goal day 2026-10-19");
+    expect(nudges[0]).toContain('never after it');
   });
 
   it('holds the reason to numbers on record: a worked-out 17% or an invented market is missing its source', () => {
