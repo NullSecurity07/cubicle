@@ -29,7 +29,7 @@ import {
 } from './spec.ts';
 import { creditOf, filmStock, photoCredits } from './stock.ts';
 import {
-  afforded, drawnAs, heldUp, lineUnder, photoOfTheLine, sceneLine, shareOut, shotKey, slotsFor, type Slot, type Visual,
+  afforded, drawnAs, heldUp, lineUnder, photoOfTheLine, sceneLine, shareOut, shotKey, slotsFor, stockQueries, topicOf, type Slot, type Visual,
 } from './visuals.ts';
 import { isDraft, makingWords, secondsEach } from '../../shared/film-time.ts';
 import { filmMemory, storyboardKey, subjectKey, type KeptSubject } from './remembered.ts';
@@ -201,6 +201,8 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // key or a spent day is said once and every scene after goes to the next library, or to drawing; no key at
         // all is said once, further down.
         const photoLibrary = filmStock(deps.stock, pack, report);
+        // What the film is about, in the brief's own nouns: what every photograph in it may be of.
+        const topic = topicOf(asked.prompt);
         // A moving shot the film was going to have can still be real footage somebody filmed when no AI clip can be
         // made, which costs nothing and needs no key (Wikimedia Commons).
         const realClips = mayUseAi && photoLibrary.clips;
@@ -578,11 +580,17 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
               // nothing else: never the film's own speaker, and never beside a claim about a named product.
             {
               // A photograph whose own description has none of the line's things in it is of something else.
-              const photo = await photoLibrary.take({
-                query: content(visual.subject).slice(0, 5).join(' ') || trimTo(visual.line, 4), shape,
-                speaker: !!scene.person || scene.layout === 'presenter', names: [material.brand?.name ?? ''].filter(Boolean),
-                fits: (one) => photoOfTheLine(one.what, visual),
-              }, stop);
+              // Asked twice at most, the shot's own things beside the film's topic and then the topic alone; a
+              // photograph that shares no word with either is refused, and after two misses the picture is drawn.
+              let photo = null as Awaited<ReturnType<typeof photoLibrary.take>>;
+              for (const query of stockQueries(visual, topic)) {
+                photo = await photoLibrary.take({
+                  query, shape,
+                  speaker: !!scene.person || scene.layout === 'presenter', names: [material.brand?.name ?? ''].filter(Boolean),
+                  fits: (one) => photoOfTheLine(one.what, visual, topic),
+                }, stop);
+                if (photo || stop.aborted) break;
+              }
               if (photo) {
                 file = `stock-${name}.${photo.ext}`;
                 await writeFile(join(at, 'assets', file), photo.bytes);

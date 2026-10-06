@@ -2,7 +2,7 @@ import { digestOf } from './hash.ts';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { NONE_ANSWERED, peopleIn, pexels, remember, type Found, type Stock, type StockKind } from './stock.ts';
-import { nounsOf } from './visuals.ts';
+import { nounsOf, numberish } from './visuals.ts';
 
 // Real photographs and real footage with no key at all.
 //
@@ -47,7 +47,7 @@ const CONCRETE_ANYWAY = new Set(['station', 'television', 'mansion', 'apartment'
 
 export function queryOf(brief: string, most = 2): string {
   const nouns = nounsOf(brief ?? '')
-    .filter((word) => !/^\d/.test(word) && !ABSTRACT.has(word) && (CONCRETE_ANYWAY.has(word) || !ABSTRACT_ENDING.test(word)));
+    .filter((word) => !numberish(word) && !ABSTRACT.has(word) && (CONCRETE_ANYWAY.has(word) || !ABSTRACT_ENDING.test(word)));
   return nouns.slice(0, most).join(' ');
 }
 

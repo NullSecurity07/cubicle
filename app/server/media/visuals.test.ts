@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  afforded, aboutTheLine, criticiseVisuals, drawnAs, fillerShot, kindFor, lineUnder, photoOfTheLine, repairVisuals, sceneLine,
+  afforded, aboutTheLine, criticiseVisuals, drawnAs, fillerShot, kindFor, lineUnder, photoOfTheLine, repairVisuals, sceneLine, stockQueries, thingsOf, topicOf,
   shareOut, shares, slotsFor, somebodyIn, unlettered, visualFrom, visualsOf, visualsPrompt, type Visual, shotKey,
 } from './visuals.ts';
 import type { Scene } from './spec.ts';
@@ -353,5 +353,35 @@ describe('the size and the lens the storyboard chose', () => {
     // A close-up that was stepped back to a wide keeps none of its close-up words.
     const moved = drawnAs(one(0, 'a cold kettle on a ring', 'it runs out quietly', { kind: 'wide', size: 'cu', lens: 85 }), BIBLE);
     expect(moved).not.toMatch(/shallow depth|close-up/);
+  });
+});
+
+// Journey 12: the director's subjects for number lines were "an eighty beside a seven, on a linen cloth" and "a
+// thousand beside euros, on a stone step", and Openverse answered with a Klondike scan of fish and a Euromaidan photo.
+describe('photographs asked for by the things a line names', () => {
+  const topic = topicOf('A 20 second documentary clip about a pottery class, with real photographs.');
+  const cash = { line: 'Seven thousand two hundred euros in cash.', subject: 'an eighty beside a seven, on a linen cloth' };
+  const mrr = { line: 'We have reached eighty seven euros MRR.', subject: 'a thousand beside euros, on a stone step' };
+  const clay = { line: 'Wet hands find the shape of a bowl on the wheel.', subject: 'wet hands shaping a clay bowl on a potter\'s wheel' };
+
+  it('reads the film\'s topic out of the brief', () => {
+    expect(topic).toEqual(['pottery', 'class']);
+  });
+
+  it('never asks a library for a number, a sum or a date', () => {
+    expect(thingsOf(cash.line)).not.toEqual(expect.arrayContaining(['seven', 'thousand', 'euros']));
+    for (const query of [...stockQueries(cash, topic), ...stockQueries(mrr, topic)]) {
+      expect(query).not.toMatch(/\b(?:seven|eighty|thousand|hundred|euros?|mrr|linen|stone)\b/);
+    }
+    expect(stockQueries(mrr, topic)).toEqual(['pottery class']);
+    expect(stockQueries(clay, topic)).toEqual(['hands pottery', 'pottery class']);
+  });
+
+  it('refuses a photograph that shares no thing with the line or the topic', () => {
+    expect(photoOfTheLine("scanned image from 'On the Cars and Off ... Klondike' seven fish", cash, topic)).toBe(false);
+    expect(photoOfTheLine('Kyiv, Euro Maidan 2013 euro protest', mrr, topic)).toBe(false);
+    expect(photoOfTheLine('Pottery class at the community centre', mrr, topic)).toBe(true);
+    // A line of nothing but numbers, in a film with no topic, is drawn rather than photographed.
+    expect(photoOfTheLine('seven fish', { line: 'Seven thousand two hundred.' })).toBe(false);
   });
 });
