@@ -587,7 +587,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
                 photo = await photoLibrary.take({
                   query, shape,
                   speaker: !!scene.person || scene.layout === 'presenter', names: [material.brand?.name ?? ''].filter(Boolean),
-                  fits: (one) => photoOfTheLine(one.what, visual, topic),
+                  fits: (one) => photoOfTheLine(one.what, visual, topic, asked.prompt),
                 }, stop);
                 if (photo || stop.aborted) break;
               }

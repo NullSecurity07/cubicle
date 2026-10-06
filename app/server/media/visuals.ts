@@ -1,3 +1,4 @@
+import { foreignIn } from './places.ts';
 import { content, countWords, STOP, type Layout, type Scene } from './spec.ts';
 import { inStyle, noFace, photographic, trimTo } from './critic.ts';
 import { framingOf, lensPhrase, SIZE_PHRASE, SIZES_OF, type Lens, type Size } from './moves.ts';
@@ -217,11 +218,22 @@ export const heldUp = (visual: Visual): boolean =>
 // Numbers, money and dates are not things a library holds pictures of: "Seven thousand two hundred euros" summoned a
 // scan of fish captioned "seven" and a protest photograph tagged "Euro". So they do not count as the line's things,
 // and a line left with no thing at all is met by the film's own topic ("a pottery class") or not by a photograph.
-export const photoOfTheLine = (what: string, visual: Pick<Visual, 'line' | 'about'>, topic: string[] = []): boolean => {
-  const nouns = [...new Set([...thingsOf(`${visual.line} ${visual.about ?? ''}`), ...topic])];
+//
+// The film's topic counts whole or not at all. A topic of two words ("farmers market") is met by a photograph that
+// names both, not by one that shares one of them: "Kuay Makuach, farmer, Lankien, South Sudan" is not a farmers
+// market. The line's own things still count one at a time. And a photograph whose title names a country, a region
+// or a news event that neither the brief nor the line names is of that place or that day (`foreignIn`), and is refused.
+export const photoOfTheLine = (what: string, visual: Pick<Visual, 'line' | 'about'>, topic: string[] = [], brief = ''): boolean => {
+  const said = `${visual.line} ${visual.about ?? ''}`;
+  if (foreignIn(what, `${brief} ${said} ${topic.join(' ')}`).length) return false;
+  const things = thingsOf(said);
+  const whole = topic.slice(0, 2);
+  const nouns = [...new Set([...things, ...topic])];
   // A line that names nothing ("you decide") takes any photograph; one whose only things were numbers takes none.
-  if (!nouns.length) return !nounsOf(`${visual.line} ${visual.about ?? ''}`).length;
-  return hasNoun(what, nouns);
+  if (!nouns.length) return !nounsOf(said).length;
+  if (hasNoun(what, things)) return true;
+  if (!whole.length) return false;
+  return whole.every((word) => hasNoun(what, [word]));
 };
 
 // Words that are a quantity, a sum of money or a date rather than a thing: spelled numbers, currencies, metrics,
@@ -263,8 +275,9 @@ export function topicOf(brief: string): string[] {
 // the topic alone. Two tries, after which the picture is drawn. A subject's words count only when they are the
 // line's or the topic's: "an eighty beside a seven, on a linen cloth" is the director's word salad for a number.
 export function stockQueries(visual: Pick<Visual, 'line' | 'about' | 'subject'>, topic: string[] = []): string[] {
-  const line = thingsOf(`${visual.line} ${visual.about ?? ''}`);
-  const subject = thingsOf(visual.subject ?? '');
+  // "documentary" and "photograph" are what the shot is, not what it is of.
+  const line = thingsOf(`${visual.line} ${visual.about ?? ''}`).filter((word) => !FILM_WORDS.has(word));
+  const subject = thingsOf(visual.subject ?? '').filter((word) => !FILM_WORDS.has(word));
   const backed = subject.filter((word) => line.includes(word) || topic.includes(word));
   const lead = [...backed, ...line].filter((word, index, all) => all.indexOf(word) === index);
   const second = topic.slice(0, 2).join(' ');

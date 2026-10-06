@@ -385,3 +385,24 @@ describe('photographs asked for by the things a line names', () => {
     expect(photoOfTheLine('seven fish', { line: 'Seven thousand two hundred.' })).toBe(false);
   });
 });
+
+// Journey 13: "Kuay Makuach, farmer, Lankien, South Sudan" sat in a film about a farmers market, because "farmer" was
+// one of the film's two words.
+describe('photographs of the whole topic, and of nowhere the brief never went', () => {
+  const brief = 'A 20 second documentary about a farmers market, with real footage clips of the stalls.';
+  const topic = topicOf(brief);
+  const question = { line: 'Why do grocery tomatoes taste like water?' };
+
+  it('takes a two-word topic whole, not one word of it', () => {
+    expect(topic).toEqual(['farmers', 'market']);
+    expect(photoOfTheLine('Kuay Makuach, farmer, Lankien', question, topic, brief)).toBe(false);
+    expect(photoOfTheLine("Arcata Farmer's Market", question, topic, brief)).toBe(true);
+    expect(photoOfTheLine('Ripe tomatoes on the vine', question, topic, brief)).toBe(true);
+  });
+
+  it('refuses a picture of a country, a city or a news day the brief does not name', () => {
+    expect(photoOfTheLine('Kuay Makuach, farmer, Lankien, South Sudan, tomatoes', question, topic, brief)).toBe(false);
+    expect(photoOfTheLine('CCTV video of pager explosion in a Beirut market', { line: 'Stalls at the farmers market' }, topic, brief)).toBe(false);
+    expect(photoOfTheLine('Farmers market in Kenya', question, topic, 'A film about a farmers market in Kenya')).toBe(true);
+  });
+});
