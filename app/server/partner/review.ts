@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { localDay, now as clockNow } from '../clock.ts';
 import { newMessageId, type Attention, type Stage } from '../../shared/model.ts';
 import { writeAtomic } from '../fsx.ts';
 import { readableDocIds } from '../prompt.ts';
@@ -210,12 +211,12 @@ export const phrasingHolds = (phrased: string, line: string) => !!phrased.trim()
 // model never answered. `dailyBudget` is a plain two-a-day counter for checks.
 type Take = boolean | { ok: boolean; release?: () => void };
 export type UnaskedBudget = { take(reason: string): Take | Promise<Take> };
-export function dailyBudget(cap = 2, now: () => number = Date.now): UnaskedBudget {
+export function dailyBudget(cap = 2, now: () => number = clockNow): UnaskedBudget {
   let day = '';
   let used = 0;
   return {
     take() {
-      const today = new Date(now()).toDateString();
+      const today = localDay(now());
       if (today !== day) { day = today; used = 0; }
       if (used >= cap) return false;
       used += 1;

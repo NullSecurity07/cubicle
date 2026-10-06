@@ -591,7 +591,7 @@ export function createPartner(options: PartnerOptions = {}) {
     // week passed (server/partner/refresh.ts). One try a day, from the day's budget, on the reserved model; never beside
     // a turn of the partner's own. A new kill signal takes the old one's place as the check.
     async function refreshVerdict() {
-      if (!morningOnTick) return;
+      if (!morningOnTick()) return;
       const held = await state.read();
       if (!held.call) return;
       const today = localDay(now());
