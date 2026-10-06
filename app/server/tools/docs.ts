@@ -9,6 +9,7 @@ import { text, type Tool, type ToolContext } from './registry.ts';
 import { shortDay } from '../clock.ts';
 import { dropFlagged, figureCheck, HELD_BACK, holdVerdict, verdictStanding, type Receipt } from '../truth.ts';
 import { findCompanyDoc } from '../../shared/partner.ts';
+import { derivedRows } from '../partner/economics.ts';
 import { evidenceCheck, markFeedback, markSaid, markUnbacked, markUnworked, readableSources, unbackedEnds } from './evidence.ts';
 import { filled, guardWrite, sectionBody, standingVerdict, unmarked, verdictState, WHOLE } from './verdict.ts';
 
@@ -251,6 +252,13 @@ async function checkWrite(context: ToolContext, id: string, before: string, writ
   // as a running log repeats "## Monday" on purpose.
   const twice = rules ? addedTwice(before, after, [...rules.sections, rules.verdict].map((one) => one.heading)) : null;
   if (twice) throw new Error(`not written: "${twice}" is already a section of this document; change it with replace_section instead of adding it again.`);
+  // Journey 14: the partner's brief update kept "Runway: 4.4 (unsourced) months (4,000 / 900, calc)", a wrong figure under
+  // two labels that disagree. The Company brief's runway and break-even are calc's on its own Numbers, whoever writes.
+  if (findCompanyDoc(context.stage.docs)?.id === id) {
+    const worked = derivedRows(after, sectionBody(after, 'Numbers') ?? '');
+    after = worked.text;
+    if (worked.set.length) done = `${done} Set from calc on the brief's own Numbers: ${worked.set.map((one) => `"${one}"`).join(', ')}. Quote these, not your own figures.`;
+  }
   const guarded = rules ? guardWrite({ rules, stage: context.stage, docId: id, writerId: context.roomId, before, after, now: Date.now(), touches, numbers: await numbersOf(context) }) : { text: after };
   const said = guarded.held ? guarded.note! : [done, guarded.note].filter(Boolean).join(' ');
   return { text: guarded.text, said };

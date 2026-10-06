@@ -7,7 +7,7 @@ import type { Bet } from '../../shared/partner.ts';
 import type { ModelMessage } from '../prompt.ts';
 import type { FounderPromise } from './promises.ts';
 import { NOTHING_CHANGED } from './since.ts';
-import { gatherMorning, MORNING_ASK, morningDue, morningInputs, morningMessage, MOST_TRIES, RETRY_AFTER, writeMorning, type MorningSources } from './morning.ts';
+import { confirmedFix, gatherMorning, MORNING_ASK, morningDue, morningInputs, morningMessage, MOST_TRIES, RETRY_AFTER, writeMorning, type MorningSources } from './morning.ts';
 
 const at = (text: string) => new Date(text).getTime();
 const NINE = at('2026-09-27T09:00');
@@ -304,5 +304,30 @@ describe('the day-2 note leads with what changed since yesterday', () => {
   it('reads the clock it is handed, not the machine\'s: the same promise is on time the day before', async () => {
     const day1 = await writeMorning({ sources: await sources({ now: at('2026-09-26T09:00'), promises: async () => [promise({})] }), name: 'Sam', promptFor: prompt, ask: async () => reply });
     expect(day1!.since).toEqual([]);
+  });
+});
+
+// Journey 14's note: "Update the Company document ... to reflect the confirmed 4.4-month runway calculated by Ops."
+// Ops had 4.99; 4.4 was the partner's own sum on the gross burn.
+describe('the morning note\'s numbers', () => {
+  const company = '# Company brief\n\n## Numbers\n\n- Price: €49 per practice per month\n- Paying practices: 2\n- Cash in the bank: €4,000\n- Monthly burn: €900\n';
+  const prompt = async (): Promise<ModelMessage[]> => [{ role: 'system', content: 'You are Iris, Partner.' }];
+  it('gives the model the calc working, and posts runway from calc with "confirmed" only beside what a read backs', async () => {
+    let heard = '';
+    const note = await writeMorning({
+      sources: { ...await sources(), company }, name: 'Iris', promptFor: prompt,
+      ask: async (messages) => { heard = String(messages.at(-1)?.content); return 'Three moves for today:\n1. Convert the 3 pilots.\n2. Update the Company document to reflect the confirmed 4.4-month runway calculated by Ops.\n3. Rosa confirmed 12 demos booked; follow up.\nRisk: runway is 4.4 months at the gross burn of €900\nQuestion: q?'; },
+    });
+    expect(heard).toContain('Worked with calc from the Company Numbers (the only runway and break-even to use; a figure said in a room is not one):\n- Break-even: ceil(900 / 49) = 19');
+    expect(heard).toContain('- Runway: round(4000 / (900 - 2 * 49), 1) = 5 months at the net burn');
+    expect(note!.things[1]).toBe('Update the Company document to reflect the confirmed 5-month runway calculated by Ops.');
+    expect(note!.things[2]).toBe('Rosa said 12 demos booked; follow up.');
+    expect(note!.risk).toBe('runway is 5 months at the gross burn of €900');
+  });
+
+  it('drops "confirmed" with no figure a read gives', () => {
+    expect(confirmedFix('Use the confirmed 4.4-month runway.', ['- Cash: €4,000', 'round(4000 / 802, 1) = 5'])).toBe('Use the 4.4-month runway.');
+    expect(confirmedFix('Otto confirmed 5 months of runway.', ['round(4000 / 802, 1) = 5'])).toBe('Otto confirmed 5 months of runway.');
+    expect(confirmedFix('Dentists confirmed they want it.', [])).toBe('Dentists said they want it.');
   });
 });

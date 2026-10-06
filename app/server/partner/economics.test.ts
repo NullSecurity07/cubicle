@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { economicsBlock, economicsOf, saysGap, wideGap, workingTools } from './economics.ts';
+import { derivedRows, economicsBlock, economicsOf, figuresFix, saysGap, wideGap, workingTools } from './economics.ts';
 
 // The Numbers of journey 13's Company brief, as the founder wrote them.
 const HARVEST = `- Offices in pilot: 5
@@ -40,5 +40,38 @@ describe('the brief\'s numbers worked out before a verdict', () => {
     expect(saysGap('We reach 34 paying offices by raising the price to €320 and signing two a month.', economics)).toBe(true);
     expect(saysGap('Break-even needs a bigger box at a higher price.', economics)).toBe(true);
     expect(saysGap('We have the cash to validate the pilot target of 10.', economics)).toBe(false);
+  });
+});
+
+// Journey 14's Company brief: a price and the whole month's burn, no cost per practice. Otto worked runway out net of
+// the €98 coming in (4.99); the partner said 4.4 (cash over the gross burn) and overruled him.
+const CALLBACK = '- Price: €49 per practice per month\n- Practices contacted: 40\n- Pilots running: 3\n- Paying practices: 2\n- Cash in the bank: €4,000\n- Monthly burn: €900';
+describe('runway and break-even only from calc', () => {
+  it('works a brief with no cost per unit: break-even on the burn, runway net of what comes in', () => {
+    const economics = economicsOf(CALLBACK)!;
+    expect(economics.working.map((one) => one.line)).toEqual([
+      'Break-even: ceil(900 / 49) = 19 paying practices to cover the burn (the brief gives no cost per unit); we have 2',
+      'Runway: round(4000 / (900 - 2 * 49), 1) = 5 months at the net burn',
+    ]);
+    expect(economics.runway).toEqual({ value: 5, display: '5' });
+  });
+
+  it('puts the partner\'s own runway and break-even right in place, and leaves a colleague\'s right figure, the working and a what-if', () => {
+    const economics = economicsOf(CALLBACK);
+    expect(figuresFix('With €4,000 in the bank and a €900 monthly burn, your runway is **4.4 months** (not 5). Push the pilots.', economics))
+      .toBe('With €4,000 in the bank and a €900 monthly burn, your runway is **5 months**. Push the pilots.');
+    expect(figuresFix('Otto says runway is 4.99 months.', economics)).toBe('Otto says runway is 4.99 months.');
+    expect(figuresFix('Break-even is 21 paying practices.', economics)).toBe('Break-even is 19 paying practices.');
+    expect(figuresFix('- Runway: round(4000 / (900 - 2 * 49), 1) = 5 months at the net burn', economics)).toBe('- Runway: round(4000 / (900 - 2 * 49), 1) = 5 months at the net burn');
+    expect(figuresFix('At €69 a practice, runway would be 6.2 months.', economics)).toBe('At €69 a practice, runway would be 6.2 months.');
+    expect(figuresFix('A round takes 3 to 4 months, so plan for runway.', economics)).toBe('A round takes 3 to 4 months, so plan for runway.');
+  });
+
+  it('sets the brief\'s Runway and Break-even rows from calc, whatever the writer put', () => {
+    const numbers = `${CALLBACK}\n- Runway: 4.4 (unsourced) months (4,000 / 900, calc)\n- Break-even: 19 paying practices (900 / 49, calc)`;
+    const out = derivedRows(numbers);
+    expect(out.text.split('\n').slice(-2)).toEqual(['- Runway: 5 months (calc: round(4000 / (900 - 2 * 49), 1) = 5)', '- Break-even: 19 paying practices (calc: ceil(900 / 49) = 19)']);
+    expect(out.set).toHaveLength(2);
+    expect(derivedRows(out.text).set).toEqual([]);
   });
 });

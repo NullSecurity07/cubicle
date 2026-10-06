@@ -298,3 +298,21 @@ describe('a derived figure in a doc', () => {
     expect(again.text).toBe('Created "Unit Economics 2".');
   });
 });
+
+// Journey 14: the partner's brief update wrote "Runway: 4.4 (unsourced) months (4,000 / 900, calc)": a wrong figure,
+// and a calc label with no calc behind it. The brief's runway and break-even are calc's on its own Numbers.
+describe('a write to the Company brief', () => {
+  it('sets Runway and Break-even from calc on the brief\'s Numbers, and says so', async () => {
+    const { store, context } = await setup();
+    await store.replaceDoc('company-brief', '# Company brief\n\n## Numbers\n\n- Price: €49 per practice per month\n- Paying practices: 2\n- Cash in the bank: €4,000\n- Monthly burn: €900\n');
+    const wired = { ...context, stage: { ...context.stage, wires: [...context.stage.wires, { id: 'w-brief', from: 'marketing', fromHandle: 'r', to: 'company-brief', toHandle: 'l' }] }, sources: () => ['We charge €49 a practice a month, 2 paying, €4,000 cash, €900 burn.'] };
+    const text = '- Price: €49 per practice per month\n- Paying practices: 2\n- Cash in the bank: €4,000\n- Monthly burn: €900\n- Runway: 4.4 months (4,000 / 900, calc)\n- Break-even: 19 paying practices (900 / 49, calc)';
+    const out = await runTool(docTools, 'replace_section', JSON.stringify({ doc: 'Company brief', heading: 'Numbers', text }), wired as never);
+    expect(out.ok).toBe(true);
+    const doc = await store.readDoc('company-brief');
+    expect(doc).toContain('- Runway: 5 months (calc: round(4000 / (900 - 2 * 49), 1) = 5)');
+    expect(doc).toContain('- Break-even: 19 paying practices (calc: ceil(900 / 49) = 19)');
+    expect(doc).not.toContain('4.4');
+    expect(out.text).toContain('Set from calc on the brief\'s own Numbers: "Runway: 5 months (calc: round(4000 / (900 - 2 * 49), 1) = 5)"');
+  });
+});

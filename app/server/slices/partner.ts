@@ -14,7 +14,7 @@ import { FAKE_MORNING, MOST_TRIES, morningDue, morningInputs, morningMessage, wr
 import { addPlan, boardFor, boardForPlan, NO_BOARD, planAttention, stepsFrom } from '../partner/plans.ts';
 import { asksWhatNext, holdSynthesis, standingFacts } from '../partner/synthesis.ts';
 import { asksVerdict, callShape, holdCall, PUSHBACK_LINE, pushesBack } from '../partner/call.ts';
-import { economicsBlock, economicsOf, workingTools } from '../partner/economics.ts';
+import { economicsBlock, economicsOf, figuresFix, workingTools } from '../partner/economics.ts';
 import { chaseLine, keptPromiseLine, promiseLine, promisesAttention, promisesBook, promisesIn } from '../partner/promises.ts';
 import { metricsOnDisk, sinceHeadline } from '../partner/since.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
@@ -528,7 +528,8 @@ export function createPartner(options: PartnerOptions = {}) {
         const numbers = `${sectionText(company, 'Numbers')}\n${payload.query}`;
         // What customers will read carries no source tags, placeholders or company money, and is not called ready while it does.
         if (forCustomers(payload.query)) text = customerReply(text, numbers);
-        text = runwayFix(text, numbers);
+        // Runway and break-even come from calc on the brief's numbers, never from the model (server/partner/economics.ts).
+        text = runwayFix(figuresFix(text, economicsOf(sectionText(company, 'Numbers'))), numbers);
         // Sent to Needs you with nothing waiting there: said under the reply.
         const rows = await deps.attention.list().catch(() => []);
         const ledger = await book.list().catch(() => null);
@@ -630,7 +631,7 @@ export function createPartner(options: PartnerOptions = {}) {
       const at = now();
       const moves = call.signal && (call.signal.what !== held.call.signal?.what || call.signal.by !== held.call.signal?.by);
       const kept = moves && call.signal && await promises.add({ what: call.signal.what, due: call.signal.by, roomId: partner.id, check: true });
-      const text = `${refreshText(opening, held.call.decision, call)}${kept ? `\n\n*Kill signal moved: it comes to Needs you on ${call.signal!.by}.*` : ''}`;
+      const text = `${figuresFix(refreshText(opening, held.call.decision, call), economics)}${kept ? `\n\n*Kill signal moved: it comes to Needs you on ${call.signal!.by}.*` : ''}`;
       await deps.store.appendChat(partner.id, { id: newMessageId(), role: 'assistant', text, at, ...(reply.provider ? { provider: reply.provider } : {}), ...(reply.model ? { model: reply.model } : {}) });
       await state.change((draft) => { draft.call = { ...call, at, day: today, roomId: partner.id, ...(economics?.inputs ? { basis: economics.inputs } : {}) }; });
       markVerdict(partner.id, at);

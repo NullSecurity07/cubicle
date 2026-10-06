@@ -13,7 +13,8 @@ export type Working = { label: 'Break-even' | 'Runway'; expression: string; valu
 // `inputs`: the brief's own monthly figures as read, for a review that works a colleague's sums out again and a
 // verdict refresh that sees how far they moved since the call.
 export type Inputs = { price?: number; cost?: number; fixed?: number; net?: number; cash?: number; paying?: number };
-export type Economics = { working: Working[]; breakEven?: number; current?: number; unit?: string; inputs?: Inputs; currency?: string };
+// `runway`: the months the working gives, as calc showed them, for holding the partner's own words to them (figuresFix).
+export type Economics = { working: Working[]; breakEven?: number; current?: number; unit?: string; inputs?: Inputs; currency?: string; runway?: { value: number; display: string } };
 
 const AMOUNT = /[$€£]?\s?(\d[\d,]*(?:\.\d+)?)\s*(k\b)?/gi;
 function rowsOf(numbers: string): Row[] {
@@ -54,6 +55,7 @@ export function economicsOf(numbers: string): Economics | null {
     const worked = calculate(expression, values);
     const result = `${worked.worked} = ${worked.display}`;
     working.push({ label, expression, values, result, line: `${label}: ${result} ${said(worked.display)}` });
+    if (label === 'Runway') out.runway = { value: worked.value, display: worked.display };
     return worked.value;
   };
   const p = price ? monthly(price) : undefined;
@@ -64,6 +66,12 @@ export function economicsOf(numbers: string): Economics | null {
   const inputs: Inputs = { price: p, cost: c, fixed: f, net: net ? monthly(net) : undefined, cash: cash?.amounts[0].value, paying: n };
   out.inputs = Object.fromEntries(Object.entries(inputs).filter(([, value]) => value !== undefined)) as Inputs;
   const units = out.unit ?? 'paying customers';
+  // Journey 14's brief gave a price and the whole month's burn and no cost per practice: the partner worked break-even
+  // and runway out in its head (and got runway wrong) because nothing here did. With no cost per unit, each paying
+  // unit's price goes to the fixed costs whole, and the line says the brief gives no cost.
+  if (p !== undefined && c === undefined && f !== undefined) {
+    out.breakEven = work('Break-even', 'ceil(fixed / price)', `fixed=${f}, price=${p}`, (value) => `${units} to cover the burn (the brief gives no cost per unit)${n !== undefined ? `; we have ${n}` : ''}`);
+  }
   if (p !== undefined && c !== undefined && f !== undefined) {
     if (p - c <= 0) {
       work('Break-even', 'price - cost', `price=${p}, cost=${c}`, () => `a month on each of the ${units}: each one loses money, so no count breaks even`);
@@ -77,6 +85,8 @@ export function economicsOf(numbers: string): Economics | null {
     if (net) work('Runway', 'round(cash / net, 1)', `cash=${money}, net=${monthly(net)}`, () => 'months at the net burn');
     else if (f !== undefined && p !== undefined && c !== undefined && n !== undefined && f - n * (p - c) > 0) {
       work('Runway', 'round(cash / (fixed - paying * (price - cost)), 1)', `cash=${money}, fixed=${f}, paying=${n}, price=${p}, cost=${c}`, () => 'months at the net burn');
+    } else if (f !== undefined && p !== undefined && c === undefined && n !== undefined && f - n * p > 0) {
+      work('Runway', 'round(cash / (burn - paying * price), 1)', `cash=${money}, burn=${f}, paying=${n}, price=${p}`, () => 'months at the net burn');
     } else if (f !== undefined && p === undefined) work('Runway', 'round(cash / burn, 1)', `cash=${money}, burn=${f}`, () => 'months at the burn');
   }
   return working.length ? out : null;
@@ -103,3 +113,58 @@ export function economicsBlock(economics: Economics): string {
 export const workingTools = (economics: Economics, id: (index: number) => string): ToolEvent[] => economics.working.map((one, index) => ({
   id: id(index), name: 'calc', args: { expression: one.expression, values: one.values }, ok: true, result: one.result,
 }));
+
+// ---------------------------------------------------------------- the partner's own words held to the working
+
+// Journey 14: the partner told the founder "your runway is 4.4 months (not 5)", cash over the gross burn, overruling a
+// colleague's right 4.99 (net of the €98 coming in); the morning note then called 4.4 confirmed. Runway and break-even
+// in what the partner says come from the working above, never from the model: a figure that differs is put right in
+// place, and a "(not …)" correction beside it goes with it. A what-if ("at €69 runway would be 7 months") is the
+// model's own sum on other inputs and stays.
+const WHAT_IF = /\b(?:if|would|could|after|assum\w*|instead|scenario|once|at\s+[$€£]\s?\d|raising|raise|cut\w*|new)\b/i;
+const MONTHS_SAID = /(\d+(?:\.\d+)?)(\s?(?:-|–)?\s?months?\b)(\**)(\s*\(not [^)]*\))?/gi;
+const RUNWAY_SAID = /\brunway\b|\bmonths? of (?:cash|money|runway)\b|\bcash (?:lasts|runs out)\b/i;
+const EVEN_SAID = /(\bbreak[- ]?even(?:\s+(?:is|sits|comes|lands|point|means|needs|requires|takes)|\s*:)*\s+(?:is\s+|at\s+|of\s+)?(?:~|about\s+|around\s+|roughly\s+)?(?:\*\*)?)(\d+)(?![\d.,]|\s*%)(\**)(\s*\(not [^)]*\))?/gi;
+export function figuresFix(text: string, economics: Economics | null | undefined): string {
+  if (!economics) return text;
+  const runway = economics.runway;
+  const even = economics.breakEven !== undefined && Number.isFinite(economics.breakEven) ? economics.breakEven : undefined;
+  if (!runway && even === undefined) return text;
+  return text.split('\n').map((line) => line.split(/(?<=[.!?])\s+/).map((sentence) => {
+    // A what-if, and the working itself ("ceil(900 / 49) = 19"), stay as they are.
+    if (WHAT_IF.test(sentence) || /=/.test(sentence)) return sentence;
+    let out = sentence;
+    if (runway && RUNWAY_SAID.test(out)) {
+      out = out.replace(MONTHS_SAID, (whole, figure: string, unit: string, stars: string, _not, at: number) => {
+        // "3 to 4 months", "under 5 months": a span or a bound is not the runway figure.
+        if (/(?:\d\s*(?:to|–|-)\s*|\b(?:under|over|at least|more than|less than|nearly|almost)\s*)$/i.test(out.slice(0, at))) return whole;
+        return Math.abs(Number(figure) - runway.value) < 0.1 ? whole : `${runway.display}${unit}${stars}`;
+      });
+    }
+    if (even !== undefined) out = out.replace(EVEN_SAID, (whole, lead: string, figure: string, stars: string) => (Number(figure) === even ? whole : `${lead}${even}${stars}`));
+    return out;
+  }).join(' ')).join('\n');
+}
+
+// The Company brief's Runway and Break-even rows, as the working gives them: what any write to the brief keeps there,
+// whatever the writer put ("Runway: 4.4 (unsourced) months (4,000 / 900, calc)" with no calc behind it).
+const DERIVED_ROW = /^(\s*[-*]\s+)(runway|break[- ]?even)\s*:.*$/i;
+// `numbers`: the section the working is read from, when `text` is the whole document.
+export function derivedRows(text: string, numbers = text): { text: string; set: string[] } {
+  const economics = economicsOf(numbers.split('\n').filter((line) => !DERIVED_ROW.test(line)).join('\n'));
+  if (!economics) return { text, set: [] };
+  const set: string[] = [];
+  const out = text.split('\n').map((line) => {
+    const found = DERIVED_ROW.exec(line);
+    if (!found) return line;
+    const runway = /^runway$/i.test(found[2]);
+    const one = economics.working.find((each) => each.label === (runway ? 'Runway' : 'Break-even'));
+    if (!one || (!runway && !Number.isFinite(economics.breakEven))) return line;
+    const value = one.result.split(' = ').at(-1)!;
+    const row = `${found[1]}${runway ? 'Runway' : 'Break-even'}: ${value} ${runway ? 'months' : economics.unit ?? 'paying customers'} (calc: ${one.result})`;
+    if (row !== line) set.push(row.trim().replace(/^[-*]\s+/, ''));
+    return row;
+  }).join('\n');
+  // Runway and break-even said anywhere else the write added are held to the same working.
+  return { text: out.split('\n').map((line) => (DERIVED_ROW.test(line) ? line : figuresFix(line, economics))).join('\n'), set };
+}
