@@ -260,6 +260,63 @@ export function markUnbacked(input: { before: string; after: string; read: strin
 }
 export const markSaid = (mark: CountMark) => `"${mark.label}" (in "${quote(mark.line)}")`;
 
+// A figure worked out from others, written with no working behind it. Journey 13: Tom wrote "Net burn at current MRR
+// (€720): €1,380 per month" and "Runway at net burn: 8.7 months" in his head from the brief's figures, forgot the
+// €534 a month the boxes cost, and both stood unmarked, since the figure check takes one step of arithmetic on two
+// figures read as sourced. On a line that names what a sum gives (burn, runway, margin, profit, break-even, CAC, LTV,
+// a total, a monthly figure), a number stands only when something read gives it as written or a calc this turn
+// worked it out from figures read; else it is marked "(unsourced)", even when its inputs were read.
+const DERIVED = /\b(?:burn|runway|margins?|profits?|loss(?:es)?|break[- ]?even|CAC|LTV|payback|totals?|per[- ]month|monthly|a month|net)\b|\/\s?mo(?:nth)?\b/i;
+const FIGURE = /(?<![\p{L}\d.,:/#-])([$€£]\s?)?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(?:\s?(k|m)\b)?(\s?%)?(?![\d]|[.,]\d|\s*\(unsourced\)|(?:st|nd|rd|th|am|pm)\b|\s?[-:/]\d)/giu;
+// A figure put as a goal or a suggestion is the writer's proposal, not a sum: "I suggest a target of $49 next".
+const PROPOSED = /\b(?:suggest\w*|propos\w*|recommend\w*|aim|goal|target|plan|should|could|would|want)\b/i;
+function unworkedFigures(line: string, known: Set<number>, worked: number[]): Unbacked[] {
+  const found: Unbacked[] = [];
+  let offset = 0;
+  for (const sentence of line.split(/(?<=[.!?;])\s+/)) {
+    const start = line.indexOf(sentence, offset);
+    offset = start + sentence.length;
+    if (!DERIVED.test(sentence)) continue;
+    found.push(...unworkedIn(sentence, known, worked).map((miss) => ({ ...miss, end: start + miss.end })));
+  }
+  return found;
+}
+function unworkedIn(line: string, known: Set<number>, worked: number[]): Unbacked[] {
+  const found: Unbacked[] = [];
+  for (const match of line.matchAll(FIGURE)) {
+    const [, money, digits, decimals = '', scaleWord, share] = match;
+    const scale = { k: 1e3, m: 1e6 }[scaleWord?.toLowerCase() ?? ''] ?? 1;
+    const value = Number(`${digits.replace(/,/g, '')}${decimals}`) * scale;
+    const before = line.slice(0, match.index);
+    const rest = line.slice(match.index + match[0].length);
+    if (PROPOSED.test(before)) continue;
+    if (!money && !share && !decimals && (CONSTANTS.has(value) || (value >= 1900 && value <= 2099))) continue;
+    if (DATE_AFTER.test(rest) || DATE_BEFORE.test(before) || NAMES.test(before)) continue;
+    if (/^\s*(?:[\p{L}'-]+\s+){0,3}\(unsourced\)/u.test(rest)) continue;
+    // As exact as it is written: "8.7" is any sum from 8.65 to 8.75, "€1,380" one from 1,379.5 to 1,380.5.
+    const half = 0.5 * 10 ** -(decimals.length ? decimals.length - 1 : 0) * scale;
+    const near = (one: number) => Math.abs(one - value) <= half + 1e-9 || (!!share && Math.abs(one * 100 - value) <= half + 1e-9);
+    if (known.has(value) || worked.some(near)) continue;
+    found.push({ label: match[0].trim(), end: match.index + match[0].trimEnd().length });
+  }
+  return found;
+}
+
+// The derived figures a write adds that nothing read gives and no calc worked out, each marked "(unsourced)" after it.
+export function markUnworked(input: { before: string; after: string; read: string[] }): { text: string; marked: CountMark[] } {
+  const { plain, free } = sortSums(input.read);
+  const known = new Set(sentencesOf(plain).flatMap(tokensOf).flatMap((token) => (token.value === undefined ? [] : [token.value])));
+  const lines = input.after.split('\n');
+  const marked: CountMark[] = [];
+  for (const { line } of added(input.before, input.after)) {
+    if (/^\s*(?:>|```)/.test(lines[line])) continue;
+    const misses = unworkedFigures(lines[line], known, free);
+    for (const miss of [...misses].reverse()) lines[line] = `${lines[line].slice(0, miss.end)} (unsourced)${lines[line].slice(miss.end)}`;
+    marked.push(...misses.map((miss) => ({ label: miss.label, line: lines[line] })));
+  }
+  return { text: lines.join('\n'), marked };
+}
+
 // A claim of evidence, and the words one of the founder's sentences or a tool result has to share with it.
 const CLAIMS: { said: RegExp; keys: RegExp }[] = [
   { said: /\bretention\b[^.;!?]{0,30}?\b(?:ok|okay|good|fine|strong|high|solid|great|healthy)\b/i, keys: /\b(?:retention|retain|retained|churn|renew|came back|come back|returning|stayed)\b/i },
@@ -269,6 +326,73 @@ const CLAIMS: { said: RegExp; keys: RegExp }[] = [
   { said: /\b(?:(?:the\s+)?(?:product|app|tool|platform|prototype|mvp|beta|it)\s+(?:itself\s+|really\s+|clearly\s+)?(?:works|is working|does work)|proven to work|validated the (?:product|idea|market|demand))\b/i, keys: /\b(?:works?|working|worked|validat\w*|proven|bugs?|crash\w*|broken|uptime)\b/i },
   { said: /\b(?:we(?:'ve| have)|I(?:'ve| have)|the founder has|they(?:'ve| have))\s+(?:had|done|held|run|conducted|completed)\s+[\w-]+\s+(?:real\s+)?(?:customer\s+|user\s+)?(?:conversations?|interviews?|calls?)\b/i, keys: /\b(?:conversations?|interview\w*|calls?|called|talk\w*|spoke|spoken)\b/i },
 ];
+// A sentence that puts words, feedback or behaviour in the mouths of customers: "office managers report it is a popular
+// perk", "strong initial pickup on Tuesday evenings", "staff appreciate the freshness". Journey 13: Lena's customer
+// notes said both with nothing on record, in a plain doc, unmarked. Each claim is a pattern; it is backed only by a
+// sentence read this turn that says what someone said or did (a founder message, interview notes, a survey, a page)
+// and shares a word of substance with it, so the brief's "evening pickup" is no source for "strong pickup".
+const SUBJECTS = 'customers?|users?|clients?|hosts?|buyers?|managers?|offices?|staff|employees|teams?|people|HR|members?|pilots?|everyone|tenants?|guests?|they';
+const FEEDBACK: RegExp[] = [
+  new RegExp(`\\b(?:${SUBJECTS})\\b(?:\\s+(?!and\\b|but\\b)[\\w/'-]+){0,2}?\\s+(?:really\\s+|often\\s+|all\\s+|keep\\s+)?(?:report(?:s|ed)?|say|says|said|told us|tell us|love[sd]?|appreciat(?:e|es|ed)|enjoy(?:s|ed)?|asks? for|asked for|asking for|request(?:s|ed)?|prais(?:e|es|ed)|rave[sd]?|complain(?:s|ed)?|prefer(?:s|red)?|describe[sd]?|call(?:s|ed)? it|await(?:s|ed)?|look(?:s|ed)? forward|can['’]t wait|(?:are|were|is) (?:excited|thrilled|delighted|happy)|recommend(?:s|ed)?|rel(?:y|ies|ied) on|highlight(?:s|ed)?|mention(?:s|ed)?|value(?:s|d)? (?:it|the))\\b`, 'i'),
+  /\b(?:strong|high|good|great|solid|growing|huge|clear|positive|steady|encouraging|enthusiastic)\s+(?:[\w-]+\s+)?(?:pickup|pick-up|uptake|adoption|engagement|demand|interest|feedback|response|reception|participation|usage|attendance|turnout|enthusiasm|excitement|satisfaction)\b/i,
+  /\b(?:popular|well[- ]received|went down well|a hit with|in high demand|sought[- ]after)\b/i,
+  /\b(?:feedback|response|reception|pickup|uptake|engagement|demand)\s+(?:is|was|has been|have been|so far)\s+(?:\w+\s+)?(?:positive|strong|great|good|high|excellent|encouraging)\b/i,
+];
+// What a source has to be to back one: itself a claim of feedback, or a record of what someone said.
+const RECORD = /\b(?:said|says|told|interview\w*|survey\w*|quoted?|replied|wrote|answered|complain\w*|reported)\b/i;
+// Words that say nothing about what the feedback was about.
+const GENERIC = new Set(`${SUBJECTS.replace(/\?/g, '').split('|').join(' ')} customer user client manager office member pilot tenant guest staff team report reported reports say said told love loved appreciate appreciated enjoy enjoyed ask asked request requested praise rave complain prefer describe call strong high good great solid growing huge clear positive steady encouraging enthusiastic pickup pick-up uptake adoption engagement demand interest feedback response reception popular initial early really often keep`.split(' '));
+const substance = (sentence: string) => content(sentence).filter((word) => word.length > 3 && !GENERIC.has(word.toLowerCase())).map(stem);
+// The sentences read that hold a record of feedback, each as its words of substance.
+type Record = { words: string[]; feedback: boolean };
+const records = (read: string[]): Record[] => sentencesOf(read.map((one) => one.split('\n').filter((line) => !line.includes(MARK)).join('\n')))
+  .flatMap((sentence) => {
+    if (/\?\s*$/.test(sentence)) return [];
+    // A question about feedback records none: "a doc on how the offices feel and what office managers say".
+    const told = (hit: RegExpExecArray | null) => !!hit && !ASKED.test(sentence.slice(0, hit.index));
+    const feedback = FEEDBACK.some((claim) => told(claim.exec(sentence)));
+    return feedback || told(RECORD.exec(sentence)) ? [{ words: substance(sentence), feedback }] : [];
+  });
+const ASKED = /\b(?:what|how|whether|if|ask|find out)\b/i;
+// The claims of feedback in one sentence that nothing read backs, each as written. A question, a doubt or a thing to
+// find out is no claim: "find out whether staff appreciate it", "no feedback on record".
+// Words said in quote marks under a heading or label about what customers said: an invented testimonial.
+const QUOTE = /["“][^"”]*\b\w+\s+\w+\s+\w+[^"”]*["”]/;
+const SAYING = /\b(?:quotes?|feedback|testimonials?|said|says|reviews?|customers?|managers?|users?|clients?|staff|employees)\b/i;
+function unbackedFeedback(sentence: string, read: Record[], heading = ''): string[] {
+  if (/\?\s*$/.test(sentence) || /\bno feedback\b/i.test(sentence)) return [];
+  const words = substance(sentence);
+  const quoted = QUOTE.exec(sentence);
+  if (quoted && (SAYING.test(heading) || SAYING.test(sentence.slice(0, quoted.index)))) {
+    return read.some((source) => source.words.some((one) => words.some((word) => alike(word, one)))) ? [] : [quoted[0].length > 60 ? `${quoted[0].slice(0, 59)}…` : quoted[0]];
+  }
+  return FEEDBACK.flatMap((claim) => {
+    const hit = claim.exec(sentence);
+    if (!hit || DENIED.test(sentence.slice(0, hit.index)) || LEARNING.test(sentence.slice(0, hit.index))) return [];
+    // "Customers love it" has no word of substance: only a sentence read that is itself such a claim backs it.
+    const backs = (source: Record) => (words.length ? source.words.some((one) => words.some((word) => alike(word, one))) : source.feedback);
+    return read.some(backs) ? [] : [hit[0]];
+  });
+}
+const LEARNING = /\b(?:find out|learn|ask|check|test|need to know|confirm|verify|explore|understand|question|open|unknown|hypothes\w*)\b[^.;!?]*$/i;
+
+// A doc with no rules keeps a claim of feedback nothing read backs, marked "(assumption)" after its sentence, the
+// way its counts are marked "(unsourced)". Gives the sentences marked.
+export function markFeedback(input: { before: string; after: string; read: string[] }): { text: string; marked: string[] } {
+  const read = records(input.read);
+  const lines = input.after.split('\n');
+  const marked: string[] = [];
+  for (const { line, heading } of added(input.before, input.after)) {
+    if (/^\s*(?:>|```)/.test(lines[line])) continue;
+    lines[line] = lines[line].split(/(?<=[.!?])\s+/).map((sentence) => {
+      if (sentence.includes(MARK) || !unbackedFeedback(sentence, read, heading).length) return sentence;
+      marked.push(sentence.trim());
+      return sentence.replace(/([.!?]*)(\s*)$/, ` ${MARK}$1$2`);
+    }).join(' ');
+  }
+  return { text: lines.join('\n'), marked };
+}
+
 // Denied, doubted or still to come: "not validated yet", "unproven", "needs to be confirmed".
 const DENIED = /\b(?:no|not|never|none|nobody|without|yet to|to be|un\w+|if|whether)\b[^.;!?]*$/i;
 // A view, not a fact: kept, and marked so a reader can tell.
@@ -297,10 +421,11 @@ export function unbackedClaims(text: string, said: string[]): string[] {
   const heard = sentencesOf(said);
   return text.split(/(?<=[.!?])\s+/).flatMap((sentence) => {
     if (sentence.includes(MARK) || VIEW.test(sentence)) return [];
-    return CLAIMS.flatMap(({ said: claim, keys }) => {
+    const claimed = CLAIMS.flatMap(({ said: claim, keys }) => {
       const hit = claim.exec(sentence);
       return !hit || DENIED.test(sentence.slice(0, hit.index)) || heard.some((one) => keys.test(one)) ? [] : [hit[0]];
     });
+    return [...claimed, ...unbackedFeedback(sentence, records(said)).filter((hit) => !claimed.includes(hit))];
   });
 }
 
@@ -320,9 +445,27 @@ export function evidenceCheck(input: { before: string; after: string; counts: st
   const figures: string[] = [];
   const claims: string[] = [];
   const marked: string[] = [];
+  const heardOf = records(input.counts);
+  let feedback = false;
   for (const { line, heading } of added(input.before, input.after)) {
     figures.push(...unbackedCounts(lines[line], counts, quoted).map((miss) => `"${miss.label}" (in "${quote(lines[line])}")`));
-    if (!EVIDENCE.test(heading)) continue;
+    // Feedback put in customers' mouths is a claim of evidence under any heading.
+    if (!EVIDENCE.test(heading)) {
+      if (/^\s*(?:>|```)/.test(lines[line])) continue;
+      lines[line] = lines[line].split(/(?<=[.!?])\s+/).map((sentence) => {
+        if (sentence.includes(MARK)) return sentence;
+        const hits = unbackedFeedback(sentence, heardOf, heading);
+        if (!hits.length) return sentence;
+        if (VIEW.test(sentence)) {
+          marked.push(sentence.trim());
+          return sentence.replace(/([.!?]*)(\s*)$/, ` ${MARK}$1$2`);
+        }
+        feedback = true;
+        claims.push(...hits.map((hit) => `"${hit}" in "${heading || 'the document'}"`));
+        return sentence;
+      }).join(' ');
+      continue;
+    }
     lines[line] = lines[line].split(/(?<=[.!?])\s+/).map((sentence) => {
       if (sentence.includes(MARK)) return sentence;
       if (VIEW.test(sentence)) {
@@ -334,6 +477,9 @@ export function evidenceCheck(input: { before: string; after: string; counts: st
         if (!hit || DENIED.test(sentence.slice(0, hit.index))) continue;
         if (!said.some((one) => keys.test(one))) claims.push(`"${hit[0]}" in "${heading}"`);
       }
+      const heard = unbackedFeedback(sentence, heardOf, heading).filter((hit) => !claims.some((one) => one.startsWith(`"${hit}"`)));
+      if (heard.length) feedback = true;
+      claims.push(...heard.map((hit) => `"${hit}" in "${heading}"`));
       return sentence;
     }).join(' ');
   }
@@ -343,7 +489,8 @@ export function evidenceCheck(input: { before: string; after: string; counts: st
       + 'Take it out, write the figure the source gives, or write "(unsourced)" right after it.');
   }
   if (claims.length) {
-    parts.push(`${claims.join(', ')}: no founder message or tool result says this. Take it out, ask the founder, or write it as your view with "${MARK}" after it.`);
+    parts.push(`${[...new Set(claims)].join(', ')}: no founder message or tool result says this. Take it out, ask the founder, or write it as your view with "${MARK}" after it.`
+      + (feedback ? ' Customer feedback comes only from notes you read; with none, write "no feedback on record".' : ''));
   }
   if (parts.length) throw new Error(`not written: ${parts.join(' And ')}`);
   return { text: lines.join('\n'), marked };

@@ -9,7 +9,7 @@ import { text, type Tool, type ToolContext } from './registry.ts';
 import { shortDay } from '../clock.ts';
 import { dropFlagged, figureCheck, HELD_BACK, holdVerdict, verdictStanding, type Receipt } from '../truth.ts';
 import { findCompanyDoc } from '../../shared/partner.ts';
-import { evidenceCheck, markSaid, markUnbacked, readableSources, unbackedEnds } from './evidence.ts';
+import { evidenceCheck, markFeedback, markSaid, markUnbacked, markUnworked, readableSources, unbackedEnds } from './evidence.ts';
 import { filled, guardWrite, sectionBody, standingVerdict, unmarked, verdictState, WHOLE } from './verdict.ts';
 
 // A new doc card's size, and the gap kept round it: the same the window uses when it places one.
@@ -195,6 +195,14 @@ async function numbersOf(context: Pick<ToolContext, 'stage' | 'store'>): Promise
 }
 
 async function save(context: ToolContext, id: string, before: string, written: string, done: string, touches?: string | typeof WHOLE) {
+  const checked = await checkWrite(context, id, before, written, done, touches);
+  await context.store.replaceDoc(id, checked.text);
+  return { text: checked.said, effect: { kind: 'doc-changed' as const, id } };
+}
+
+// What a write would save and what its result says, or a throw saying what is not written and why. A new doc's first
+// text goes through here too: journey 13's invented customer notes came in a create_doc, which checked nothing.
+async function checkWrite(context: ToolContext, id: string, before: string, written: string, done: string, touches?: string | typeof WHOLE): Promise<{ text: string; said: string }> {
   const rules = await rulesOf(context.stage, id);
   const honest = honestMarks(context, before, written, (await evidenceFor(context, before))?.read ?? null);
   written = honest.text;
@@ -207,6 +215,15 @@ async function save(context: ToolContext, id: string, before: string, written: s
   }
   let after = unsourced.reduce((text, label) => text.replace(at(label), `${label}${MARK}`), written);
   if (unsourced.length) done = `${done} Marked as unsourced, since nothing this turn read gives them: ${unsourced.join(', ')}.`;
+  // A burn, a runway, a margin or a total worked out in the head stands only with a calc behind it.
+  const sources = await evidenceFor(context, before);
+  const unworked = sources ? markUnworked({ before, after, read: sources.read }) : null;
+  if (unworked?.marked.length) {
+    const which = unworked.marked.map(markSaid).join(', ');
+    if (rules) throw new Error(`not written: ${which} ${unworked.marked.length > 1 ? 'are figures' : 'is a figure'} worked out with no calc this turn and in nothing read. ${WORK_IT_OUT}`);
+    after = unworked.text;
+    done = `${done} Marked as unsourced, since no calc this turn worked them out and nothing read gives them: ${which}. ${WORK_IT_OUT}`;
+  }
   if (rules) {
     const held = await heldToEvidence(context, before, after);
     after = held.text;
@@ -222,16 +239,25 @@ async function save(context: ToolContext, id: string, before: string, written: s
       const landed = counts.marked.filter((mark) => kept.has(mark.line));
       if (landed.length) done = `${done} Marked as unsourced, since nothing read gives them for what they count: ${landed.map(markSaid).join(', ')}. Read for them, or take them out.`;
     }
+    // Feedback put in customers' mouths that nothing read says is kept as the writer's guess, and said to be one.
+    const feedback = read ? markFeedback({ before, after, read: read.read }) : null;
+    if (feedback?.marked.length) {
+      after = feedback.text;
+      done = `${done} Marked as an assumption, since no notes read say it: ${feedback.marked.map((one) => `"${quote(one)}"`).join(', ')}. `
+        + 'Customer feedback comes only from notes you read; with none, write "no feedback on record".';
+    }
   }
   // Only a team doc's own sections are kept to one copy, where a second would slip past the checks; a plain doc such
   // as a running log repeats "## Monday" on purpose.
   const twice = rules ? addedTwice(before, after, [...rules.sections, rules.verdict].map((one) => one.heading)) : null;
   if (twice) throw new Error(`not written: "${twice}" is already a section of this document; change it with replace_section instead of adding it again.`);
   const guarded = rules ? guardWrite({ rules, stage: context.stage, docId: id, writerId: context.roomId, before, after, now: Date.now(), touches, numbers: await numbersOf(context) }) : { text: after };
-  await context.store.replaceDoc(id, guarded.text);
   const said = guarded.held ? guarded.note! : [done, guarded.note].filter(Boolean).join(' ');
-  return { text: said, effect: { kind: 'doc-changed' as const, id } };
+  return { text: guarded.text, said };
 }
+// With no numbers in it: a tool result is read, and an example figure here would source itself.
+const WORK_IT_OUT = 'Work each one out with calc from figures read, every cost in, and write the working line in the doc, as "Net burn = costs − MRR = result (calc)".';
+const quote = (text: string) => (text.length > 90 ? `${text.slice(0, 89)}…` : text);
 
 // Whether a question is about a section: it names the section's words ("founder-market fit") or its number
 // ("section 4"), read past case, hyphens and the heading's own "4." in front.
@@ -495,11 +521,13 @@ export const docTools: Tool[] = [
       // A short name, never the ask: the model often hands the whole request over as the title.
       const title = docTitle(text(args, 'title', 200));
       const id = `doc-${Math.random().toString(36).slice(2, 8)}`;
-      await context.store.writeDoc(id, text(args, 'text'));
+      // A new doc has no rules, so its text is marked, never refused.
+      const checked = await checkWrite(context, id, '', text(args, 'text'), `Created "${title}".`);
+      await context.store.writeDoc(id, checked.text);
       context.granted.set(id, title);
       // A stage that cannot be saved just now still leaves a doc the person can write to this turn.
       await Promise.resolve().then(() => context.store.patchStage(docOnStage(context.roomId, id, title))).catch(() => {});
-      return { text: `Created "${title}".`, effect: { kind: 'doc-created', id, title } };
+      return { text: checked.said, effect: { kind: 'doc-created', id, title } };
     },
   },
 ];

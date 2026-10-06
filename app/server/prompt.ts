@@ -17,6 +17,11 @@ export type ModelMessage =
   | { role: 'tool'; tool_call_id: string; content: string };
 
 const PAST_RESULT_CHARS = 300;
+// What a doc may say about customers and about worked-out money. Journey 13: customer notes with invented feedback,
+// and a net burn worked out in the head that forgot a cost.
+export const DOC_TRUTH = 'In a document, customer feedback comes only from notes you read (the founder\'s words, interview notes, a survey, a page); '
+  + 'with none, write "no feedback on record". Work out every derived figure (burn, runway, margin, profit, break-even, totals, per month) with calc '
+  + 'and show its working line in the doc, as "Net burn = 1,400 − 20 = 1,380 (calc)". '
 
 // A wire grants access, whichever way it was drawn: of the given cards, the ones wired to this room.
 export function wired(stage: Stage, roomId: string, ids: string[]): string[] {
@@ -172,6 +177,7 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
           // Nothing wired, but a document made in this turn is theirs to go on writing.
           : toolNames.includes('write_doc') && toolNames.includes('create_doc') ? 'A document you make with create_doc is yours to go on writing in this turn, with replace_section, append_doc or write_doc, naming it by its title. '
           : '')
+        + (toolNames.includes('write_doc') || toolNames.includes('create_doc') ? DOC_TRUTH : '')
         + 'For anything on the web, search and read with all your queries or addresses in one call. Say where a fact came from. '
         + 'The founder sees a receipt for every tool call, and work without a receipt did not happen: never write that you saved, created or changed '
         + 'something unless that tool call ran in this turn and succeeded. When a request has several parts, make every tool call first, '

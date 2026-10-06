@@ -8,6 +8,7 @@ import { resultCap } from './context/shrink.ts';
 import type { Offered } from './playbook.ts';
 import type { Payloads, Seams, Source } from './seams.ts';
 import { runTool, type Tool, type ToolContext } from './tools/registry.ts';
+import { readsOf } from './tools/unread.ts';
 import { ANSWER_IN_WORDS, CALL_THE_TOOL, checkReply, HELD_BACK, proseToolCall, turnEvidence, turnSources } from './truth.ts';
 import type { UsageBook } from './usage.ts';
 import { needsSlim, slimNotice } from './slim.ts';
@@ -101,6 +102,8 @@ export async function runTurn(input: {
   // What a colleague asked with ask_person had read for their answer: it backs a count, never a claim, and the rest of
   // their answer, said from their own head, backs nothing.
   const heard: string[] = [];
+  // The pages this turn read, and those that did not load: a failed read backs nothing (server/tools/unread.ts).
+  const reads = { reached: [] as string[], unreached: [] as string[] };
   // Why the stream broke off mid-reply, when it did; whether a tool call came back as text and was already asked about
   // once; whether it came back so twice and was held back; whether the reply had to be made from the receipts.
   let broke = '';
@@ -261,6 +264,7 @@ export async function runTurn(input: {
         const { read, said } = turnEvidence(inputs);
         return { read: [...read, ...worked, ...heard, query], said: [...said, ...worked, query] };
       };
+      context.reads = () => reads;
       context.report = (effect) => events.tool({ id: call.id, name: call.name, args, effect });
       // A tool that runs a turn of its own inside itself asks the founder on this turn's path, not on one of its own.
       context.approve = input.approve;
@@ -274,9 +278,13 @@ export async function runTurn(input: {
       done.push(event);
       events.tool(event);
       messages.push({ role: 'tool', tool_call_id: call.id, content: full });
-      results.push(full);
+      // A page that did not load is no source for anything said or written after it.
+      const read = readsOf(full);
+      reads.reached.push(...read.reached);
+      reads.unreached.push(...read.unreached);
+      results.push(read.text);
       if (ran.ok && ran.heard) heard.push(...ran.heard);
-      else if (ran.ok && !/^(?:recall|reflect|remember)$/.test(call.name)) worked.push(full);
+      else if (ran.ok && !/^(?:recall|reflect|remember)$/.test(call.name)) worked.push(read.text);
     }
   }
 

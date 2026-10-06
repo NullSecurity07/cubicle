@@ -111,12 +111,22 @@ function Chip({ tool }: { tool: ToolEvent }) {
   return <ChipLine tool={tool} />;
 }
 
+// A failed step that has its own words for the founder, instead of "Could not: ...": a draft refused for an address
+// nothing gives says so, so a guessed address never reads as a mere hiccup.
+export function failedLine(tool: Pick<ToolEvent, 'name' | 'args' | 'ok' | 'result'>): string | null {
+  if (tool.name === 'draft_email' && tool.ok === false && /no address on record for /.test(tool.result ?? '')) {
+    return `No address on record for ${String(tool.args.to ?? '').slice(0, 120)}: ask the founder or find it on their site`;
+  }
+  return null;
+}
+
 function ChipLine({ tool }: { tool: ToolEvent }) {
   const state = tool.ok === undefined ? 'run' : tool.ok ? 'ok' : 'fail';
   const { doing, done, subject } = receiptOf(tool);
+  const failed = failedLine(tool);
   return (
     <details className={`chip chip--${state}`}>
-      <summary><span className="chip__mark" aria-hidden="true" />{state === 'fail' ? `Could not: ${doing.toLowerCase()}` : state === 'run' ? doing : done} {subject}</summary>
+      <summary><span className="chip__mark" aria-hidden="true" />{failed ?? <>{state === 'fail' ? `Could not: ${doing.toLowerCase()}` : state === 'run' ? doing : done} {subject}</>}</summary>
       <pre>{JSON.stringify(tool.args, null, 2)}{tool.result ? `\n\n${tool.result}` : ''}</pre>
       {/* What a slice offers to do about this one step, if any of them has anything to say about it. */}
       {SLICES.map((slice) => (slice.receipt ? <slice.receipt key={slice.name} tool={tool} /> : null))}

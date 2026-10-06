@@ -4,6 +4,8 @@ import type { Browser, Launch } from '../browser.ts';
 import type { Mail } from '../mail.ts';
 import { SETUP_HINT } from '../mail.ts';
 import { wiredCards } from '../prompt.ts';
+import { findCompanyDoc } from '../../shared/partner.ts';
+import { leadsCardIds, leadsFor } from '../leads/store.ts';
 import { runCode } from '../sandbox.ts';
 import { browserSession } from './web.ts';
 import { speaker, text, type Tool, type ToolContext } from './registry.ts';
@@ -15,7 +17,31 @@ const ADDRESS = /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/;
 export type Drafting = {
   raise(entry: Attention): Promise<void>;
   open?(stage: ToolContext['stage'], roomId: string, url: string): Promise<string | null>;
+  // The addresses on the Leads cards on the stage.
+  onRecord?(stage: ToolContext['stage']): Promise<string[]>;
 };
+
+// An address a person invents looks like a real one: journey 13's Tom drafted to office@example.com, which nothing
+// had ever given. An address goes in a draft only when it is on record: in something this turn read, the founder's
+// words in any room, the Company brief, or a Leads card row. Outside a turn there is nothing to check against.
+const EMAILS = /[^\s@<>,;:()"'`[\]]+@[^\s@<>,;:()"'`[\]]+\.[a-z]{2,}/gi;
+const GUESSED = /^(?:info|office|hello|contact|hi|team|sales|support|admin|mail|enquiries|inquiries|careers|jobs|hr|press)@/i;
+async function onRecord(context: ToolContext, drafting?: Drafting): Promise<Set<string> | null> {
+  if (!context.sources) return null;
+  const chats = await Promise.all(context.stage.rooms.map((room) => context.store.readChat(room.id).catch(() => [])));
+  const founder = chats.flat().filter((message) => message.role === 'user' && !message.from && !message.failed).map((message) => message.text);
+  const company = findCompanyDoc(context.stage.docs);
+  const brief = company ? await context.store.readDoc(company.id).catch(() => '') : '';
+  const leads = drafting?.onRecord ? await drafting.onRecord(context.stage).catch(() => []) : [];
+  const text = [...context.sources(), ...founder, brief, ...leads].join('\n');
+  return new Set([...text.matchAll(EMAILS)].map((match) => match[0].replace(/[.]+$/, '').toLowerCase()));
+}
+// The emails on every Leads card on the stage, read through the same shared list the Leads card keeps.
+export const leadAddresses = (workspace: string) => async (stage: ToolContext['stage']) =>
+  (await Promise.all(leadsCardIds(stage).map((id) => leadsFor(workspace).list(id)))).flat().flatMap((lead) => (lead.person.email ? [lead.person.email] : []));
+export const noAddress = (address: string) => `no address on record for ${address}`;
+const unknownAddress = (address: string) => `${noAddress(address)}: nothing read this turn, no Leads card, no founder message and not the Company brief gives it`
+  + `${GUESSED.test(address) ? `, and "${address.split('@')[0]}@" put before their domain is a guess` : ''}. Ask the founder for it, or find it on their site, then draft again. Do not write a guessed address.`;
 
 // The founder's Gmail card wired to the person, if there is one, shown the draft: Gmail's compose page with the
 // fields filled. Opening a page sends nothing; the Send button in it is the founder's.
@@ -47,6 +73,9 @@ export function outwardTools(mail: Mail, filesDir: string, drafting?: Drafting, 
         const bad = to.filter((address) => !ADDRESS.test(address));
         if (bad.length) throw new Error(`not an email address: ${bad.join(', ')}`);
         if (to.length > 5) throw new Error('at most 5 recipients');
+        const known = await onRecord(context, drafting);
+        const unknown = known ? to.filter((address) => !known.has(address.toLowerCase())) : [];
+        if (unknown.length) throw new Error(unknown.map(unknownAddress).join(' '));
         const room = speaker(context);
         const url = gmailLink(draft);
         const cardId = drafting?.open ? await drafting.open(context.stage, context.roomId, url).catch(() => null) : null;

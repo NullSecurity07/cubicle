@@ -3,6 +3,7 @@
 // then, so the reply is read afterwards and the founder is told, in a line under it, what nothing backs. The model's
 // words are never taken away, with one exception: a verdict word or score the team doc refused (holdVerdict).
 
+import { readsOf } from './tools/unread.ts';
 import { PARTNER_STANCE, STANCE } from '../shared/model.ts';
 
 export type Receipt = { name: string; ok?: boolean; effect?: unknown; result?: string };
@@ -419,7 +420,8 @@ function factsOf(system: string, stances: string[]): string {
 export function turnSources(messages: { role: string; content: unknown }[], stances: string[] = [STANCE, PARTNER_STANCE]): string[] {
   return messages.map((message) => {
     const content = typeof message.content === 'string' ? message.content : '';
-    return message.role === 'system' ? factsOf(content, stances) : content;
+    // A page that did not load, handed back to the model so it knows, is no source (server/tools/unread.ts).
+    return message.role === 'system' ? factsOf(content, stances) : message.role === 'tool' ? readsOf(content).text : content;
   }).filter(Boolean);
 }
 

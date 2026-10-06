@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { evidenceCheck, heardFrom, markClaims, markUnbacked, readableSources } from './evidence.ts';
+import { evidenceCheck, heardFrom, markClaims, markFeedback, markUnbacked, markUnworked, readableSources } from './evidence.ts';
 
 const TEMPLATE = '# Evaluation\n\n## 2. Three specific ways it dies\n\n1. — survivable? — cheapest test:\n\n## 3. Is the pain real?\n\nVitamin — painkiller — hair on fire:\n\nWhat it costs them per month:\n\nReal customer conversations done (of ten to twenty):\n\n## 5. Verdict\n\nOne word (STRONG / WEAK / PIVOT REQUIRED):\n';
 // Journey 10's founder: twelve beta users, two paying, forty playtest sessions logged. Nobody talked to anyone.
@@ -150,5 +150,92 @@ describe('a claim that the product works', () => {
   });
   it('is marked "(assumption)" in a reason when nothing backs it', () => {
     expect(markClaims('The product itself works. 3 pay.', [FOUNDER])).toBe('The product itself works (assumption). 3 pay.');
+  });
+});
+
+// Journey 13: Lena's customer notes put feedback in the pilot offices' mouths that nobody ever gave.
+describe('feedback put in customers\' mouths', () => {
+  const PICKUP = '**Engagement:** Strong initial pickup on Tuesday evenings; staff appreciate the convenience and freshness of local produce.';
+  const PERK = '**Office manager feedback:** HR/Office managers report it acts as a popular perk and talking point in the office.';
+  const BRIEF13 = '# Company brief\n\nWe deliver boxes of local produce to offices on Tuesdays for evening pickup. 5 pilot offices, 3 paying.';
+  const ASK = 'Make a new doc with customer notes: what we actually know about our five pilot offices and what we still need to find out about churn after month three.';
+  const plain = (line: string, read = [BRIEF13, ASK]) => markFeedback({ before: '# Customer notes\n', after: `# Customer notes\n\n${line}`, read });
+
+  it('is marked "(assumption)" in a plain doc when nothing read says it', () => {
+    expect(plain(PICKUP).text).toContain('freshness of local produce (assumption).');
+    expect(plain(PERK).text).toContain('talking point in the office (assumption).');
+    expect(plain(`${PICKUP}\n${PERK}`).marked).toHaveLength(2);
+  });
+  it('stands when notes read say it, by shared words', () => {
+    const notes = 'Interview notes, Acme office: the office manager said the box is a nice perk and people talk about it at lunch.';
+    expect(plain(PERK, [BRIEF13, notes]).marked).toEqual([]);
+    expect(plain('Staff appreciate the freshness of the produce.', [BRIEF13, 'Survey: 7 of 9 staff said the freshness was the best part.']).marked).toEqual([]);
+    // A record about something else backs nothing.
+    expect(plain(PERK, [BRIEF13, 'The founder said churn after month three is the worry.']).marked).toHaveLength(1);
+    expect(plain('Customers love it.', ['Founder: our customers love it.']).marked).toEqual([]);
+  });
+  it('leaves alone questions, things to find out and "no feedback on record"', () => {
+    for (const line of [
+      'Do office managers report it as a perk?',
+      'Find out whether staff appreciate the Tuesday slot.',
+      'Office manager feedback: no feedback on record.',
+      'We do not know if the boxes are popular yet.',
+      'Five pilot offices, three of them paying.',
+    ]) expect(plain(line).marked).toEqual([]);
+  });
+  it('is refused on a team doc under any heading, and marked when hedged', () => {
+    const before = '# Evaluation\n\n## Notes\n\n';
+    const run = (line: string) => evidenceCheck({ before, after: `${before}${line}\n`, counts: [BRIEF13, ASK], said: [ASK] });
+    expect(() => run(PERK)).toThrow(/"Office managers report" in "Notes".*no feedback on record/s);
+    expect(run('Office managers probably see it as a popular perk.').text).toContain('popular perk (assumption).');
+  });
+  it('is marked in a partner\'s reason', () => {
+    expect(markClaims('Keep going because staff engagement remains high.', [ASK])).not.toContain('(assumption)');
+    expect(markClaims('Keep going: the offices report strong engagement.', [ASK])).toContain('(assumption)');
+  });
+});
+
+// Journey 13: Tom's Unit Economics worked net burn and runway out in his head, forgot the produce, and both stood.
+describe('a derived figure with no calc behind it', () => {
+  const BRIEF13 = '# Company brief\n\n## Numbers\n\n- Monthly burn: €2,100\n- MRR: €720\n- Cash: €12,000\n- 3 paying offices; produce costs €178 a box';
+  const ASK = 'Work out our unit economics in a new doc.';
+  const mark = (line: string, read: string[]) => markUnworked({ before: '# Unit Economics\n', after: `# Unit Economics\n\n${line}`, read });
+
+  it('is marked "(unsourced)" though its inputs were read', () => {
+    expect(mark('Net burn at current MRR (€720): €1,380 per month', [BRIEF13, ASK]).text).toContain('Net burn at current MRR (€720): €1,380 (unsourced) per month');
+    expect(mark('Runway at net burn: 8.7 months', [BRIEF13, ASK]).text).toContain('Runway at net burn: 8.7 (unsourced) months');
+  });
+  it('stands when a calc this turn worked it out from figures read, rounded as written', () => {
+    const calcs = ['2100 - 720 = 1380', '12000 / 1380 = 8.695652174 (exact: 8.695652173913043)'];
+    expect(mark('Net burn at current MRR (€720): €1,380 per month', [BRIEF13, ASK, ...calcs]).marked).toEqual([]);
+    expect(mark('Runway at net burn: 8.7 months', [BRIEF13, ASK, ...calcs]).marked).toEqual([]);
+    expect(mark('Net burn = 2,100 − 720 = 1,380 (calc)', [BRIEF13, ASK, ...calcs]).marked).toEqual([]);
+    // The right figure, with the produce in, from a calc too.
+    expect(mark('Net burn: €1,914 a month', [BRIEF13, ASK, '2100 + 3 * 178 - 720 = 1914']).marked).toEqual([]);
+  });
+  it('is still marked when the calc rests on a figure nothing read gives', () => {
+    expect(mark('Runway: 6.3 months', [BRIEF13, ASK, '12000 / 1900 = 6.315789474']).marked).toHaveLength(1);
+  });
+  it('leaves alone figures read as written, lines that work nothing out, and dates', () => {
+    for (const line of ['Monthly burn: €2,100 (brief)', 'Price: €178 a box for 3 offices', 'We ship on 10 Nov, 12 months of runway at most.', '5 pilot offices took part.'])
+      expect(mark(line, [BRIEF13, ASK]).marked).toEqual([]);
+  });
+});
+
+// Live run of the fix: an "upbeat" pilot feedback doc made up office manager quotes and eager teams.
+describe('invented testimonials and eagerness', () => {
+  const ASK = 'Make a doc called Pilot feedback: how the pilot offices feel about the boxes so far, what office managers say, and how pickup is going.';
+  const plain = (text: string, read = [ASK]) => markFeedback({ before: '', after: text, read });
+  it('marks a quote under a heading about what people said, and eager behaviour, when nothing read says it', () => {
+    const doc = '# Pilot feedback\n\n## Office manager quotes\n- *"It has completely changed our Tuesday routine, everyone hangs around the kitchen."*\n\n## Office sentiment\n- **Excitement:** Teams eagerly await Tuesday deliveries.\n- **Pickup:** Evening pickups are running smoothly with steady participation.';
+    const out = plain(doc);
+    expect(out.marked).toHaveLength(3);
+    expect(out.text).toContain('kitchen."* (assumption)');
+    expect(plain('Office managers highlight the convenience as a great perk for morale.').marked).toHaveLength(1);
+  });
+  it('lets a quote read in interview notes stand, and does not read the founder\'s question as a record', () => {
+    const notes = 'Interview notes: the Acme office manager said "it has completely changed our Tuesday routine".';
+    expect(plain('## Quotes\n- "It has completely changed our Tuesday routine."', [ASK, notes]).marked).toEqual([]);
+    expect(plain('## Quotes\n- "Pickup is going great for the pilot offices."').marked).toHaveLength(1);
   });
 });

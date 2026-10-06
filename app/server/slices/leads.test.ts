@@ -52,6 +52,20 @@ describe('the Leads card', () => {
     expect(names('build')).toEqual([]);
   });
 
+  // Journey 13: Samplely's page came back "Page Not Found", and the lead still said "team size in ICP range".
+  it('notes "page not reachable" on a lead whose page did not load this turn, instead of why it fits', async () => {
+    const { part, tool, store, list } = await setup();
+    closing = part.close;
+    const reads = { reached: ['https://www.example.com/jobs'], unreached: ['https://samplely.example/about'] };
+    const context = { stage: await store.loadStage(), roomId: 'marketing', store, granted: new Map(), reads: () => reads } as ToolContext;
+    const out = await tool('add_lead').run({ person: 'Office manager', company: 'Samplely', why: 'Team size in ICP range, Berlin office' }, context);
+    expect(out.text).toBe('Added Office manager at Samplely. https://samplely.example/about was not reachable, so its note says "page not reachable" instead of why they fit. Read another source before you score them or say they fit.');
+    expect((await list())[0].notes[0].text).toBe('Page not reachable: https://samplely.example/about did not load, so nothing read says why Samplely fits yet.');
+    // A page that loaded keeps the reason as given.
+    expect((await tool('add_lead').run({ person: 'Office manager', company: 'Exampleco', why: '30 staff, hiring an office manager' }, context)).text).toBe('Added Office manager at Exampleco.');
+    expect((await list()).find((one) => one.company.name === 'Exampleco')!.notes[0].text).toBe('30 staff, hiring an office manager');
+  });
+
   it('adds a lead once, however it is typed, and says when one is already here', async () => {
     const { part, use, list, heard, workspace } = await setup();
     closing = part.close;

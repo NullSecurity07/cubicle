@@ -267,3 +267,34 @@ describe('what a team doc says about the world', () => {
     expect(out.text).toContain('Marked as a view: "Likely a painkiller for designers who test often."');
   });
 });
+
+// Journey 13: a new "Customer notes" doc said the pilot offices loved the boxes, and nothing on record said so.
+describe('customer feedback in a new doc', () => {
+  it('is marked "(assumption)" when nothing read says it, and the writer is told to say "no feedback on record"', async () => {
+    const { store, context } = await setup();
+    const read = ['Make a new doc with customer notes: what we actually know about our five pilot offices.', 'Brief: local produce boxes, 5 pilot offices, 3 paying.'];
+    const turn = { ...context, sources: () => read, evidence: () => ({ read, said: read }) };
+    const text = '# Customer notes\n\n**Office manager feedback:** HR/Office managers report it acts as a popular perk and talking point in the office.\n\n5 pilot offices, 3 paying.';
+    const out = await runTool(docTools, 'create_doc', JSON.stringify({ title: 'Customer notes', text }), turn);
+    expect(out.ok).toBe(true);
+    expect(out.text).toMatch(/^Created "Customer notes"\. Marked as an assumption, since no notes read say it: .*no feedback on record/);
+    const id = (out.effect as { id: string }).id;
+    expect(await store.readDoc(id)).toContain('talking point in the office (assumption).\n\n5 pilot offices, 3 paying.');
+  });
+});
+
+// Journey 13: "Net burn €1,380" and "runway 8.7 months" worked out in the head, wrong, and unmarked.
+describe('a derived figure in a doc', () => {
+  it('is marked "(unsourced)" with no calc behind it, and the writer is told to use calc and show the working', async () => {
+    const { store, context } = await setup();
+    const read = ['Brief: monthly burn €2,100, MRR €720, cash €12,000.', 'Work out our unit economics in a new doc.'];
+    const turn = { ...context, sources: () => read, evidence: () => ({ read, said: read }) };
+    const out = await runTool(docTools, 'create_doc', JSON.stringify({ title: 'Unit Economics', text: '# Unit Economics\n\nNet burn at current MRR (€720): €1,380 per month\nRunway at net burn: 8.7 months' }), turn);
+    expect(out.text).toMatch(/no calc this turn worked them out .*"€1,380".*"8\.7".*Work each one out with calc/s);
+    expect(await store.readDoc((out.effect as { id: string }).id)).toContain('€1,380 (unsourced) per month\nRunway at net burn: 8.7 (unsourced) months');
+    const worked = [...read, '2100 - 720 = 1380', '12000 / 1380 = 8.695652174'];
+    const calced = { ...context, sources: () => worked, evidence: () => ({ read: worked, said: worked }) };
+    const again = await runTool(docTools, 'create_doc', JSON.stringify({ title: 'Unit Economics 2', text: '# Unit Economics\n\nNet burn = 2,100 − 720 = 1,380 (calc)\nRunway at net burn: 8.7 months' }), calced);
+    expect(again.text).toBe('Created "Unit Economics 2".');
+  });
+});
