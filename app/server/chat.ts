@@ -125,7 +125,7 @@ export function createChat(deps: Deps) {
       const room = stage.rooms.find((candidate) => candidate.id === roomId)!;
       const vision = messages.some((message) => message.role === 'user' && !!message.images?.length);
       // The partner answers on the strongest free models unless the founder pinned one for them.
-      const { order, notice } = turnRoute(room, clients, usage, { promptChars: promptSize(messages), tools: true, vision });
+      const { order, notice } = turnRoute(room, clients, usage, { promptChars: promptSize(messages), tools: true, vision }, { query: text });
       if (vision && !order[0]?.vision) send({ notice: 'No model that can see images is set up (Gemini can), so the picture is described to the model only by its file name.' });
       if (notice) send({ notice });
       if (slim && order[0]) send({ notice: slimNotice(order[0]) });

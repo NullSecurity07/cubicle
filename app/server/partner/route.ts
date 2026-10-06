@@ -1,4 +1,5 @@
 import { providerOf, walled, type ModelClient } from '../providers.ts';
+import { asksVerdict } from './call.ts';
 import { FLOOR, LOW_EFFORT, route, SECOND, STRONG, tier } from '../router.ts';
 import type { UsageBook } from '../usage.ts';
 
@@ -8,15 +9,27 @@ import type { UsageBook } from '../usage.ts';
 export { STRONG, SECOND, LOW_EFFORT };
 const title = (name: string) => name[0].toUpperCase() + name.slice(1);
 
+// The partner-only model (Gemini 3.5 Flash) has 20 free requests a day for the whole project: a founder talking to the
+// partner would spend them by noon. So it is kept for the turns that commit: the verdict on the company, the
+// founder's pushback in the hour after one, and the morning note. Every other partner turn takes the usual order.
+export const PUSHBACK_MS = 60 * 60_000;
+const verdicts = new Map<string, number>();
+// Heard when a verdict is held in the partner's room (and once at start from the kept state).
+export const markVerdict = (roomId: string, at: number) => { if (at > (verdicts.get(roomId) ?? 0)) verdicts.set(roomId, at); };
+export const reservedTurn = (roomId: string, query: string, now = Date.now()) => asksVerdict(query) || now - (verdicts.get(roomId) ?? -Infinity) < PUSHBACK_MS;
+
 // The one road every turn of a person takes, whoever started it: the founder's chat, a board run or repeat, a
-// colleague handing them work. The partner (unpinned) goes by the partner's route, so a turn of theirs that did not
-// start in their chat still reaches the partner-only model first; anyone else, or a pinned partner, by the router.
-export function turnRoute(room: { partner?: boolean; model?: string } | undefined, clients: ModelClient[], usage: UsageBook, want: { promptChars: number; tools: boolean; vision?: boolean }) {
-  return room?.partner && !room.model ? partnerRoute(clients, usage, want) : route(clients, usage, { pinned: room?.model, ...want });
+// colleague handing them work. The partner (unpinned) goes by the partner's route, the partner-only model first only
+// on a reserved turn (`asked`); anyone else, or a pinned partner, by the router.
+export function turnRoute(room: { id?: string; partner?: boolean; model?: string } | undefined, clients: ModelClient[], usage: UsageBook, want: { promptChars: number; tools: boolean; vision?: boolean }, asked?: { query: string; now?: number }) {
+  if (!room?.partner || room.model) return route(clients, usage, { pinned: room?.model, ...want });
+  return partnerRoute(clients, usage, { ...want, reserved: !!asked && !!room.id && reservedTurn(room.id, asked.query, asked.now) });
 }
 
-export function partnerRoute(clients: ModelClient[], usage: UsageBook, want: { promptChars: number; tools: boolean; vision?: boolean }) {
-  const { order } = route(clients, usage, { ...want, kind: 'turn', partner: true });
+// `reserved`: a turn the partner-only model may answer (see `reservedTurn`); without it, it is left out.
+export function partnerRoute(clients: ModelClient[], usage: UsageBook, want: { promptChars: number; tools: boolean; vision?: boolean; reserved?: boolean }) {
+  const { reserved, ...asked } = want;
+  const { order } = route(clients, usage, { ...asked, kind: 'turn', partner: !!reserved });
   const roomy = (client: ModelClient) => usage.left(client) > FLOOR && !usage.hot(client, want.promptChars);
   // Roomy before resting, hosted before this machine, then by strength; the router's order breaks ties.
   const key = (client: ModelClient) => [roomy(client) ? 0 : 1, client.local ? 1 : 0, tier(client, true), order.indexOf(client)];

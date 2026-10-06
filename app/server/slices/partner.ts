@@ -23,7 +23,7 @@ import { CUSTOMER_LINE, customerReply, forCustomers } from '../partner/audience.
 import { wired } from '../prompt.ts';
 import type { ModelMessage } from '../prompt.ts';
 import { complete, fakeClient, promptSize } from '../providers.ts';
-import { partnerRoute } from '../partner/route.ts';
+import { markVerdict, partnerRoute } from '../partner/route.ts';
 import { withSystem, type Handler } from '../seams.ts';
 import { newId, patchStageVia } from '../slice-kit.ts';
 import { speaker, text, type Tool } from '../tools/registry.ts';
@@ -190,6 +190,8 @@ export function createPartner(options: PartnerOptions = {}) {
       await state.change((held) => { held.companyId = made.id; });
       return made;
     };
+    // A verdict kept from before a restart still reserves the next hour's pushback.
+    await state.read().then((held) => { if (held.call?.roomId && typeof held.call.at === 'number') markVerdict(held.call.roomId, held.call.at); }).catch(() => {});
     if (makeAtStart && !(await state.read()).companyId) await adopt().catch((error: Error) => console.error(`partner: ${error.message}`));
     // The document as it is now: the recorded one if it is still on the stage (renamed or not), nothing once the
     // founder took it away, and a pinned company doc by its title only while nothing has been recorded.
@@ -248,7 +250,8 @@ export function createPartner(options: PartnerOptions = {}) {
     // ------------------------------------------------------------ the morning turn
 
     const ask = options.ask ?? (deps.fake ? async () => ({ text: FAKE_MORNING, provider: fakeClient.name, model: fakeClient.model }) : async (messages: ModelMessage[]) => {
-      const { order } = partnerRoute(deps.clients, deps.usage, { promptChars: promptSize(messages), tools: false });
+      // The morning note is one of the partner-only model's reserved turns.
+      const { order } = partnerRoute(deps.clients, deps.usage, { promptChars: promptSize(messages), tools: false, reserved: true });
       // Nothing is shown while the note is written, so a stream that breaks part way goes straight to the next model.
       const reply = await complete(messages, { onToken: () => {}, onRestart: () => {} }, order, ({ client, error }) => deps.usage.failed(client.name, error), (client) => deps.usage.admit(client.name));
       if (!reply.reported) deps.usage.record(reply.client.name, reply.usage, reply.quota);
@@ -423,7 +426,10 @@ export function createPartner(options: PartnerOptions = {}) {
             // each figure in the reason came from.
             const worked = economics ? workingTools(economics, (index) => `calc-brief-${now()}-${index}`) : [];
             payload = { ...payload, reply: { ...reply, tools: [...worked, ...reply.tools] }, lookedAgain: payload.lookedAgain || askedAgain };
-            await state.change((held) => { held.call = { ...call, at: now(), day: today, roomId: me.id }; });
+            const at = now();
+            await state.change((held) => { held.call = { ...call, at, day: today, roomId: me.id }; });
+            // The founder's pushback in the next hour is answered on the partner-only model too.
+            markVerdict(me.id, at);
             if (call.signal) {
               await promises.add({ what: call.signal.what, due: call.signal.by, roomId: me.id, check: true });
               await deps.attention.refresh().catch(() => {});
