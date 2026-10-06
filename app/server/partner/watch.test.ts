@@ -10,7 +10,7 @@ import { unaskedRow } from '../openends/health.ts';
 import type { ModelClient } from '../providers.ts';
 import { createUnasked } from '../usage.ts';
 import { saidNoFor } from './saidno.ts';
-import { budgetUsed, createWatch, fakeWatchReply, killLineOf, metricSparks, proposalOf, towardLine, trending, type Acts, type Budget, type Proposal, type WatchDeps, watchBudget } from './watch.ts';
+import { budgetUsed, createWatch, emailBody, fakeWatchReply, killLineOf, killToward, leadSparks, metricSparks, proposalOf, towardLine, trending, watchAsk, type Acts, type Budget, type Proposal, type WatchDeps, watchBudget } from './watch.ts';
 
 const NOON = new Date('2026-10-06T12:00:00').getTime();
 const DAY = 86_400_000;
@@ -43,6 +43,33 @@ describe('the kill-signal trend', () => {
     expect(metricSparks([{ cardId: 'm1', metrics: [signups(['2026-09-30', 6], ['2026-10-05', 5.8])] }], killCheck(), [], NOON)).toHaveLength(0);
     // No reading since the verdict: nothing has moved.
     expect(metricSparks([{ cardId: 'm1', metrics: [signups(['2026-09-30', 6])] }], killCheck(), [], NOON)).toHaveLength(0);
+  });
+
+  // Journey 15: kill signal "fewer than 10 print jobs done", readings 7 then 9, and Needs you said the number was
+  // trending to the kill line. Progress toward the goal is never danger; only a move to the losing side is.
+  it('fixture table: only a move toward the losing side of the kill line is raised, in both directions', () => {
+    const jobs = (...values: [string, number][]): Metric => ({ key: 'print-jobs-done', label: 'Print jobs done', better: 'up', points: values.map(([at, value]) => ({ at, value, from: 'founder' })) });
+    const churn = (...values: [string, number][]): Metric => ({ key: 'churn', label: 'Churn', better: 'down', unit: '%', points: values.map(([at, value]) => ({ at, value, from: 'founder' })) });
+    const kill = killCheck('fewer than 10 print jobs done');
+    const killed = { ...kill, said: '2026-10-07' };
+    const above = killCheck('churn above 8%');
+    const table: [string, Metric, FounderPromise, string | null][] = [
+      ['7 to 9 under "fewer than 10": progress', jobs(['2026-10-07', 7], ['2026-10-08', 9]), killed, null],
+      ['9 to 8 under "fewer than 10": the wrong way', jobs(['2026-10-07', 9], ['2026-10-08', 8]), killed, 'Print jobs done is moving away from the kill line it has to clear'],
+      ['9 to 9: nothing moved', jobs(['2026-10-07', 9], ['2026-10-08', 9]), killed, null],
+      ['14 to 11 over "fewer than 10": past half-way down', jobs(['2026-10-07', 14], ['2026-10-08', 11]), killed, 'Print jobs done is trending to the kill line'],
+      ['14 to 9 over "fewer than 10": crossed', jobs(['2026-10-07', 14], ['2026-10-08', 9]), killed, 'Print jobs done crossed the kill line'],
+      ['14 to 16: away from the line', jobs(['2026-10-07', 14], ['2026-10-08', 16]), killed, null],
+      ['churn 4% to 7% under "above 8%": trending up to it', churn(['2026-09-30', 4], ['2026-10-05', 7]), above, 'Churn is trending to the kill line'],
+      ['churn 7% to 4% under "above 8%": better', churn(['2026-09-30', 7], ['2026-10-05', 4]), above, null],
+      ['churn 9% to 10% already over "above 8%": worse', churn(['2026-09-30', 9], ['2026-10-05', 10]), above, 'Churn is moving away from the kill line it has to clear'],
+    ];
+    for (const [name, metric, check, why] of table) {
+      const found = metricSparks([{ cardId: 'm1', metrics: [metric] }], check, [], NOON);
+      expect(found.map((one) => one.why), name).toEqual(why ? [why] : []);
+    }
+    expect(killToward(7, 9, 10, true)).toBeNull();
+    expect(killToward(9, 8, 10, true)).toMatchObject({ away: true, crossed: false });
   });
 
   it('wakes on an open bet half-way to its target from the day it was taken', () => {
@@ -282,5 +309,32 @@ describe('the partner watch', () => {
     try { expect((await watch.look()).made).toHaveLength(0); } finally { console.log = log; }
     expect(logged.some((line) => line.startsWith('partner watch: not raised. Already declined'))).toBe(true);
     expect(await watch.rows()).toHaveLength(0);
+  });
+});
+
+// Journey 15: Mira asked how pickup works and whether one trial job was possible; the unasked draft proposed a call
+// and ended "My call: Send the reply to Mira today ...".
+describe('the reply to a lead who wrote back', () => {
+  const MIRA = 'Hi, thanks for reaching out. A few of our members need small brackets printed next week. How does pickup work and could we try one job first? Mira';
+  const mira: Lead & { cardId: string } = {
+    id: 'lead-mira', cardId: 'leads1', person: { name: 'Mira Hoffmann', email: 'mira@fablab.example' }, company: { name: 'FabLab Kreuzberg' }, stage: 'replied', notes: [], source: 'founder', addedAt: 0, updatedAt: 3,
+    thread: [{ kind: 'drafted', at: 1, subject: 'Try PrintNear' }, { kind: 'replied', at: 2, text: MIRA }],
+  };
+  it('quotes their words to the partner and asks for answers to them, never a call they did not ask for or the verdict\'s lines', () => {
+    const [spark] = leadSparks([mira], { 'lead-mira': 'contacted' }, NOON);
+    const asked = watchAsk(spark, '2026-10-07');
+    expect(asked).toContain(`What Mira Hoffmann wrote, word for word:\n"${MIRA}"`);
+    expect(asked).toContain('each question they asked in turn');
+    expect(asked).toContain('proposes a call only if they asked for one');
+    expect(asked).toContain('no "My call", "Why", "Kill signal" or "This week" lines');
+    expect(asked).not.toContain('proposing a 20-minute call');
+  });
+
+  it('keeps the partner\'s own lines out of the email', () => {
+    const [spark] = leadSparks([mira], { 'lead-mira': 'contacted' }, NOON);
+    const reply = 'Move: Answer Mira today.\nSubject: Pickup and a first job\nBody: Hi Mira,\n\nPickup is from the host nearest you; one trial job is fine.\n\nBest,\nFounder\n\nMy call: Send the reply to Mira today to turn her weekend queue into our next host.';
+    const { draft } = proposalOf(spark, reply, '2026-10-07');
+    expect(draft).toEqual({ kind: 'email', to: 'mira@fablab.example', subject: 'Pickup and a first job', body: 'Hi Mira,\n\nPickup is from the host nearest you; one trial job is fine.\n\nBest,\nFounder' });
+    expect(emailBody('Hi\n**Kill signal:** x\nBye')).toBe('Hi\nBye');
   });
 });
