@@ -1,8 +1,9 @@
 import { isShape, SHAPE_NAMES, type Slide } from '../../shared/deck.ts';
 
-// What a deck may be made of: the founder's brief, the documents, notes and project wired to the card, and a Metrics
-// card's block when one is wired. A number on a slide is kept only when one of these says it, and the slide then
-// names which one. Nothing is looked up anywhere else, so a deck never carries a figure nobody on this stage wrote.
+// What a deck may be made of: the founder's brief, the documents, notes and project wired to the card, and where
+// traction is read from: a wired Metrics card's block, else the Company brief's Numbers (`metrics`, named for which it
+// is). A number on a slide is kept only when one of these says it, and the slide then names which one. Nothing is
+// looked up anywhere else, so a deck never carries a figure nobody on this stage wrote.
 export type Material = { brief: string; sources: { name: string; text: string }[]; metrics?: { name: string; text: string } };
 
 export const HEADLINE_WORDS = 8;
@@ -44,6 +45,14 @@ export function sourceOf(token: string, material: Material, only?: 'metrics' | '
 
 const textOf = (slide: Slide) => [slide.headline, ...slide.lines, slide.figure ? `${slide.figure.value} ${slide.figure.label}` : ''].join('\n');
 const saysNoNumbers = (slide: Slide) => slide.lines.some((line) => /no numbers yet/i.test(line));
+const tractionFrom = (material: Material) => material.metrics?.name ?? 'the Metrics card';
+// The traction source's own rows, as slide lines: "Paying offices: 3". Journey 13: the traction slide said "No
+// numbers yet." while slide 8 listed the brief's numbers; with a source there, traction says what it says.
+export function tractionLines(material: Material): string[] {
+  if (!material.metrics) return [];
+  return material.metrics.text.split('\n').map((line) => line.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, '').replace(/[*_`]/g, '').trim())
+    .filter((line) => /\d/.test(line) && !/^#/.test(line)).map((line) => words(line).slice(0, LINE_WORDS).join(' ')).slice(0, MOST_LINES);
+}
 
 // What is wrong with a deck, slide by slide, in words a model can act on. Empty is a deck that passes.
 export function faults(slides: Slide[], material: Material): string[] {
@@ -57,9 +66,10 @@ export function faults(slides: Slide[], material: Material): string[] {
     for (const line of slide.lines) if (words(line).length > LINE_WORDS) found.push(`${at}: "${line.slice(0, 40)}…" is longer than ${LINE_WORDS} words`);
     const only = slide.shape === 'traction' ? 'metrics' : undefined;
     for (const number of numbersIn(textOf(slide))) {
-      if (!sourceOf(number, material, only)) found.push(`${at}: ${number} is not in the material${only ? ' (a traction number must come from the Metrics card)' : ''}; use only numbers the material states, or none`);
+      if (!sourceOf(number, material, only)) found.push(`${at}: ${number} is not in the material${only ? ` (a traction number must come from ${tractionFrom(material)})` : ''}; use only numbers the material states, or none`);
     }
-    if (slide.shape === 'traction' && !material.metrics && !saysNoNumbers(slide)) found.push(`${at}: there is no Metrics card, so the traction slide says "${NO_NUMBERS}"`);
+    if (slide.shape === 'traction' && !material.metrics && !saysNoNumbers(slide)) found.push(`${at}: there is no Metrics card and no Numbers in the Company brief, so the traction slide says "${NO_NUMBERS}"`);
+    if (slide.shape === 'traction' && material.metrics && (saysNoNumbers(slide) || !numbersIn(textOf(slide)).length)) found.push(`${at}: ${tractionFrom(material)} has numbers, so the traction slide states them rather than none`);
     if (slide.shape === 'ask') for (const amount of moneyIn(textOf(slide))) {
       if (!sourceOf(amount, material, 'brief')) found.push(`${at}: the founder did not name ${amount}; the ask names an amount only when the brief does`);
     }
@@ -109,7 +119,15 @@ export function mend(slides: Slide[], material: Material): { slides: Slide[]; sa
     slide.lines = lines;
     if (slide.shape === 'traction' && !material.metrics && !saysNoNumbers(slide)) {
       slide.lines = [NO_NUMBERS, ...slide.lines].slice(0, MOST_LINES);
-      said.push(`${at}: no Metrics card is wired, so it says "${NO_NUMBERS}"`);
+      said.push(`${at}: no Metrics card is wired and the Company brief has no Numbers, so it says "${NO_NUMBERS}"`);
+    }
+    // A traction slide with no number while its source has some: the source's own rows, so no two slides disagree.
+    if (slide.shape === 'traction' && material.metrics && (saysNoNumbers(slide) || !numbersIn(textOf(slide)).length)) {
+      const rows = tractionLines(material);
+      if (rows.length) {
+        slide.lines = rows;
+        said.push(`${at}: traction said no numbers, so it now reads them from ${tractionFrom(material)}`);
+      }
     }
     if (slide.shape === 'ask' && !moneyIn(textOf(slide)).length && moneyIn(textOf(original)).length) aside.push('Name an amount in the brief when you have one.');
     // Where this slide's numbers came from, worked out rather than taken on the model's word.

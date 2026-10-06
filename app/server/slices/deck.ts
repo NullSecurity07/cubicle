@@ -2,6 +2,8 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { deckChannel, isLook, isPurpose, type DeckEvent, type DeckLook, type DeckPurpose } from '../../shared/deck.ts';
 import type { Card, Stage } from '../../shared/model.ts';
+import { isCompanyTitle } from '../../shared/partner.ts';
+import { sectionText } from '../partner/company.ts';
 import { shortDay } from '../clock.ts';
 import { hub } from '../events.ts';
 import type { Material } from '../deck/critic.ts';
@@ -51,6 +53,17 @@ export async function metricsOf(workspace: string, stage: Stage, cardId: string,
   return undefined;
 }
 
+// The Numbers section of the Company brief the deck reads (the company's own document first, then any it reads that
+// has one), as the traction source with its name: "the Company brief". Only the rows with a number in them.
+export async function briefNumbers(deps: Pick<Deps, 'store'>, stage: Stage, docIds: string[]): Promise<Material['metrics']> {
+  const docs = docIds.map((id) => stage.docs.find((one) => one.id === id)).filter((one): one is Stage['docs'][number] => !!one);
+  for (const doc of [...docs.filter((one) => isCompanyTitle(one.title)), ...docs.filter((one) => !isCompanyTitle(one.title))]) {
+    const rows = sectionText(await deps.store.readDoc(doc.id).catch(() => ''), 'Numbers').split('\n').filter((line) => /^\s*[-*]\s+.*\d/.test(line));
+    if (rows.length) return { name: `the ${doc.title}`, text: rows.join('\n').slice(0, 1400) };
+  }
+  return undefined;
+}
+
 // Everything a deck may draw on: the wired documents, notes and link titles, a wired project's words, colours,
 // typeface and logo, and a Metrics card. Read fresh for every make, the way a film reads its material.
 export async function gatherDeck(deps: Pick<Deps, 'workspace' | 'root' | 'store'>, cardId: string, roomId?: string): Promise<Gathered> {
@@ -78,8 +91,10 @@ export async function gatherDeck(deps: Pick<Deps, 'workspace' | 'root' | 'store'
     const words = await deps.store.readDoc(id).catch(() => '');
     if (words.trim()) { sources.push({ name: doc.title, text: words.slice(0, 2400) }); using.push(doc.title); }
   }
-  const metrics = await metricsOf(deps.workspace, stage, cardId, roomId);
-  if (metrics) using.push('the Metrics card');
+  // Traction reads a wired Metrics card first, then the Company brief's Numbers, and only then has none (journey 13:
+  // "No numbers yet." on traction while another slide listed the brief's numbers).
+  const metrics = await metricsOf(deps.workspace, stage, cardId, roomId) ?? await briefNumbers(deps, stage, docsFor(stage, cardId, roomId));
+  if (metrics) using.push(metrics.name === 'Metrics card' ? 'the Metrics card' : `${metrics.name}'s Numbers`);
   return { material: { brief: card?.brief ?? '', sources, ...(metrics ? { metrics } : {}) }, dress, using };
 }
 

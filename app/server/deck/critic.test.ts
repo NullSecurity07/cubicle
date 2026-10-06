@@ -72,6 +72,20 @@ describe('the critic', () => {
     expect(slides[0].source).toBe('Metrics card');
   });
 
+  // Journey 13: traction said "No numbers yet." while another slide listed the brief's numbers.
+  it('fills a traction slide that says no numbers from the brief\'s Numbers, with the brief as its source', () => {
+    const fromBrief: Material = { ...bare, metrics: { name: 'the Company brief', text: '- Paying offices: 3 (since September 2026)\n- MRR: €720\n- Cash: €12,000' } };
+    const empty = [slide('traction', 'Early and honest about it', ['No numbers yet.'])];
+    expect(faults(empty, fromBrief)).toEqual(['slide 1 (traction): the Company brief has numbers, so the traction slide states them rather than none']);
+    const { slides, said } = mend(empty, fromBrief);
+    expect(slides[0].lines).toEqual(['Paying offices: 3 (since September 2026)', 'MRR: €720', 'Cash: €12,000']);
+    expect(slides[0].source).toBe('the Company brief');
+    expect(said).toContain('slide 1: traction said no numbers, so it now reads them from the Company brief');
+    expect(faults(slides, fromBrief)).toEqual([]);
+    // A traction number the brief does not give is still taken out.
+    expect(mend([slide('traction', 'Growing', ['MRR: €720', '40 offices waiting'])], fromBrief).slides[0].lines).toEqual(['MRR: €720']);
+  });
+
   it('keeps one idea a slide and a headline under nine words', () => {
     const { slides, said } = mend([slide('list', 'one two three four five six seven eight nine ten', ['a', 'b', 'c', 'd', 'e', 'f'])], bare);
     expect(slides[0].headline).toBe('one two three four five six seven eight');

@@ -69,6 +69,25 @@ describe('the Deck card', { timeout: 60_000 }, () => {
     expect(await metricsOf(workspace, stage, 'deck-1')).toEqual({ name: 'Metrics card', text: 'MRR 12,400 (Sep 24)' });
   });
 
+  // Journey 13: no Metrics card wired, the Company brief holding Numbers, and the traction slide said "No numbers yet."
+  // while slide 8 listed those numbers. Traction reads the card first, then the brief's Numbers, then has none.
+  it('reads traction from the Company brief\'s Numbers when no Metrics card is wired, and the card first when one is', async () => {
+    const { part, deps, store, workspace } = await setup();
+    closing = part.close;
+    const stage = await store.loadStage();
+    const company = stage.docs.find((one) => one.title === 'Company brief')!;
+    await store.writeDoc(company.id, '# Company brief\n\n## Idea\nBoxes of farm food.\n\n## Numbers\n- Paying offices: 3 (since September 2026)\n- MRR: €720\n- Not counted yet\n\n## Decisions\n');
+    const fromBrief = await gatherDeck(deps, 'deck-1');
+    expect(fromBrief.material.metrics).toEqual({ name: 'the Company brief', text: '- Paying offices: 3 (since September 2026)\n- MRR: €720' });
+    expect(fromBrief.using).toContain("the Company brief's Numbers");
+    stage.cards!.push({ id: 'metrics-1', kind: 'metrics' } as never);
+    stage.wires.push({ id: 'm', from: 'metrics-1', fromHandle: 'r', to: 'deck-1', toHandle: 'l' });
+    await store.saveStage(stage);
+    await mkdir(join(workspace, 'metrics'), { recursive: true });
+    await writeFile(join(workspace, 'metrics', 'metrics-1.json'), JSON.stringify({ block: 'Paying offices 4 (Oct 6)' }));
+    expect((await gatherDeck(deps, 'deck-1')).material.metrics).toEqual({ name: 'Metrics card', text: 'Paying offices 4 (Oct 6)' });
+  });
+
   it('makes, edits and reads a deck for a wired person, and tells the card as it goes', async () => {
     const { part, use, heard } = await setup();
     closing = part.close;
