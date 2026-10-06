@@ -213,10 +213,65 @@ export const heldUp = (visual: Visual): boolean =>
   countWords(visual.subject) >= 4 && !listSubject(visual.subject) && aboutTheLine(visual);
 
 // Whether a found photograph is of the line, by what its photographer said it is.
-export const photoOfTheLine = (what: string, visual: Pick<Visual, 'line' | 'about'>): boolean => {
-  const nouns = nounsOf(`${visual.line} ${visual.about ?? ''}`);
-  return !nouns.length || hasNoun(what, nouns);
+//
+// Numbers, money and dates are not things a library holds pictures of: "Seven thousand two hundred euros" summoned a
+// scan of fish captioned "seven" and a protest photograph tagged "Euro". So they do not count as the line's things,
+// and a line left with no thing at all is met by the film's own topic ("a pottery class") or not by a photograph.
+export const photoOfTheLine = (what: string, visual: Pick<Visual, 'line' | 'about'>, topic: string[] = []): boolean => {
+  const nouns = [...new Set([...thingsOf(`${visual.line} ${visual.about ?? ''}`), ...topic])];
+  // A line that names nothing ("you decide") takes any photograph; one whose only things were numbers takes none.
+  if (!nouns.length) return !nounsOf(`${visual.line} ${visual.about ?? ''}`).length;
+  return hasNoun(what, nouns);
 };
+
+// Words that are a quantity, a sum of money or a date rather than a thing: spelled numbers, currencies, metrics,
+// months, weekdays, years.
+const NUMBERISH = new Set(['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven',
+  'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty', 'thirty', 'forty',
+  'fifty', 'sixty', 'seventy', 'eighty', 'ninety', 'hundred', 'hundreds', 'thousand', 'thousands', 'million', 'millions',
+  'billion', 'billions', 'dozen', 'dozens', 'half', 'percent', 'cent', 'cents', 'euro', 'euros', 'dollar', 'dollars', 'pound',
+  'pounds', 'yen', 'mrr', 'arr', 'eur', 'usd', 'gbp', 'revenue', 'cash', 'runway', 'burn', 'budget', 'price', 'profit',
+  'january', 'february', 'april', 'june', 'july', 'august', 'september', 'october', 'november', 'december',
+  'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'today', 'tomorrow', 'yesterday', 'year',
+  'years', 'month', 'months', 'week', 'weeks', 'day', 'days', 'hour', 'hours', 'minute', 'minutes', 'second', 'seconds',
+  'first', 'second', 'third', 'fourth', 'fifth', 'tenth', 'hundredth', 'thousandth']);
+export const numberish = (word: string): boolean => NUMBERISH.has(word.toLowerCase()) || /\d/.test(word)
+  || word.split('-').length > 1 && word.split('-').every((part) => NUMBERISH.has(part.toLowerCase()));
+
+// The commonest words for how a thing is rather than what it is, which a title search reads as things.
+const QUALITIES = new Set(['wet', 'dry', 'old', 'young', 'little', 'tiny', 'huge', 'large', 'empty', 'full', 'quiet', 'loud',
+  'bright', 'dark', 'black', 'white', 'red', 'blue', 'green', 'yellow', 'brown', 'grey', 'gray', 'soft', 'hard', 'warm',
+  'cold', 'slow', 'fast', 'long', 'short', 'high', 'low', 'rough', 'smooth', 'clean', 'dirty', 'fresh', 'raw', 'shape']);
+
+// A line's photographable things: its nouns, less every number, sum and date and the words for a quality.
+export const thingsOf = (line: string): string[] => nounsOf(line).filter((word) => !numberish(word) && !QUALITIES.has(word));
+
+// What the film is about, in its own nouns: the words after "about" (or "of", "on") in the brief, else the brief's
+// things less the words for a film. "A 20 second documentary clip about a pottery class, with real photographs" is
+// about ["pottery", "class"]. Every photograph in the film may be of the topic when its line names nothing.
+const FILM_WORDS = new Set(['film', 'films', 'video', 'videos', 'clip', 'clips', 'reel', 'reels', 'documentary', 'short',
+  'photographs', 'photograph', 'photos', 'photo', 'pictures', 'picture', 'footage', 'story', 'piece', 'trailer', 'teaser',
+  'narration', 'voice', 'music', 'captions', 'vertical', 'wide', 'tall', 'square', 'cinematic', 'style', 'look', 'version']);
+export function topicOf(brief: string): string[] {
+  const after = /\b(?:about|of|on|showing|featuring)\s+(.+?)(?:[,.;:!?]|\s+(?:with|for|in which|that|using|set to|and make|told)\b|$)/i.exec(brief ?? '')?.[1] ?? '';
+  const keep = (text: string) => thingsOf(text).filter((word) => !FILM_WORDS.has(word));
+  const named = keep(after);
+  return (named.length ? named : keep(brief ?? '')).slice(0, 3);
+}
+
+// What a photo library is asked for one shot, in order of hope: the shot's own things beside the film's topic, then
+// the topic alone. Two tries, after which the picture is drawn. A subject's words count only when they are the
+// line's or the topic's: "an eighty beside a seven, on a linen cloth" is the director's word salad for a number.
+export function stockQueries(visual: Pick<Visual, 'line' | 'about' | 'subject'>, topic: string[] = []): string[] {
+  const line = thingsOf(`${visual.line} ${visual.about ?? ''}`);
+  const subject = thingsOf(visual.subject ?? '');
+  const backed = subject.filter((word) => line.includes(word) || topic.includes(word));
+  const lead = [...backed, ...line].filter((word, index, all) => all.indexOf(word) === index);
+  const second = topic.slice(0, 2).join(' ');
+  if (!lead.length) return second ? [second] : [];
+  const first = [...lead.slice(0, 1), ...topic.slice(0, 1), ...lead.slice(1, 2)].filter((word, index, all) => all.indexOf(word) === index).slice(0, 2).join(' ');
+  return [first, second].filter((query, index, all) => query && all.indexOf(query) === index);
+}
 
 // --- the reading ------------------------------------------------------------------------------------------
 

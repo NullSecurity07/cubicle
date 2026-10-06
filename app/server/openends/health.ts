@@ -14,6 +14,7 @@ import { which, whichAsync } from '../which.ts';
 import { FIND_VARS, outreachEnv } from '../leads/openoutreach.ts';
 import { canWrite, sameDisk, type StatDev } from './backup.ts';
 import { serviceRow, serviceState, type ServiceState } from '../service.ts';
+import { servedToday } from '../media/stock.ts';
 
 // Is everything this app leans on really here? One question a line, answered yes or no, and when the answer is no,
 // what the founder would do about it — in the words they would use, not ours.
@@ -124,7 +125,9 @@ export const outsideHealth: { now: () => { name: string; ok: boolean; detail: st
 export const healthRows = new Map<string, () => Promise<Check | null> | Check | null>();
 
 // The services that need nothing but a key in .env: what each one opens up, and the line that sets it up.
-export function keyChecks(env: NodeJS.ProcessEnv, root: string): Check[] {
+// `photos` is how many pictures each library served films today (`servedToday`), which is what the photographs row
+// says rather than guessing from the keys.
+export function keyChecks(env: NodeJS.ProcessEnv, root: string, photos: Record<string, number> = {}): Check[] {
   const has = (...names: string[]) => names.every((name) => !!env[name]?.trim());
   const checks: Check[] = [];
   const agentmail = has('AGENTMAIL_API_KEY');
@@ -149,10 +152,15 @@ export function keyChecks(env: NodeJS.ProcessEnv, root: string): Check[] {
     detail: has('HF_TOKEN') ? 'a Hugging Face token is set, so films can have moving clips and lip-sync' : 'no Hugging Face token is set, so films are made of still pictures',
     fix: 'Make a free Hugging Face account, copy a read token from huggingface.co/settings/tokens into .env as HF_TOKEN, and start the app again.',
   });
+  // Openverse and Wikimedia Commons answer with no key at all, so a film has real photographs either way; Pexels is
+  // asked first when its key is set. The row says which library served today, and how many.
+  const tally = Object.entries(photos).filter(([, count]) => count > 0).sort((a, b) => b[1] - a[1])
+    .map(([name, count]) => `${name} ${count}`).join(', ');
+  const chain = has('PEXELS_API_KEY') ? 'Pexels, then Openverse, then Wikimedia Commons' : 'Openverse, then Wikimedia Commons (no Pexels key is set)';
   checks.push({
-    name: 'Real photographs', ok: has('PEXELS_API_KEY'),
-    detail: has('PEXELS_API_KEY') ? 'Pexels is set, so films can use real stock photographs and footage' : 'no Pexels key is set, so films use drawn pictures only',
-    fix: 'Add PEXELS_API_KEY (free at pexels.com/api) to .env and start the app again.',
+    name: 'Real photographs', ok: true,
+    detail: tally ? `today films used photographs from ${tally}; asked in turn: ${chain}` : `no film has used a photograph today; films ask ${chain}, and draw what none of them has`,
+    fix: 'Nothing is needed. PEXELS_API_KEY (free at pexels.com/api) in .env adds Pexels photographs and footage first.',
   });
   checks.push({
     name: 'More music', ok: has('FREESOUND_API_KEY'),
@@ -271,7 +279,7 @@ export async function checkAll(deps: HealthDeps): Promise<Check[]> {
 
   checks.push(backupRow({ dir: deps.backupDir, backups: await deps.backups(), writable: await canWrite(deps.backupDir), sameDisk: await sameDisk(workspace, deps.backupDir, deps.stat) }, now()));
 
-  checks.push(...keyChecks(env, root));
+  checks.push(...keyChecks(env, root, await servedToday(join(root, 'app', '.cache', 'stock')).catch(() => ({}))));
   // What slices know about themselves right now (the phone, Twenty), each asked once; one that throws is left out.
   for (const row of [...(deps.rows ?? healthRows).values()]) {
     const found = await Promise.resolve().then(row).catch(() => null);

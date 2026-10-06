@@ -176,6 +176,27 @@ export async function remember(dir: string, one: Found): Promise<void> {
   await writeFile(file, `${JSON.stringify(held, null, 2)}\n`).catch(() => {});
 }
 
+// Which library served a picture, by the id it was given there.
+export const libraryOf = (id: string): string =>
+  id.startsWith('openverse-') ? 'Openverse' : id.startsWith('commons-') ? 'Wikimedia Commons' : id.startsWith('pexels-') ? 'Pexels' : 'another library';
+
+// How many pictures and clips each library served today, kept beside the cached pictures so Health can say which
+// library films really drew on — a row that said "drawn pictures only" while a film used two Openverse photographs.
+export type Served = { day: string; by: Record<string, number> };
+const servedFile = (dir: string) => join(dir, 'served.json');
+const today = (now: number) => new Date(now).toISOString().slice(0, 10);
+export async function servedToday(dir: string, now = Date.now()): Promise<Record<string, number>> {
+  const held = await readFile(servedFile(dir), 'utf8').then((raw) => JSON.parse(raw) as Served).catch(() => null);
+  return held && held.day === today(now) ? held.by ?? {} : {};
+}
+export async function served(dir: string, one: Pick<Found, 'id'>, now = Date.now()): Promise<void> {
+  await mkdir(dir, { recursive: true }).catch(() => {});
+  const by = await servedToday(dir, now);
+  const name = libraryOf(one.id);
+  by[name] = (by[name] ?? 0) + 1;
+  await writeFile(servedFile(dir), JSON.stringify({ day: today(now), by } satisfies Served)).catch(() => {});
+}
+
 export function pexels(env: NodeJS.ProcessEnv = process.env, http: typeof fetch = fetch, dir = '.cache/stock'): Stock {
   const key = env.PEXELS_API_KEY?.trim();
   const taken: Found[] = [];
@@ -227,12 +248,13 @@ export function pexels(env: NodeJS.ProcessEnv = process.env, http: typeof fetch 
       const ext = one.kind === 'video' ? 'mp4' : 'jpg';
       const file = join(dir, `${digestOf(one.id, 24)}.${ext}`);
       const held = await readFile(file).catch(() => null);
-      if (held?.length) { if (!taken.some((other) => other.id === one.id)) taken.push(one); return { ext, bytes: held }; }
+      if (held?.length) { if (!taken.some((other) => other.id === one.id)) taken.push(one); await served(dir, one); return { ext, bytes: held }; }
       const answer = await http(one.url, { signal });
       if (!answer.ok) throw new Error(`that photograph could not be fetched (${answer.status})`);
       const bytes = Buffer.from(await answer.arrayBuffer());
       await writeFile(file, bytes).catch(() => {});
       await remember(dir, one);
+      await served(dir, one);
       taken.push(one);
       return { ext, bytes };
     },

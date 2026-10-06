@@ -382,6 +382,8 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
             <a href={fileUrl(film.path)} download>Download</a>
             {film.poster && <a href={fileUrl(film.poster)} download>Poster</a>}
             {film.mlt && <a href={fileUrl(film.mlt)} download title="The film as tracks, for Shotcut or Kdenlive. Its pictures and sound sit beside it in the shared files, in a folder of the same name.">.mlt</a>}
+            {/* Who took each real photograph and filmed each clip, under what licence: the words that travel with the film. */}
+            {film.credits && <a href={fileUrl(film.credits)} target="_blank" rel="noreferrer" title="Who made each photograph, clip and voice in this film, and the licence it is used under">Credits</a>}
           </div>
         )}
         {film?.mlt && !making && <p className="studio__note">Also an .mlt for Shotcut or Kdenlive.</p>}
@@ -408,7 +410,7 @@ export function VideoGenNode({ id, data, selected }: NodeProps<VideoGenNodeType>
         )}
         {!!using.length && <p className="studio__using">Using: {using.join(', ')}</p>}
         {film?.music && !making && <p className="studio__note">Music: {film.music.title} by {film.music.by} · {film.music.licence}</p>}
-        {film?.noncommercial && !making && <p className="studio__note"><NotForSale result={film} /> Narrated with OmniVoice: {NONCOMMERCIAL}.{film.credits && <> <a href={fileUrl(film.credits)} target="_blank" rel="noreferrer">Credits</a></>}</p>}
+        {film?.noncommercial && !making && <p className="studio__note"><NotForSale result={film} /> Narrated with OmniVoice: {NONCOMMERCIAL}.</p>}
         {!making && !!brief.trim() && <p className="studio__note">{data.speed === 'draft' ? 'A draft takes' : 'Making it takes'} {howLong(data.length, data.ai ?? 'auto', data.speed === 'draft', drawnHere, !data.silent)}. Everything left on Auto, the director reads out of the brief.</p>}
         <form className="studio__ask" onSubmit={(event) => { event.preventDefault(); shoot(); }}>
           <textarea

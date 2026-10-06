@@ -13,6 +13,9 @@ import {
   kickerOf, listable, listy, NEEDS_TEXT, noFace, opensADoor, plainClose, shorten, stockHeading, subjectOf, trimTo, trimWhole, wholeBullet, worthAStat,
 } from './wording.ts';
 
+// What a creator says to an audience on a platform, never a film's close anywhere else.
+const SIGN_OFF = /\b(?:follow (?:for more|us|me|along)|like and (?:share|subscribe)|smash (?:that|the) \w+|hit (?:the )?(?:like|follow|subscribe)|link in (?:the )?bio)\b/i;
+
 // The critic. A free model asked for a storyboard will, left alone, write the same scene three times, put the whole
 // of the narration on screen as a wall of type, and hand back a minute and a half where fifteen seconds were asked
 // for. That is not a prompt problem — it is what a weak model does under any prompt — so nothing the model writes
@@ -477,12 +480,23 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
     });
   }
 
+  // 2b4b. A platform's sign-off belongs to a social post. "Follow for more" closed a pottery documentary nobody was
+  //       going to post from an account, so on anything but a reel or an advert it is a plain close instead.
+  if (!want.reel) {
+    scenes = scenes.map((scene) => {
+      if (!SIGN_OFF.test(`${scene.text ?? ''} ${scene.heading ?? ''} ${scene.say ?? ''}`)) return scene;
+      note('a sign-off for followers is for a social post, so this film closes on something plain instead');
+      const close = plainClose(want.purpose);
+      return { ...scene, text: close.text, say: close.say, heading: undefined };
+    });
+  }
+
   // 2b. A wordmark is the mark of something. A film with no product behind it closes on what to do instead.
   if (want.product === false) {
     scenes = scenes.map((scene) => {
       if (scene.layout !== 'logo') return scene;
       note('there is no product behind this film, so it closes on what to do rather than on a made-up wordmark');
-      return { ...scene, layout: 'cta', text: trimTo(scene.text || scene.heading || 'Follow for more', HEADING_WORDS), heading: undefined };
+      return { ...scene, layout: 'cta', text: trimTo(scene.text || scene.heading || (want.reel ? 'Follow for more' : plainClose(want.purpose).text), HEADING_WORDS), heading: undefined };
     });
   }
 

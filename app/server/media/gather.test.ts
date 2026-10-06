@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Card, Stage } from '../../shared/model.ts';
-import { gather, narratorOf, sourcesFor, takeLine, type StudioNarrator, type VideoDeps } from './gather.ts';
+import { aboutTheCompany, gather, narratorOf, withoutMoney, sourcesFor, takeLine, type StudioNarrator, type VideoDeps } from './gather.ts';
 import { voiceKey, wavOf } from './voice.ts';
 
 const box = { x: 0, y: 0, w: 1, h: 1 };
@@ -127,5 +127,44 @@ describe('a take the founder already recorded', () => {
     expect(voiceKey({ engine: 'omnivoice', design: 'calm', clone: 'me', language: 'es' })).toBe('omnivoice|clone:me|language:es');
     // The studio card's own ask and the film's reading of that card come to the same key.
     expect(voiceKey({ prompt: 'x', engine: 'omnivoice', design: 'calm', language: '' })).toBe(voiceKey(narratorOf({}, { cardId: 'v', engine: 'omnivoice', design: 'calm', says: '' })));
+  });
+});
+
+// Journey 12: an unwired video card asked for "a documentary about a pottery class" read the pinned Company brief and
+// narrated Playtestr's MRR and cash in the bank.
+describe('a pinned company brief and a film about something else', () => {
+  const brief = 'Playtestr: a tool for indie game devs to run playtests.\nDevs send a build link, recruit players.\nFourteen studios are testing our platform.\nWe have reached 87 euros MRR. Cash in the bank: €7,200.';
+  const stage: Stage = {
+    rooms: [], cards: [{ id: 'film', kind: 'videogen', ...box }], wires: [],
+    docs: [{ id: 'company', title: 'Company brief', pinned: true, ...box }],
+  };
+  const readDoc = async () => brief;
+
+  it('films the subject asked for and leaves the pinned brief out', async () => {
+    const { material } = await gathered(stage, { prompt: 'A 20 second documentary clip about a pottery class, with real photographs.' }, { readDoc });
+    expect(material.lines).toEqual([]);
+    expect(material.using).toEqual([]);
+  });
+
+  it('reads the pinned brief for a film about the company, without its money unless asked', async () => {
+    const { material } = await gathered(stage, { prompt: 'A short film about Playtestr for indie devs' }, { readDoc });
+    const lines = material.lines.join('\n');
+    expect(lines).toContain('Fourteen studios are testing our platform.');
+    expect(lines).not.toMatch(/MRR|7,200|Cash/);
+    const asked = await gathered(stage, { prompt: 'An investor update film: our MRR and runway' }, { readDoc });
+    expect(asked.material.lines.join('\n')).toContain('87 euros MRR');
+  });
+
+  it('reads a wired doc whatever the brief is about', async () => {
+    const wired: Stage = { ...stage, wires: [wire('company', 'film')] };
+    const { material } = await gathered(wired, { prompt: 'A documentary about a pottery class' }, { readDoc });
+    expect(material.using).toEqual(['Company brief']);
+  });
+
+  it('knows a brief about the company from one about anything else', () => {
+    expect(aboutTheCompany('A 20 second documentary clip about a pottery class, with real photographs.', { title: 'Company brief', text: brief })).toBe(false);
+    expect(aboutTheCompany('A launch reel', { title: 'Company brief', text: brief })).toBe(true);
+    expect(aboutTheCompany('a clip about playtestr', { title: 'Company brief', text: brief })).toBe(true);
+    expect(withoutMoney('We have 14 studios. Cash in the bank: €7,200.\nRunway is 8 months.')).toBe('We have 14 studios.');
   });
 });
