@@ -1,3 +1,4 @@
+import { markClaims } from '../tools/evidence.ts';
 import type { TurnResult } from '../loop.ts';
 
 // Journey 11: asked "keep going, pivot, or stop?", the partner said "keep going" with reasons from the brief, and named
@@ -154,7 +155,10 @@ export const checkTitle = (signal: KillSignal) => `Check: ${signal.what} by ${si
 
 // The partner's reply to a verdict ask, held to the shape. `again` answers once more in words only; a part the second
 // answer gives fills the first's gap, and a kill signal named by neither is said to be missing.
-export async function holdCall(asked: string, first: TurnResult, again: ((first: TurnResult, nudge: string) => Promise<TurnResult>) | undefined, today: string, evidence: string): Promise<{ reply: TurnResult; call: PartnerCall | null; askedAgain: boolean }> {
+// `said` is what may back a claim of evidence in the reason ("the product works"): the founder's words, the Company
+// document and this turn's tool results, never the partner's own past replies. One nothing backs stays, marked
+// "(assumption)" (server/tools/evidence.ts).
+export async function holdCall(asked: string, first: TurnResult, again: ((first: TurnResult, nudge: string) => Promise<TurnResult>) | undefined, today: string, evidence: string, said: string[] = [evidence]): Promise<{ reply: TurnResult; call: PartnerCall | null; askedAgain: boolean }> {
   if (first.stopped || !asksVerdict(asked)) return { reply: first, call: null, askedAgain: false };
   const read = readCall(first.text, today, evidence);
   let call: PartnerCall = { decision: read.decision, why: read.why, signal: read.signal, move: read.move };
@@ -174,5 +178,6 @@ export async function holdCall(asked: string, first: TurnResult, again: ((first:
     }
     reply = { ...second, tools: [...first.tools, ...second.tools], usage: { input: first.usage.input + second.usage.input, output: first.usage.output + second.usage.output } };
   }
+  if (call.why) call = { ...call, why: markClaims(call.why, said) };
   return { reply: { ...reply, text: renderCall(call, read.rest) }, call, askedAgain };
 }

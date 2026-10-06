@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { evidenceCheck, heardFrom } from './evidence.ts';
+import { evidenceCheck, heardFrom, markClaims, markUnbacked, readableSources } from './evidence.ts';
 
 const TEMPLATE = '# Evaluation\n\n## 2. Three specific ways it dies\n\n1. — survivable? — cheapest test:\n\n## 3. Is the pain real?\n\nVitamin — painkiller — hair on fire:\n\nWhat it costs them per month:\n\nReal customer conversations done (of ten to twenty):\n\n## 5. Verdict\n\nOne word (STRONG / WEAK / PIVOT REQUIRED):\n';
 // Journey 10's founder: twelve beta users, two paying, forty playtest sessions logged. Nobody talked to anyone.
@@ -107,5 +107,48 @@ describe('what of a colleague\'s answer backs a count', () => {
     expect(heardFrom('The founder has 12 beta users. They signed 7 paid pilots. We should interview 5 hosts.', [FOUNDER]))
       .toEqual(['The founder has 12 beta users.']);
     expect(heardFrom('Twelve beta users, I think.', [])).toEqual([]);
+  });
+});
+
+// Journey 12: Omar worked out a runway of 8 months and 32 paying studios with calc from the brief's figures, and the
+// doc marked both "(unsourced)", since the sum names no months and no studios.
+describe('a count worked out with calc', () => {
+  const BRIEF12 = '# Company brief\n\n- Paying studios: 3 at €29 a month\n- Cash: €7,200\n- Burn: €1,400 a month';
+  const ASKED = 'If we cut burn to €900 a month, what is our runway and how many paying studios do we need?';
+  const mark = (after: string, read: string[]) => markUnbacked({ before: '# Unit economics\n', after: `# Unit economics\n${after}`, read });
+  it('is backed by the sum, its rounding and its inputs when every input was read', () => {
+    const out = mark('- Gross runway: 8 months\n- Break-even: 32 studios (exact: 31.03)\n- 900 a month of burn', [BRIEF12, ASKED, '7200 / 900 = 8', '900 / 29 = 31.03448276 (exact: 31.03448275862069)']);
+    expect(out.marked).toEqual([]);
+    expect(out.text).not.toContain('(unsourced)');
+  });
+  it('builds on an earlier sum', () => {
+    expect(mark('- Net runway: 8 months, burn 813', [BRIEF12, ASKED, '7200 / 813 = 8.856088561 (exact: 8.85608856088561)', '900 - 87 = 813', 'MRR €87']).marked).toEqual([]);
+  });
+  it('inherits "unsourced" when an input was not read', () => {
+    const out = mark('- Gross runway: 8 months', [BRIEF12, '7200 / 900 = 8']);
+    expect(out.marked).toEqual([{ label: '8', line: '- Gross runway: 8 (unsourced) months' }]);
+    expect(readableSources([BRIEF12, '7200 / 900 = 8'])).not.toContain('7200 / 900 = 8');
+    expect(readableSources([BRIEF12, ASKED, '7200 / 900 = 8'])).toContain('7200 / 900 = 8');
+  });
+  it('is no sum when the arithmetic is wrong', () => {
+    expect(mark('- Gross runway: 9 months', [BRIEF12, ASKED, '7200 / 900 = 9']).marked).toHaveLength(1);
+  });
+  it('is not backed by a mark or a report that quotes it marked, said again later in the turn', () => {
+    const first = mark('- Gross runway: 8 months', [BRIEF12]);
+    const report = `Marked as unsourced: "8" (in "${first.marked[0].line}")`;
+    const again = markUnbacked({ before: '# Unit economics\n', after: '# Unit economics\n- Gross runway: 8 months', read: [BRIEF12, first.text, report] });
+    expect(again.marked).toHaveLength(1);
+  });
+});
+
+describe('a claim that the product works', () => {
+  it('is refused on an evidence section when nobody said it, and marked as a view when hedged', () => {
+    expect(refusal(pain('The product itself works for designers.'))).toMatch(/"The product itself works" in "3\. Is the pain real\?"/);
+    expect(refusal(pain('We have proven to work with board game designers.'))).toMatch(/proven to work/);
+    expect(check(pain('The product probably works for designers.')).text).toContain('(assumption)');
+    expect(refusal(pain('The product itself works for designers.'), [FOUNDER, 'Designers tell me the app works every session.'])).toBeNull();
+  });
+  it('is marked "(assumption)" in a reason when nothing backs it', () => {
+    expect(markClaims('The product itself works. 3 pay.', [FOUNDER])).toBe('The product itself works (assumption). 3 pay.');
   });
 });

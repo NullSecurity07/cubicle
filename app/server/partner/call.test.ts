@@ -95,3 +95,17 @@ describe('holding the reply', () => {
     expect(renderCall({ decision: 'stop' })).toBe(`My call: **stop**.\nKill signal: ${NO_SIGNAL}.`);
   });
 });
+
+describe('a claim of evidence in the reason', () => {
+  // Journey 12: "The product itself works" stood in the partner's verdict with nothing behind it.
+  const works = full.replace('**Why:** 2 of 12 beta users already pay €39 a month, so the pain is real.', '**Why:** The product itself works, and 2 of 12 beta users already pay €39 a month.');
+  it('is marked "(assumption)" when nothing the founder said or a tool gave backs it', async () => {
+    const out = await holdCall('your verdict?', turn(works), undefined, today, brief, [brief]);
+    expect(out.call?.why).toBe('The product itself works, and 2 of 12 beta users already pay €39 a month (assumption).');
+    expect(out.reply.text).toContain('Why: The product itself works, and 2 of 12 beta users already pay €39 a month (assumption).');
+  });
+  it('stands when the founder said it', async () => {
+    const out = await holdCall('your verdict?', turn(works), undefined, today, brief, [brief, 'Our studios say the build flow works for them.']);
+    expect(out.call?.why).not.toContain('(assumption)');
+  });
+});
