@@ -337,11 +337,14 @@ const FEEDBACK: RegExp[] = [
   /\b(?:strong|high|good|great|solid|growing|huge|clear|positive|steady|encouraging|enthusiastic)\s+(?:[\w-]+\s+)?(?:pickup|pick-up|uptake|adoption|engagement|demand|interest|feedback|response|reception|participation|usage|attendance|turnout|enthusiasm|excitement|satisfaction)\b/i,
   /\b(?:popular|well[- ]received|went down well|a hit with|in high demand|sought[- ]after)\b/i,
   /\b(?:feedback|response|reception|pickup|uptake|engagement|demand)\s+(?:is|was|has been|have been|so far)\s+(?:\w+\s+)?(?:positive|strong|great|good|high|excellent|encouraging)\b/i,
+  // Journey 14: the deck's speaker notes answered the brief's open question "Will practices trust automatic texts?"
+  // with "Early pilot results suggest they do." A finding of a pilot, a test or early data is a record or nothing.
+  /\b(?:(?:early|initial|first|pilot|beta|trial|test|our)\s+(?:pilot\s+|beta\s+|trial\s+|test\s+|user\s+|customer\s+)?(?:results?|data|findings?|signals?|numbers|tests?|pilots?|trials?)|pilots?|trials?)\s+(?:so far\s+)?(?:have\s+|has\s+)?(?:suggest(?:s|ed)?|show(?:s|ed|n)?|indicat(?:e|es|ed)|confirm(?:s|ed)?|prov(?:e|es|ed|en)|point(?:s|ed)? to|demonstrat(?:e|es|ed)|(?:are|were|look|looks|looked) (?:promising|positive|strong|good|great|encouraging))\b/i,
 ];
 // What a source has to be to back one: itself a claim of feedback, or a record of what someone said.
 const RECORD = /\b(?:said|says|told|interview\w*|survey\w*|quoted?|replied|wrote|answered|complain\w*|reported)\b/i;
 // Words that say nothing about what the feedback was about.
-const GENERIC = new Set(`${SUBJECTS.replace(/\?/g, '').split('|').join(' ')} customer user client manager office member pilot tenant guest staff team report reported reports say said told love loved appreciate appreciated enjoy enjoyed ask asked request requested praise rave complain prefer describe call strong high good great solid growing huge clear positive steady encouraging enthusiastic pickup pick-up uptake adoption engagement demand interest feedback response reception popular initial early really often keep`.split(' '));
+const GENERIC = new Set(`${SUBJECTS.replace(/\?/g, '').split('|').join(' ')} customer user client manager office member pilot tenant guest staff team report reported reports say said told love loved appreciate appreciated enjoy enjoyed ask asked request requested praise rave complain prefer describe call strong high good great solid growing huge clear positive steady encouraging enthusiastic pickup pick-up uptake adoption engagement demand interest feedback response reception popular initial early really often keep result results data finding findings signal signals numbers test tests trial trials pilots suggest suggests show shows indicate indicates`.split(' '));
 const substance = (sentence: string) => content(sentence).filter((word) => word.length > 3 && !GENERIC.has(word.toLowerCase())).map(stem);
 // The sentences read that hold a record of feedback, each as its words of substance.
 type Record = { words: string[]; feedback: boolean };

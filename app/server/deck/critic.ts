@@ -1,4 +1,5 @@
 import { isShape, SHAPE_NAMES, type Slide } from '../../shared/deck.ts';
+import { unbackedClaims } from '../tools/evidence.ts';
 
 // What a deck may be made of: the founder's brief, the documents, notes and project wired to the card, and where
 // traction is read from: a wired Metrics card's block, else the Company brief's Numbers (`metrics`, named for which it
@@ -54,6 +55,17 @@ export function tractionLines(material: Material): string[] {
     .filter((line) => /\d/.test(line) && !/^#/.test(line)).map((line) => words(line).slice(0, LINE_WORDS).join(' ')).slice(0, MOST_LINES);
 }
 
+// A claim of evidence on a slide or in its notes that nothing in the material backs, each as written: the doc guard's
+// claims ("customers love it", "early pilot results suggest they do"), held to the brief, the wired documents and
+// the traction source. Journey 14: slide 8's notes answered the brief's own open question with a pilot nobody ran.
+const recordOf = (material: Material) => [material.brief, ...material.sources.map((source) => source.text), ...(material.metrics ? [material.metrics.text] : [])];
+export const claimsIn = (text: string, material: Material): string[] => unbackedClaims(text, recordOf(material));
+// The mend's own lines in the notes, which quote what it took out: never read again as the model's words.
+const ASIDE = /^(?:Headline had a number with no source|Needs a source:|Cut for one idea a slide:|Name an amount|Asked:|Took out )/;
+const noteSentences = (notes: string) => notes.split('\n').flatMap((line) => (ASIDE.test(line.trim()) ? [] : line.split(/(?<=[.!?])\s+/))).map((one) => one.trim()).filter(Boolean);
+const unsourcedIn = (text: string, material: Material) => numbersIn(text).filter((number) => !sourceOf(number, material));
+const short = (text: string) => (text.length > 60 ? `${text.slice(0, 59)}…` : text);
+
 // What is wrong with a deck, slide by slide, in words a model can act on. Empty is a deck that passes.
 export function faults(slides: Slide[], material: Material): string[] {
   const found: string[] = [];
@@ -67,6 +79,13 @@ export function faults(slides: Slide[], material: Material): string[] {
     const only = slide.shape === 'traction' ? 'metrics' : undefined;
     for (const number of numbersIn(textOf(slide))) {
       if (!sourceOf(number, material, only)) found.push(`${at}: ${number} is not in the material${only ? ` (a traction number must come from ${tractionFrom(material)})` : ''}; use only numbers the material states, or none`);
+    }
+    for (const text of [slide.headline, ...slide.lines]) {
+      for (const hit of claimsIn(text, material)) found.push(`${at}: "${short(hit)}" is not on record in the material; take it out or put it as an open question`);
+    }
+    for (const sentence of noteSentences(slide.notes ?? '')) {
+      for (const hit of claimsIn(sentence, material)) found.push(`${at}: the speaker notes say "${short(hit)}", which nothing in the material says; take it out or put it as an open question`);
+      for (const number of unsourcedIn(sentence, material)) found.push(`${at}: the speaker notes give ${number}, which is not in the material; use only numbers the material states`);
     }
     if (slide.shape === 'traction' && !material.metrics && !saysNoNumbers(slide)) found.push(`${at}: there is no Metrics card and no Numbers in the Company brief, so the traction slide says "${NO_NUMBERS}"`);
     if (slide.shape === 'traction' && material.metrics && (saysNoNumbers(slide) || !numbersIn(textOf(slide)).length)) found.push(`${at}: ${tractionFrom(material)} has numbers, so the traction slide states them rather than none`);
@@ -96,6 +115,30 @@ export function mend(slides: Slide[], material: Material): { slides: Slide[]; sa
       slide.headline = words(kept).length >= 2 ? kept : SHAPE_NAMES[slide.shape];
       said.push(`${at}: took a number with no source out of the headline`);
     }
+    if (claimsIn(slide.headline, material).length) {
+      aside.push('Took out a headline that claimed what nothing on record says.');
+      slide.headline = SHAPE_NAMES[slide.shape];
+      said.push(`${at}: took a claim nothing on record backs out of the headline`);
+    }
+    // The speaker notes are held to the same record: a sentence with a claim or a number nothing backs goes.
+    if (slide.notes) {
+      let cut = 0;
+      const notes = slide.notes.split('\n').map((line) => {
+        if (ASIDE.test(line.trim())) return line;
+        const kept = line.split(/(?<=[.!?])\s+/).filter((sentence) => {
+          const bad = !!claimsIn(sentence, material).length || !!unsourcedIn(sentence, material).length;
+          if (bad) cut += 1;
+          return !bad;
+        });
+        return kept.join(' ');
+      }).filter((line, index, all) => line.trim() || (index > 0 && all[index - 1].trim()));
+      if (cut) {
+        const text = notes.join('\n').trim();
+        if (text) slide.notes = text;
+        else delete slide.notes;
+        said.push(`${at}: took ${cut === 1 ? 'a sentence' : `${cut} sentences`} nothing on record backs out of the speaker notes`);
+      }
+    }
     if (words(slide.headline).length > HEADLINE_WORDS) {
       slide.headline = words(slide.headline).slice(0, HEADLINE_WORDS).join(' ').replace(/[,;:–-]+$/, '');
       said.push(`${at}: cut the headline to ${HEADLINE_WORDS} words`);
@@ -108,6 +151,7 @@ export function mend(slides: Slide[], material: Material): { slides: Slide[]; sa
     }
     const lines: string[] = [];
     for (const line of slide.lines) {
+      if (claimsIn(line, material).length) { aside.push('Took out a line that claimed what nothing on record says.'); said.push(`${at}: dropped a line with a claim nothing on record backs`); continue; }
       if (!sourced(line)) { aside.push(`Needs a source: ${line}`); said.push(`${at}: dropped a line with a number and no source`); continue; }
       lines.push(words(line).length > LINE_WORDS ? `${words(line).slice(0, LINE_WORDS).join(' ')}…` : line);
     }

@@ -95,6 +95,39 @@ describe('the critic', () => {
   });
 });
 
+// Journey 14: slide 8 asked the brief's open question and its speaker notes answered it with a pilot nobody ran.
+describe('claims on slides and in speaker notes', () => {
+  const callback: Material = { brief: 'Callback texts a patient back when the practice misses a call. €49 a month per practice. Open question: will practices trust automatic texts?', sources: [] };
+  const trust = slide('problem', 'Will practices trust automatic texts?', ['Staff stay in control of every text'], { notes: 'This is the question we hear most. Early pilot results suggest they do. Every text can be edited first.' });
+
+  it('names an unbacked claim in the notes, a line or a headline, and a number in the notes nobody gave', () => {
+    const found = faults([trust, slide('market', 'Users love it', ['Customers love the replies']), slide('solution', 'One text', [], { notes: 'Saves 14 hours a week.' })], callback).join('\n');
+    expect(found).toContain('slide 1 (problem): the speaker notes say "Early pilot results suggest"');
+    expect(found).toContain('slide 2 (market): "Users love" is not on record');
+    expect(found).toContain('slide 2 (market): "Customers love" is not on record');
+    expect(found).toContain('slide 3 (solution): the speaker notes give 14, which is not in the material');
+  });
+
+  it('mends by taking the claim out rather than shipping it, and keeps the rest of the notes', () => {
+    const { slides, said } = mend([trust, slide('market', 'Every practice misses calls', ['Customers love the replies', 'Missed calls cost bookings'])], callback);
+    expect(slides[0].notes).toBe('This is the question we hear most. Every text can be edited first.');
+    expect(slides[0].notes).not.toMatch(/pilot/i);
+    expect(slides[1].lines).toEqual(['Missed calls cost bookings']);
+    expect(slides[1].notes).not.toMatch(/love/i);
+    expect(said).toContain('slide 1: took a sentence nothing on record backs out of the speaker notes');
+    expect(said).toContain('slide 2: dropped a line with a claim nothing on record backs');
+    expect(faults(slides, callback)).toEqual([]);
+    // Mended once, kept exactly as it is on the next mend.
+    expect(mend(slides, callback).slides).toEqual(slides);
+  });
+
+  it('keeps a finding the material records', () => {
+    const recorded: Material = { ...callback, sources: [{ name: 'Pilot notes', text: 'Dr. Weber said the pilot results show her staff trust the texts.' }] };
+    expect(faults([trust], recorded)).toEqual([]);
+    expect(mend([trust], recorded).slides[0]).toEqual(trust);
+  });
+});
+
 describe('a storyboard as a model wrote it', () => {
   it('is read into slides, or refused with the reason', () => {
     let next = 0;
