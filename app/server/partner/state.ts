@@ -1,6 +1,7 @@
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { MorningNote, PlanProposal } from '../../shared/partner.ts';
+import type { PartnerCall } from './call.ts';
 import { writeAtomic } from '../fsx.ts';
 import { readBook } from '../rescue.ts';
 
@@ -26,6 +27,9 @@ export type PartnerState = {
   wired?: string[];
   // The bets whose check was already posted in the partner's room: said once, across restarts too.
   betChecks?: string[];
+  // The partner's last verdict on the company, as read from its reply: the call, the reason, the kill signal and the
+  // first move. Its kill signal waits in the promises book as a check for its day.
+  call?: PartnerCall & { at: number; day: string; roomId: string };
 };
 
 export function partnerState(workspace: string) {

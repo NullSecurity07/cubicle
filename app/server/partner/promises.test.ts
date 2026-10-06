@@ -88,3 +88,15 @@ describe('a promise in Needs you', () => {
     expect(chaseLine(promise())).toBe('You said you would call 5 beta users by Friday (due 2026-10-02). Done? Close it in Needs you, or tell me what got in the way.');
   });
 });
+
+describe('the kill signal of a verdict, kept as a check', () => {
+  it('comes to Needs you as a check on its day, one at a time, and is not chased as the founder\'s word', async () => {
+    const book = promisesBook(await mkdtemp(join(tmpdir(), 'checks-')), () => MONDAY);
+    const first = await book.add({ what: '6 paying users', due: '2026-10-26', roomId: 'p1', check: true });
+    const second = await book.add({ what: '8 paying users', due: '2026-11-02', roomId: 'p1', check: true });
+    const all = await book.list();
+    expect(all.find((one) => one.id === first!.id)!.status).toBe('dropped');
+    expect(promisesAttention(all, '2026-10-26')).toEqual([]);
+    expect(promisesAttention(all, '2026-11-02')).toEqual([expect.objectContaining({ id: `promise:${second!.id}`, title: 'Check: 8 paying users by 2026-11-02?', roomId: 'p1' })]);
+  });
+});

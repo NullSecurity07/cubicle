@@ -13,6 +13,7 @@ import { saysSomething } from '../missions.ts';
 import { FAKE_MORNING, MOST_TRIES, morningDue, morningInputs, morningMessage, writeMorning, type MorningSources } from '../partner/morning.ts';
 import { addPlan, boardFor, boardForPlan, NO_BOARD, planAttention, stepsFrom } from '../partner/plans.ts';
 import { asksWhatNext, holdSynthesis, standingFacts } from '../partner/synthesis.ts';
+import { asksVerdict, callShape, holdCall } from '../partner/call.ts';
 import { chaseLine, keptPromiseLine, promiseLine, promisesAttention, promisesBook, promisesIn } from '../partner/promises.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import { staleNeeds, standingBlock, standingParts, stillWaiting, teamVerdict, type StandingParts } from '../partner/standing.ts';
@@ -370,6 +371,8 @@ export function createPartner(options: PartnerOptions = {}) {
         out = withSystem(out, block);
         // Written for customers: said before it is written, and held to it after (the reply seam below).
         if (forCustomers(payload.query)) out = withSystem(out, CUSTOMER_LINE);
+        // A verdict on the company comes in four lines, held to them after (the reply seam below).
+        if (asksVerdict(payload.query)) out = withSystem(out, callShape(localDay(now())));
       }
       return next(out);
     };
@@ -388,6 +391,30 @@ export function createPartner(options: PartnerOptions = {}) {
         const facts = standingFacts(await partsFor(stage, me.id).catch(() => null) ?? { verdicts: [], numbers: '', open: [], planned: [], flagCounts: [], decided: [], learned: [] });
         const held = await holdSynthesis(payload.query, payload.reply, payload.again, facts, payload.lookedAgain);
         if (held !== payload.reply) payload = { ...payload, reply: held, lookedAgain: payload.lookedAgain || held.text !== payload.reply.text };
+      }
+      // A verdict on the company commits: the call, the reason on record, a kill signal with its day, the first move.
+      // A part missing is asked for once; the kill signal waits in Needs you for its day (server/partner/call.ts).
+      let checkLine = '';
+      if (asksVerdict(payload.query)) {
+        try {
+          const today = localDay(now());
+          const doc = await companyNow(stage);
+          const [company, block, chat] = await Promise.all([
+            doc ? deps.store.readDoc(doc.id).catch(() => '') : '', standingFor(stage, me.id).catch(() => ''),
+            deps.store.readChat(me.id).catch(() => []),
+          ]);
+          const evidence = [company, block, payload.query, ...chat.slice(-30).map((one) => one.text ?? ''), ...payload.reply.tools.map((tool) => tool.result ?? '')].join('\n');
+          const { reply, call, askedAgain } = await holdCall(payload.query, payload.reply, payload.again, today, evidence);
+          if (call) {
+            payload = { ...payload, reply, lookedAgain: payload.lookedAgain || askedAgain };
+            await state.change((held) => { held.call = { ...call, at: now(), day: today, roomId: me.id }; });
+            if (call.signal) {
+              await promises.add({ what: call.signal.what, due: call.signal.by, roomId: me.id, check: true });
+              await deps.attention.refresh().catch(() => {});
+              checkLine = `*Kept as a check: it comes to Needs you on ${call.signal.by}.*`;
+            }
+          }
+        } catch (error) { console.error(`partner verdict: ${(error as Error).message}`); }
       }
       const facts = companyFacts(payload.query);
       let text = payload.reply.text;
@@ -416,6 +443,7 @@ export function createPartner(options: PartnerOptions = {}) {
         const ledger = await book.list().catch(() => null);
         text = staleNeeds(text, ledger ? stillWaiting(rows, ledger) : rows);
         if (receipt) text = `${text.replace(/\s+$/, '')}\n\n${receipt}`;
+        if (checkLine) text = `${text.replace(/\s+$/, '')}\n\n${checkLine}`;
       } catch (error) { console.error(`partner keep: ${(error as Error).message}`); }
       return next(text === payload.reply.text ? payload : { ...payload, reply: { ...payload.reply, text } });
     };
@@ -444,7 +472,7 @@ export function createPartner(options: PartnerOptions = {}) {
     // turn of the partner's own.
     async function chasePromises() {
       const today = localDay(now());
-      const late = (await promises.list()).filter((one) => one.status === 'open' && one.due < today && !one.chased);
+      const late = (await promises.list()).filter((one) => one.status === 'open' && !one.check && one.due < today && !one.chased);
       if (!late.length) return;
       const partner = partnerOf(await deps.store.loadStage());
       if (partner && deps.busy.has(partner.id)) return;
