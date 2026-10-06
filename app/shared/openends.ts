@@ -3,7 +3,10 @@
 
 // One thing that either works or does not, in the founder's own words. `fix` is what they would do about it.
 // `warn`: working, but worth a look (amber, not red): the backups are fresh but on the workspace's own disk.
-export type Check = { name: string; ok: boolean; detail: string; fix: string; warn?: boolean };
+// `act`: one button the founder may press to fix it here (Runs while closed: Turn on), and the path it posts to.
+export type Check = { name: string; ok: boolean; detail: string; fix: string; warn?: boolean; act?: { label: string; path: string } };
+// What pressing a row's button came to, in a sentence, with the row as it is now.
+export type ActResult = { ok: boolean; said: string; check: Check };
 
 // One archive of the workspace, as it sits on disk.
 export type Backup = { file: string; at: number; bytes: number };

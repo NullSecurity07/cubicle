@@ -117,6 +117,10 @@ export async function ytdlpVersion(env: NodeJS.ProcessEnv = process.env): Promis
   });
 }
 
+// Where the Runs while closed row is read from: systemd, unless the openends slice put its own runner here (a check
+// run's stub), so Health and the dashboard read the same service.
+export const serviceNow: { state: (env: NodeJS.ProcessEnv) => Promise<ServiceState> } = { state: (env) => serviceState({ env }) };
+
 // The outside programs' rows, as the openends slice that talks to them last saw them. The dashboard reads its health
 // through this, so it shows the same rows as the health panel without connecting to anything itself.
 export const outsideHealth: { now: () => { name: string; ok: boolean; detail: string }[] } = { now: () => [] };
@@ -275,7 +279,7 @@ export async function checkAll(deps: HealthDeps): Promise<Check[]> {
   });
 
   // Whether the morning note, the bet checks, the watches and the backup happen with the window closed.
-  checks.push(serviceRow(await (deps.service ?? (() => serviceState({ env })))().catch(() => ({ systemd: false, installed: false, enabled: false, active: 'inactive', path: '' }))));
+  checks.push(serviceRow(await (deps.service ?? (() => serviceNow.state(env)))().catch(() => ({ systemd: false, installed: false, enabled: false, active: 'inactive', path: '' }))));
 
   checks.push(backupRow({ dir: deps.backupDir, backups: await deps.backups(), writable: await canWrite(deps.backupDir), sameDisk: await sameDisk(workspace, deps.backupDir, deps.stat) }, now()));
 
@@ -375,4 +379,18 @@ export async function liveReaders(http: typeof fetch = fetch): Promise<Check[]> 
     } catch (error) { return { name, ok: false, detail: `${LIVE_FEED} could not be reached: ${said(error)}`, fix }; }
   })();
   return [reddit, feed];
+}
+
+// The day's budget for work nobody asked for (usage.ts, createUnasked): how much of it is used, and on what. Each reason
+// once, with how many times when it came up more than once, so twelve page watches read as one line, not twelve.
+export function unaskedRow(state: { cap: number; used: { reason: string }[] }): Check {
+  const counts = new Map<string, number>();
+  for (const one of state.used) counts.set(one.reason, (counts.get(one.reason) ?? 0) + 1);
+  const reasons = [...counts].map(([reason, times]) => (times > 1 ? `${reason} (${times})` : reason)).join(', ');
+  const full = state.used.length >= state.cap;
+  return {
+    name: 'Unasked work today', ok: true, ...(full ? { warn: true } : {}),
+    detail: `${state.used.length} of ${state.cap} used${reasons ? `: ${reasons}` : ''}`,
+    fix: full ? 'Nothing to do: what was left waits for tomorrow, and anything you ask still gets an answer today.' : '',
+  };
 }

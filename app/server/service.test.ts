@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { SERVICE, cleanPath, servicePort, enableLine, installService, removeService, serviceRow, serviceState, unitPath, unitText, type ServiceState } from './service.ts';
+import { SERVICE, TURN_ON, cleanPath, servicePort, enableLine, installService, noSession, removeService, serviceRow, serviceRunner, serviceState, stubRunner, unitPath, unitText, type ServiceState } from './service.ts';
 
 const base = { node: '/usr/bin/node', app: '/home/me/cublicle/app', workspace: '/home/me/cublicle/workspace', path: '/usr/bin:/home/me/.local/bin' };
 
@@ -102,7 +102,6 @@ describe('the row that says whether it runs while closed', () => {
     const never = serviceRow(state({ installed: false, enabled: false, active: 'inactive' }));
     expect(never).toMatchObject({ ok: true, warn: true });
     expect(never.detail).toMatch(/^no/);
-    expect(never.detail).toContain('pnpm service:install');
     expect(never.fix).toContain('pnpm service:install');
     expect(never.fix).toContain(enableLine);
     const off = serviceRow(state({ enabled: false, active: 'inactive' }));
@@ -142,5 +141,82 @@ describe('the port the service holds', () => {
     expect(await servicePort({ HOME: home })).toBe(7421);
     await installService({ ...base, port: 7521 }, { env: { HOME: home }, ask: async () => '' });
     expect(await servicePort({ HOME: home })).toBe(7521);
+  });
+});
+
+describe('Turn on, the founder\'s one click', () => {
+  const fresh = () => mkdtempSync(join(tmpdir(), 'service-'));
+  // A systemd that remembers what it was told: enable switches it on, start runs it.
+  const systemd = () => {
+    const asked: string[][] = [];
+    let enabled = 'disabled'; let active = 'inactive';
+    const ask = async (args: string[]) => {
+      asked.push(args);
+      if (args[0] === 'enable') enabled = 'enabled';
+      if (args[0] === 'start') active = 'active';
+      return args[0] === 'is-enabled' ? enabled : args[0] === 'is-active' ? active : '';
+    };
+    return { ask, asked };
+  };
+
+  it('is offered on the row only while the service is not on, and never when there is no systemd', () => {
+    const state = (over: Partial<ServiceState>): ServiceState => ({ systemd: true, installed: true, enabled: true, active: 'active', path: '/x', ...over });
+    expect(serviceRow(state({ installed: false, enabled: false, active: 'inactive' })).act).toEqual(TURN_ON);
+    expect(serviceRow(state({ enabled: false, active: 'inactive' })).act).toEqual(TURN_ON);
+    expect(serviceRow(state({})).act).toBeUndefined();
+    expect(serviceRow(state({ systemd: false, installed: false, enabled: false })).act).toBeUndefined();
+    expect(serviceRow(state({ systemd: false, installed: false, enabled: false })).detail).toContain('no systemd user session');
+  });
+
+  it('writes the unit, switches it on and starts it when this app is not on its port', async () => {
+    const home = fresh();
+    const { ask, asked } = systemd();
+    const runner = serviceRunner({ input: () => base, ownPort: 7512, env: { HOME: home }, ask });
+    expect(serviceRow(await runner.state()).detail).toMatch(/^no/);
+    const done = await runner.turnOn();
+    expect(done).toEqual({ ok: true, said: 'Switched on and running. It starts at every login and keeps going while the app is closed.' });
+    expect(asked).toContainEqual(['daemon-reload']);
+    expect(asked).toContainEqual(['enable', SERVICE]);
+    expect(asked).toContainEqual(['start', SERVICE]);
+    expect(serviceRow(await runner.state()).detail).toMatch(/^yes: it runs as a service/);
+  });
+
+  it('switches on without starting while this app holds the port, and hands over as it leaves', async () => {
+    const home = fresh();
+    const { ask, asked } = systemd();
+    const runner = serviceRunner({ input: () => base, ownPort: 7421, env: { HOME: home }, ask });
+    const done = await runner.turnOn();
+    expect(done.ok).toBe(true);
+    expect(done.said).toBe('Switched on. It takes over when you close the app, and starts at every login.');
+    expect(asked).not.toContainEqual(['start', SERVICE]);
+    const row = serviceRow(await runner.state());
+    expect(row).toMatchObject({ ok: true, detail: 'yes: switched on. It takes over when you close the app, and starts at every login' });
+    expect(row.warn).toBeUndefined();
+    expect(await runner.handover()).toBe(true);
+    // The service itself is never told to hand over to itself.
+    const itself = serviceRunner({ input: () => base, ownPort: 7421, env: { HOME: home, INVOCATION_ID: 'x' }, ask });
+    expect(await itself.handover()).toBe(false);
+  });
+
+  it('says so, and writes nothing, on a machine with no systemd user session', async () => {
+    const home = fresh();
+    const runner = serviceRunner({ input: () => base, ownPort: 7512, env: { HOME: home }, ask: async () => null });
+    expect(await runner.turnOn()).toEqual({ ok: false, said: 'This machine has no systemd user session, so the app can only run while its window is open.' });
+    expect((await serviceState({ env: { HOME: home }, ask: async () => null })).installed).toBe(false);
+    expect(noSession('Failed to connect to bus: No medium found')).toBe(true);
+    expect(noSession('Failed to connect to user scope bus via local transport: $DBUS_SESSION_BUS_ADDRESS and $XDG_RUNTIME_DIR not defined')).toBe(true);
+    expect(noSession('Unit cubicle.service could not be found.')).toBe(false);
+  });
+
+  it('has a stub for check runs that lives in memory: off, one click, then yes', async () => {
+    const stub = stubRunner();
+    expect(serviceRow(await stub.state())).toMatchObject({ act: TURN_ON });
+    expect((await stub.turnOn()).ok).toBe(true);
+    expect(stub.calls).toEqual(['turnOn']);
+    expect(serviceRow(await stub.state()).detail).toMatch(/^yes: it runs as a service/);
+    expect(await stub.handover()).toBe(false);
+    const none = stubRunner('nosession');
+    expect(serviceRow(await none.state()).detail).toContain('no systemd user session');
+    expect((await none.turnOn()).ok).toBe(false);
   });
 });

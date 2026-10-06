@@ -9,7 +9,7 @@ import { createRecall, wordEmbedder } from './recall.ts';
 import { createSeams } from './seams.ts';
 import { createSkills } from './skills.ts';
 import { createStore } from './store.ts';
-import { createUsage } from './usage.ts';
+import { createUnasked, createUsage } from './usage.ts';
 
 // Everything a slice may reach for, real but small and empty, on a throwaway workspace: what `pnpm check:providers`
 // and the unit test that installs the whole `server/slices` folder both hand round. A slice only installs when it is
@@ -17,8 +17,9 @@ import { createUsage } from './usage.ts';
 // noticing, so this is one list both of them share. `fake` keeps every slice away from the outside world.
 export function stubDeps(workspace: string, root: string): Deps {
   const store = createStore(workspace);
+  const usage = createUsage(null);
   return {
-    workspace, root, fake: true, store, seams: createSeams(), clients: [], usage: createUsage(null),
+    workspace, root, fake: true, store, seams: createSeams(), clients: [], usage, unasked: createUnasked({ path: null, usage, clients: () => [] }),
     approvals: createApprovals(), attention: createAttention(workspace), boards: createBoards(workspace),
     recall: createRecall({ dir: workspace, embed: wordEmbedder, gather: async () => [] }),
     skills: createSkills(workspace), founder: createFounder(workspace), memory: createMemory(store, async () => ''), decisions: createDecisions(workspace),

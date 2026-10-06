@@ -1,12 +1,14 @@
 import type { Skill } from '../../../shared/model';
 import type { BackupPlaces } from '../../../shared/keys-file';
-import type { Backups, Check, Insights, Outside } from '../../../shared/openends';
+import type { ActResult, Backups, Check, Insights, Outside } from '../../../shared/openends';
 import { request as ask, send } from '../../api';
 
 // This slice's own paths. It asks for nothing the panels do not show.
 const post = (body?: unknown) => send('POST', body);
 
 export const getHealth = () => ask<{ checks: Check[] }>('/api/health').then((held) => held.checks);
+// A row's one button (Runs while closed: Turn on): what it came to, and the row as it is now.
+export const actOn = (path: string) => ask<ActResult>(path, post());
 export const getBackups = () => ask<Backups>('/api/backups');
 export const makeBackup = () => ask<Backups & { dropped: number }>('/api/backups', post());
 // Where backups go: the places this machine has, and the folder written into .env through the keys route, which makes

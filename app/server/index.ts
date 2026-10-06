@@ -58,7 +58,7 @@ import { teamTools } from './tools/team.ts';
 import { webTools } from './tools/web.ts';
 import { createTrace } from './trace.ts';
 import { createPromptFor } from './turn-prompt.ts';
-import { createUsage, keyPrint } from './usage.ts';
+import { createUnasked, createUsage, keyPrint, UNASKED_CAP } from './usage.ts';
 import { wireStudios } from './wiring/studios.ts';
 
 // First of all: a promise nobody caught is written down and the app goes on; a throw nobody caught ends it with a
@@ -96,6 +96,9 @@ bookRescue.tell = (damage) => tellDamage(damage);
 const usage = createUsage(resolve(workspace, 'usage.json'));
 usage.fingerprints(Object.fromEntries(clients.map((client) => [client.name, keyPrint(client.openai?.apiKey)])));
 await usage.load();
+// Work nobody asked for gets so many turns a day of its own (STAGE_UNASKED_CAP, 12 unless set), kept across a restart.
+const unasked = createUnasked({ path: resolve(workspace, 'unasked.json'), usage, clients: () => clients, cap: Number(process.env.STAGE_UNASKED_CAP ?? UNASKED_CAP) });
+await unasked.load();
 const browser = fake ? createBrowser(fakeRunner, undefined, undefined, fakeHand) : createBrowser(realRunner(), { direct: [redditFeed(), stackExchange()], fallback: process.env.STAGE_NO_READER === '1' ? [] : [jinaReader, archiveCopy()] }, dnsResolve);
 const approvals = createApprovals();
 // Summaries go to a model with room to spare: the last configured providers are the large free ones.
@@ -164,7 +167,7 @@ const tools = [...docTools, ...fileTools, ...webTools(browser, launchFor), ...ou
 // list is only final once every slice has added its own, so `late.runs` stands in and is filled the moment it exists.
 const late = lateRuns();
 const extras = await installSlices(await loadSlices(resolve(import.meta.dirname, 'slices')), {
-  workspace, root, fake, store, seams, clients, usage, approvals, attention, boards, recall, skills, founder, memory, decisions, busy,
+  workspace, root, fake, store, seams, clients, usage, unasked, approvals, attention, boards, recall, skills, founder, memory, decisions, busy,
   notify: fake ? () => {} : desktopNotify, promptFor, json, body, own, runs: late.runs,
   toolsFor: (stage, roomId) => toolsFor(stage, roomId),
 });
