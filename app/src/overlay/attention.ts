@@ -21,6 +21,7 @@ export const WHAT: Record<Attention['kind'], string> = {
   'metric-alert': 'A number to look at', 'proposed-target': 'suggests a target',
   'runway-low': 'Runway is short', 'proposed-runway': 'suggests a change to the runway',
   'lead-stale': 'A lead to follow up',
+  'lead-replied': 'A lead wrote back', 'lead-notes': 'Notes from a meeting', 'lead-reading': 'A number from a meeting',
   'key-rejected': 'A model key was refused',
   'file-damaged': 'A file could not be read',
   'backup-failed': 'The daily backup failed',

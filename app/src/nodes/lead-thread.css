@@ -1,0 +1,28 @@
+/* A lead's thread: its newest event under the name on the card, and in the lead's view the events with the founder's
+   moves under them (they replied, a meeting set, how it went). Quiet type, the card's own buttons and fields. */
+
+.lead { grid-template-areas: 'name name' 'company company' 'thread fit'; }
+.lead__thread { grid-area: thread; align-self: end; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; color: var(--accent-soft); opacity: 0.9; }
+
+.thread { display: flex; flex-direction: column; gap: 8px; }
+.thread__events { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0 0 0 10px; list-style: none; border-left: 1px solid var(--card-border); }
+.thread__event { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; font-size: 12px; line-height: 1.4; }
+.thread__event > span { font-weight: 550; }
+.thread__event small { font-size: 10.5px; color: var(--muted); }
+.thread__event q { flex-basis: 100%; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; user-select: text; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; line-clamp: 4; overflow: hidden; }
+.thread__event--replied > span, .thread__event--meeting > span { color: var(--accent-soft); }
+.thread__acts, .thread__form > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.thread__acts button, .thread__form button { border: 0; border-radius: 8px; padding: 5px 11px; font: inherit; font-size: 12px; font-weight: 550; color: var(--text); background: rgba(255, 255, 255, 0.1); cursor: pointer; transition: background 0.15s; }
+.thread__acts button:hover, .thread__form button:hover { background: rgba(255, 255, 255, 0.16); }
+.thread__acts .primary, .thread__form .primary { background: var(--accent); color: #fff; }
+.thread__acts .primary:disabled, .thread__form .primary:disabled { opacity: 0.35; cursor: default; }
+.thread__form { display: flex; flex-direction: column; gap: 6px; animation: leads-in 0.18s ease both; }
+.thread__form > div { justify-content: flex-end; }
+.thread__form textarea, .thread__form input { width: 100%; box-sizing: border-box; border: 1px solid var(--card-border); border-radius: 8px; padding: 6px 8px; outline: 0; background: rgba(255, 255, 255, 0.05); color: var(--text); font: inherit; font-size: 12.5px; color-scheme: dark; resize: none; }
+.thread__form textarea:focus, .thread__form input:focus { border-color: var(--focus); }
+
+.needs__notes { order: -1; flex: 1 1 100%; display: flex; }
+.needs__notes textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--card-border); border-radius: 8px; padding: 6px 8px; outline: 0; resize: none; background: rgba(255, 255, 255, 0.05); color: var(--text); font: inherit; font-size: 12.5px; }
+.needs__notes textarea:focus { border-color: var(--focus); }
+@media (prefers-reduced-motion: reduce) { .thread__form { animation: none; } }
+.needs__end:has(.needs__notes) { flex-wrap: wrap; }

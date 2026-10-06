@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { LEAD_STAGES, leadName, noteKey, sameLead, type Lead, type LeadsEvent, type LeadStage } from '../../shared/leads.ts';
+import { LEAD_STAGES, leadName, noteKey, sameLead, type Lead, type LeadsEvent, type LeadStage, type ThreadEvent } from '../../shared/leads.ts';
 import type { Stage } from '../../shared/model.ts';
 import { newId } from '../slice-kit.ts';
 
@@ -107,6 +107,20 @@ export function createLeads(dir: string, tell: (cardId: string, event: LeadsEven
     async move(cardId: string, leadId: string, stage: LeadStage): Promise<Lead> {
       if (!isStage(stage)) throw new Error(`a stage is one of ${LEAD_STAGES.join(', ')}`);
       return change(cardId, leadId, (lead) => { lead.stage = stage; });
+    },
+    // One event on the lead's thread, with the stage it moves to (if any) and a note, all in one change.
+    async thread(cardId: string, leadId: string, event: Omit<ThreadEvent, 'at'>, stage?: LeadStage | null, note?: { by: string; text: string }): Promise<Lead> {
+      return change(cardId, leadId, (lead) => {
+        // Each event's time is its name, so two in the same millisecond are kept a millisecond apart.
+        const at = Math.max(now(), (lead.thread?.at(-1)?.at ?? 0) + 1);
+        lead.thread = [...(lead.thread ?? []), { ...event, at }].slice(-200);
+        if (stage) lead.stage = stage;
+        if (note?.text.trim()) lead.notes.push({ at, by: note.by, text: note.text.trim().slice(0, 2000) });
+      });
+    },
+    // A change to an event already on the thread, found by when it happened (the founder's answer to a reading).
+    async rethread(cardId: string, leadId: string, at: number, edit: (event: ThreadEvent) => void): Promise<Lead> {
+      return change(cardId, leadId, (lead) => { const event = lead.thread?.find((one) => one.at === at); if (!event) throw new Error('that is no longer on the lead'); edit(event); });
     },
     async score(cardId: string, leadId: string, score: number, why: string): Promise<Lead> {
       if (!Number.isFinite(score)) throw new Error('a score is a number from 0 to 10');

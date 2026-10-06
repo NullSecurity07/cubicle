@@ -1,12 +1,13 @@
 import { useJumpTo } from '../flow';
 import type { Lapsed } from '../../shared/lapsed';
 import { useAddCard } from '../addCard';
-import { changeTask, dismissAttention, dropSource, removeTask } from '../api';
+import { changeTask, dismissAttention, draftOpenedFor, dropSource, removeTask } from '../api';
 import { emit } from '../bus';
 import { Approval, asked } from '../nodes/Approval';
 import { CoderAsk } from '../nodes/CoderAsk';
 import { MetricsNeed } from '../nodes/MetricsNeed';
 import { LeadNudgeNeed } from '../nodes/LeadNudge';
+import { LeadThreadNeed } from '../nodes/LeadThread';
 import { PartnerNeed } from '../slices/partner/PartnerNeed';
 import { ago, since, useAttention, WHAT } from './attention';
 import { PanelShell } from './PanelShell';
@@ -82,10 +83,11 @@ export function NeedsPanel() {
                 </>}
                 <MetricsNeed entry={entry} attempt={attempt} />
                 <LeadNudgeNeed entry={entry} attempt={attempt} />
+                <LeadThreadNeed entry={entry} attempt={attempt} />
                 <PartnerNeed entry={entry} attempt={attempt} />
                 {entry.decisionId && <button type="button" className="primary" onClick={() => { showDecision(entry.decisionId!); overlay.open({ kind: 'panel', name: 'decisions' }); }}>{entry.kind === 'review-due' ? 'Look at it' : 'Decide'}</button>}
                 {entry.kind === 'key-rejected' && <button type="button" className="primary" onClick={() => { overlay.close({ kind: 'panel', name: 'needs' }); overlay.open({ kind: 'panel', name: 'apikeys' }); }}>Open Keys</button>}
-                {entry.kind === 'mail-draft' && entry.url && <a className="needs__link primary" href={entry.url} target="_blank" rel="noreferrer" onClick={() => { markDraftOpened(entry.id); attempt(dismissAttention(entry.id)); }}>Open in Gmail</a>}
+                {entry.kind === 'mail-draft' && entry.url && <a className="needs__link primary" href={entry.url} target="_blank" rel="noreferrer" onClick={() => { markDraftOpened(entry.id); attempt(dismissAttention(entry.id)); void draftOpenedFor(entry.id, new URL(entry.url!).searchParams.get('to') ?? '').catch(() => { /* no lead to move */ }); }}>Open in Gmail</a>}
                 {(entry.lapsed || entry.kind === 'mail-draft' || entry.kind === 'key-rejected' || entry.kind === 'file-damaged' || entry.kind === 'backup-failed' || entry.kind === 'run-failed' || entry.kind === 'missed' || entry.kind === 'review-due' || entry.kind === 'page-changed') && <button type="button" onClick={() => attempt(dismissAttention(entry.id))}>Dismiss</button>}
                 {entry.lapsed && entry.roomId && <button type="button" className="primary" onClick={() => ask(entry, said)}>Ask {entry.who ?? 'them'} again</button>}
               </div>

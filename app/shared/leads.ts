@@ -16,6 +16,21 @@ export type Lead = {
   // shows it. `noteIds` maps a note's key here (see `noteKey`) to that note in Twenty, so each note goes over once.
   // `remoteAt` is the person's updatedAt as Twenty last said it, so the mirror knows its own writes when it reads back.
   twenty?: { personId: string; companyId?: string; noteIds: Record<string, string>; syncedAt: number; remoteAt?: string };
+  // What happened between the founder and this person, oldest first: see `leads-thread.ts`, which owns the moves.
+  thread?: ThreadEvent[];
+};
+
+// One thing in a lead's thread. `drafted`: a person drafted an email to them (`draft` is its Needs you id). `sent`: an
+// email the founder said yes to went out from `room`'s mailbox (`via` agentmail) or the founder's Gmail. `opened`: the
+// founder opened a drafted email in Gmail. `replied`: they wrote back (`text`, and `mail`, the message id, when the
+// inbox poll found it). `meeting`: one is set for `day` (YYYY-MM-DD), `taskId` on `boardId` holds it. `notes`: what the
+// founder wrote after it, with the `reading` it proposes for the Metrics card and the founder's answer to it.
+// `closed`: the founder waved away the ask named by `of`.
+export type ThreadKind = 'drafted' | 'sent' | 'opened' | 'replied' | 'meeting' | 'notes' | 'closed';
+export type ThreadReading = { conversations: number; paying: number; answer?: 'logged' | 'declined' };
+export type ThreadEvent = {
+  at: number; kind: ThreadKind; text?: string; subject?: string; draft?: string; room?: string; via?: 'agentmail' | 'gmail';
+  mail?: string; day?: string; boardId?: string; taskId?: string; reading?: ThreadReading; of?: 'replied' | 'notes';
 };
 // A note's key for the mirror: notes are only ever added, so where it sits and when it was written never change.
 export const noteKey = (note: LeadNote, index: number) => `${index}:${note.at}`;

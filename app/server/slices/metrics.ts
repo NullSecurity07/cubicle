@@ -2,7 +2,7 @@ import { alerts, findMetric, formatValue, isDay, localDay, metricsBlock, metrics
 import type { Attention, Card, Stage } from '../../shared/model.ts';
 import { hub } from '../events.ts';
 import type { Deps, Slice } from '../install.ts';
-import { createMetrics, type MetricPatch, type MetricsStore } from '../metrics/store.ts';
+import { metricsFor, type MetricPatch, type MetricsStore } from '../metrics/store.ts';
 import { wired } from '../prompt.ts';
 import type { Handler } from '../seams.ts';
 import { text, type Tool, type ToolContext } from '../tools/registry.ts';
@@ -124,7 +124,7 @@ export default {
   name: 'metrics',
   install(deps: Deps) {
     const say = (cardId: string, event: MetricsEvent) => hub.say(metricsChannel(cardId), event);
-    const store = createMetrics(deps.workspace, say);
+    const store = metricsFor(deps.workspace, say);
     const onStage = async () => cardsOf(await deps.store.loadStage());
     const seen = new Map<string, number>();
     // Whatever changed a card may have raised or settled something in Needs you.
