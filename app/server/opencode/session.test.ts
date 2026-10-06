@@ -1,3 +1,7 @@
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { CoderEvent } from '../../shared/coder.ts';
 import type { Attention } from '../../shared/model.ts';
@@ -5,13 +9,13 @@ import { createApprovals } from '../approvals.ts';
 import { DOWN_MESSAGE, fakeEngine } from './fake.ts';
 import type { Engine } from './server.ts';
 import { GONE } from './server.ts';
-import { createCoder } from './session.ts';
+import { createCoder, gitIgnored } from './session.ts';
 
 const card = { id: 'coder-1', dir: '/code/shop', name: 'shop' };
 
 // The engine the card drives, the book the founder answers in and the list of what waits for them — all of them
 // watched, so a test can say what went where.
-function setup(engine: Engine & Partial<ReturnType<typeof fakeEngine>> = fakeEngine({ step: 2 }), extra: { now?: () => number; reachable?: (url: string) => Promise<boolean>; map?: Parameters<typeof createCoder>[0]['map'] } = {}) {
+function setup(engine: Engine & Partial<ReturnType<typeof fakeEngine>> = fakeEngine({ step: 2 }), extra: { now?: () => number; reachable?: (url: string) => Promise<boolean>; map?: Parameters<typeof createCoder>[0]['map']; ignored?: Parameters<typeof createCoder>[0]['ignored'] } = {}) {
   const said: CoderEvent[] = [];
   const raised: Attention[] = [];
   const cleared: string[] = [];
@@ -263,6 +267,24 @@ describe('a coder card', () => {
     await coder.wait(card.id);
     expect(lines().filter((one) => one.startsWith('diff:'))).toEqual(['diff: +12 −3 in 1 file']);
     expect(await coder.result(card.id)).toContain('No files changed.');
+  });
+
+  it('counts only what was written: no bytecode, no binaries, nothing the folder\'s .gitignore names', async () => {
+    const { coder, lines } = setup(fakeEngine({ step: 2 }), { ignored: async (_dir, files) => new Set(files.filter((one) => one.startsWith('build/'))) });
+    await coder.prompt(card, 'Add a health check and run python on it', {});
+    expect(await coder.wait(card.id)).toBe('done');
+    expect(lines().filter((one) => one.startsWith('diff:'))).toEqual(['diff: +12 −3 in 1 file']);
+    expect((await coder.patches(card.id)).map((one) => one.file)).toEqual(['src/example.ts']);
+    expect(await coder.result(card.id)).toContain('Changed: +12 −3 in 1 file (src/example.ts)');
+  });
+
+  it('asks git which files the folder ignores, and nothing when it is not a repository', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'coder-ignored-'));
+    expect([...await gitIgnored(dir, ['build/out.txt'])]).toEqual([]);
+    execFileSync('git', ['init', '-q'], { cwd: dir });
+    await writeFile(join(dir, '.gitignore'), 'build/\n*.log\n');
+    expect([...await gitIgnored(dir, ['build/out.txt', 'src/a.ts', 'debug.log', 'never made.log'])].sort()).toEqual(['build/out.txt', 'debug.log', 'never made.log']);
+    await rm(dir, { recursive: true, force: true });
   });
 
   it('lists the models in the order the founder picks from, the free ones first', async () => {

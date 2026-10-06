@@ -6,9 +6,17 @@ import type { CallOptions, Engine } from './server.ts';
 // says what it did, reports a one-file diff and goes idle. A brief that says "both" makes it ask before the edit and
 // the command at once, `gap` apart, the way a real model asks when it calls two tools in one step. A model named in
 // `down` (its id without the provider) answers the way a Zen model with a dead endpoint does: opencode retries it with
-// the provider's message a few times, then gives up with a session error. Nothing here reads the network.
+// the provider's message a few times, then gives up with a session error. A brief that mentions python runs it too,
+// and the diff then also holds what that leaves behind: bytecode, a binary and a file under build/, which a folder's
+// .gitignore usually names. Nothing here reads the network.
 type Session = { id: string; directory: string; created: number; busy: boolean; messages: { id: string; role: 'user' | 'assistant'; text: string }[]; run?: AbortController; reverted?: string };
 const PATCH = '--- a/src/example.ts\n+++ b/src/example.ts\n@@ -1,3 +1,12 @@\n-export const ok = false;\n+export const ok = true;\n';
+const LEFT_BEHIND = [
+  { file: 'src/__pycache__/example.cpython-312.pyc', patch: '', additions: 9, deletions: 0, status: 'added' },
+  { file: 'logo.png', patch: 'Binary files /dev/null and b/logo.png differ\n', additions: 0, deletions: 0, status: 'added' },
+  { file: 'build/out.txt', patch: '+built\n', additions: 1, deletions: 0, status: 'added' },
+];
+const ran = (session: Session) => session.messages.some((one) => one.role === 'user' && /python/i.test(one.text));
 
 export const DOWN_MESSAGE = 'Error from provider (Console): Upstream request failed: Endpoint is unavailable.';
 export function fakeEngine({ step = 120, gap = 0, now = Date.now, down = [] }: { step?: number; gap?: number; now?: () => number; down?: string[] } = {}): Engine & { sessions: Map<string, Session>; mcp: Map<string, Map<string, unknown>> } {
@@ -106,7 +114,7 @@ export function fakeEngine({ step = 120, gap = 0, now = Date.now, down = [] }: {
       const half = Math.ceil(said.length / 2);
       grown(id('prt'), 'text', [said.slice(0, half), said.slice(half)]);
       usage({ input: 1200, output: 80, reasoning: 20 });
-      tell('session.diff', { sessionID, diff: [{ file: 'src/example.ts', additions: 12, deletions: 3 }] }, session.directory);
+      tell('session.diff', { sessionID, diff: [{ file: 'src/example.ts', additions: 12, deletions: 3 }, ...(ran(session) ? LEFT_BEHIND : [])] }, session.directory);
     } catch { /* aborted: the abort below says idle */ }
     session.busy = false;
     session.run = undefined;
@@ -145,7 +153,7 @@ export function fakeEngine({ step = 120, gap = 0, now = Date.now, down = [] }: {
         if (method === 'POST' && action === 'abort') { session.run?.abort(); return true; }
         // The real one says the folder's diff once more after an undo, a moment later.
         if (method === 'POST' && action === 'revert') { session.reverted = String(asked.messageID); setTimeout(() => tell('session.diff', { sessionID: session.id, diff: [{ file: 'src/example.ts', additions: 12, deletions: 3 }] }, session.directory), 0); return { id: session.id, revert: { messageID: session.reverted } }; }
-        if (method === 'GET' && action === 'diff') return session.messages.length && !session.reverted ? [{ file: 'src/example.ts', patch: PATCH, additions: 12, deletions: 3, status: 'modified' }] : [];
+        if (method === 'GET' && action === 'diff') return session.messages.length && !session.reverted ? [{ file: 'src/example.ts', patch: PATCH, additions: 12, deletions: 3, status: 'modified' }, ...(ran(session) ? LEFT_BEHIND : [])] : [];
         if (method === 'GET' && action === 'message') return session.messages.map((one) => ({ info: { id: one.id, role: one.role }, parts: [{ type: 'text', text: one.text }] }));
         if (method === 'GET' && !action) return { id: session.id, directory: session.directory, time: { created: session.created }, ...(session.reverted ? { revert: { messageID: session.reverted } } : {}) };
         if (method === 'DELETE' && !action) { sessions.delete(sessionId); return true; }
