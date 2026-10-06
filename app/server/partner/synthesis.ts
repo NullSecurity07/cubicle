@@ -13,7 +13,7 @@ import type { StandingParts } from './standing.ts';
 // steps from the call" asks nothing: only an open question about the company's next move counts.
 export const asksWhatNext = (said: string) => /\bwhat(?:'s| is)? next\b(?!\s+to\b)|\bwhat (?:do|should|shall|can) (?:i|we) do\b(?!\s+(?:about|with|for|if|on)\b)|\bwhat now\b|\bplan (?:the|my|our|this|next) week\b|\bwhere (?:do|should) (?:i|we) start\b|\bnext steps?\b(?=[^.!\n]*\?)|\bwhat should (?:i|we) (?:focus on|work on|do\b(?!\s+(?:about|with|for|if|on)\b))|\bwhat(?:'s| is) (?:the|my|our) (?:priority|plan) for (?:today|this week)\b/i.test(said);
 
-export type FactKind = 'verdict' | 'numbers' | 'bets' | 'learned' | 'due' | 'promise' | 'decided';
+export type FactKind = 'verdict' | 'numbers' | 'bets' | 'learned' | 'due' | 'promise' | 'decided' | 'declined';
 // One standing fact: its line as the standing block has it, and the ways a reply can name it.
 export type Fact = { kind: FactKind; line: string; names: RegExp[]; words?: string[] };
 
@@ -73,6 +73,11 @@ export function standingFacts(parts: StandingParts): Fact[] {
   for (const line of parts.decided) {
     const [title, chosen = ''] = line.replace(/^\s*-\s*\S+\s+/, '').split(/:\s*/, 2);
     facts.push({ kind: 'decided', line, names: [phrase(title), ...(chosen ? [phrase(chosen)] : [])], words: [...wordsOf(title), ...wordsOf(chosen)] });
+  }
+  // A no the founder gave counts when the answer names it: "you said no to the price cut, so…".
+  for (const line of parts.declined ?? []) {
+    const what = /^\s*-\s*"([^"]+)"/.exec(line)?.[1] ?? '';
+    facts.push({ kind: 'declined', line, names: [/\byou (?:said no|declined|turned down)\b/i, ...(what ? [phrase(what)] : [])], words: wordsOf(what) });
   }
   return facts;
 }

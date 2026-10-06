@@ -18,7 +18,8 @@ const DECIDED_MOST = 4;
 // What the gather gives, plus the decisions on record, as the slice caches them between ticks.
 // `learned`: one line per closed bet, as What we learned in the Company document has it.
 // `promised`: the founder's open promises, one line each, read fresh every turn.
-export type StandingParts = Pick<CompanyGather, 'verdicts' | 'numbers' | 'open' | 'planned' | 'flagCounts'> & { decided: string[]; learned: string[]; promised?: string[] };
+// `declined`: what the founder said no to lately, one line each (server/partner/saidno.ts), read fresh every turn.
+export type StandingParts = Pick<CompanyGather, 'verdicts' | 'numbers' | 'open' | 'planned' | 'flagCounts'> & { decided: string[]; learned: string[]; promised?: string[]; declined?: string[] };
 
 export async function standingParts(from: MorningSources): Promise<StandingParts> {
   const got = await gatherCompany(from, { verdictChars: LINE_MOST });
@@ -84,6 +85,7 @@ export function standingBlock(parts: StandingParts, waiting: Attention[]): strin
     ['What we learned (closed bets; cite the line when advice rests on it):', parts.learned ?? []],
     ['Due on the board:', parts.planned],
     ['The founder\'s promises:', parts.promised ?? []],
+    ['The founder said no to (never put one to them again as new):', parts.declined ?? []],
     ['', parts.flagCounts.length ? [`Truth net since yesterday: ${parts.flagCounts.map((one) => `${one.room} had ${one.count} flagged ${one.count === 1 ? 'line' : 'lines'}`).join('; ')}. Never repeat a flagged figure as a fact.`] : []],
   ];
   const lines = [STANDING_HEAD];

@@ -31,6 +31,8 @@ export function Approval({ tool }: { tool: ToolEvent }) {
   const [sending, setSending] = useState(false);
   const [always, setAlways] = useState(false);
   const [problem, setProblem] = useState('');
+  // Why not, if the founder says: kept with their no, so nobody puts the same thing to them again as if it were new.
+  const [why, setWhy] = useState('');
   const fallback = asked(tool.name);
   const yes = yesOf(tool.name);
   const title = tool.question || fallback;
@@ -46,7 +48,7 @@ export function Approval({ tool }: { tool: ToolEvent }) {
     try {
       if (ok && always && reach) await remember(tool.id, args);
       // A person asking for a hand is told why not, when the founder says why; every other "no" carries nothing.
-      await answerApproval(tool.id, ok, picked !== undefined ? { ...args, answer: picked } : ok || tool.name === 'browse_help' ? args : undefined);
+      await answerApproval(tool.id, ok, picked !== undefined ? { ...args, answer: picked } : ok || tool.name === 'browse_help' ? args : why.trim() ? { reason: why.trim() } : undefined);
     } catch (error) { setProblem((error as Error).message); setSending(false); }
   }
 
@@ -70,6 +72,11 @@ export function Approval({ tool }: { tool: ToolEvent }) {
         <label className="approval__always">
           <input type="checkbox" checked={always} disabled={sending} onChange={(event) => setAlways(event.target.checked)} />
           Always allow {reach.label}
+        </label>
+      )}
+      {!choices.length && !('answer' in args) && (
+        <label className="approval__why">Why not (if you won't)
+          <input value={why} disabled={sending} placeholder="Optional" onChange={(event) => setWhy(event.target.value)} />
         </label>
       )}
       {problem && <p className="msg--problem">{problem}</p>}

@@ -21,6 +21,7 @@ import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import { createWatch, dailyBudget, fakeWatchReply, type Budget } from '../partner/watch.ts';
 import { draftId, gmailLink } from '../../shared/maildraft.ts';
 import { leadAddresses, noAddress } from '../tools/outward.ts';
+import { saidNoFor } from '../partner/saidno.ts';
 import { staleNeeds, standingBlock, standingParts, stillWaiting, teamVerdict, type StandingParts } from '../partner/standing.ts';
 import { companyFacts, keepFacts, keptLine, runwayFix } from '../partner/keep.ts';
 import { CUSTOMER_LINE, customerReply, forCustomers } from '../partner/audience.ts';
@@ -319,8 +320,9 @@ export function createPartner(options: PartnerOptions = {}) {
         gathering.catch(() => { if (standing === gathering) standing = null; });
       }
       // The founder's open promises are read fresh too: one closed a moment ago is gone from the next turn.
-      const [parts, promised] = await Promise.all([standing, promises.list().catch(() => [])]);
-      return { ...parts, promised: promised.filter((one) => one.status === 'open').map(promiseLine) };
+      // So is what the founder said no to: a no given a moment ago is in the very next turn.
+      const [parts, promised, declined] = await Promise.all([standing, promises.list().catch(() => []), saidNoFor(deps.workspace).lines().catch(() => [])]);
+      return { ...parts, promised: promised.filter((one) => one.status === 'open').map(promiseLine), declined };
     }
     async function standingFor(stage: Stage, partnerId: string) {
       // Bets are read from the ledger, never from Needs you rows: a row can outlive the take by a refresh.
@@ -630,7 +632,11 @@ export function createPartner(options: PartnerOptions = {}) {
                 const row = await briefNumber(stage, deps.store, taking.metric).catch(() => null) ?? taking.brief as BriefRow;
                 await metricsFromBrief(deps.workspace, deps.store, row, partnerOf(stage)?.id ?? taking.roomId, now(), { value: taking.target, by: taking.checkDate });
               }
-              await book.answer(bet[1], sent?.accept === true); await betsChanged(); deps.json(res, 200, { ok: true }); return true;
+              // Declined: kept as a no, so the same bet is not put to the founder again as if it were new.
+              const leaving = sent?.accept === true ? undefined : (await book.list()).find((one) => one.id === bet[1] && one.status === 'proposed');
+              await book.answer(bet[1], sent?.accept === true);
+              if (leaving) await saidNoFor(deps.workspace).record({ tool: 'propose_bet', subject: leaving.what, ...(leaving.proposedBy ? { who: leaving.proposedBy } : {}), ...(typeof sent?.reason === 'string' ? { reason: sent.reason } : {}) }).catch(() => {});
+              await betsChanged(); deps.json(res, 200, { ok: true }); return true;
             }
             const verdict = VERDICTS.includes(sent?.verdict) ? sent.verdict as BetVerdict : null;
             if (!verdict) { deps.json(res, 400, { error: 'say whether it worked' }); return true; }
@@ -674,6 +680,7 @@ export function createPartner(options: PartnerOptions = {}) {
               await boardForPlan(deps.store, held.roomId);
             }
             const made = accept ? await addPlan(deps.boards, await deps.store.loadStage(), held) : null;
+            if (!accept) await saidNoFor(deps.workspace).record({ tool: 'propose_tasks', subject: held.title, who: held.who, ...(typeof sent?.reason === 'string' ? { reason: sent.reason } : {}) }).catch(() => {});
             await state.change((draft) => { draft.plans = draft.plans.filter((one) => one.id !== held.id); });
             standing = null;
             await deps.attention.refresh();
