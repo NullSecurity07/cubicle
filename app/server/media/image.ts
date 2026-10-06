@@ -147,7 +147,12 @@ export function huggingFaceImages(
   connect: PictureConnect = async (space, options) => (await gradio()).Client.connect(space, options) as unknown as Promise<PictureApp>,
   http: typeof fetch = fetch,
 ): Maker {
-  const token = () => env.HF_TOKEN as `hf_${string}` | undefined;
+  // The token's allowance and an unsigned caller's are counted apart: on a day the token had spent its minutes
+  // (a second tester on the same account), an unsigned ask still drew. So a spent token is set aside until the
+  // next day and the demos are asked without it; only when that is spent too is the day over.
+  let tokenSpentOn = '';
+  const today = () => new Date().toISOString().slice(0, 10);
+  const token = () => (tokenSpentOn === today() ? undefined : env.HF_TOKEN as `hf_${string}` | undefined);
 
   async function once(spot: Picture, have: Record<Slot, unknown>, help: { report: (line: string) => void; signal?: AbortSignal }): Promise<Piece> {
     if (help.signal?.aborted) throw new Error('stopped');
@@ -207,7 +212,14 @@ export function huggingFaceImages(
       const failures: string[] = [];
       for (const spot of spacesFor(String(ask.prompt ?? ''))) {
         try {
-          return await once(spot, have, help);
+          try {
+            return await once(spot, have, help);
+          } catch (error) {
+            if (plainly(error) !== HF_SPENT || !token() || help.signal?.aborted) throw error;
+            tokenSpentOn = today();
+            help.report("the Hugging Face token's free GPU minutes are spent for today, so the demos are asked without it");
+            return await once(spot, have, help);
+          }
         } catch (error) {
           const why = plainly(error);
           // Every Space spends the same allowance, so once that is gone there is no second demo worth asking.

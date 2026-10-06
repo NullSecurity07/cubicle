@@ -69,7 +69,10 @@ export function licenceOf(short: string): Licence {
 }
 
 // The words of a page with its markup taken off, which is how Commons hands over an author's name.
+// A part the page hides is not part of the name: Commons writes an unnamed author as "Unknown author", then again
+// in a hidden span, then "or not provided", which read in full as "by Unknown author Unknown author or not provided".
 export const plainText = (html: string): string => (html ?? '')
+  .replace(/<(\w+)[^>]*style="[^"]*display:\s*none[^"]*"[^>]*>[\s\S]*?<\/\1>/gi, ' ')
   .replace(/<[^>]*>/g, ' ').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>')
   .replace(/\s+/g, ' ').trim();
 
@@ -251,7 +254,8 @@ export function commons(http: typeof fetch = fetch, dir = '.cache/stock'): Stock
         const width = Number(item.width ?? 0);
         const height = Number(item.height ?? 0);
         const title = metaOf(meta, 'ObjectName') || String(page.title ?? '').replace(/^File:/, '').replace(/\.[a-z0-9]+$/i, '');
-        const by = metaOf(meta, 'Artist').slice(0, 120);
+        // An author Commons does not know is no author; the credit says "an unknown author" in its own words.
+        const by = metaOf(meta, 'Artist').replace(/^unknown author\b.*$/i, '').slice(0, 120);
         const pageUrl = String(item.descriptionurl ?? '');
         const what = `${title} ${metaOf(meta, 'ImageDescription').slice(0, 200)}`.trim();
         const common = {
