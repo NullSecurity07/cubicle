@@ -1,5 +1,6 @@
 import { markClaims } from '../tools/evidence.ts';
 import type { TurnResult } from '../loop.ts';
+import { briefRow } from './bets.ts';
 import { saysGap, wideGap, type Economics } from './economics.ts';
 
 // Journey 11: asked "keep going, pivot, or stop?", the partner said "keep going" with reasons from the brief, and named
@@ -16,7 +17,8 @@ export type KillSignal = { what: string; by: string; then?: string };
 // call is "keep going" far below break-even and nothing says how the gap closes.
 export type PartnerCall = { decision?: Decision; why?: string; signal?: KillSignal; move?: string; working?: string[]; gap?: string };
 export type CallField = 'call' | 'why' | 'kill signal' | 'date' | 'this week' | 'how the gap closes';
-export type ReadCall = PartnerCall & { missing: CallField[]; unsourced: string[]; rest: string; closes?: string };
+// `dead`: why the kill signal said cannot do its job (it cannot fire from where the company stands, or cannot be met).
+export type ReadCall = PartnerCall & { missing: CallField[]; unsourced: string[]; rest: string; closes?: string; dead?: string };
 
 // A day of two to six weeks from today: soon enough to matter, long enough for the number to move.
 export const SOONEST = 14;
@@ -94,6 +96,48 @@ export function killOf(text: string, today: string): { signal?: KillSignal; miss
   return { signal: { what, by: day!.day, ...(then ? { then } : {}) }, missing };
 }
 
+// The threshold of a kill signal: "paying practices < 2", "fewer than 10 paying practices", "monthly burn above €1,200".
+// `below`: the signal fires when the number is under the threshold (a number the company wants up); else when it is over.
+const UNDER = String.raw`<=?|≤|below|under|less than|fewer than|lower than|at most|no more than`;
+const OVER = String.raw`>=?|≥|above|over|more than|greater than|higher than|exceeds?|at least`;
+const VALUE = String.raw`[$€£]?\s?(\d[\d,]*(?:\.\d+)?)\s?(k\b|%)?`;
+const QUALIFIER = /^(?:still|stays?|remains?|is|are|has|have|falls?|drops?|goes|gets?|reaches?|hits?|only|fewer|still at)\s+/i;
+export function thresholdOf(what: string): { metric: string; below: boolean; value: number } | null {
+  const said = what.replace(/[*_`]/g, '').trim();
+  const number = (digits: string, unit?: string) => Number(digits.replace(/,/g, '')) * (unit?.toLowerCase() === 'k' ? 1000 : 1);
+  const after = new RegExp(String.raw`^(.*?[a-z].*?)\s*(?:is\s+|are\s+|stays?\s+|remains?\s+|falls?\s+|drops?\s+|goes\s+|still\s+)*(${UNDER}|${OVER})\s*${VALUE}`, 'i').exec(said);
+  if (after) {
+    let metric = after[1].replace(/[\s:,-]+$/, '').trim();
+    while (QUALIFIER.test(metric)) metric = metric.replace(QUALIFIER, '');
+    return { metric, below: new RegExp(`^(?:${UNDER})$`, 'i').test(after[2]), value: number(after[3], after[4]) };
+  }
+  const before = new RegExp(String.raw`^(?:\w+\s+){0,3}?(${UNDER}|${OVER})\s*${VALUE}\s+([a-z][^,;.(]*)`, 'i').exec(said);
+  if (before) return { metric: before[4].trim(), below: new RegExp(`^(?:${UNDER})$`, 'i').test(before[1]), value: number(before[2], before[3]) };
+  // "6 paying users": a count to reach, so it fires under it.
+  const bare = new RegExp(String.raw`^${VALUE}\s+([a-z][^,;.(]*)$`, 'i').exec(said);
+  if (bare) return { metric: bare[3].trim(), below: true, value: number(bare[1], bare[2]) };
+  return null;
+}
+
+// Journey 14: "Kill signal: paying practices < 2" with 2 paying already could only fire if a customer left. A kill
+// signal holds the call to a test it could fail: today's value is on the losing side of the threshold (under it for a
+// number the company wants up, over it for one it wants down), and the threshold is in reach by the day (within ten
+// times today's value). Read against the Company brief's Numbers; a number the brief does not hold is not judged.
+export function deadSignal(signal: KillSignal, numbers: string): string | null {
+  const said = thresholdOf(signal.what);
+  if (!said || !numbers.trim()) return null;
+  const row = briefRow(numbers, said.metric);
+  if (!row) return null;
+  const now = row.value;
+  const name = row.label.toLowerCase();
+  if (said.below ? now >= said.value : now <= said.value) {
+    return `${row.label} is ${now} now (Company brief), so "${signal.what}" can only fire if it ${said.below ? 'falls' : 'rises'} back: it cannot fail on progress. Name a threshold ${said.below ? 'above' : 'below'} ${now} that ${name} must ${said.below ? 'reach' : 'come down to'} by the day, one the company could miss.`;
+  }
+  const far = said.below ? now > 0 && said.value > now * 10 : said.value < now / 10;
+  if (far) return `${row.label} is ${now} now (Company brief), so ${said.value} by ${signal.by} is out of reach: name a threshold the company could ${said.below ? 'reach' : 'come down to'} by then.`;
+  return null;
+}
+
 // Numbers of the reason that nothing on record gives: "17%" worked out from 2 of 12, a market size from nowhere.
 const NUMBER = /\d[\d,]*(?:\.\d+)?/g;
 const flat = (text: string) => text.replace(/(?<=\d),(?=\d{3}\b)/g, '');
@@ -110,7 +154,8 @@ export function unsourcedIn(text: string, evidence: string): string[] {
 const WORKING = /^(?:break[- ]?even|runway)\s*:/i;
 
 // The verdict in a reply: each labelled line read, what is missing named, and the reply's other lines kept as they are.
-export function readCall(text: string, today: string, evidence: string, economics?: Economics | null): ReadCall {
+// `numbers`: the Company brief's Numbers section, which a kill signal is held against (deadSignal).
+export function readCall(text: string, today: string, evidence: string, economics?: Economics | null, numbers = ''): ReadCall {
   const said: Partial<Record<'call' | 'why' | 'kill' | 'week' | 'gap', string>> = {};
   const rest: string[] = [];
   for (const line of text.split('\n')) {
@@ -126,23 +171,25 @@ export function readCall(text: string, today: string, evidence: string, economic
   const why = said.why || undefined;
   const unsourced = why ? unsourcedIn(why, evidence) : [];
   if (!why || unsourced.length) missing.push('why');
-  const kill = said.kill ? killOf(said.kill, today) : { missing: ['kill signal', 'date'] as CallField[] };
+  const kill: { signal?: KillSignal; missing: CallField[] } = said.kill ? killOf(said.kill, today) : { missing: ['kill signal', 'date'] };
+  const dead = kill.signal ? deadSignal(kill.signal, numbers) : null;
+  if (dead) kill.missing.push('kill signal');
   missing.push(...kill.missing);
   const move = said.week || undefined;
   if (!move) missing.push('this week');
   const restText = rest.join('\n').replace(/\n{3,}/g, '\n\n').trim();
   const closed = !!economics && saysGap(`${why ?? ''}\n${said.gap ?? ''}\n${move ?? ''}\n${restText}`, economics);
   if (decision === 'keep going' && wideGap(economics) && !closed) missing.push('how the gap closes');
-  return { decision, why, signal: kill.signal, move, missing, unsourced, rest: restText, ...(said.gap ? { closes: said.gap } : {}) };
+  return { decision, why, ...(dead ? { dead } : { signal: kill.signal }), move, missing, unsourced, rest: restText, ...(said.gap ? { closes: said.gap } : {}) };
 }
 
 // The second look asks only for what is missing, each line with its rule.
-export function callNudge(read: Pick<ReadCall, 'missing' | 'unsourced'>, today: string, economics?: Economics | null): string {
+export function callNudge(read: Pick<ReadCall, 'missing' | 'unsourced' | 'dead'>, today: string, economics?: Economics | null): string {
   const lines: string[] = [];
   if (read.missing.includes('how the gap closes') && economics) lines.push(`Gap: your call is keep going, but break-even is ${economics.breakEven} ${economics.unit} and the company has ${economics.current}. In one line, say how that gap closes (price, cost, or reaching ${economics.breakEven} by when), or change the call.`);
   if (read.missing.includes('call')) lines.push('My call: keep going, change course or stop (one of the three).');
   if (read.missing.includes('why')) lines.push(`Why: the strongest reason, with only numbers the Company document, the chat or what you read gives${read.unsourced.length ? ` (nothing on record gives ${read.unsourced.join(', ')})` : ''}.`);
-  if (read.missing.includes('kill signal') || read.missing.includes('date')) lines.push(`Kill signal: one number the founder can measure and the threshold that would change your call, then "by YYYY-MM-DD", a day from ${plusDays(today, SOONEST)} to ${plusDays(today, LATEST)} (today is ${today}).`);
+  if (read.missing.includes('kill signal') || read.missing.includes('date')) lines.push(`Kill signal: one number the founder can measure and the threshold that would change your call, then "by YYYY-MM-DD", a day from ${plusDays(today, SOONEST)} to ${plusDays(today, LATEST)} (today is ${today}).${read.dead ? ` ${read.dead}` : ''}`);
   if (read.missing.includes('this week')) lines.push('This week: the first move, one thing the founder does this week.');
   const names = read.missing.filter((one, index, all) => all.indexOf(one) === index && !(one === 'date' && all.includes('kill signal')));
   // A gap asked about may change the call itself, so the call line is answered again with it.
@@ -173,12 +220,12 @@ export const checkTitle = (signal: KillSignal) => `Check: ${signal.what} by ${si
 // `said` is what may back a claim of evidence in the reason ("the product works"): the founder's words, the Company
 // document and this turn's tool results, never the partner's own past replies. One nothing backs stays, marked
 // "(assumption)" (server/tools/evidence.ts).
-export async function holdCall(asked: string, first: TurnResult, again: ((first: TurnResult, nudge: string) => Promise<TurnResult>) | undefined, today: string, evidence: string, said: string[] = [evidence], economics?: Economics | null): Promise<{ reply: TurnResult; call: PartnerCall | null; askedAgain: boolean }> {
+export async function holdCall(asked: string, first: TurnResult, again: ((first: TurnResult, nudge: string) => Promise<TurnResult>) | undefined, today: string, evidence: string, said: string[] = [evidence], economics?: Economics | null, numbers = ''): Promise<{ reply: TurnResult; call: PartnerCall | null; askedAgain: boolean }> {
   if (first.stopped || !asksVerdict(asked)) return { reply: first, call: null, askedAgain: false };
   // The brief's working is on record for the reason: its figures are calc results, not the partner's guesses.
   const working = economics?.working.map((one) => one.line) ?? [];
   const held = [evidence, ...working].join('\n');
-  const read = readCall(first.text, today, held, economics);
+  const read = readCall(first.text, today, held, economics, numbers);
   let call: PartnerCall = { decision: read.decision, why: read.why, signal: read.signal, move: read.move, ...(read.closes ? { gap: read.closes } : {}) };
   let reply = first;
   let gapOpen = read.missing.includes('how the gap closes');
@@ -186,7 +233,7 @@ export async function holdCall(asked: string, first: TurnResult, again: ((first:
   if (askedAgain) {
     const second = await again!(first, callNudge(read, today, economics));
     if (!second.stopped) {
-      const more = readCall(second.text, today, held, economics);
+      const more = readCall(second.text, today, held, economics, numbers);
       // Asked how the gap closes, the partner may change the call: the second call stands then. Their line on how it
       // closes is kept as the Gap line, labelled or not.
       const closes = more.closes ?? (economics ? more.rest.split('\n').map((line) => plain(line)).find((line) => saysGap(line, economics)) : undefined);

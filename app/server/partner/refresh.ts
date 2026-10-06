@@ -68,8 +68,9 @@ export function refreshText(opening: string, old: Decision | undefined, fresh: P
 }
 
 // The new call read from the reply, held to the same four lines as an asked verdict; null when it has no call at all.
-export function readRefresh(reply: Pick<TurnResult, 'text'>, today: string, evidence: string, economics: Economics | null): PartnerCall | null {
-  const read = readCall(reply.text, today, `${evidence}\n${(economics?.working ?? []).map((one) => one.line).join('\n')}`, economics);
+// A kill signal that could not fail from where the company stands (deadSignal) is not taken: the one standing stays.
+export function readRefresh(reply: Pick<TurnResult, 'text'>, today: string, evidence: string, economics: Economics | null, numbers = ''): PartnerCall | null {
+  const read = readCall(reply.text, today, `${evidence}\n${(economics?.working ?? []).map((one) => one.line).join('\n')}`, economics, numbers);
   if (!read.decision) return null;
   return {
     decision: read.decision, ...(read.why && !read.unsourced.length ? { why: read.why } : {}), ...(read.signal ? { signal: read.signal } : {}), ...(read.move ? { move: read.move } : {}),
