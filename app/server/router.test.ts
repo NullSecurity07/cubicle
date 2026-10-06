@@ -79,7 +79,16 @@ describe('route', () => {
   it('says so when the pinned model has no key here', () => {
     const result = route([client('alpha')], createUsage(null), { pinned: 'mistral', promptChars: 10, tools: true });
     expect(names(result)).toEqual(['alpha']);
-    expect(result.notice).toMatch(/Mistral is not set up/);
+    expect(result.notice).toMatch(/Mistral Small is not set up/);
+  });
+
+  it('says a side model pinned to a person is a side model, and keeps it out of the turn and its notices', () => {
+    const all = [client('nvidia-lightning', { side: true }), client('gemini'), client('nvidia')];
+    const result = route(all, createUsage(null), { pinned: 'nvidia-lightning', promptChars: 10, tools: true });
+    expect(names(result)).toEqual(['gemini', 'nvidia']);
+    expect(result.notice).toBe('Nemotron Lightning is a side model (short answers); the turn uses the normal order.');
+    // Its side calls still go to it first.
+    expect(names(route(all, createUsage(null), { pinned: 'nvidia-lightning', promptChars: 10, tools: true, kind: 'side' }))[0]).toBe('nvidia-lightning');
   });
 
   it('leaves out models that cannot hold the prompt or cannot use tools', () => {
@@ -265,7 +274,7 @@ describe('one order for every turn, the partner\'s (pass 8)', () => {
     for (let at = 0; at < 2; at += 1) usage.failed('gemini', new Error('no first word within 20 s (timed out)'));
     const result = route([client('gemini'), client('cloudflare-gpt-oss')], usage, { promptChars: 10, tools: true });
     expect(names(result)).toEqual(['cloudflare-gpt-oss', 'gemini']);
-    expect(result.notice).toBe('Gemini was slow to start answering twice, so Cloudflare-gpt-oss answers for now.');
+    expect(result.notice).toBe('Gemini Flash-Lite was slow to start answering twice, so gpt-oss on Cloudflare answers for now.');
   });
 });
 
@@ -319,7 +328,7 @@ describe('a stalled Gemini and a stalled NVIDIA, with real clients on a fake clo
       expect(third.seconds).toBeLessThan(1);
       // A colleague's turn skips the resting Gemini, and Mistral answers before Cloudflare; Kimi is behind them both.
       const colleague = await turn(set);
-      expect(colleague).toMatchObject({ by: 'mistral', notice: 'Gemini was slow to start answering twice, so Mistral answers for now.' });
+      expect(colleague).toMatchObject({ by: 'mistral', notice: 'Gemini Flash-Lite was slow to start answering twice, so Mistral Small answers for now.' });
       expect(colleague.seconds).toBeLessThan(1);
     } finally { vi.useRealTimers(); }
   });
