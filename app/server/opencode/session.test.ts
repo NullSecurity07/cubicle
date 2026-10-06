@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { CoderEvent } from '../../shared/coder.ts';
 import type { Attention } from '../../shared/model.ts';
 import { createApprovals } from '../approvals.ts';
-import { fakeEngine } from './fake.ts';
+import { DOWN_MESSAGE, fakeEngine } from './fake.ts';
 import type { Engine } from './server.ts';
 import { GONE } from './server.ts';
 import { createCoder } from './session.ts';
@@ -271,7 +271,7 @@ describe('a coder card', () => {
       default: 'opencode/fake-free',
       groups: [
         { name: 'Free (OpenCode Zen)', models: [{ id: 'opencode/fake-free', name: 'Fake Free' }, { id: 'opencode/other-free', name: 'Other Free' }] },
-        { name: 'Your keys', models: [{ id: 'google/gemini-3-flash', name: 'Gemini 3 Flash' }, { id: 'groq/llama-3.3-70b-versatile', name: 'Llama 3.3 70B' }] },
+        { name: 'Your keys', models: [{ id: 'google/gemini-3-flash', name: 'Gemini 3 Flash', provider: 'Google' }, { id: 'groq/llama-3.3-70b-versatile', name: 'Llama 3.3 70B', provider: 'Groq' }] },
         { name: 'Local', models: [{ id: 'ollama/qwen2.5-coder:7b', name: 'qwen2.5-coder:7b' }] },
       ],
     });
@@ -313,5 +313,95 @@ describe('a coder card', () => {
     await coder.wait(card.id);
     expect(calls.find((one) => one.path.endsWith('/prompt_async'))?.body).not.toHaveProperty('system');
     expect(lines()).toContain('note: the folder\'s map could not be handed to the coder (MCP error -32000: Connection closed); it reads the files instead');
+  });
+
+  it('says whose each of the founder\'s models is, and tells apart two of one provider with one name', async () => {
+    const base = fakeEngine({ step: 2 });
+    const same = { 'openai/gpt-oss-120b': { id: 'openai/gpt-oss-120b', name: 'GPT OSS 120B' } };
+    const listed: Engine = { ...base, call: async (method, path, options) => (path.startsWith('/config/providers') ? { providers: [
+      { id: 'groq', name: 'Groq', models: same },
+      { id: 'cerebras', name: 'Cerebras', models: { 'gpt-oss-120b': { id: 'gpt-oss-120b', name: 'GPT OSS 120B' } } },
+      { id: 'openrouter', name: 'OpenRouter', models: { 'openai/gpt-oss-120b:free': { id: 'openai/gpt-oss-120b:free', name: 'GPT OSS 120B' }, 'openai/gpt-oss-20b:free': { id: 'openai/gpt-oss-20b:free', name: 'GPT OSS 120B' } } },
+    ] } as never : base.call(method, path, options)) };
+    const { coder } = setup(listed);
+    expect((await coder.models()).groups[1].models).toEqual([
+      { id: 'cerebras/gpt-oss-120b', name: 'GPT OSS 120B', provider: 'Cerebras' },
+      { id: 'groq/openai/gpt-oss-120b', name: 'GPT OSS 120B', provider: 'Groq' },
+      { id: 'openrouter/openai/gpt-oss-120b:free', name: 'GPT OSS 120B (openai/gpt-oss-120b:free)', provider: 'OpenRouter' },
+      { id: 'openrouter/openai/gpt-oss-20b:free', name: 'GPT OSS 120B (openai/gpt-oss-20b:free)', provider: 'OpenRouter' },
+    ]);
+  });
+
+  it('hands the ask to the next free model when the default one is down, says so, and skips it for an hour', async () => {
+    let clock = 1_000_000;
+    const { coder, calls, lines } = setup(fakeEngine({ step: 2, down: ['fake-free'], now: () => clock }), { now: () => clock });
+    await coder.prompt(card, 'Add a health check', {});
+    expect(await coder.wait(card.id)).toBe('done');
+    const sent = () => calls.filter((one) => one.path.endsWith('/prompt_async')).map((one) => one.body.model.modelID);
+    expect(sent()).toEqual(['fake-free', 'other-free']);
+    expect(lines()).toEqual(['ask: Add a health check', 'note: Fake is unavailable, trying Other', 'tool: edit src/example.ts', 'reply: Did: Add a health check', 'diff: +12 −3 in 1 file']);
+    expect(lines().join('\n')).not.toMatch(/Error from provider|Endpoint/);
+    expect(coder.snapshot(card.id).state).toBe('idle');
+    // The next ask goes straight to the one that answers, and the picker's default says so.
+    await coder.prompt(card, 'And a readme', {});
+    await coder.wait(card.id);
+    expect(sent()).toEqual(['fake-free', 'other-free', 'other-free']);
+    expect((await coder.models()).default).toBe('opencode/other-free');
+    // An hour on, the first one gets its turn again.
+    clock += 61 * 60_000;
+    expect((await coder.models()).default).toBe('opencode/fake-free');
+  });
+
+  it('carries a founder\'s pick that was down a moment ago over to the next free model, with a line saying so', async () => {
+    const { coder, calls, lines } = setup(fakeEngine({ step: 2, down: ['fake-free'] }));
+    const picked = { ...card, model: 'opencode/fake-free' };
+    await coder.prompt(picked, 'One', {});
+    await coder.wait(card.id);
+    await coder.prompt(picked, 'Two', {});
+    expect(await coder.wait(card.id)).toBe('done');
+    expect(calls.filter((one) => one.path.endsWith('/prompt_async')).map((one) => one.body.model.modelID)).toEqual(['fake-free', 'other-free', 'other-free']);
+    expect(lines()).toContain('note: Fake was unavailable a moment ago, so Other takes this one');
+  });
+
+  it('stops at the first retry, in plain words, when no free model is left or the founder\'s keyed model is down', async () => {
+    const both = setup(fakeEngine({ step: 2, down: ['fake-free', 'other-free'] }));
+    await both.coder.prompt(card, 'Go', {});
+    expect(await both.coder.wait(card.id)).toBe('stopped');
+    expect(both.lines()).toEqual(['ask: Go', 'note: Fake is unavailable, trying Other', 'error: Other is not answering right now: Endpoint is unavailable. Pick another model on the card.']);
+    expect(both.coder.snapshot(card.id).state).toBe('stopped');
+
+    const keyed = setup(fakeEngine({ step: 2, down: ['llama-3.3-70b-versatile'] }));
+    await keyed.coder.models();
+    await keyed.coder.prompt({ ...card, model: 'groq/llama-3.3-70b-versatile' }, 'Go', {});
+    expect(await keyed.coder.wait(card.id)).toBe('stopped');
+    expect(keyed.calls.filter((one) => one.path.endsWith('/prompt_async'))).toHaveLength(1);
+    expect(keyed.calls.filter((one) => one.path.endsWith('/abort'))).toHaveLength(1);
+    expect(keyed.lines()).toEqual(['ask: Go', 'error: Llama 3.3 70B is not answering right now: Endpoint is unavailable. Pick another model on the card.']);
+    expect(DOWN_MESSAGE).toMatch(/Error from provider/);
+  });
+
+  it('never ends an ask on the last run\'s second idle, said after the next ask went in', async () => {
+    const base = fakeEngine({ step: 2 });
+    let late: (() => void) | undefined;
+    const echoing: Engine = { ...base, call: async (method, path, options) => { if (path.endsWith('/prompt_async')) late?.(); return base.call(method, path, options); } };
+    const { coder, lines } = setup(echoing);
+    await coder.prompt(card, 'One', {});
+    await coder.wait(card.id);
+    late = () => coder.hear({ type: 'session.idle', properties: { sessionID: coder.snapshot(card.id).session } });
+    await coder.prompt(card, 'Two', {});
+    expect(await coder.wait(card.id)).toBe('done');
+    expect(lines().at(-2)).toBe('reply: Did: Two');
+  });
+
+  it('lets the next ask, sent the moment the last one ended, run to its own end', async () => {
+    const base = fakeEngine({ step: 2 });
+    // The real diff takes a moment; both of opencode's idle words for the first run are still being worked out.
+    const slow: Engine = { ...base, call: async (method, path, options) => { if (path.endsWith('/diff')) await new Promise((settle) => setTimeout(settle, 20)); return base.call(method, path, options); } };
+    const { coder, lines } = setup(slow);
+    await coder.prompt(card, 'One', {});
+    expect(await coder.wait(card.id)).toBe('done');
+    await coder.prompt(card, 'Two', {});
+    expect(await coder.wait(card.id)).toBe('done');
+    expect(lines().at(-2)).toBe('reply: Did: Two');
   });
 });

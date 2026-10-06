@@ -1,8 +1,8 @@
-import { diffLine, type CoderAsk, type CoderEvent, type CoderLine, type CoderLive, type CoderModels, type CoderPatch, type CoderState } from '../../shared/coder.ts';
+import { diffLine, type CoderAsk, type CoderModel, type CoderEvent, type CoderLine, type CoderLive, type CoderModels, type CoderPatch, type CoderState } from '../../shared/coder.ts';
 import type { Attention } from '../../shared/model.ts';
 import { askFounder, type Answer } from '../approvals.ts';
 import { KEYED as KEYS, MCP_NAME, type McpLocal } from './config.ts';
-import { translate, type RawEvent } from './events.ts';
+import { modelDown, translate, type RawEvent } from './events.ts';
 import { GONE, needsRestart, type Engine } from './server.ts';
 
 // Driving one card's coder: its lasting session in one folder, the log the founder watches, the questions it asks and
@@ -31,6 +31,12 @@ type Held = {
   // two at once, and both must reach the founder: the first shows, the rest wait behind it.
   permissions: CoderAsk[];
   heard: number; prompted: number; seenBusy: boolean; reply: string; error?: string;
+  // The ask being worked on and the model working on it. A free model that turns out to be down hands the same ask to
+  // the next free one, once per ask (`switched`); while it does, the old model's last words (a refusal, the idle after
+  // the abort) are not news (`switching`: 'aborting' until the ask has gone to the next model, 'sent' until it is busy).
+  ask?: string; using?: string; switched?: boolean; switching?: 'aborting' | 'sent';
+  // Counts the asks (and the hand-overs): an end that was being worked out for one of them never ends another.
+  round: number;
   // Whether this piece of work changed the folder at all, as opencode reported it.
   changed: boolean;
   done: Set<(how: 'done' | 'stopped') => void>;
@@ -55,6 +61,11 @@ const LIVE_TEXT = 8000;
 // The one local provider; its address comes from the config (the founder's bridge when it is up, Ollama itself otherwise).
 const LOCAL: Record<string, string> = { ollama: 'http://127.0.0.1:11434/v1' };
 const FREE = 'Free (OpenCode Zen)';
+// The free models that answered with the real opencode on 2026-10-06, steadiest first (Big Pickle is opencode's own
+// default). Zen's free list changes every few weeks: a model not named here comes after these, in Zen's own order.
+const PREFERRED = ['big-pickle', 'nemotron-3-ultra-free', 'nemotron-3.5-lightning-free', 'mimo-v2.6-flash-free', 'ling-3.1-flash-free'];
+// A free model whose provider said it is down is skipped for this long.
+const DEAD_FOR = 60 * 60_000;
 const KEYED = new Set(KEYS.map(({ id }) => id));
 // Models a provider lists that are not for writing code: research agents, speech, pictures, video, guards, filters.
 const NOT_A_CODER = /deep-research|tts|embedding|image|veo|imagen|guard|whisper|moderation|audio/i;
@@ -73,6 +84,14 @@ export function createCoder(deps: Deps) {
   let swept = false;
   let known: CoderModels | null = null;
   let bases: Record<string, string> = { ...LOCAL };
+  // Free models found down, until when. Kept in memory: a restart tries them all again.
+  const dead = new Map<string, number>();
+  const isDead = (id: string) => (dead.get(id) ?? 0) > now();
+  const freeIds = () => known?.groups[0]?.models.map((one) => one.id) ?? [];
+  const nextFree = (skip: string[] = []) => freeIds().find((id) => !isDead(id) && !skip.includes(id));
+  const pickDefault = () => deps.env.STAGE_CODER_MODEL?.trim() || nextFree() || freeIds()[0] || null;
+  // A model as the founder reads it on the card: its name without "Free", which the group already says.
+  const nameOf = (id: string) => (known?.groups.flatMap((group) => group.models).find((one) => one.id === id)?.name ?? id.split('/').pop() ?? id).replace(/\s*\(?free\)?$/i, '').trim();
 
   const held = (cardId: string) => {
     const card = cards.get(cardId);
@@ -163,7 +182,7 @@ export function createCoder(deps: Deps) {
   function open(card: CoderCard): Held {
     let mine = cards.get(card.id);
     if (!mine) {
-      mine = { id: card.id, dir: card.dir, name: card.name, session: card.session || undefined, model: card.model, state: 'idle', lines: [], permissions: [], changed: false, heard: now(), prompted: 0, seenBusy: false, reply: '', done: new Set(), live: null, parts: new Map(), usage: new Map() };
+      mine = { id: card.id, dir: card.dir, name: card.name, session: card.session || undefined, model: card.model, state: 'idle', lines: [], permissions: [], changed: false, heard: now(), prompted: 0, round: 0, seenBusy: false, reply: '', done: new Set(), live: null, parts: new Map(), usage: new Map() };
       cards.set(card.id, mine);
       if (mine.session) bySession.set(mine.session, card.id);
     }
@@ -198,37 +217,46 @@ export function createCoder(deps: Deps) {
 
   async function models(): Promise<CoderModels> {
     const said = await engine.call<{ providers: { id: string; name?: string; options?: { baseURL?: string }; models: Record<string, { id?: string; name?: string; status?: string; capabilities?: { toolcall?: boolean }; cost?: { input?: number; output?: number } }> }[] }>('GET', '/config/providers');
-    const groups = { free: [] as { id: string; name: string }[], keys: [] as { id: string; name: string }[], local: [] as { id: string; name: string }[] };
+    const groups = { free: [] as CoderModel[], keys: [] as CoderModel[], local: [] as CoderModel[] };
     for (const provider of said?.providers ?? []) {
       if (provider.options?.baseURL && provider.id in LOCAL) bases = { ...bases, [provider.id]: provider.options.baseURL };
       for (const [key, model] of Object.entries(provider.models ?? {})) {
         // A coder works through tools: a model that cannot call one (speech, a guard model) is no use here.
         if (model.capabilities?.toolcall === false || model.status === 'deprecated') continue;
         if (KEYED.has(provider.id) && (NOT_A_CODER.test(key) || NOT_A_CODER.test(model.name ?? ''))) continue;
-        const one = { id: `${provider.id}/${key}`, name: model.name || key };
+        const one: CoderModel = { id: `${provider.id}/${key}`, name: model.name || key };
         const free = !model.cost?.input && !model.cost?.output;
         if (provider.id === 'opencode' && free) groups.free.push(one);
-        else if (KEYED.has(provider.id) && (provider.id !== 'openrouter' || key.endsWith(':free'))) groups.keys.push(one);
+        else if (KEYED.has(provider.id) && (provider.id !== 'openrouter' || key.endsWith(':free'))) groups.keys.push({ ...one, provider: provider.name || provider.id });
         else if (provider.id in LOCAL) groups.local.push(one);
       }
     }
-    const byName = (one: { name: string }, other: { name: string }) => one.name.localeCompare(other.name);
-    groups.keys.sort(byName);
-    known = {
-      default: deps.env.STAGE_CODER_MODEL?.trim() || groups.free[0]?.id || null,
-      groups: [{ name: FREE, models: groups.free }, { name: 'Your keys', models: groups.keys }, { name: 'Local', models: groups.local }],
-    };
+    const rank = (id: string) => { const at = PREFERRED.indexOf(id.slice('opencode/'.length)); return at < 0 ? PREFERRED.length : at; };
+    groups.free.sort((one, other) => rank(one.id) - rank(other.id));
+    // The same model sold by several providers reads the same: they sit together, each saying whose it is.
+    groups.keys.sort((one, other) => one.name.localeCompare(other.name) || (one.provider ?? '').localeCompare(other.provider ?? ''));
+    // Two models of one provider with one name are two ids: the end of each id tells them apart.
+    for (const list of [groups.keys, groups.local]) {
+      const twins = list.filter((one) => list.some((other) => other !== one && other.name === one.name && other.provider === one.provider));
+      for (const one of twins) one.name = `${one.name} (${one.id.split('/').slice(1).join('/')})`;
+    }
+    known = { default: null, groups: [{ name: FREE, models: groups.free }, { name: 'Your keys', models: groups.keys }, { name: 'Local', models: groups.local }] };
+    known.default = pickDefault();
     return known;
   }
 
   async function prompt(card: CoderCard, text: string, { by }: { by?: string }) {
     const mine = open(card);
     if (busy(mine)) throw new Error('the coder is still on the last piece of work. Wait for it, or press Stop on the card');
-    const model = mine.model || (known ?? await models()).default;
+    if (!mine.model && !known) await models();
+    let model = mine.model || pickDefault();
     if (!model) throw new Error('opencode offers no free model right now. The founder picks one on the card, or sets STAGE_CODER_MODEL in .env.');
-    const [providerID, ...rest] = model.split('/');
     line(mine, { kind: 'ask', text: text.trim().slice(0, 4000), ...(by ? { by } : {}) });
-    Object.assign(mine, { reply: '', error: undefined, seenBusy: false, changed: false, prompted: now(), heard: now() });
+    Object.assign(mine, { reply: '', error: undefined, seenBusy: false, changed: false, prompted: now(), heard: now(), ask: text, switched: false, switching: undefined, round: mine.round + 1 });
+    // The founder's own pick, found down a moment ago: the next free model takes this ask, and the card says so.
+    const instead = isDead(model) ? nextFree([model]) : undefined;
+    if (instead) { line(mine, { kind: 'note', text: `${nameOf(model)} was unavailable a moment ago, so ${nameOf(instead)} takes this one` }); model = instead; }
+    const [providerID] = model.split('/');
     if (providerID in LOCAL && !(await reachable(bases[providerID]))) {
       const where = bases[providerID].replace(/^https?:\/\//, '').replace(/\/v1$/, '');
       mine.error = `the local model server at ${where} is not answering`;
@@ -241,20 +269,77 @@ export function createCoder(deps: Deps) {
     mine.live = freshLive();
     sayLive(mine, true);
     try {
-      const hint = await withMap(mine);
-      const body = { model: { providerID, modelID: rest.join('/') }, parts: [{ type: 'text', text }], ...(hint ? { system: hint } : {}) };
-      const session = mine.session ?? await newSession(mine);
-      await engine.call('POST', `/session/${session}/prompt_async`, { directory: mine.dir, body }).catch(async (error: Error) => {
-        // A session the database no longer holds (a wiped workspace, a month gone) is started again, once.
-        if (!/\b404\b/.test(error.message)) throw error;
-        await engine.call('POST', `/session/${await newSession(mine)}/prompt_async`, { directory: mine.dir, body });
-      });
+      await post(mine, model, text);
     } catch (error) {
-      mine.error = (error as Error).message;
-      line(mine, { kind: 'error', text: `the coder could not start: ${mine.error}` });
-      endLive(mine);
-      setState(mine, 'stopped');
-      finish(mine, 'stopped');
+      couldNotStart(mine, error as Error);
+    }
+  }
+
+  // One ask handed to one model, in the card's session (a new one when it has none).
+  async function post(card: Held, model: string, text: string, sending?: () => void) {
+    const [providerID, ...rest] = model.split('/');
+    const hint = await withMap(card);
+    const body = { model: { providerID, modelID: rest.join('/') }, parts: [{ type: 'text', text }], ...(hint ? { system: hint } : {}) };
+    const session = card.session ?? await newSession(card);
+    card.using = model;
+    sending?.();
+    await engine.call('POST', `/session/${session}/prompt_async`, { directory: card.dir, body }).catch(async (error: Error) => {
+      // A session the database no longer holds (a wiped workspace, a month gone) is started again, once.
+      if (!/\b404\b/.test(error.message)) throw error;
+      await engine.call('POST', `/session/${await newSession(card)}/prompt_async`, { directory: card.dir, body });
+    });
+  }
+
+  function couldNotStart(card: Held, error: Error) {
+    card.switching = undefined;
+    card.error = error.message;
+    line(card, { kind: 'error', text: `the coder could not start: ${card.error}` });
+    endLive(card);
+    setState(card, 'stopped');
+    finish(card, 'stopped');
+  }
+
+  // The model's provider says it is down. A free model is set aside for an hour and the same ask goes to the next free
+  // one, once, with a line saying so; anything else (a keyed model, the second free model down too) ends the work now
+  // in plain words, rather than after opencode's minute and more of retrying a model that will not answer.
+  async function fallBack(card: Held, why: string) {
+    const from = card.using!;
+    card.switching = 'aborting';
+    if (!known) await models().catch(() => null);
+    const free = freeIds().includes(from);
+    if (free) dead.set(from, now() + DEAD_FOR);
+    const next = free && !card.switched ? nextFree([from]) : undefined;
+    if (card.session) {
+      await engine.call('POST', `/session/${card.session}/abort`, { directory: card.dir }).catch(() => {});
+      // The old model's run is over only when opencode stops listing it as busy; its last words come before that, and
+      // the next model's ask goes in after, so none of them is taken for the new one's.
+      for (let tries = 0; tries < 30; tries += 1) {
+        const status = await engine.call<Record<string, unknown>>('GET', '/session/status', { directory: card.dir }).catch(() => null);
+        if (!status || !(card.session in status)) break;
+        await new Promise((settle) => setTimeout(settle, 100));
+      }
+    }
+    if (!busy(card)) { card.switching = undefined; return; }
+    if (!next) {
+      card.switching = undefined;
+      card.error = `${nameOf(from)} is not answering right now: ${why.replace(/[.\s]*$/, '.')} Pick another model on the card.`;
+      line(card, { kind: 'error', text: card.error });
+      endLive(card);
+      setState(card, 'stopped');
+      finish(card, 'stopped');
+      return;
+    }
+    card.switched = true;
+    line(card, { kind: 'note', text: `${nameOf(from)} is unavailable, trying ${nameOf(next)}` });
+    Object.assign(card, { reply: '', error: undefined, seenBusy: false, changed: false, prompted: now(), heard: now(), round: card.round + 1 });
+    card.parts.clear();
+    card.usage.clear();
+    card.live = freshLive();
+    sayLive(card, true);
+    try {
+      await post(card, next, card.ask ?? '', () => { card.switching = 'sent'; });
+    } catch (error) {
+      couldNotStart(card, error as Error);
     }
   }
 
@@ -308,10 +393,14 @@ export function createCoder(deps: Deps) {
   }
 
   async function idle(card: Held) {
-    if (card.state !== 'working') return;
+    if (card.state !== 'working' || card.switching === 'aborting') return;
+    card.switching = undefined;
+    const round = card.round;
     const files = await diff(card);
     const text = files.length ? diffLine(files) : '';
-    if (card.state !== 'working') return;
+    // opencode says idle twice, so two of these can be on their way: the first ends the ask, and the second, coming
+    // back from its diff after the next ask went in, must not end that one too.
+    if (card.state !== 'working' || card.round !== round) return;
     if (text && card.lines.findLast((one) => one.kind === 'diff' || one.kind === 'ask')?.text !== text) line(card, { kind: 'diff', text });
     endLive(card);
     setState(card, card.error ? 'stopped' : 'idle');
@@ -374,6 +463,15 @@ export function createCoder(deps: Deps) {
     if (!card) return;
     const heard = translate(event, card.dir);
     if (!heard) return;
+    // A model being left behind: its refusals and the idle after the abort are not news. The next model being busy is.
+    if (card.switching === 'aborting' && (heard.idle || heard.error || heard.retry)) return;
+    if (card.switching === 'sent') {
+      if (heard.idle) return;
+      if (heard.busy) card.switching = undefined;
+    }
+    // A model that is down: said at opencode's first retry, a second or two in, rather than after all of them.
+    const trouble = heard.retry ?? heard.error;
+    if (trouble && busy(card) && card.using && !card.switching && modelDown(trouble)) { void fallBack(card, trouble); return; }
     if (heard.progress) card.heard = now();
     if (heard.changed) card.changed = true;
     // Busy only counts while the card is waiting on it: opencode says busy once more after an error or a stop, and
@@ -404,7 +502,10 @@ export function createCoder(deps: Deps) {
         if (card.session) void engine.call('POST', `/session/${card.session}/abort`, { directory: card.dir }).catch(() => {});
       }
     }
-    if (heard.idle) void idle(card);
+    // opencode says idle twice at the end of a run (its status, then the event of its own), and the second can land
+    // on the next ask, sent the moment the first one ended. Idle counts once this ask has been busy; a stream that
+    // dropped the busy is covered by the look at the server's list.
+    if (heard.idle && card.seenBusy) void idle(card);
   }
   engine.listen(hear);
 
@@ -424,6 +525,7 @@ export function createCoder(deps: Deps) {
     refuseAll(card, (ask) => `said no · ${ask.tool} ${ask.what} — stopped`);
     // Said and settled before the abort goes out: opencode answers an abort with "idle", and that must not read as done.
     card.error = 'stopped';
+    card.switching = undefined;
     line(card, { kind: 'note', text: `stopped · ${why}` });
     endLive(card);
     setState(card, 'stopped');

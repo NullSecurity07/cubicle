@@ -10,6 +10,8 @@ export type Heard = {
   // The folder changed under this step (opencode's patch part), whichever tool changed it.
   changed?: true;
   line?: CoderLine; permission?: CoderAsk; replied?: string; reply?: string; error?: string;
+  // opencode trying the model's request again after the provider refused it, with the provider's reason in plain words.
+  retry?: string;
   // What the card shows live. A part of the reply or of the thinking is announced (`opened`), grows (`delta`) and ends
   // (`closed`); opencode sends a delta with only the part's id, so whoever listens remembers which kind each part is.
   opened?: { id: string; kind: 'reasoning' | 'text'; text?: string };
@@ -34,8 +36,15 @@ const unwrap = (text: string) => {
 };
 // A provider's error in the founder's words: its account numbers, tiers and links are nobody's business on the card.
 export const plainError = (text: string) => unwrap(text)
+  .replace(/Error from provider \([^)]*\):\s*/gi, '').replace(/Upstream request failed:\s*/gi, '')
   .replace(/\s+in organization `[^`]*`/gi, '').replace(/\s+service tier `[^`]*`/gi, '')
   .replace(/[^.?!]*https?:\/\/\S+[^.?!]*[.?!]?/g, '').replace(/\s*Need more tokens\?/gi, '').replace(/\s+/g, ' ').trim();
+
+// A provider saying the model itself cannot answer right now (its endpoint is down, it is overloaded, it is gone),
+// rather than refusing the founder's own key or quota: another model will answer where this one will not.
+const KEY_OR_QUOTA = /api.?key|unauthori[sz]ed|forbidden|quota|rate.?limit|too many requests|credit|billing|payment|insufficient/i;
+const DOWN = /unavailable|overloaded|no endpoints|no allowed providers|bad gateway|gateway timeout|\b50[234]\b|model not found|not found for model|does not exist/i;
+export const modelDown = (text: string) => DOWN.test(text) && !KEY_OR_QUOTA.test(text);
 
 // The end of what a command printed: the last lines are where a test run says how it went.
 const tail = (value: unknown, max: number) => { const text = String(value ?? '').replace(/\s+$/, ''); return text.length > max ? text.slice(-max) : text; };
@@ -117,7 +126,11 @@ export function translate(event: RawEvent, dir = ''): Heard | null {
   }
   if (type === 'permission.replied') return { session, replied: String(said.requestID ?? said.permissionID ?? ''), ...(said.reply ? { reply: String(said.reply) } : {}) };
   if (type === 'session.idle') return { session, idle: true };
-  if (type === 'session.status') return said.status?.type === 'idle' ? { session, idle: true } : said.status?.type === 'busy' ? { session, busy: true } : null;
+  if (type === 'session.status') {
+    const status = said.status ?? {};
+    if (status.type === 'retry') return { session, retry: plainError(flat(status.message ?? 'the provider refused the request', 400)).slice(0, 300) };
+    return status.type === 'idle' ? { session, idle: true } : status.type === 'busy' ? { session, busy: true } : null;
+  }
   if (type === 'session.error') {
     // Stopping the coder is said by whoever stopped it; opencode's own word for it is not news.
     if (said.error?.name === 'MessageAbortedError') return { session };

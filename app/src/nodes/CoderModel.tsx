@@ -30,12 +30,13 @@ export function CoderModel({ model, onPick }: { model?: string; onPick: (model: 
   // at should not. Until then the pill says the model's id the way a person would.
   const all = list?.groups.flatMap((group) => group.models) ?? [];
   const showing = model ?? list?.default ?? undefined;
-  const name = all.find((one) => one.id === showing)?.name ?? (showing ? spoken(showing) : 'Free model');
+  const chosen = all.find((one) => one.id === showing);
+  const name = chosen?.name ?? (showing ? spoken(showing) : 'Free model');
   const pick = (next: string | undefined) => { onPick(next); setOpen(false); };
 
   return (
     <div className="coder-model nodrag" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false); }} onKeyDown={(event) => { if (pressed(event, 'cancel')) setOpen(false); }}>
-      <button type="button" className="coder-model__pill" aria-haspopup="menu" aria-expanded={open} aria-label={`Model: ${plain(name)}`} title="The model the coder thinks with" onClick={() => setOpen(!open)}>
+      <button type="button" className="coder-model__pill" aria-haspopup="menu" aria-expanded={open} aria-label={`Model: ${plain(name)}`} title={chosen?.provider ? `The model the coder thinks with: ${plain(name)} on ${chosen.provider}` : 'The model the coder thinks with'} onClick={() => setOpen(!open)}>
         <span>{plain(name)}</span>
         <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M2.500 4 5 6.500 7.500 4" /></svg>
       </button>
@@ -55,6 +56,7 @@ export function CoderModel({ model, onPick }: { model?: string; onPick: (model: 
               {group.models.map((one) => (
                 <button key={one.id} type="button" role="menuitemradio" aria-checked={model === one.id} onClick={() => pick(one.id)}>
                   <b>{group.name === 'Free (OpenCode Zen)' ? plain(one.name) : one.name}</b>
+                  {one.provider && <small>{one.provider}</small>}
                 </button>
               ))}
             </div>
