@@ -96,7 +96,7 @@ export function Chat({ id, name, role, partner, onStatus }: { id: string; name: 
     const text = again?.text ?? draft.trim();
     const attachments = again ? again.attachments ?? [] : files;
     const replace = again?.replace ?? editing?.id;
-    if ((!text && !attachments.length) || busy) return;
+    if ((!text && !attachments.length) || busy || sending.current) return;
     sending.current = true;
     tail.current = true;
     setDraft('');
@@ -125,7 +125,9 @@ export function Chat({ id, name, role, partner, onStatus }: { id: string; name: 
         }
         if ('notice' in event) setNotice(event.notice);
         if ('error' in event) throw new Error(event.error);
-        if ('done' in event) { finished = true; if (event.message.text.trim() || event.message.tools) setMessages((current) => [...current, event.message]); }
+        // The stored reply takes the draft's place in the same render: drawing both until the stream closes showed
+        // every chip and line of the reply twice for a moment.
+        if ('done' in event) { finished = true; if (event.message.text.trim() || event.message.tools) setMessages((current) => [...current, event.message]); setLive(null); return; }
         setLive({ ...now });
         if ('tool' in event) report(now.tools.some((tool) => tool.waiting) ? 'waiting' : 'thinking', asked);
       }, stop.current.signal, { replace, attachments });
