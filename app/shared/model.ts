@@ -266,7 +266,7 @@ export type RoomEvent = { roomId: string } & (
 // a key answering; `slow`: every key rests after giving no first word twice (breaker.ts). What a dot is drawn from.
 // `needsCard`: every key this provider has is refused until its account has a card or payment method on file.
 // `check`: how the last key check went. A check that did not pass is what the dot says until the model answers again.
-export type ModelInfo = { name: string; model: string; ready: boolean; left: number; requests: number; tokens: number; planOff?: boolean; needsCard?: boolean; lastAnswerAt?: number; checked?: boolean; check?: KeyCheck; slow?: boolean };
+export type ModelInfo = { name: string; model: string; ready: boolean; left: number; requests: number; tokens: number; planOff?: boolean; needsCard?: boolean; lastAnswerAt?: number; checked?: boolean; check?: KeyCheck; slow?: boolean; partnerOnly?: boolean };
 
 // What a key check with one model came to. Only `ok` is a key that passed: the rest are each said as what they are.
 export type CheckOutcome = 'ok' | 'slow' | 'not-found' | 'refused' | 'card' | 'plan' | 'down' | 'failed';

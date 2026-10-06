@@ -59,7 +59,7 @@ function Quota({ place }: { place: string }) {
     <div className="quota">
       <button type="button" className="quota__rings" aria-label="Model usage today" aria-expanded={open} onClick={() => setOpen(!open)}>
         {dots.map(({ model, dot }) => (
-          <svg key={model.name} viewBox="0 0 20 20" className={`ring ring--${dot.tone}`} role="img" aria-label={`${model.name}: ${dot.words}`}>
+          <svg key={model.name} viewBox="0 0 20 20" className={`ring ring--${dot.tone}`} role="img" aria-label={`${model.name}${model.partnerOnly ? ' (partner)' : ''}: ${dot.words}`}>
             <circle cx="10" cy="10" r="7" className="ring__track" />
             <circle cx="10" cy="10" r="7" pathLength={100} strokeDasharray={`${dot.tone === 'untested' ? 0 : dot.tone === 'refused' || dot.tone === 'slow' ? 100 : Math.round(model.left * 100)} 100`} transform="rotate(-90 10 10)" />
             {dot.tone === 'refused' && <circle cx="10" cy="10" r="2.400" className="ring__mark" />}
@@ -72,7 +72,7 @@ function Quota({ place }: { place: string }) {
           {dots.map(({ model, dot }) => (
             <div key={model.name} className="quota__row">
               <span className={`quota__dot ring--${dot.tone}`} />
-              <span className="quota__name">{model.name}<small>{model.model}</small></span>
+              <span className="quota__name">{model.name}<small>{model.model}{model.partnerOnly ? ' · partner only' : ''}</small></span>
               <span className="quota__numbers">
                 {dot.tone === 'refused' ? (model.planOff ? 'Plan off' : model.needsCard ? 'Needs a card' : 'Key refused') : dot.tone === 'untested' ? 'Untested' : dot.tone === 'slow' ? 'Slow' : dot.words}
                 <small>{dot.tone === 'refused' ? dot.words : dot.tone === 'untested' ? 'No reply yet today · $0' : dot.tone === 'slow' ? 'No first word twice · asked last for 30 min' : `${model.requests} replies · ${model.tokens.toLocaleString()} tokens · $0`}</small>

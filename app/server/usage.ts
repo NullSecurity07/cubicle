@@ -329,15 +329,16 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     },
     // Several keys for one provider are one provider to the founder: the rings show what they have done together and
     // what is left of the two days' worth between them. It is also the name a person is pinned to.
-    // The side model is no one's to pin, so the picker never lists it; the insights ask for it with `withSide`. Nor is a
-    // partner-only model: pinned to a colleague it would never answer.
-    info(clients: ModelClient[], withSide = false): ModelInfo[] {
+    // The side model is no one's to pin, so the picker never lists it; the insights ask for it with `withSide`. A
+    // partner-only model is listed only when asked for with `withPartner` (the rail's rings), and marked, so no picker
+    // offers it to a colleague it would never answer.
+    info(clients: ModelClient[], withSide = false, withPartner = withSide): ModelInfo[] {
       roll();
       const rows = new Map<string, { info: ModelInfo; keys: number; off: number; card: number; slow: number }>();
-      for (const client of clients.filter((one) => withSide || (!one.side && !one.partnerOnly))) {
+      for (const client of clients.filter((one) => withSide || (!one.side && (withPartner || !one.partnerOnly)))) {
         const name = providerOf(client.name);
         const used = count(client.name);
-        const row = rows.get(name) ?? { info: { name, model: client.model, ready: true, left: 0, requests: 0, tokens: 0 }, keys: 0, off: 0, card: 0, slow: 0 };
+        const row = rows.get(name) ?? { info: { name, model: client.model, ready: true, left: 0, requests: 0, tokens: 0, ...(client.partnerOnly ? { partnerOnly: true } : {}) }, keys: 0, off: 0, card: 0, slow: 0 };
         const last = Math.max(row.info.lastAnswerAt ?? 0, answeredAt[client.name] ?? 0);
         // One key that passed is the provider passing; with none, the latest check that did not pass is what is said.
         const mine = checks[client.name];

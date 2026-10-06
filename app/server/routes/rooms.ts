@@ -14,7 +14,7 @@ export function roomRoutes(deps: { store: Store; busy: Set<string>; usage: Usage
     const room = /^\/api\/rooms\/([^/]+)\/chat$/.exec(path)?.[1];
     if (doc && req.method === 'GET') return answer(res, 200, { text: await store.readDoc(doc) });
     if (doc && req.method === 'PUT') { await store.writeDoc(doc, String((await body(req)).text ?? '')); return answer(res, 200, { ok: true }); }
-    if (path === '/api/models' && req.method === 'GET') return answer(res, 200, usage.info(clients));
+    if (path === '/api/models' && req.method === 'GET') return answer(res, 200, usage.info(clients, false, true));
     const cut = /^\/api\/rooms\/([^/]+)\/chat\/([\w-]{1,80})$/.exec(path);
     if (cut && req.method === 'DELETE') {
       if (busy.has(cut[1])) return answer(res, 409, { error: 'this person is still replying' });

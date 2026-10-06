@@ -109,7 +109,7 @@ export function ForgeView({ onPlace, onBack }: { onPlace: (framework: Framework)
   // Bumped whenever there is something new to watch: the job goes quiet between the preview and Build, and the
   // window stops asking until the founder sets it going again.
   const [watch, setWatch] = useState(0);
-  const models = useModels();
+  const models = useModels()?.filter((model) => !model.partnerOnly);
   const quota = !models ? '' : models.length ? `${Math.round(Math.max(0, ...models.map((model) => model.left)) * 100)}% of today's free models left` : 'no models are set up yet';
   // The last step reached, so a failure is shown where it happened rather than throwing the list away.
   const reached = useRef(0);
