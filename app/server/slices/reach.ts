@@ -10,7 +10,7 @@ import type { Source } from '../seams.ts';
 import { healthRows } from '../openends/health.ts';
 import { createBridge } from '../reach/bridge.ts';
 import { createDigest, dailyDue, dueAt } from '../reach/digest.ts';
-import { localDay } from '../clock.ts';
+import { localDay, now as clockNow } from '../clock.ts';
 import { MORNING_HOUR, morningMessage } from '../partner/morning.ts';
 import { partnerState } from '../partner/state.ts';
 import { todayFive, todayLine } from '../today/rank.ts';
@@ -72,7 +72,7 @@ export default {
 
     // Today, as one screen: what finished, what waits for the founder, what is coming, what the people learned.
     const digest = createDigest({ boards: deps.boards, stage: () => deps.store.loadStage(), skills: deps.skills, attention: () => deps.attention.list(), workspace: deps.workspace, five: async () => (await todayFive(deps)).map(todayLine) });
-    const since = async () => (await book.read()).digestAt || Date.now() - DAY;
+    const since = async () => (await book.read()).digestAt || clockNow() - DAY;
 
     // A voice the app cast under an older, looser rule is cast again under today's, once, as the app starts: people
     // were once handed D-grade voices by the luck of their id. A voice the founder picked is theirs and stays.
@@ -90,7 +90,7 @@ export default {
     const phone = createPhone({
       api, outbox, reach, book, topics, stage: () => deps.store.loadStage(),
       ask: (roomId, said) => bridge(roomId, said),
-      answer: (id, answer) => deps.approvals.answer(id, answer),
+      answer: (id, answer) => deps.approvals.answer(id, answer, 'founder'),
       busy: () => deps.busy,
       hear: async (sound, _mime, report) => heard(await samplesOf(sound, run), report),
       say: async (roomId, said) => oggOf(await speak(sayable(said) || 'There is code in the written reply.', await voiceOf(roomId)), run),
@@ -387,7 +387,7 @@ export default {
         await phone.flush().catch(() => {});
         await updates.look().catch(() => {});
         if (!now.updates.on) return;
-        const at = Date.now();
+        const at = clockNow();
         const today = localDay(at);
         const due = dueAt(now.updates.at, at);
         const kept = await book.read();

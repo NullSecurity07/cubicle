@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import type { Attention } from '../../shared/model.ts';
-import { localDay } from '../clock.ts';
+import { localDay, now as clockNow } from '../clock.ts';
 import { writeAtomic } from '../fsx.ts';
 import { readBook } from '../rescue.ts';
 import { newId } from '../slice-kit.ts';
@@ -122,7 +122,7 @@ export function promisesIn(message: string, now: number): Said[] {
   return found;
 }
 
-export function promisesBook(workspace: string, now: () => number = Date.now) {
+export function promisesBook(workspace: string, now: () => number = clockNow) {
   const path = join(workspace, 'promises.json');
   let queue: Promise<unknown> = Promise.resolve();
   async function list(): Promise<FounderPromise[]> {

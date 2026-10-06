@@ -50,7 +50,7 @@ export function stageRoutes(deps: { store: Store; events: ReturnType<typeof crea
     const asked = /^\/api\/approvals\/([\w.:-]{1,120})$/.exec(path)?.[1];
     if (asked && req.method === 'POST') {
       const said = await body(req);
-      const known = approvals.answer(asked, { ok: said.ok === true, args: said.args && typeof said.args === 'object' ? said.args : undefined });
+      const known = approvals.answer(asked, { ok: said.ok === true, args: said.args && typeof said.args === 'object' ? said.args : undefined }, 'founder');
       return answer(res, known ? 200 : 404, known ? { ok: true } : { error: 'nothing is waiting under that id' });
     }
     return false;

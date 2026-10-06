@@ -33,7 +33,7 @@ const useWanted = () => useSyncExternalStore(subscribe, () => wanted);
 const morning = () => {
   say({ text: 'Asking your partner for the morning note…' });
   askMorning()
-    .then((note) => say({ text: note.unchanged ? `Nothing changed since ${new Date(note.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}. ${note.who}'s note stands: ${note.things[0]}` : `${note.who}'s morning note: ${note.things[0]}`, roomId: note.roomId }))
+    .then((note) => say({ text: note.unchanged ? `Nothing changed since ${new Date(note.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}. ${note.who}'s note stands: ${note.things[0]}` : `${note.who}'s morning note: ${note.since?.[0] ?? note.things[0]}`, roomId: note.roomId }))
     .catch((error: Error) => say({ text: error.message, problem: true }));
 };
 const frame = () => new Promise<void>((done) => { requestAnimationFrame(() => done()); });

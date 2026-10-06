@@ -1,5 +1,5 @@
 import { matching, responseLine, surveyBlock, surveyChannel, templateTitle, type SurveyEvent } from '../../shared/survey.ts';
-import { localDay } from '../clock.ts';
+import { localDay, now as clockNow } from '../clock.ts';
 import { hub } from '../events.ts';
 import type { Slice } from '../install.ts';
 import { wired } from '../prompt.ts';
@@ -66,7 +66,7 @@ export default {
       const cards = stage ? surveyCards(stage) : [];
       const ids = stage ? wired(stage, payload.roomId, cards.map((card) => card.id)) : [];
       if (!ids.length) return next(payload);
-      const today = localDay(Date.now());
+      const today = localDay(clockNow());
       const blocks = await Promise.all(cards.filter((card) => ids.includes(card.id)).map(async (card) => surveyBlock(card, await surveys.list(card.id), today, localDay)));
       return next({ ...payload, messages: [{ ...system, content: `${system.content}\n\n${blocks.join('\n')}` }, ...rest] });
     };

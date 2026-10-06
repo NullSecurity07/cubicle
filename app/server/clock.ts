@@ -21,3 +21,14 @@ export const timeOrDay = (at: number, now: number) => (dayKey(at) === dayKey(now
 export const localDay = (at: number) => { const day = new Date(at); return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`; };
 // The front of a name in trash: when it was let go of, to the millisecond, in characters every file system takes.
 export const trashStamp = (at: number = Date.now()) => new Date(at).toISOString().replace(/[:.]/g, '-');
+
+// ---------------------------------------------------------------- the one "now"
+
+// Every date-based check (the morning note, late promises, bets, lead nudges, the phone's digest, Today's five) asks
+// this for the moment, never Date.now itself, so a check run can live "day 2" without waiting a day. The offset is
+// zero on the founder's own run and can only be moved through `server/clock-offset.ts`, which refuses it there.
+let offset = 0;
+export const now = () => Date.now() + offset;
+export const clockOffset = () => offset;
+// Only `server/clock-offset.ts` calls this, after it has said yes; tests call it to put the clock back.
+export function moveClock(ms: number) { offset = Number.isFinite(ms) ? Math.round(ms) : 0; }
