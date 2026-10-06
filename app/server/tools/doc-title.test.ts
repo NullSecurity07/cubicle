@@ -4,6 +4,9 @@ import { docTitle } from './doc-title.ts';
 describe('a doc title', () => {
   it.each([
     ['Write me a doc about our pricing in 400 words', 'Pricing'],
+    ['Build plan', 'Build plan'],
+    ['Launch checklist', 'Launch checklist'],
+    ['Draft the launch email', 'Launch email'],
     ['Customer notes: what we actually know about our beta studios', 'Customer notes'],
     ['Unit economics: runway, break-even users at our price', 'Unit economics'],
     ['Draft a 300-word memo on the launch plan', 'Launch plan'],

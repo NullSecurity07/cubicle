@@ -6,11 +6,20 @@ const ASKING = /^(?:(?:please|can you|could you|would you|i need you to|i want y
 const ARTICLE = /^(?:(?:a|an|the|some|our|my|one|short|quick|brief|new|simple)\s+)+/i;
 const KIND = /^(?:\d+[- ]?(?:words?|pages?)\s+)?(?:doc(?:ument)?|note|notes|memo|page|write-?up|summary|draft|file|card)\s+(?:about|on|for|of|covering|called|named|titled|listing|with|that)\s+/i;
 const COUNT = /\b(?:in\s+|of\s+|about\s+|around\s+|under\s+|max(?:imum)?\s+|at most\s+|no more than\s+|~\s*)?\d[\d,]*\s*(?:-\s*)?(?:words?|pages?|lines?|paragraphs?|bullets?|sentences?)\b(?:\s+(?:long|max|or less|or fewer))?/gi;
+// What makes a title read as a request rather than a name: a verb followed by whom or what to write.
+const ASKING_SHAPE = /^(?:please|can you|could you|would you|i need|i want|help me|let'?s)\b|^\w+(?:\s+\w+)?\s+(?:me|us|a|an|the|some|our|my|one|doc|document|note|notes|memo|page|summary|draft)\b|\b(?:about|words?|pages?)\b/i;
 const LOOSE_END = /\s+(?:of|and|or|the|for|with|about|to|in|on|a|an|at|by|from|our|my|that|which|so|as)$/i;
 
 export function docTitle(raw: string): string {
   let title = raw.replace(/\s+/g, ' ').trim().replace(/^["'“‘]+|["'”’]+$/g, '').trim();
   title = title.replace(COUNT, ' ').replace(/\(\s*\)/g, ' ').replace(/\s+/g, ' ').trim();
+  // A short title with no asking in it ("Build plan", "Launch checklist") is a name already: a leading word that
+  // happens to be a verb stays.
+  if (title.split(' ').length <= MOST && !ASKING_SHAPE.test(title)) {
+    const [name] = title.split(/\s*(?::|\s[-–—]\s)\s*/);
+    const kept = (name && name.trim().length > 1 ? name : title).replace(/[.!?,;:]+$/g, '').trim();
+    return kept ? kept[0].toUpperCase() + kept.slice(1) : 'Untitled';
+  }
   title = title.replace(ASKING, '').replace(ARTICLE, '').replace(KIND, '').replace(ARTICLE, '');
   // The name before a colon or a dash is the name; what follows says what is in it.
   const [head] = title.split(/\s*(?::|\s[-–—]\s)\s*/);
