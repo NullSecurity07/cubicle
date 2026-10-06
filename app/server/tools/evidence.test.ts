@@ -231,6 +231,7 @@ describe('invented testimonials and eagerness', () => {
     const out = plain(doc);
     expect(out.marked).toHaveLength(3);
     expect(out.text).toContain('kitchen."* (assumption)');
+    expect(plain('Office managers highlight the convenience as a great perk for morale.').marked).toHaveLength(1);
   });
   it('lets a quote read in interview notes stand, and does not read the founder\'s question as a record', () => {
     const notes = 'Interview notes: the Acme office manager said "it has completely changed our Tuesday routine".';
