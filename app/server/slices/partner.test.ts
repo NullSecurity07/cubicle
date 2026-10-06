@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import type { Room, Stage } from '../../shared/model.ts';
+import type { Room, Stage, ToolEvent } from '../../shared/model.ts';
 import { COMPANY_LINE, companyLine } from '../../shared/partner.ts';
 import type { Deps, Installed } from '../install.ts';
 import { companyDocOf } from '../partner/company.ts';
@@ -835,6 +835,93 @@ describe('the partner slice: a verdict that commits', () => {
     expect(out.text).toContain('Why: Break-even is 34 paying offices against 3 today.\n- Break-even: ceil(2100 / (240 - 178)) = 34 paying offices to cover fixed costs; we have 3.\n- Runway: round(12000 / (2100 - 3 * (240 - 178)), 1) = 6.3 months at the net burn.\nKill signal');
     expect(out.tools.map((one) => [one.name, one.result])).toEqual([['calc', 'ceil(2100 / (240 - 178)) = 34'], ['calc', 'round(12000 / (2100 - 3 * (240 - 178)), 1) = 6.3']]);
     await part.close!();
+  });
+});
+
+// Journey 13: Tom's Unit Economics had a net burn of €1,380 worked out with calc (the boxes' cost left out) and the
+// partner never looked. Now a colleague's finished doc write is reviewed on the next tick, unasked; and the verdict is
+// made again, unasked, when the brief's numbers moved more than a tenth since the call.
+describe('the partner slice: reviewing colleagues and refreshing the verdict', () => {
+  const NUMBERS = (paying: number) => `# Company\n\n## Numbers\n\n- Paying offices: ${paying}\n- Price: €240 a month per office\n- Produce + delivery cost: €41 per box, about €178 a month per office\n- MRR: €720\n- Cash: €12,000\n- Burn: €2,100 a month\n`;
+  const turn = (text: string, tools: unknown[] = []) => ({ text, tools: tools as ToolEvent[], provider: 'p', model: 'm', usage: { input: 1, output: 1 }, stopped: false });
+
+  it('flags a wrong net burn in the writer\'s room and in Needs you, and Fix hands back the ask for the colleague', async () => {
+    const answers: [number, unknown][] = [];
+    const clock = new Date('2026-10-06T10:00').getTime();
+    const { deps, part } = await installed({ json: (_res, status, body) => { answers.push([status, body]); } }, { now: () => clock, ask: async () => SHAPED, budget: { take: () => ({ ok: false }) } });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    const company = companyDocOf(await deps.store.loadStage())!;
+    await deps.store.writeDoc(company.id, NUMBERS(3));
+    const stage = await deps.store.loadStage();
+    await deps.store.saveStage({ ...stage, docs: [...stage.docs, { id: 'doc-ue', title: 'Unit Economics', x: 0, y: 0, w: 1, h: 1 }] });
+    await deps.store.writeDoc('doc-ue', '# Unit Economics\n\n- Net burn at current MRR (€720): €1,380 per month\n');
+    const wrote = { id: 'w', name: 'create_doc', args: {}, ok: true, result: 'Wrote "Unit Economics".', effect: { kind: 'doc-created', id: 'doc-ue', title: 'Unit Economics' } };
+    const calc = { id: 'c', name: 'calc', args: {}, ok: true, result: '2100 - 720 = 1,380' };
+    await deps.seams.run('turn:after', { roomId: 'marketing', source: 'chat', query: 'Write the unit economics.', reply: turn('Done.', [calc, wrote]) as never });
+    await part.tick!();
+    const said = (await deps.store.readChat('marketing')).at(-1)!;
+    expect(said).toMatchObject({ role: 'user', from: 'Sam' });
+    expect(said.text).toContain('Net burn is €1,914 a month, not €1,380: 2100 + 3 * 178 - 3 * 240 = 1,914 (calc); it leaves out what the 3 paying offices cost (€534 a month).');
+    const row = (await deps.attention.list()).find((one) => one.kind === 'review-flag')!;
+    expect(row).toMatchObject({ who: 'Sam', roomId: 'marketing', title: 'Sam flagged: Maya\'s "Unit Economics". Fix first: net burn is €1,914 a month, not €1,380.' });
+    // Reviewed once: the next tick says nothing more.
+    await part.tick!();
+    expect((await deps.store.readChat('marketing')).filter((one) => one.from === 'Sam')).toHaveLength(1);
+    deps.body = async () => ({ fix: true });
+    await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/reviews/${row.id.split(':')[1]}`);
+    expect(answers.at(-1)).toEqual([200, { ok: true, roomId: 'marketing', ask: expect.stringContaining('Please fix "Unit Economics" before I act on it: Net burn is €1,914') }]);
+    expect((await deps.attention.list()).some((one) => one.kind === 'review-flag')).toBe(false);
+    // The fix is written and reviewed again: fit for the founder, no row.
+    await deps.store.writeDoc('doc-ue', '# Unit Economics\n\n- Net burn: €1,914 a month\n');
+    await deps.seams.run('turn:after', { roomId: 'marketing', source: 'chat', query: 'fix it', reply: turn('Fixed.', [{ ...calc, result: '2100 + 3 * 178 - 720 = 1,914' }, { ...wrote, effect: { kind: 'doc-changed', id: 'doc-ue' } }]) as never });
+    await part.tick!();
+    expect((await deps.store.readChat('marketing')).at(-1)!.text).toBe('I read "Unit Economics".\nFit for the founder.');
+    expect((await deps.attention.list()).some((one) => one.kind === 'review-flag')).toBe(false);
+    await part.close!();
+  });
+
+  it('makes the call again unasked when the paying count moved, quoting the old one, and moves the kill signal', async () => {
+    let clock = new Date('2026-10-01T10:00').getTime();
+    const asks: string[] = [];
+    const replies = ['My call: keep going\nWhy: three offices pay.\nKill signal: paying offices below 5 by 2026-10-29\nThis week: call the two pilot offices.\nGap: we reach 34 by raising the price and signing two a month.',
+      'My call: change course\nWhy: break-even is 34 paying offices and we have 4.\nKill signal: paying offices below 8 by 2026-11-10\nThis week: raise the price for new offices.'];
+    let taken = 0;
+    const { deps, part } = await installed({}, { now: () => clock, ask: async (messages) => { asks.push(String(messages.at(-1)?.content)); return SHAPED; }, budget: { take: () => { taken += 1; return { ok: true }; } } });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    const company = companyDocOf(await deps.store.loadStage())!;
+    await deps.store.writeDoc(company.id, NUMBERS(3));
+    await deps.seams.run('turn:reply', { roomId: 'p1', query: 'Your verdict: keep going, pivot or stop?', reply: turn(replies[0]) });
+    clock = new Date('2026-10-02T10:00').getTime();
+    await part.tick!();
+    expect(asks.filter((one) => one.includes('Make the call again'))).toHaveLength(0);
+    // A fourth office pays: the count moved by a third.
+    await deps.store.writeDoc(company.id, NUMBERS(4).replace('MRR: €720', 'MRR: €960'));
+    const before = (await deps.store.readChat('p1')).length;
+    const ask = async (messages: { content: unknown }[]) => { asks.push(String(messages.at(-1)?.content)); return replies[1]; };
+    // Started again with an ask that answers the refresh: the call, its basis and the day it was made are kept on disk.
+    clock = new Date('2026-10-03T10:00').getTime();
+    await part.close!();
+    const again = (await createPartner({ now: () => clock, ask, budget: { take: () => { taken += 1; return { ok: true }; } } })(deps)) as Installed;
+    await again.tick!();
+    const refresh = asks.find((one) => one.includes('Make the call again'))!;
+    expect(refresh).toContain('The numbers behind your verdict moved.');
+    expect(refresh).toContain('On 1 Oct I said keep going at 3 paying offices; now 34 needed to break even and 4 paying offices. Since then: paying offices 3 to 4.');
+    const posted = (await deps.store.readChat('p1')).slice(before).at(-1)!;
+    expect(posted.text).toMatch(/^On 1 Oct I said keep going at 3 paying offices; now 34 needed to break even and 4 paying offices: now change course\. Since then: paying offices 3 to 4\.\n\nMy call: \*\*change course\*\*\./);
+    expect(posted.text).toContain('*Kill signal moved: it comes to Needs you on 2026-11-10.*');
+    expect(taken).toBe(1);
+    // Said once: the next tick, and the next day with nothing moved, say nothing.
+    await again.tick!();
+    clock = new Date('2026-10-04T10:00').getTime();
+    await again.tick!();
+    expect(asks.filter((one) => one.includes('Make the call again'))).toHaveLength(1);
+    // Day eight after the refresh: looked at again.
+    clock = new Date('2026-10-10T10:00').getTime();
+    await again.tick!();
+    expect(asks.filter((one) => one.includes('A week has passed since your verdict.'))).toHaveLength(1);
+    await again.close!();
   });
 });
 

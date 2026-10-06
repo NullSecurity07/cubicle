@@ -2,6 +2,7 @@ import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { MorningNote, PlanProposal } from '../../shared/partner.ts';
 import type { PartnerCall } from './call.ts';
+import type { Inputs } from './economics.ts';
 import { writeAtomic } from '../fsx.ts';
 import { readBook } from '../rescue.ts';
 
@@ -29,7 +30,10 @@ export type PartnerState = {
   betChecks?: string[];
   // The partner's last verdict on the company, as read from its reply: the call, the reason, the kill signal and the
   // first move. Its kill signal waits in the promises book as a check for its day.
-  call?: PartnerCall & { at: number; day: string; roomId: string };
+  // `basis`: the brief's figures the call was made on, so a move of more than a tenth refreshes it (refresh.ts).
+  call?: PartnerCall & { at: number; day: string; roomId: string; basis?: Inputs };
+  // The day the partner last tried to refresh its verdict unasked: one try a day.
+  refreshTried?: string;
 };
 
 export function partnerState(workspace: string) {

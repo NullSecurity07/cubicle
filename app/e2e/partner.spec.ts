@@ -36,7 +36,7 @@ test.afterEach(async ({ page }) => {
   const gone = new Set([...stage.rooms.filter((room) => room.partner).map((room) => room.id), ...stage.docs.filter((doc) => doc.title === 'Company').map((doc) => doc.id)]);
   await page.request.put('/api/docs/company-brief', { data: { text: brief } });
   await page.request.put('/api/stage', { data: { ...stage, rooms: stage.rooms.filter((room) => !gone.has(room.id)), docs: stage.docs.filter((doc) => !gone.has(doc.id)), wires: stage.wires.filter((wire) => !gone.has(wire.from) && !gone.has(wire.to)) } });
-  for (const name of ['partner.json', 'bets.json', 'today.json', 'promises.json', 'partner-watch.json', 'partner-watch-budget.json']) await rm(join(WORKSPACE, name), { force: true });
+  for (const name of ['partner.json', 'bets.json', 'today.json', 'promises.json', 'reviews.json', 'partner-watch.json', 'partner-watch-budget.json']) await rm(join(WORKSPACE, name), { force: true });
   expect(broke).toEqual([]);
 });
 
@@ -149,6 +149,41 @@ test('a promise the founder makes comes to Needs you on its day, and the founder
   await expect(row).toContainText('Due today.');
   await row.getByRole('button', { name: 'Done' }).click();
   await expect(row).toHaveCount(0);
+});
+
+// Journey 13: Tom's Unit Economics had a net burn of €1,380, the €534 a month the boxes cost left out, worked out with
+// calc so nothing stopped it, and the partner never looked. Now Sam reads a colleague's finished doc on the next tick,
+// unasked: the wrong figure comes to Needs you with the right working, and Fix sends the colleague the ask.
+test('the partner reviews a colleague\'s doc unasked, and Fix sends the colleague the ask', async ({ page }) => {
+  test.setTimeout(120_000);
+  await bar(page, 'add a partner called Sam', 'Add Sam, your partner');
+  await expect(page.getByRole('status').filter({ hasText: 'Sam is your partner' })).toBeVisible({ timeout: 15_000 });
+  const company = ((await (await page.request.get('/api/docs/company-brief')).json()) as { text: string }).text;
+  const numbers = '- Paying offices: 3\n- Price: €240 a month per office\n- Produce + delivery cost: €41 per box, about €178 a month per office\n- MRR: €720\n- Cash: €12,000\n- Burn: €2,100 a month\n';
+  await page.request.put('/api/docs/company-brief', { data: { text: company.replace(/## Numbers\n[\s\S]*?(?=\n## |$)/, `## Numbers\n\n${numbers}`) } });
+
+  const calc = JSON.stringify({ expression: 'burn - mrr', values: 'burn=2100, mrr=720' });
+  const doc = JSON.stringify({ title: 'Unit Economics', text: '# Unit Economics\n\n- Net burn at current MRR (€720): €1,380 per month' });
+  await page.request.post('/api/rooms/marketing/chat', { data: { text: `/tool calc ${calc}\n/tool create_doc ${doc}` } });
+  const chat = async () => (await (await page.request.get('/api/rooms/marketing/chat')).json()) as { role: string; text: string; from?: string }[];
+  await expect.poll(async () => (await chat()).find((one) => one.from === 'Sam')?.text ?? '', { timeout: 45_000 })
+    .toContain('Net burn is €1,914 a month, not €1,380: 2100 + 3 * 178 - 3 * 240 = 1,914 (calc)');
+
+  await bar(page, 'needs', 'Needs you');
+  const row = page.getByRole('dialog', { name: 'Needs you' }).locator('.needs__item--review-flag');
+  await expect(row).toContainText('Sam reviewed a team doc');
+  await expect(row).toContainText('Sam flagged: Maya\'s "Unit Economics". Fix first: net burn is €1,914 a month, not €1,380.');
+  await expect(row).toContainText('it leaves out what the 3 paying offices cost (€534 a month)');
+  await row.getByRole('button', { name: 'Fix' }).click();
+  await expect.poll(async () => (await chat()).filter((one) => one.role === 'user' && !one.from).at(-1)?.text ?? '', { timeout: 15_000 })
+    .toMatch(/^Please fix "Unit Economics" before I act on it: Net burn is €1,914 a month, not €1,380/);
+  await expect.poll(async () => ((await (await page.request.get('/api/attention')).json()) as { kind: string }[]).some((one) => one.kind === 'review-flag')).toBe(false);
+
+  // The doc the check made goes with it.
+  await page.goto('about:blank');
+  const stage = await stageOf(page);
+  const made = new Set(stage.docs.filter((one) => one.title === 'Unit Economics').map((one) => one.id));
+  await page.request.put('/api/stage', { data: { ...stage, docs: stage.docs.filter((one) => !made.has(one.id)), wires: stage.wires.filter((wire) => !made.has(wire.from) && !made.has(wire.to)) } });
 });
 
 // The partner watch: the verdict's kill signal is "weekly signups below 5", kept as a check. A Signups reading of 4

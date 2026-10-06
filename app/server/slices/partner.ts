@@ -18,6 +18,9 @@ import { economicsBlock, economicsOf, workingTools } from '../partner/economics.
 import { chaseLine, keptPromiseLine, promiseLine, promisesAttention, promisesBook, promisesIn } from '../partner/promises.ts';
 import { metricsOnDisk, sinceHeadline } from '../partner/since.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
+import { createReviews, granted } from '../partner/review.ts';
+import { readRefresh, refreshAsk, refreshDue, refreshOpening, refreshText } from '../partner/refresh.ts';
+import { markClaims } from '../tools/evidence.ts';
 import { createWatch, dailyBudget, fakeWatchReply, type Budget } from '../partner/watch.ts';
 import { draftId, gmailLink } from '../../shared/maildraft.ts';
 import { leadAddresses, noAddress } from '../tools/outward.ts';
@@ -178,9 +181,10 @@ export function planTools(state: PartnerStateBook, changed: () => Promise<void>,
 }
 
 // What a test hands in instead of the clock and the model.
-// `watchAsk` stands in for the model on the watch's unasked turns; `budget` for the daily budget of them.
+// `watchAsk` stands in for the model on the watch's unasked turns; `budget` for the daily budget of them; `phrase` for
+// the small model that words a partner review. The watch, the review and the verdict refresh share the budget handed in.
 type Asked = { text: string; provider?: string; model?: string };
-export type PartnerOptions = { now?: () => number; ask?: (messages: ModelMessage[]) => Promise<string | Asked>; watchAsk?: (messages: ModelMessage[]) => Promise<Asked>; budget?: Budget };
+export type PartnerOptions = { now?: () => number; ask?: (messages: ModelMessage[]) => Promise<string | Asked>; watchAsk?: (messages: ModelMessage[]) => Promise<Asked>; budget?: Budget; phrase?: (prompt: string) => Promise<string | null> };
 
 export function createPartner(options: PartnerOptions = {}) {
   const now = options.now ?? clockNow;
@@ -219,7 +223,8 @@ export function createPartner(options: PartnerOptions = {}) {
     const book = betsBook(deps.workspace, now);
     const bets = (): Promise<Bet[]> => book.list();
     const promises = promisesBook(deps.workspace, now);
-
+    // The review and the verdict refresh spend from the app's one budget for unasked work (usage.ts).
+    const budget: Budget = options.budget ?? deps.unasked;
     // A bet changed: the Company document's Bets section is written again from the ledger, and Needs you is told.
     const betsChanged = async () => {
       standing = null;
@@ -298,6 +303,15 @@ export function createPartner(options: PartnerOptions = {}) {
         async drop(draft) { await promises.close(draft.promiseId, false).catch((error: Error) => { if (!/already closed/.test(error.message)) throw error; }); standing = null; },
       },
     });
+
+    // A review is worded on the usual partner order, never the reserved model; a fake run keeps the worked-out line.
+    const phrase = options.phrase ?? (deps.fake ? undefined : async (prompt: string) => (await quietTurn(false)([{ role: 'user', content: prompt }])).text);
+    // A colleague's finished doc write is reviewed by the partner on the next tick (server/partner/review.ts).
+    const reviews = createReviews({
+      workspace: deps.workspace, store: deps.store, attention: deps.attention, busy: deps.busy, now, budget, phrase, notify: deps.notify,
+      company: async (stage) => { const doc = await companyNow(stage); return doc ? { id: doc.id, text: await deps.store.readDoc(doc.id).catch(() => '') } : null; },
+    });
+    const offReviews = deps.seams.on('turn:after', reviews.heard);
 
     // Today's note, written now if it is due (or asked for), else the one already written, else null.
     let writing: Promise<(MorningNote & { unchanged?: true }) | null> | null = null;
@@ -386,7 +400,7 @@ export function createPartner(options: PartnerOptions = {}) {
       }
       const stage = await deps.store.loadStage();
       const verdict = await teamVerdict(stage, (id) => deps.store.readDoc(id)).catch(() => null);
-      return [...found, ...await watch.rows(), ...planAttention(held.plans), ...await betsAttention(await book.list(), stage, deps.workspace, localDay(now()), verdict), ...promisesAttention(await promises.list(), localDay(now()))];
+      return [...found, ...await watch.rows(), ...await reviews.rows(), ...planAttention(held.plans), ...await betsAttention(await book.list(), stage, deps.workspace, localDay(now()), verdict), ...promisesAttention(await promises.list(), localDay(now()))];
     });
     // A person wrote a doc that is a plan (by its title or its first heading): its day-by-day steps are offered as tasks.
     const afterTool: Handler<'tool:after'> = async (payload, next) => {
@@ -472,7 +486,7 @@ export function createPartner(options: PartnerOptions = {}) {
             const worked = economics ? workingTools(economics, (index) => `calc-brief-${now()}-${index}`) : [];
             payload = { ...payload, reply: { ...reply, tools: [...worked, ...reply.tools] }, lookedAgain: payload.lookedAgain || askedAgain };
             const at = now();
-            await state.change((held) => { held.call = { ...call, at, day: today, roomId: me.id }; });
+            await state.change((held) => { held.call = { ...call, at, day: today, roomId: me.id, ...(economics?.inputs ? { basis: economics.inputs } : {}) }; });
             // The founder's pushback in the next hour is answered on the partner-only model too.
             markVerdict(me.id, at);
             if (call.signal) {
@@ -573,6 +587,48 @@ export function createPartner(options: PartnerOptions = {}) {
       deps.notify?.('A bet is due for a check', fresh[0].what);
     }
 
+    // The partner's verdict made again, unasked, when the brief's economics moved more than a tenth since the call or a
+    // week passed (server/partner/refresh.ts). One try a day, from the day's budget, on the reserved model; never beside
+    // a turn of the partner's own. A new kill signal takes the old one's place as the check.
+    async function refreshVerdict() {
+      if (!morningOnTick) return;
+      const held = await state.read();
+      if (!held.call) return;
+      const today = localDay(now());
+      if (held.refreshTried === today) return;
+      const stage = await deps.store.loadStage();
+      const partner = partnerOf(stage);
+      if (!partner || deps.busy.has(partner.id)) return;
+      const economics = await economicsNow(stage).catch(() => null);
+      const due = refreshDue(held.call, economics?.inputs, today);
+      if (!due) return;
+      const taken = await granted(budget, 'verdict refresh');
+      if (!taken.ok) return;
+      await state.change((draft) => { draft.refreshTried = today; });
+      const opening = refreshOpening(held.call, economics, due.moved);
+      const messages: ModelMessage[] = [...await deps.promptFor(stage, partner.id, [], true), { role: 'user', content: refreshAsk(held.call, opening, economics, today, due.why) }];
+      // No model answered: the turn never ran, so it goes back to the day's budget, and tomorrow tries again.
+      const answered = await ask(messages).catch((error: Error) => { taken.release(); throw error; });
+      const reply = typeof answered === 'string' ? { text: answered } as { text: string; provider?: string; model?: string } : answered;
+      const doc = await companyNow(stage);
+      const company = doc ? await deps.store.readDoc(doc.id).catch(() => '') : '';
+      const fresh = readRefresh(reply, today, `${company}\n${opening}`, economics);
+      if (!fresh) return;
+      // A new call with no kill signal of its own keeps the one standing.
+      const fresher = { ...fresh, ...(!fresh.signal && held.call.signal ? { signal: held.call.signal } : {}) };
+      const call = fresher.why ? { ...fresher, why: markClaims(fresher.why, [company, ...(fresher.working ?? [])]) } : fresher;
+      const at = now();
+      const moves = call.signal && (call.signal.what !== held.call.signal?.what || call.signal.by !== held.call.signal?.by);
+      const kept = moves && call.signal && await promises.add({ what: call.signal.what, due: call.signal.by, roomId: partner.id, check: true });
+      const text = `${refreshText(opening, held.call.decision, call)}${kept ? `\n\n*Kill signal moved: it comes to Needs you on ${call.signal!.by}.*` : ''}`;
+      await deps.store.appendChat(partner.id, { id: newMessageId(), role: 'assistant', text, at, ...(reply.provider ? { provider: reply.provider } : {}), ...(reply.model ? { model: reply.model } : {}) });
+      await state.change((draft) => { draft.call = { ...call, at, day: today, roomId: partner.id, ...(economics?.inputs ? { basis: economics.inputs } : {}) }; });
+      markVerdict(partner.id, at);
+      standing = null;
+      await deps.attention.refresh().catch(() => {});
+      deps.notify?.(`${partner.name} looked at the verdict again`, text.split('\n')[0]);
+    }
+
     return {
       tools: [...betTools(book, deps.workspace, betsChanged, now), ...planTools(state, async () => { await deps.attention.refresh().catch(() => {}); }, now)],
       // Closing a bet is the partner's alone; offering tasks needs a board on the stage.
@@ -593,6 +649,10 @@ export function createPartner(options: PartnerOptions = {}) {
         await chasePromises();
         await morning(false);
         if (watchOnTick) await watch.look();
+        // ---- the partner's unasked judgement: colleagues' docs reviewed, the verdict refreshed (partner/review.ts,
+        // partner/refresh.ts). Their own ticks, called here; nothing else of the watch's triggers lives here.
+        await reviews.tick(partnerOf(await deps.store.loadStage())).catch((error: Error) => console.error(`partner review: ${error.message}`));
+        await refreshVerdict().catch((error: Error) => console.error(`partner refresh: ${error.message}`));
       },
       async route(req, res, path) {
         if (!path.startsWith('/api/partner')) return false;
@@ -646,6 +706,17 @@ export function createPartner(options: PartnerOptions = {}) {
             const closed = await book.close(held.id, { verdict, value: reading.value, note: typeof sent?.note === 'string' ? sent.note.slice(0, 300) : '', by: 'Founder' });
             await betsChanged();
             deps.json(res, 200, closed);
+            return true;
+          }
+          // The founder answers a review flag from Needs you: Fix hands the window the ask to send in the colleague's
+          // room, Ignore lets it go. The row goes either way.
+          const reviewed = /^\/api\/partner\/reviews\/([A-Za-z0-9_-]{1,120})$/.exec(path);
+          if (reviewed && method === 'POST') {
+            const sent = await deps.body(req);
+            const found = await reviews.answer(reviewed[1]);
+            if (!found) { deps.json(res, 404, { error: 'that review is no longer waiting' }); return true; }
+            await deps.attention.refresh();
+            deps.json(res, 200, sent?.fix === true ? { ok: true, roomId: found.roomId, ask: found.ask } : { ok: true });
             return true;
           }
           // The watch, looked at now: what it raised and what waits for tomorrow's budget.
@@ -702,6 +773,8 @@ export function createPartner(options: PartnerOptions = {}) {
         offTurn();
         offReply();
         offPromise();
+        offReviews();
+        await reviews.settled();
         await syncing?.catch(() => {});
         await writing?.catch(() => {});
         await state.settled();
