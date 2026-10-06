@@ -121,11 +121,11 @@ async function briefNumber(stage: Stage, store: { readDoc(id: string): Promise<s
   return briefRow(sectionText(await store.readDoc(company.id).catch(() => ''), 'Numbers'), metric);
 }
 
-// The founder took a bet whose number only the brief held: a Metrics card with that row, wired to the partner (or
-// whoever proposed it), so the check day has a number to read. Named by the metric's key, so two quick yeses make one card.
-export async function metricsFromBrief(workspace: string, store: Pick<Deps['store'], 'patchStage'>, row: BriefRow, roomId: string | undefined, now: number): Promise<string> {
+// The founder took a bet whose number only the brief held: a Metrics card with that row and the bet's target on it,
+// wired to the partner (or whoever proposed it), so the check day has a number to read. Named by the metric's key, so two quick yeses make one card.
+export async function metricsFromBrief(workspace: string, store: Pick<Deps['store'], 'patchStage'>, row: BriefRow, roomId: string | undefined, now: number, target?: { value: number; by: string }): Promise<string> {
   const id = `metrics-${keyOf(row.label)}`;
-  await writeAtomic(join(workspace, 'metrics', `${id}.json`), JSON.stringify(briefMetrics(row, localDay(now), now), null, 2), { mkdir: true });
+  await writeAtomic(join(workspace, 'metrics', `${id}.json`), JSON.stringify(briefMetrics(row, localDay(now), now, target), null, 2), { mkdir: true });
   await store.patchStage((draft) => {
     if (!(draft.cards ?? []).some((card) => card.id === id)) draft.cards = [...(draft.cards ?? []), { id, kind: 'metrics', title: 'Numbers', ...placeOf(draft), w: 380, h: 440 }];
     // A card of that key already there (left from before, or the other yes) is wired, never wired twice.
@@ -563,7 +563,7 @@ export function createPartner(options: PartnerOptions = {}) {
               if (taking?.brief && (await readMetric(deps.workspace, stage, taking.metric)).value === null) {
                 // The brief as it stands now, in case the founder changed the number since the bet was put.
                 const row = await briefNumber(stage, deps.store, taking.metric).catch(() => null) ?? taking.brief as BriefRow;
-                await metricsFromBrief(deps.workspace, deps.store, row, partnerOf(stage)?.id ?? taking.roomId, now());
+                await metricsFromBrief(deps.workspace, deps.store, row, partnerOf(stage)?.id ?? taking.roomId, now(), { value: taking.target, by: taking.checkDate });
               }
               await book.answer(bet[1], sent?.accept === true); await betsChanged(); deps.json(res, 200, { ok: true }); return true;
             }

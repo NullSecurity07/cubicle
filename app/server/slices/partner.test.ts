@@ -396,6 +396,7 @@ describe('the partner slice: the bets ledger', () => {
     await Promise.allSettled([part.route!({ method: 'POST' } as never, {} as never, url), part.route!({ method: 'POST' } as never, {} as never, url)]);
     const after = await deps.store.loadStage();
     expect((after.cards ?? []).filter((one) => one.kind === 'metrics')).toHaveLength(1);
+    const data = JSON.parse(await readFile(join(workspace, 'metrics', `${(after.cards ?? []).find((one) => one.kind === 'metrics')!.id}.json`), 'utf8'));
     // A card of that key left on the stage without its wire still gets the partner's wire.
     await deps.store.patchStage((draft) => { draft.wires = draft.wires.filter((wire) => !wire.to.startsWith('metrics-')); });
     const { metricsFromBrief } = await import('./partner.ts');
@@ -406,8 +407,8 @@ describe('the partner slice: the bets ledger', () => {
     const card = (after.cards ?? []).find((one) => one.kind === 'metrics')!;
     expect(card).toMatchObject({ kind: 'metrics', title: 'Numbers' });
     expect(after.wires.filter((wire) => wire.from === 'p1' && wire.to === card.id)).toHaveLength(1);
-    const data = JSON.parse(await readFile(join(workspace, 'metrics', `${card.id}.json`), 'utf8'));
-    expect(data.metrics).toEqual([{ key: 'paying-users', label: 'Paying users', better: 'up', points: [{ at: '2026-09-27', value: 2, from: 'the Company brief' }] }]);
+    // Journey 13: the card said "Set a target" beside a bet with one; the bet's number and day are the row's target.
+    expect(data.metrics).toEqual([{ key: 'paying-users', label: 'Paying users', better: 'up', points: [{ at: '2026-09-27', value: 2, from: 'the Company brief' }], target: { value: 6, by: '2026-10-11' } }]);
     expect(await deps.store.readDoc(company.id)).toContain('- Open: Email the 12 beta users a €19 offer. Measured by "paying users" on the Metrics card: 6 by 2026-10-11');
     // Taken once: a second yes adds no second card.
     expect((await part.tools!.find((one) => one.name === 'propose_bet')!.run({ what: 'Second', hypothesis: 'h', metric: 'paying users', target: 7, check_date: '2026-10-11' }, { stage: await deps.store.loadStage(), roomId: 'p1', store: deps.store, granted: new Map(), query: 'bet on 7 paying users' } as never)).text).not.toContain('No Metrics card');
