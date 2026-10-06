@@ -260,6 +260,63 @@ export function markUnbacked(input: { before: string; after: string; read: strin
 }
 export const markSaid = (mark: CountMark) => `"${mark.label}" (in "${quote(mark.line)}")`;
 
+// A figure worked out from others, written with no working behind it. Journey 13: Tom wrote "Net burn at current MRR
+// (€720): €1,380 per month" and "Runway at net burn: 8.7 months" in his head from the brief's figures, forgot the
+// €534 a month the boxes cost, and both stood unmarked, since the figure check takes one step of arithmetic on two
+// figures read as sourced. On a line that names what a sum gives (burn, runway, margin, profit, break-even, CAC, LTV,
+// a total, a monthly figure), a number stands only when something read gives it as written or a calc this turn
+// worked it out from figures read; else it is marked "(unsourced)", even when its inputs were read.
+const DERIVED = /\b(?:burn|runway|margins?|profits?|loss(?:es)?|break[- ]?even|CAC|LTV|payback|totals?|per[- ]month|monthly|a month|net)\b|\/\s?mo(?:nth)?\b/i;
+const FIGURE = /(?<![\p{L}\d.,:/#-])([$€£]\s?)?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(?:\s?(k|m)\b)?(\s?%)?(?![\d]|[.,]\d|\s*\(unsourced\)|(?:st|nd|rd|th|am|pm)\b|\s?[-:/]\d)/giu;
+// A figure put as a goal or a suggestion is the writer's proposal, not a sum: "I suggest a target of $49 next".
+const PROPOSED = /\b(?:suggest\w*|propos\w*|recommend\w*|aim|goal|target|plan|should|could|would|want)\b/i;
+function unworkedFigures(line: string, known: Set<number>, worked: number[]): Unbacked[] {
+  const found: Unbacked[] = [];
+  let offset = 0;
+  for (const sentence of line.split(/(?<=[.!?;])\s+/)) {
+    const start = line.indexOf(sentence, offset);
+    offset = start + sentence.length;
+    if (!DERIVED.test(sentence)) continue;
+    found.push(...unworkedIn(sentence, known, worked).map((miss) => ({ ...miss, end: start + miss.end })));
+  }
+  return found;
+}
+function unworkedIn(line: string, known: Set<number>, worked: number[]): Unbacked[] {
+  const found: Unbacked[] = [];
+  for (const match of line.matchAll(FIGURE)) {
+    const [, money, digits, decimals = '', scaleWord, share] = match;
+    const scale = { k: 1e3, m: 1e6 }[scaleWord?.toLowerCase() ?? ''] ?? 1;
+    const value = Number(`${digits.replace(/,/g, '')}${decimals}`) * scale;
+    const before = line.slice(0, match.index);
+    const rest = line.slice(match.index + match[0].length);
+    if (PROPOSED.test(before)) continue;
+    if (!money && !share && !decimals && (CONSTANTS.has(value) || (value >= 1900 && value <= 2099))) continue;
+    if (DATE_AFTER.test(rest) || DATE_BEFORE.test(before) || NAMES.test(before)) continue;
+    if (/^\s*(?:[\p{L}'-]+\s+){0,3}\(unsourced\)/u.test(rest)) continue;
+    // As exact as it is written: "8.7" is any sum from 8.65 to 8.75, "€1,380" one from 1,379.5 to 1,380.5.
+    const half = 0.5 * 10 ** -(decimals.length ? decimals.length - 1 : 0) * scale;
+    const near = (one: number) => Math.abs(one - value) <= half + 1e-9 || (!!share && Math.abs(one * 100 - value) <= half + 1e-9);
+    if (known.has(value) || worked.some(near)) continue;
+    found.push({ label: match[0].trim(), end: match.index + match[0].trimEnd().length });
+  }
+  return found;
+}
+
+// The derived figures a write adds that nothing read gives and no calc worked out, each marked "(unsourced)" after it.
+export function markUnworked(input: { before: string; after: string; read: string[] }): { text: string; marked: CountMark[] } {
+  const { plain, free } = sortSums(input.read);
+  const known = new Set(sentencesOf(plain).flatMap(tokensOf).flatMap((token) => (token.value === undefined ? [] : [token.value])));
+  const lines = input.after.split('\n');
+  const marked: CountMark[] = [];
+  for (const { line } of added(input.before, input.after)) {
+    if (/^\s*(?:>|```)/.test(lines[line])) continue;
+    const misses = unworkedFigures(lines[line], known, free);
+    for (const miss of [...misses].reverse()) lines[line] = `${lines[line].slice(0, miss.end)} (unsourced)${lines[line].slice(miss.end)}`;
+    marked.push(...misses.map((miss) => ({ label: miss.label, line: lines[line] })));
+  }
+  return { text: lines.join('\n'), marked };
+}
+
 // A claim of evidence, and the words one of the founder's sentences or a tool result has to share with it.
 const CLAIMS: { said: RegExp; keys: RegExp }[] = [
   { said: /\bretention\b[^.;!?]{0,30}?\b(?:ok|okay|good|fine|strong|high|solid|great|healthy)\b/i, keys: /\b(?:retention|retain|retained|churn|renew|came back|come back|returning|stayed)\b/i },

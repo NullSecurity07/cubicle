@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { evidenceCheck, heardFrom, markClaims, markFeedback, markUnbacked, readableSources } from './evidence.ts';
+import { evidenceCheck, heardFrom, markClaims, markFeedback, markUnbacked, markUnworked, readableSources } from './evidence.ts';
 
 const TEMPLATE = '# Evaluation\n\n## 2. Three specific ways it dies\n\n1. — survivable? — cheapest test:\n\n## 3. Is the pain real?\n\nVitamin — painkiller — hair on fire:\n\nWhat it costs them per month:\n\nReal customer conversations done (of ten to twenty):\n\n## 5. Verdict\n\nOne word (STRONG / WEAK / PIVOT REQUIRED):\n';
 // Journey 10's founder: twelve beta users, two paying, forty playtest sessions logged. Nobody talked to anyone.
@@ -192,5 +192,32 @@ describe('feedback put in customers\' mouths', () => {
   it('is marked in a partner\'s reason', () => {
     expect(markClaims('Keep going because staff engagement remains high.', [ASK])).not.toContain('(assumption)');
     expect(markClaims('Keep going: the offices report strong engagement.', [ASK])).toContain('(assumption)');
+  });
+});
+
+// Journey 13: Tom's Unit Economics worked net burn and runway out in his head, forgot the produce, and both stood.
+describe('a derived figure with no calc behind it', () => {
+  const BRIEF13 = '# Company brief\n\n## Numbers\n\n- Monthly burn: €2,100\n- MRR: €720\n- Cash: €12,000\n- 3 paying offices; produce costs €178 a box';
+  const ASK = 'Work out our unit economics in a new doc.';
+  const mark = (line: string, read: string[]) => markUnworked({ before: '# Unit Economics\n', after: `# Unit Economics\n\n${line}`, read });
+
+  it('is marked "(unsourced)" though its inputs were read', () => {
+    expect(mark('Net burn at current MRR (€720): €1,380 per month', [BRIEF13, ASK]).text).toContain('Net burn at current MRR (€720): €1,380 (unsourced) per month');
+    expect(mark('Runway at net burn: 8.7 months', [BRIEF13, ASK]).text).toContain('Runway at net burn: 8.7 (unsourced) months');
+  });
+  it('stands when a calc this turn worked it out from figures read, rounded as written', () => {
+    const calcs = ['2100 - 720 = 1380', '12000 / 1380 = 8.695652174 (exact: 8.695652173913043)'];
+    expect(mark('Net burn at current MRR (€720): €1,380 per month', [BRIEF13, ASK, ...calcs]).marked).toEqual([]);
+    expect(mark('Runway at net burn: 8.7 months', [BRIEF13, ASK, ...calcs]).marked).toEqual([]);
+    expect(mark('Net burn = 2,100 − 720 = 1,380 (calc)', [BRIEF13, ASK, ...calcs]).marked).toEqual([]);
+    // The right figure, with the produce in, from a calc too.
+    expect(mark('Net burn: €1,914 a month', [BRIEF13, ASK, '2100 + 3 * 178 - 720 = 1914']).marked).toEqual([]);
+  });
+  it('is still marked when the calc rests on a figure nothing read gives', () => {
+    expect(mark('Runway: 6.3 months', [BRIEF13, ASK, '12000 / 1900 = 6.315789474']).marked).toHaveLength(1);
+  });
+  it('leaves alone figures read as written, lines that work nothing out, and dates', () => {
+    for (const line of ['Monthly burn: €2,100 (brief)', 'Price: €178 a box for 3 offices', 'We ship on 10 Nov, 12 months of runway at most.', '5 pilot offices took part.'])
+      expect(mark(line, [BRIEF13, ASK]).marked).toEqual([]);
   });
 });

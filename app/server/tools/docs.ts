@@ -9,7 +9,7 @@ import { text, type Tool, type ToolContext } from './registry.ts';
 import { shortDay } from '../clock.ts';
 import { dropFlagged, figureCheck, HELD_BACK, holdVerdict, verdictStanding, type Receipt } from '../truth.ts';
 import { findCompanyDoc } from '../../shared/partner.ts';
-import { evidenceCheck, markFeedback, markSaid, markUnbacked, readableSources, unbackedEnds } from './evidence.ts';
+import { evidenceCheck, markFeedback, markSaid, markUnbacked, markUnworked, readableSources, unbackedEnds } from './evidence.ts';
 import { filled, guardWrite, sectionBody, standingVerdict, unmarked, verdictState, WHOLE } from './verdict.ts';
 
 // A new doc card's size, and the gap kept round it: the same the window uses when it places one.
@@ -215,6 +215,15 @@ async function checkWrite(context: ToolContext, id: string, before: string, writ
   }
   let after = unsourced.reduce((text, label) => text.replace(at(label), `${label}${MARK}`), written);
   if (unsourced.length) done = `${done} Marked as unsourced, since nothing this turn read gives them: ${unsourced.join(', ')}.`;
+  // A burn, a runway, a margin or a total worked out in the head stands only with a calc behind it.
+  const sources = await evidenceFor(context, before);
+  const unworked = sources ? markUnworked({ before, after, read: sources.read }) : null;
+  if (unworked?.marked.length) {
+    const which = unworked.marked.map(markSaid).join(', ');
+    if (rules) throw new Error(`not written: ${which} ${unworked.marked.length > 1 ? 'are figures' : 'is a figure'} worked out with no calc this turn and in nothing read. ${WORK_IT_OUT}`);
+    after = unworked.text;
+    done = `${done} Marked as unsourced, since no calc this turn worked them out and nothing read gives them: ${which}. ${WORK_IT_OUT}`;
+  }
   if (rules) {
     const held = await heldToEvidence(context, before, after);
     after = held.text;
@@ -246,6 +255,8 @@ async function checkWrite(context: ToolContext, id: string, before: string, writ
   const said = guarded.held ? guarded.note! : [done, guarded.note].filter(Boolean).join(' ');
   return { text: guarded.text, said };
 }
+// With no numbers in it: a tool result is read, and an example figure here would source itself.
+const WORK_IT_OUT = 'Work each one out with calc from figures read, every cost in, and write the working line in the doc, as "Net burn = costs − MRR = result (calc)".';
 const quote = (text: string) => (text.length > 90 ? `${text.slice(0, 89)}…` : text);
 
 // Whether a question is about a section: it names the section's words ("founder-market fit") or its number
