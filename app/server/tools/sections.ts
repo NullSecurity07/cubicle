@@ -7,7 +7,8 @@ export type Heading = { level: number; title: string; line: number };
 const HEADING = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
 const FENCE = /^\s*(```|~~~)/;
 
-export const headingKey = (title: string) => title.replace(/^#+\s*/, '').replace(/\s+/g, ' ').trim().toLowerCase();
+// "## Numbers", "numbers" and "Numbers:" are one heading: a person names a section without its marks or its colon.
+export const headingKey = (title: string) => title.replace(/^#+\s*/, '').replace(/\s*:\s*$/, '').replace(/\s+/g, ' ').trim().toLowerCase();
 
 export function headings(text: string): Heading[] {
   const found: Heading[] = [];
@@ -55,6 +56,31 @@ export function replaceSection(text: string, heading: string, body: string): { t
   const head = lines.slice(0, hit.line + 1).join('\n');
   const tail = next ? lines.slice(next.line).join('\n') : '';
   return { text: `${head}\n\n${fresh ? `${fresh}\n` : ''}${tail ? `\n${tail}` : ''}`.replace(/\n{3,}$/, '\n\n') };
+}
+
+// The document with `added` put at the end of the section under one heading, before the next heading of the same or a
+// higher level, so a line asked for in "Numbers" lands in Numbers and not at the bottom of the document. `title` is the
+// heading as the document has it. With no such heading, `missing` lists the headings there are; with two, it is unclear.
+export function appendToSection(text: string, heading: string, added: string):
+  { text: string; title: string } | { missing: string } | { error: string } {
+  const all = headings(text);
+  const key = headingKey(heading);
+  const hits = all.filter((one) => headingKey(one.title) === key);
+  const listed = all.map((one) => `"${one.title}"`).join(', ') || 'none';
+  if (!hits.length) return { missing: listed };
+  if (hits.length > 1) return { error: `more than one heading is called "${hits[0].title}", so it is not clear where to add. Its headings: ${listed}.` };
+  const [hit] = hits;
+  const next = all.find((one) => one.line > hit.line && one.level <= hit.level);
+  const lines = text.split('\n');
+  const end = next ? next.line : lines.length;
+  const head = lines.slice(0, end).join('\n').replace(/\s+$/, '');
+  const tail = next ? lines.slice(end).join('\n') : '';
+  // A list item goes straight under the section's last line, as one more line of its list; anything else, or anything
+  // under a bare heading, after a blank line, so it is not run into the line before.
+  const body = added.replace(/^\s*\n/, '').replace(/\s+$/, '');
+  const bare = !lines.slice(hit.line + 1, end).some((line) => line.trim());
+  const gap = !bare && /^\s*(?:[-*+]|\d+[.)])\s/.test(body) ? '\n' : '\n\n';
+  return { text: `${head}${gap}${body}\n${tail ? `\n${tail}` : ''}`, title: hit.title.replace(/\s*:\s*$/, '') };
 }
 
 // One of `named` that this write adds a second copy of, or null. A second "## 5. Verdict" appended at the end is how a

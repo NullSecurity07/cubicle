@@ -167,7 +167,7 @@ export function buildMessages(stage: Stage, roomId: string, docs: Record<string,
     toolNames.length
       ? `You can act with these tools: ${toolNames.join(', ')}. Use one when the founder asks for the work itself, not for advice about it. `
         + (toolNames.includes('write_doc') && mine.length
-          ? `You may change only the documents connected to your room (${mine.map((id) => `"${stage.docs.find((doc) => doc.id === id)!.title}"`).join(', ')}), with replace_section to change one section, append_doc to add, or write_doc only to rewrite it whole, naming the document by its title. `
+          ? `You may change only the documents connected to your room (${mine.map((id) => `"${stage.docs.find((doc) => doc.id === id)!.title}"`).join(', ')}), with replace_section to change one section, append_doc to add (with section set to add inside one, such as "Numbers"), or write_doc only to rewrite it whole, naming the document by its title. `
             + 'Their text is already below: never look for a document with read_file or list_files, which only see the separate shared files folder. '
           // Nothing wired, but a document made in this turn is theirs to go on writing.
           : toolNames.includes('write_doc') && toolNames.includes('create_doc') ? 'A document you make with create_doc is yours to go on writing in this turn, with replace_section, append_doc or write_doc, naming it by its title. '

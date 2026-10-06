@@ -85,6 +85,45 @@ describe('doc tools', () => {
     expect((await store.readDoc('brand-doc')).match(/^## Monday$/gm)).toHaveLength(2);
   });
 
+  it('adds inside a named section, before the next heading, and says where it went', async () => {
+    const { store, call } = await setup();
+    const out = await call('append_doc', { doc: 'Brand doc', section: 'Review', text: '- Dana: pricing is unclear.' });
+    expect(out.ok).toBe(true);
+    expect(out.text).toMatch(/^Added 1 line to the end of the "Review" section\./);
+    expect(await store.readDoc('brand-doc')).toBe(PLAN.replace('Faye: the numbers are unsourced.\n', 'Faye: the numbers are unsourced.\n- Dana: pricing is unclear.\n'));
+  });
+
+  it('finds the section past "##", case and a trailing colon', async () => {
+    const { store, call } = await setup();
+    await store.replaceDoc('brand-doc', '# Brief\n\n## Numbers:\n\n- 12 beta users\n\n## Open questions\n\n- Pricing?\n');
+    const out = await call('append_doc', { doc: 'Brand doc', section: '## numbers', text: '- 2 paying' });
+    expect(out.text).toMatch(/to the end of the "Numbers" section/);
+    expect(await store.readDoc('brand-doc')).toBe('# Brief\n\n## Numbers:\n\n- 12 beta users\n- 2 paying\n\n## Open questions\n\n- Pricing?\n');
+  });
+
+  it('says plainly when the named section is not there, and adds at the end', async () => {
+    const { store, call } = await setup();
+    const out = await call('append_doc', { doc: 'Brand doc', section: 'Numbers', text: 'Ten users.' });
+    expect(out.ok).toBe(true);
+    expect(out.text).toMatch(/^There is no "Numbers" section in this document \(its headings: "Launch plan", "Research", "Review", "Build"\), so this was added at the end, after "Build"\. Do not say it went into "Numbers"\./);
+    expect(await store.readDoc('brand-doc')).toBe(`${PLAN}\nTen users.\n`);
+  });
+
+  it('quotes a marked line back, so the reply can say it with its "(unsourced)" mark', async () => {
+    const { store, context } = await setup();
+    await store.replaceDoc('brand-doc', '# Company brief\n\n## Numbers\n\n- 12 beta users, 2 paying\n\n## Open questions\n\n- Pricing?\n');
+    const read = ['The founder: we have 12 beta users, 2 of them paying.'];
+    const turn = { ...context, sources: () => read, evidence: () => ({ read, said: read }) };
+    const out = await runTool(docTools, 'append_doc', JSON.stringify({ doc: 'Brand doc', section: 'Numbers', text: '- Projected paying users (December): 10' }), turn);
+    expect(out.ok).toBe(true);
+    const doc = await store.readDoc('brand-doc');
+    expect(doc).toContain('- 12 beta users, 2 paying\n- Projected paying users (December): 10');
+    expect(doc.indexOf('Projected')).toBeLessThan(doc.indexOf('## Open questions'));
+    expect(out.text).toMatch(/^Added 1 line to the end of the "Numbers" section\./);
+    expect(out.text).toContain('It reads: "- Projected paying users (December): 10 (unsourced)".');
+    expect(out.text).toMatch(/quote it with its "\(unsourced\)" mark/);
+  });
+
   it('points a person to write_doc when a section to replace is there twice', async () => {
     const { store, call } = await setup();
     await store.replaceDoc('brand-doc', `${PLAN}\n## Build\n\nAgain\n`);
@@ -107,7 +146,7 @@ describe('a count nothing read gives, in a doc with no rules', () => {
     const { out, doc, again, store } = await write('We ran 14 customer interviews with our 40 playtest hosts.');
     expect(out.ok).toBe(true);
     expect(doc).toContain('We ran 14 (unsourced) customer interviews with our 40 (unsourced) playtest hosts.');
-    expect(out.text).toMatch(/Marked as unsourced, since nothing read gives them for what they count: "14" .*"40" .*Read for them, or take them out\.$/);
+    expect(out.text).toMatch(/Marked as unsourced, since nothing read gives them for what they count: "14" .*"40" .*Read for them, or take them out\./);
     expect((await again()).text).not.toMatch(/Marked/);
     expect((await store.readDoc('brand-doc')).match(/\(unsourced\)/g)).toHaveLength(2);
   });
@@ -124,7 +163,7 @@ describe('a count nothing read gives, in a doc with no rules', () => {
     ].join('\n');
     const { out, doc } = await write(text);
     expect(doc).toContain(text);
-    expect(out.text).toMatch(/^Added \d+ characters\.$/);
+    expect(out.text).toMatch(/^Added \d+ lines at the end of the document, after "Build"\.$/);
   });
 });
 
@@ -143,10 +182,10 @@ describe('a figure nothing this turn read', () => {
     expect(again.text).toBe(`Wrote ${(await store.readDoc('brand-doc')).length} characters.`);
     expect((await store.readDoc('brand-doc')).match(/\(unsourced\)/g)).toHaveLength(2);
     // A figure the doc itself marked is no source for saying it again; one the doc states plainly is.
-    expect((await runTool(docTools, 'append_doc', JSON.stringify({ doc: 'Brand doc', text: 'Still €80 for an accountant.' }), sourced)).text).toMatch(/Marked as unsourced.*: €80\.$/);
-    expect((await runTool(docTools, 'append_doc', JSON.stringify({ doc: 'Brand doc', text: 'The review found 3 rivals.' }), sourced)).text).toBe('Added 26 characters.');
+    expect((await runTool(docTools, 'append_doc', JSON.stringify({ doc: 'Brand doc', text: 'Still €80 for an accountant.' }), sourced)).text).toMatch(/Marked as unsourced.*: €80\. It reads: "Still €80 \(unsourced\) for an accountant\."\. When you tell the founder, quote it with its "\(unsourced\)" mark\.$/);
+    expect((await runTool(docTools, 'append_doc', JSON.stringify({ doc: 'Brand doc', text: 'The review found 3 rivals.' }), sourced)).text).toBe('Added 1 line at the end of the document, after "Build".');
     // Outside a turn there is nothing to check against, and nothing is marked.
-    expect((await call('append_doc', { doc: 'Brand doc', text: 'Rent is $900.' })).text).toBe('Added 13 characters.');
+    expect((await call('append_doc', { doc: 'Brand doc', text: 'Rent is $900.' })).text).toBe('Added 1 line at the end of the document, after "Build".');
   });
 
   it('is refused in a team doc with rules, with the figures named', async () => {
