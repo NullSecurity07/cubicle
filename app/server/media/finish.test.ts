@@ -170,3 +170,56 @@ describe('a drawn picture that does not show its scene', () => {
     expect(redraws).toBe(1);
   });
 });
+
+// Journey 17: a night-shift nurse drawn lying on a staff-room floor under "night-shift nurses eat badly".
+describe('somebody lying on the floor', () => {
+  const nurse: Visual = { at: 0, scene: 0, take: 0, line: 'Night-shift nurses eat badly because canteens are closed at night.',
+    subject: 'nurses, an exhausted night-shift nurse resting her head against a locker in the staff room', kind: 'medium', room: 'foot' };
+  const label = 'a photograph of nurses and canteens';
+  // A sight that scores each file as its scene and as somebody lying down, by the shares it is told.
+  const posed = (shares: Record<string, [number, number]>, asked: string[][] = []): Sight => ({
+    warm: () => {}, why: () => null, look: async () => fine, plies: async () => null,
+    versus: async (file, labels) => { asked.push(labels); return shares[file.split('/').pop()!] ?? null; },
+  });
+
+  it('is drawn again standing when the picture is nearer "a person lying on the floor" than its scene, and the standing one is kept', async () => {
+    const lines: string[] = [];
+    const drawn: Visual[] = [];
+    const asked: string[][] = [];
+    const done = await finishPicture({
+      dir: '/nowhere', file: 'one.png', visual: nurse, scene, pack: 'clean', paint, state: looking(), report: (line) => lines.push(line),
+      sight: posed({ 'one.png': [0.2, 0.8], 'one-b.png': [0.9, 0.1] }, asked),
+      subject: { label, closer: nurse },
+      redraw: async (again) => { drawn.push(again); return 'one-b.png'; },
+    });
+    expect(asked[0]).toEqual([label, 'a person lying on the floor']);
+    expect(done.file).toBe('one-b.png');
+    expect(drawn[0].subject).toContain('standing upright');
+    expect(drawn[0].subject).not.toMatch(/resting/);
+    expect(lines.join(' ')).toMatch(/lying on the floor \(0\.80\), so it was drawn again standing \(0\.10\)/);
+  });
+
+  it('leaves a picture that is nearer its scene, and one whose line has somebody lying down', async () => {
+    let redraws = 0;
+    const first = await finishPicture({
+      dir: '/nowhere', file: 'one.png', visual: nurse, scene, pack: 'clean', paint, state: looking(), report: () => {},
+      sight: posed({ 'one.png': [0.7, 0.3] }), subject: { label, closer: nurse }, redraw: async () => { redraws += 1; return 'one-b.png'; },
+    });
+    expect(first.file).toBe('one.png');
+    const asleep = { ...nurse, line: 'After a twelve-hour shift she is asleep on the sofa.' };
+    const second = await finishPicture({
+      dir: '/nowhere', file: 'one.png', visual: asleep, scene, pack: 'clean', paint, state: looking(), report: () => {},
+      sight: posed({ 'one.png': [0.2, 0.8] }), subject: { label, closer: asleep }, redraw: async () => { redraws += 1; return 'one-b.png'; },
+    });
+    expect(second.file).toBe('one.png');
+    expect(redraws).toBe(0);
+  });
+
+  it('keeps the first picture when the standing one is no better', async () => {
+    const done = await finishPicture({
+      dir: '/nowhere', file: 'one.png', visual: nurse, scene, pack: 'clean', paint, state: looking(), report: () => {},
+      sight: posed({ 'one.png': [0.3, 0.7], 'one-b.png': [0.2, 0.8] }), subject: { label, closer: nurse }, redraw: async () => 'one-b.png',
+    });
+    expect(done.file).toBe('one.png');
+  });
+});

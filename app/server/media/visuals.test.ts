@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   afforded, aboutTheLine, criticiseVisuals, drawnAs, fillerShot, kindFor, lineUnder, photoOfTheLine, repairVisuals, sceneLine, stockQueries, thingsOf, topicOf,
   shareOut, shares, slotsFor, somebodyIn, unlettered, visualFrom, visualsOf, visualsPrompt, type Visual, shotKey,
-  closeHolds, settingOf, standInOf, worldOf, worldScore,
+  closeHolds, settingOf, standInOf, worldOf, worldScore, nounsOf, packOf, packedFor, liesDown,
 } from './visuals.ts';
 import { productFacts } from './gather.ts';
 import { foreignIn } from './places.ts';
@@ -571,5 +571,73 @@ describe('a film about a marketplace is a film of its printers and makers', () =
     const { visuals } = repairVisuals([tiles], world);
     expect(visuals[0].subject).toMatch(/3D printers/);
     expect(criticiseVisuals(visuals, world).map((one) => one.rule)).not.toContain('offworld');
+  });
+});
+
+// Journey 17: "20 s explainer about our meal-prep delivery", ShiftMeals (five ready meals a week for night-shift nurses).
+describe('Journey 17: the meal-prep film', () => {
+  const ASK = '20 s explainer about our meal-prep delivery';
+  const BRIEF = [
+    'What the company does: ShiftMeals, a weekly meal-prep delivery for night-shift nurses. Five ready meals for the shift week, delivered to the hospital staff entrance on Sunday evening.',
+    '## Idea\nNight-shift nurses eat badly because canteens are closed at night. ShiftMeals cooks five meals a week planned around a night shift and delivers them to the hospital.',
+    '## Customer\nNight-shift nurses at two city hospitals.',
+  ].join('\n\n');
+  const LINES = [
+    'Night-shift nurses eat badly because canteens are closed at night.',
+    'ShiftMeals cooks five meals a week planned around a night shift.',
+    'Your weekly order arrives at the hospital staff entrance on Sunday evening.',
+  ];
+  const world = worldOf(ASK, productFacts(BRIEF));
+  const shotOf = (line: string, subject: string): Visual => ({ at: 0, scene: 0, take: 0, line, subject, kind: 'medium', room: 'foot' });
+
+  it('takes no verb, preposition or adverb for a thing of the film', () => {
+    for (const word of ['eat', 'because', 'around', 'cooks', 'badly', 'arrives', 'planned', 'closed']) {
+      expect(world.words).not.toContain(word);
+      expect(LINES.flatMap((line) => thingsOf(line))).not.toContain(word);
+    }
+    expect(world.words).toEqual(expect.arrayContaining(['meal', 'nurses', 'hospital', 'staff', 'entrance', 'canteens']));
+    expect(thingsOf(LINES[0])).toEqual(expect.arrayContaining(['nurses', 'canteens']));
+    expect(thingsOf(LINES[1])).toContain('meals');
+    expect(thingsOf(LINES[2])).toEqual(expect.arrayContaining(['order', 'hospital', 'staff', 'entrance']));
+  });
+
+  it('reads a word by the words beside it: after an article or a number a thing, before an article something done', () => {
+    expect(nounsOf('Volunteers sort parcels every morning.')).toContain('parcels');
+    expect(nounsOf('Volunteers sort the parcels.')).not.toContain('sort');
+    expect(nounsOf('It booked appointments. It transcribes each voicemail.')).toContain('appointments');
+  });
+
+  it('knows the product comes in a box, and draws every food shot in it', () => {
+    expect(world.product).toMatch(/box/);
+    const stew = packedFor(shotOf(LINES[1], 'A night shift meal of warm stew served in a ceramic bowl on a stainless steel counter'), world);
+    expect(stew.subject).toMatch(/containers packed in a cardboard delivery box/);
+    expect(stew.subject).not.toMatch(/bowl/);
+    const plates = packedFor(shotOf(LINES[1], 'five ready meals on white plates on a wooden table'), world);
+    expect(plates.subject).toMatch(/box/);
+    expect(plates.subject).not.toMatch(/plates/);
+    // A shot already of the box, and a shot of a nurse, are left as they are.
+    const boxed = shotOf(LINES[2], 'A cardboard delivery box resting by a hospital door');
+    expect(packedFor(boxed, world)).toBe(boxed);
+    const nurse = shotOf(LINES[0], 'a night-shift nurse at a locker in the staff room');
+    expect(packedFor(nurse, world)).toBe(nurse);
+  });
+
+  it('packs nothing for a film whose product is not boxed food', () => {
+    expect(packOf('A 20 second clip about a weekly pottery class making bowls and plates')).toBeUndefined();
+    expect(packOf('Callback turns a dental practice\'s voicemail into booked appointments.')).toBeUndefined();
+    expect(packOf('A meal kit with recipes, delivered weekly')).toMatch(/meal kit box/);
+    const pottery = worldOf('A 20 second explainer about our pottery class', 'We teach a weekly class making bowls.');
+    const bowl = shotOf('Make your first bowl.', 'a clay bowl on a wheel');
+    expect(packedFor(bowl, pottery)).toBe(bowl);
+  });
+
+  it('draws anybody standing or sitting upright at work, unless the line lays them down', () => {
+    const nurse = shotOf(LINES[0], 'an exhausted night-shift nurse resting her head against a locker');
+    expect(drawnAs(nurse, BIBLE)).toMatch(/standing or sitting upright at work in a natural pose/);
+    expect(drawnAs(nurse, BIBLE)).not.toMatch(/lying/);
+    const asleep = shotOf('After a double shift she is asleep on the sofa.', 'a nurse asleep on a staff-room sofa');
+    expect(liesDown(asleep.line)).toBe(true);
+    expect(drawnAs(asleep, BIBLE)).not.toMatch(/upright/);
+    expect(drawnAs(shotOf(LINES[1], 'five ready meals in a delivery box'), BIBLE)).not.toMatch(/upright/);
   });
 });

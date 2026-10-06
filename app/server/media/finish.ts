@@ -1,10 +1,10 @@
 import { join } from 'node:path';
 import { blankness, isBlank, liftFor, lighten, meanLight, scrimFor } from './contrast.ts';
 import { SUBJECT_PRESENT } from './picture-policy.ts';
-import { facesLens, fault, isLettered, type Plies, type Sight } from './sight.ts';
+import { ASKS, facesLens, fault, isLettered, type Plies, type Sight } from './sight.ts';
 import type { Scene } from './spec.ts';
 import { PACK, type Pack } from './templates/index.ts';
-import { redrawnFor, type Visual } from './visuals.ts';
+import { liesDown, redrawnFor, uprightFor, type Visual } from './visuals.ts';
 
 // What happens to one picture between arriving and going on screen, for a new film and for a film remade from
 // notes alike. It used to live inside the first render only, so a remake in a new look redrew every picture with
@@ -18,7 +18,7 @@ export type Finished = { file: string; visual: Visual; hold?: number; lift?: num
 
 // What one film's pictures share while they are finished: how many have been drawn a second time, and which
 // faults the card has already been told about.
-export type Looking = { redrawn: number; told: Set<string>; absent?: number };
+export type Looking = { redrawn: number; told: Set<string>; absent?: number; posed?: number };
 export const looking = (): Looking => ({ redrawn: 0, told: new Set(), absent: 0 });
 
 // Twice a film at most: a redraw is most of a minute, and a studio that doubts every picture it draws is a studio
@@ -27,6 +27,9 @@ export const REDRAWS = 2;
 // A drawn picture that does not show its own scene's things is drawn once more, closer, up to this many a film. It
 // is its own count, so a stranger at the lens in one picture never spends the redraw an empty corridor needed.
 export const ABSENT_REDRAWS = 3;
+// A drawn picture seen as somebody lying on the floor, under a line that has nobody lying down, is drawn once more
+// standing up, up to this many a film.
+export const POSE_REDRAWS = 2;
 
 export async function finishPicture(one: {
   // The folder the picture sits in, and its name there.
@@ -83,6 +86,26 @@ export async function finishPicture(one: {
         const after = await sight.about(join(dir, second), one.subject.label).catch(() => null);
         if (after !== null && after > present) { file = second; kept = one.subject.closer; }
         one.report(`scene ${visual.scene + 1}: the picture did not show ${one.subject.label.replace(/^a photograph of /, '')} (${present.toFixed(2)}), so it was drawn again closer${after !== null ? ` (${after.toFixed(2)})` : ''}`);
+      } catch { /* the first picture stands */ }
+    }
+  }
+  // And whether anybody in it is lying on the floor when the line has nobody lying down. Journey 17's night-shift
+  // nurse lay on a staff-room floor beside two plates under "night-shift nurses eat badly", which no rule about the
+  // scene's own things catches: she was a nurse, and there were meals. The studio's eyes score the picture as its
+  // scene against "a person lying on the floor"; nearer the second, it is drawn again standing, and the one less
+  // like somebody lying down is kept.
+  if (one.subject && sight?.versus && one.redraw && !stop?.aborted && (state.posed ?? 0) < POSE_REDRAWS
+    && !liesDown(`${visual.line} ${visual.about ?? ''}`)) {
+    const labels = [one.subject.label, ASKS.lying];
+    const before = await sight.versus(join(dir, file), labels).catch(() => null);
+    if (before && before[1] > before[0]) {
+      state.posed = (state.posed ?? 0) + 1;
+      const again = uprightFor(kept);
+      try {
+        const second = await one.redraw(again);
+        const after = await sight.versus(join(dir, second), labels).catch(() => null);
+        if (!after || after[1] < before[1]) { file = second; kept = again; }
+        one.report(`scene ${visual.scene + 1}: the picture had somebody lying on the floor (${before[1].toFixed(2)}), so it was drawn again standing${after ? ` (${after[1].toFixed(2)})` : ''}`);
       } catch { /* the first picture stands */ }
     }
   }

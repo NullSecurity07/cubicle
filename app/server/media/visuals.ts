@@ -146,6 +146,17 @@ export function redrawnFor(visual: Visual, found: { face: boolean }): Visual {
   };
 }
 
+// Whether a line has somebody lying down in it, which is the only time a picture of them may.
+const LIES = /\b(?:lying|lies|lie down|lay down|laid down|asleep|sleeping|sleeps|slept|napping|naps?|in bed|on the floor|collaps(?:e|es|ed|ing)|faint(?:s|ed|ing)?|unconscious)\b/i;
+export const liesDown = (line: string): boolean => LIES.test(line ?? '');
+// The words in a subject that lay its person down, and the same subject with them stood back up. What a picture
+// that was seen lying down is drawn again from.
+const LAID = /\b(?:lying|lies|asleep|sleeping|napping|resting|slumped|collapsed|sprawled|curled up)\b[^,.;]*/gi;
+export function uprightFor(visual: Visual): Visual {
+  const subject = (visual.subject ?? '').replace(LAID, ' ').replace(/\s{2,}/g, ' ').replace(/\s+([,.;])/g, '$1').replace(/[\s,.;]+$/, '').trim();
+  return { ...visual, subject: `${subject || visual.subject}, standing upright at work` };
+}
+
 // --- is this picture of what is being said? ------------------------------------------------------------------
 
 // How much two subjects have in common, counted in the words that carry meaning. Two pictures that share most of
@@ -180,9 +191,62 @@ const NOT_THINGS = new Set(['nothing', 'anything', 'everything', 'something', 'n
   'never', 'always', 'still', 'even', 'also', 'again', 'beside', 'without', 'within', 'across', 'through', 'free',
   'private', 'local', 'automatically', 'did', 'does', 'done', 'going', 'said', 'says', 'able', 'less', 'much', 'many']);
 export const THING_STEM = (word: string) => word.replace(/(?:ing|ed|s)$/, '').replace(/e$/, '');
+
+// Words that are never a thing in a picture: the ways a sentence joins and places its things, and the verbs a line
+// does most. Journey 17's meal-prep film drew "eat and because" and "cooks and around": the world had been built out
+// of "Night-shift nurses eat badly because canteens are closed at night. ShiftMeals cooks five meals a week planned
+// around a night shift", and every word of it that was not a stop word had passed for a thing.
+const NOT_NOUNS = new Set([
+  // where and when a thing is
+  'around', 'because', 'although', 'though', 'whether', 'unless', 'while', 'whilst', 'since', 'until', 'till', 'before',
+  'after', 'above', 'below', 'behind', 'between', 'beneath', 'beyond', 'besides', 'among', 'amongst', 'amid', 'against',
+  'along', 'alongside', 'toward', 'towards', 'throughout', 'underneath', 'under', 'upon', 'onto', 'inside', 'outside',
+  'near', 'nearly', 'past', 'per', 'via', 'despite', 'except', 'instead', 'either', 'neither', 'nor', 'yet', 'too',
+  // how and how often
+  'now', 'soon', 'already', 'often', 'sometimes', 'usually', 'maybe', 'perhaps', 'almost', 'enough', 'quite', 'rather',
+  'ever', 'away', 'together', 'anyway', 'everywhere', 'somewhere', 'nowhere', 'well', 'badly', 'later', 'early', 'late',
+  'directly', 'right', 'straight', 'twice', 'once', 'tonight', 'abroad', 'ahead', 'apart', 'aside',
+  // the verbs a line does, which are never what a picture is of
+  'eat', 'eats', 'ate', 'eaten', 'drink', 'drinks', 'drank', 'sleep', 'sleeps', 'slept', 'arrive', 'arrives', 'become',
+  'becomes', 'became', 'bring', 'brings', 'brought', 'buy', 'buys', 'bought', 'come', 'comes', 'came', 'find', 'finds',
+  'go', 'goes', 'went', 'gone', 'happen', 'happens', 'let', 'lets', 'lose', 'loses', 'lost', 'mean', 'means', 'put',
+  'puts', 'receive', 'receives', 'spend', 'spends', 'tell', 'tells', 'told', 'think', 'thinks', 'thought', 'wake',
+  'wakes', 'woke', 'begin', 'begins', 'began', 'feel', 'feels', 'felt', 'seem', 'seems', 'stay', 'stays', 'skip',
+  'skips', 'choose', 'chooses', 'chose', 'deliver', 'delivers', 'cook', 'cooks', 'plan', 'plans', 'save', 'saves',
+  'pay', 'pays', 'sign', 'cancel', 'cancels', 'pause', 'pauses', 'grow', 'grows', 'grew', 'let', 'help', 'helps',
+  'are', 'got', 'gotten', 'gave', 'given', 'took', 'saw', 'seen', 'knew', 'known', 'felt', 'kept', 'met', 'sat']);
+// …and which of them a line really uses as a thing: "the cooks in the kitchen" are people, "ShiftMeals cooks five
+// meals" is something the company does. A word straight after an article or a possessive is a thing; one after a
+// pronoun or a modal, or straight before an article, a number or a pronoun, is something done. One after a number
+// is counted, so a thing: "five meals a week".
+const DETERMINERS = new Set(['a', 'an', 'the', 'your', 'their', 'our', 'my', 'his', 'her', 'its', 'this', 'that', 'these',
+  'those', 'each', 'every', 'some', 'any', 'no']);
+const DOERS = new Set(['to', 'will', 'would', 'can', 'could', 'should', 'may', 'might', 'must', 'we', 'you', 'they', 'i',
+  'he', 'she', 'it', 'who', 'nobody', 'somebody', 'someone', 'everyone', 'anyone']);
+const DONE_TO = new Set(['a', 'an', 'the', 'your', 'their', 'our', 'my', 'his', 'her', 'its', 'them', 'him', 'us', 'me', 'it']);
+// A line's words in order, with a mark where a sentence or a clause ends, so a word is never read by the next one's.
+const words = (text: string) => text.toLowerCase().replace(/[.,;:!?()]+/g, ' | ').replace(/[^\p{L}\p{N}\s|]+/gu, ' ').split(/\s+/).filter(Boolean);
+// Whether a word is used as a thing somewhere in the line, by the words either side of it.
+function usedAsThing(word: string, said: string[]): boolean {
+  const places = said.flatMap((one, at) => (one === word ? [at] : []));
+  if (!places.length) return true;
+  return places.some((at) => {
+    const before = said[at - 1] ?? '';
+    const after = said[at + 1] ?? '';
+    if (DETERMINERS.has(before) || numberish(before)) return true;
+    if (DOERS.has(before)) return false;
+    if (DONE_TO.has(after) || numberish(after)) return false;
+    return !(after.length > 3 && /ly$/.test(after) && !NOUN_LY.has(after));
+  });
+}
+// The few words ending in -ly that are things, and so may follow a thing without making it a verb.
+const NOUN_LY = new Set(['family', 'belly', 'jelly', 'rally', 'ally', 'lily', 'assembly', 'supply', 'reply', 'weekly', 'daily', 'monthly']);
+// Whether a word could be a thing at all: not a joining word, an adverb or a verb the studio knows.
+export const thingWord = (word: string): boolean => !NOT_THINGS.has(word) && !NOT_NOUNS.has(word) && !/(?:ly|ing|ed)$/.test(word);
 export function nounsOf(line: string): string[] {
   SUMMONS_TEXT.lastIndex = 0;
-  return [...new Set(content(line ?? '').filter((word) => !NOT_THINGS.has(word) && !/(?:ly|ing|ed)$/.test(word)
+  const said = words(line ?? '');
+  return [...new Set(content(line ?? '').filter((word) => thingWord(word) && usedAsThing(word, said)
     && !new RegExp(SUMMONS_TEXT.source, 'i').test(word)))];
 }
 export const hasNoun = (text: string, nouns: string[]): boolean => {
@@ -325,7 +389,45 @@ export type World = {
   // The kind the founder wrote a thing with, by the thing: "3D printers" is { printers: '3D' }. Drawn without it, the
   // film's 3D printers came back as a laser printer, an inkjet and an ink cartridge.
   kinds?: Record<string, string>;
+  // What the product comes packed as, when the brief sells a box, a kit or a subscription: "sealed meal-prep
+  // containers in a delivery box". Every picture of its food is drawn in it.
+  product?: string;
 };
+
+// --- what the product comes in ----------------------------------------------------------------------------------
+//
+// Journey 17's meal-prep delivery film drew its meals as plated restaurant dishes and a stew in a clay pot: nothing
+// on the screen was the product, which is five meals a week in boxes at the staff entrance. A brief that sells a
+// box, a kit or a weekly delivery of food has its food drawn the way it arrives.
+// What the product sells is food: said in its own words, not a bowl or a plate, which a pottery class has too.
+const FOOD = /\b(?:meals?|food|foods|lunch(?:es)?|dinners?|breakfasts?|snacks?|groceries|recipes?|ingredients?|menus?)\b/i;
+// A picture of food: the product's own words, and the dishes and doings a picture model draws food as.
+const FOOD_SHOT = /\b(?:meals?|food|foods|lunch(?:es)?|dinners?|breakfasts?|snacks?|dish(?:es)?|groceries|recipes?|ingredients?|stews?|soups?|salads?|curr(?:y|ies)|pasta|rice|noodles|plates?|bowls?|cooking|cooked|cooks?|eat|eats|eating|menus?)\b/i;
+const PACKED = /\b(box(?:es)?|kits?|crates?|hampers?|containers?)\b/i;
+const SUBSCRIBED = /\b(?:meal[- ]?prep|subscriptions?|subscribers?|delivered|deliver(?:y|ies|s)?)\b/i;
+const IN_A_BOX = 'ready meals in sealed containers packed in a cardboard delivery box';
+export function packOf(text: string): string | undefined {
+  const said = text ?? '';
+  if (!FOOD.test(said)) return undefined;
+  const boxed = PACKED.exec(said)?.[1].toLowerCase();
+  if (boxed?.startsWith('kit')) return 'a meal kit box with its fresh ingredients packed inside';
+  if (boxed || /\bmeal[- ]?prep\b/i.test(said)) return /\bmeal[- ]?prep\b/i.test(said) ? 'sealed meal-prep containers packed in a cardboard delivery box' : IN_A_BOX;
+  return SUBSCRIBED.test(said) ? IN_A_BOX : undefined;
+}
+// Whether a picture is of the product's food, by what is drawn in it: the line only when there is no subject yet.
+// A nurse under "nurses eat badly" is a picture of a nurse.
+export const foodShot = (visual: Pick<Visual, 'line' | 'about' | 'subject'>): boolean =>
+  FOOD_SHOT.test((visual.subject ?? '').trim() || (visual.line ?? ''));
+// How a picture model plates food when nobody says otherwise, which a packed product never is.
+const PLATED = /\b(?:(?:served|plated|arranged|laid out)\s+)?(?:on|in|onto|into)\s+(?:a\s+|an\s+|the\s+|two\s+|three\s+|four\s+|five\s+|several\s+)?(?:[\p{L}-]+\s+){0,2}(?:plates?|bowls?|dish(?:es)?|pots?|platters?|trays?)\b/giu;
+// A food shot of a film whose product is packed, drawn in its pack: its plates and bowls taken out of the subject
+// and the pack written into it, unless it is in there already.
+export function packedFor(visual: Visual, world?: World): Visual {
+  if (!world?.product || !foodShot(visual)) return visual;
+  if (/\b(?:box(?:es)?|containers?|kits?)\b/i.test(visual.subject ?? '')) return visual;
+  const unplated = (visual.subject ?? '').replace(PLATED, ' ').replace(/\s{2,}/g, ' ').replace(/\s+([,.;])/g, '$1').replace(/[\s,.;]+$/, '').trim();
+  return { ...visual, subject: [unplated, world.product].filter(Boolean).join(', ') };
+}
 
 // A kind a picture model reads the thing by: "3D", "2D". Written "3-D" or "3‑D" by a model, it is the same kind.
 const KIND = /\b(\d)\s*[-‑–]?\s*(d)\b/gi;
@@ -378,7 +480,8 @@ export function worldOf(ask: string, facts = ''): World {
     const thing = THING_STEM(hit[2].toLowerCase());
     if (words.some((word) => THING_STEM(word) === thing)) kinds[thing] = kindOf(hit[1])[0];
   }
-  return { words, named, setting: settingOf(ask), ...(Object.keys(kinds).length ? { kinds } : {}) };
+  const pack = packOf(named);
+  return { words, named, setting: settingOf(ask), ...(Object.keys(kinds).length ? { kinds } : {}), ...(pack ? { product: pack } : {}) };
 }
 
 // Objects that stand in for an idea rather than show the film's world, and the marks of a museum's or an archive's
@@ -806,7 +909,14 @@ export function drawnAs(visual: Visual, bible: string): string {
   // The clause that invites a person is written on the one picture that is allowed one and nowhere else. It used
   // to be on all of them, and a picture model handed it draws a person every time — the same person, because the
   // look is fixed. Four shots of one stranger is what that cost on a real reel.
-  const who = somebodyIn(body) ? ', anybody in the picture is at work and turned away from the camera' : '';
+  //
+  // And how they hold themselves. Journey 17 drew a night-shift nurse lying on a staff-room floor beside two plates,
+  // out of "an exhausted nurse resting her head against a locker" under a line about eating badly. So anybody drawn
+  // stands or sits upright at work, unless the line itself has somebody lying down. It is said as what they do, never
+  // as what they do not: a picture model reads "not lying down" as "lying down".
+  const who = somebodyIn(body) || content(body).some((word) => PEOPLE_WORDS.test(word))
+    ? `, anybody in the picture is ${liesDown(`${visual.line} ${visual.about ?? ''}`) ? '' : 'standing or sitting upright at work in a natural pose, '}turned away from the camera`
+    : '';
   // How big and through what, where the storyboard said: a phrase about focus and distance, never anybody's name.
   // A shot the rules have since re-framed (a second person taken out, a face stepped back from) has left the size it
   // was given behind, and a close-up's long lens on what is now a wide is two instructions that disagree.
