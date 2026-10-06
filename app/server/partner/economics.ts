@@ -37,6 +37,18 @@ function monthly(row: Row): number {
   return row.amounts[0].value;
 }
 const unitOf = (label: string) => label.toLowerCase().replace(/\s*\(.*\)$/, '').trim();
+// What one price is paid for, when the brief says: "€12 per print job" is paid per print job, so break-even counts print
+// jobs a month, not the paying hosts beside it (journey 15 said "50 paying hosts" three times after the founder said
+// otherwise). A price a month, a year or per user, seat or customer is the paying row's own.
+const PERIOD_OR_PAYER = /^(?:month|mo|year|yr|week|day|user|seat|customer|client|subscriber|member|account|licen[cs]e|head)s?$/i;
+export function perUnit(line: string): string | undefined {
+  const found = /^(?:[$€£]\s?)?\d[\d,]*(?:\.\d+)?\s*k?\s*(?:[$€£])?\s*(?:(?:per|a|an|each)\s+|\/\s*)((?:[a-z][a-z-]*\s+){0,2}?[a-z][a-z-]*)(?=\s*(?:,|;|\.|$|\bpaid\b|\bfrom\b|\bto\b|\bfor\b))/i.exec(line.replace(/\(.*?\)/g, ' ').trim());
+  const words = found?.[1].trim().toLowerCase();
+  // "€240 per office a month" is a subscription per paying office, not a price per job.
+  if (!words || PERIOD_OR_PAYER.test(words.split(/\s+/).at(-1)!) || /^\s*(?:a|per|each|\/)\s*(?:month|mo|year|yr)\b/i.test(line.replace(/\(.*?\)/g, ' ').slice((found!.index ?? 0) + found![0].length))) return undefined;
+  return words.endsWith('s') ? words : /(?:x|ch|sh)$/.test(words) ? `${words}es` : /[^aeiou]y$/.test(words) ? `${words.slice(0, -1)}ies` : `${words}s`;
+}
+const stem = (word: string) => word.replace(/(?:es|s)$/, '');
 
 // The working from the Company brief's Numbers section, or nothing when it does not hold enough to work anything out.
 export function economicsOf(numbers: string): Economics | null {
@@ -46,7 +58,13 @@ export function economicsOf(numbers: string): Economics | null {
   const fixed = find(rows, /\bfixed costs?\b|\boverheads?\b|\bburn\b|\boperating costs?\b|\bexpenses\b/i, /\bnet\b/i);
   const net = find(rows, /\bnet burn\b/i);
   const cash = find(rows, /\bcash\b|\bin the bank\b|\bbank balance\b/i);
-  const paying = find(rows, /\bpaying\b|\bcustomers\b|\bsubscribers\b/i, /\bprice\b|\bcost\b/i);
+  const payers = find(rows, /\bpaying\b|\bcustomers\b|\bsubscribers\b/i, /\bprice\b|\bcost\b/i);
+  const said = price ? perUnit(price.line) : undefined;
+  // Priced per the very thing the paying row counts ("€40 per office", "Paying offices: 5"): that is the paying unit.
+  const per = said && !(payers && new RegExp(`\\b${stem(said.split(' ').at(-1)!)}`, 'i').test(payers.label)) ? said : undefined;
+  // Priced per job: what is counted is that thing ("Print jobs done: 4"), never the paying people beside it.
+  const counted = per ? find(rows, new RegExp(`\\b${stem(per.split(' ').at(-1)!)}`, 'i'), /\bprice\b|\bcost\b/i) : undefined;
+  const paying = per ? counted : payers;
   const working: Working[] = [];
   const out: Economics = { working };
   const currency = /[$€£]/.exec(numbers)?.[0];
@@ -63,31 +81,35 @@ export function economicsOf(numbers: string): Economics | null {
   const f = fixed ? monthly(fixed) : undefined;
   const n = paying?.amounts[0].value;
   if (n !== undefined && paying) { out.current = n; out.unit = unitOf(paying.label); }
+  if (per) out.unit = `${per} a month`;
   const inputs: Inputs = { price: p, cost: c, fixed: f, net: net ? monthly(net) : undefined, cash: cash?.amounts[0].value, paying: n };
   out.inputs = Object.fromEntries(Object.entries(inputs).filter(([, value]) => value !== undefined)) as Inputs;
   const units = out.unit ?? 'paying customers';
+  // A count of jobs done so far is not a month's count: it is said as what the brief has, and never nets the burn.
+  const have = n === undefined ? '' : per ? `; the brief has ${n} (${paying!.label.toLowerCase()})` : `; we have ${n}`;
+  const nets = !per;
   // Journey 14's brief gave a price and the whole month's burn and no cost per practice: the partner worked break-even
   // and runway out in its head (and got runway wrong) because nothing here did. With no cost per unit, each paying
   // unit's price goes to the fixed costs whole, and the line says the brief gives no cost.
   if (p !== undefined && c === undefined && f !== undefined) {
-    out.breakEven = work('Break-even', 'ceil(fixed / price)', `fixed=${f}, price=${p}`, (value) => `${units} to cover the burn (the brief gives no cost per unit)${n !== undefined ? `; we have ${n}` : ''}`);
+    out.breakEven = work('Break-even', 'ceil(fixed / price)', `fixed=${f}, price=${p}`, () => `${units} to cover the burn (the brief gives no cost per unit)${have}`);
   }
   if (p !== undefined && c !== undefined && f !== undefined) {
     if (p - c <= 0) {
       work('Break-even', 'price - cost', `price=${p}, cost=${c}`, () => `a month on each of the ${units}: each one loses money, so no count breaks even`);
       out.breakEven = Infinity;
     } else {
-      out.breakEven = work('Break-even', 'ceil(fixed / (price - cost))', `fixed=${f}, price=${p}, cost=${c}`, (value) => `${units} to cover fixed costs${n !== undefined ? `; we have ${n}` : ''}`);
+      out.breakEven = work('Break-even', 'ceil(fixed / (price - cost))', `fixed=${f}, price=${p}, cost=${c}`, () => `${units} to cover fixed costs${have}`);
     }
   }
   if (cash) {
     const money = cash.amounts[0].value;
     if (net) work('Runway', 'round(cash / net, 1)', `cash=${money}, net=${monthly(net)}`, () => 'months at the net burn');
-    else if (f !== undefined && p !== undefined && c !== undefined && n !== undefined && f - n * (p - c) > 0) {
+    else if (nets && f !== undefined && p !== undefined && c !== undefined && n !== undefined && f - n * (p - c) > 0) {
       work('Runway', 'round(cash / (fixed - paying * (price - cost)), 1)', `cash=${money}, fixed=${f}, paying=${n}, price=${p}, cost=${c}`, () => 'months at the net burn');
-    } else if (f !== undefined && p !== undefined && c === undefined && n !== undefined && f - n * p > 0) {
+    } else if (nets && f !== undefined && p !== undefined && c === undefined && n !== undefined && f - n * p > 0) {
       work('Runway', 'round(cash / (burn - paying * price), 1)', `cash=${money}, burn=${f}, paying=${n}, price=${p}`, () => 'months at the net burn');
-    } else if (f !== undefined && p === undefined) work('Runway', 'round(cash / burn, 1)', `cash=${money}, burn=${f}`, () => 'months at the burn');
+    } else if (f !== undefined && (p === undefined || !nets)) work('Runway', 'round(cash / burn, 1)', `cash=${money}, burn=${f}`, () => `months at the burn${nets ? '' : ` (the brief gives no ${per} a month to net it)`}`);
   }
   return working.length ? out : null;
 }

@@ -10,6 +10,7 @@ import type { Handler, Payloads } from '../seams.ts';
 import { heldForMemory } from '../tools/docs.ts';
 import { reflectTools } from '../tools/reflect.ts';
 import { NOT_WRITTEN } from '../truth.ts';
+import { correctionsIn, saysWrong } from '../partner/corrections.ts';
 import type { UsageBook } from '../usage.ts';
 
 // Retain: after a conversation turn, a person writes down on its own the one or two things worth keeping from it —
@@ -109,7 +110,7 @@ export function ownFigure(fact: string, sources: string[]): boolean {
 }
 
 export function createRetain(deps: {
-  memory: Pick<Memory, 'read' | 'remember'>; store: Store; extract?: Extract;
+  memory: Pick<Memory, 'read' | 'remember'> & Partial<Pick<Memory, 'write'>>; store: Store; extract?: Extract;
   // The room's memory changed: the panel reads itself again.
   changed: (roomId: string) => void;
   log?: (line: string) => void; now?: () => number;
@@ -140,11 +141,27 @@ export function createRetain(deps: {
     return null;
   }
 
+  // The note lines that say a figure the founder just said is wrong, taken out.
+  async function forget(roomId: string, corrected: ReturnType<typeof correctionsIn>) {
+    if (!deps.memory.write) return;
+    const { notes } = await deps.memory.read(roomId);
+    const lines = notes.split('\n');
+    const left = lines.filter((line) => !saysWrong(line, corrected));
+    if (left.length === lines.length) return;
+    await deps.memory.write(roomId, { notes: left.join('\n') });
+    deps.changed(roomId);
+    log(`retain · ${lines.length - left.length} kept ${lines.length - left.length === 1 ? 'line' : 'lines'} the founder corrected taken out`);
+  }
+
   // Reads one exchange and keeps what lasts. Gives back the lines it kept.
   async function retain(payload: Payloads['turn:after']): Promise<string[]> {
     const { roomId } = payload;
     // Only the founder's own turns count towards "three turns since": a run in between is not a conversation.
     if (payload.source === 'chat') turns.set(roomId, (turns.get(roomId) ?? EVERY_TURNS) + 1);
+    // Journey 15: the founder said "50 print jobs a month, not 50 paying hosts" and the notes kept "Break-even point: 50
+    // paying hosts" and said it again. A figure the founder says is wrong leaves the notes at once, whatever else runs.
+    const corrected = payload.source === 'chat' ? correctionsIn(payload.query) : [];
+    if (corrected.some((one) => one.wrong)) await forget(roomId, corrected).catch((error: Error) => log(`retain · ${error.message}`));
     if (await why(payload)) return [];
     turns.set(roomId, 0);
     last.set(roomId, now());
@@ -167,7 +184,10 @@ export function createRetain(deps: {
       const founder = (await deps.store.readChat(roomId).catch(() => [] as ChatMessage[])).filter((message) => message.role === 'user').map((message) => message.text);
       const sources = [payload.query, ...founder, ...docs, ...payload.reply.tools.map((tool) => (tool.ok ? tool.result ?? '' : ''))];
       const kept: string[] = [];
+      const wrong = correctionsIn(founder.slice(-30).join('\n'));
       for (const fact of facts) {
+        // Never a figure the founder said is wrong, in this exchange or lately.
+        if (saysWrong(fact, [...corrected, ...wrong])) continue;
         // Read again right before each line is written, not once before the model was asked: a remember from this
         // same turn, and the line kept just before, are in the notes by now.
         const notes = (await deps.memory.read(roomId)).notes;
