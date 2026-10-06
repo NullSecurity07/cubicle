@@ -652,6 +652,26 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
     });
   }
 
+  // 4b. Nothing is said twice. Journey 13: the director, asked for one more line to fill twenty seconds, wrote the
+  //     film's closing line again, and "Taste the difference real dirt and sunshine make" was heard in scenes three
+  //     and five. The second saying goes; when it is the close, the earlier one goes instead, so the film still ends
+  //     on it. A scene that shows something real (a screenshot, a picture, a clip) stays on screen without the
+  //     line; one that only said it is dropped.
+  const shows = (scene: Scene) => !!(scene.asset || scene.image_prompt || scene.clip_prompt || scene.portrait_prompt) || scene.layout === 'device' || scene.layout === 'footage';
+  const sayOnce = () => {
+    for (let later = 1; later < scenes.length && scenes.length > 2; later += 1) {
+      const said = scenes[later].say?.trim();
+      if (!said) continue;
+      const earlier = scenes.findIndex((one, index) => index < later && !!one.say?.trim() && saidAgain(one.say!, said));
+      if (earlier < 0) continue;
+      const quiet = later === scenes.length - 1 ? earlier : later;
+      note('a line the film already said was said again, so it is said once');
+      if (shows(scenes[quiet])) scenes = scenes.map((one, index) => (index === quiet ? { ...one, say: undefined, source: undefined } : one));
+      else { scenes = scenes.filter((_one, index) => index !== quiet); later -= 1; }
+    }
+  };
+  sayOnce();
+
   // 5. No scene holds longer than a breath. A line too long for one scene is two scenes when there is room for one
   //    and a shorter line when there is not.
   const ceiling = want.pace === 'punchy' ? 4 : 6;
@@ -873,7 +893,13 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
     }
   }
 
+  // 15. Nothing is said twice, once more: the close and the promise above may have put a line back.
+  sayOnce();
+
   return { spec: { ...spec, scenes }, notes };
 }
+
+// Whether two spoken lines are the same line: each has nearly all of the other's words.
+export const saidAgain = (one: string, other: string): boolean => echoes(one, other) >= 0.8 && echoes(other, one) >= 0.8;
 
 const LISTS = new Set<Layout>(['checklist', 'steps', 'bullets', 'compare', 'chart']);
