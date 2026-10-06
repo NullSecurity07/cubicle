@@ -90,11 +90,18 @@ const bigEnough = (kind: StockKind, width: number, height: number): boolean =>
 // Openverse lets an anonymous caller ask twenty times a minute and two hundred times a day. Each search is counted
 // in a small file beside the cache, and the counts Openverse sends back in its headers win over ours. When either
 // is spent, the asking stops and Commons is asked instead, and the founder is told once.
+//
+// One film is also held to eight searches of its own (`OPENVERSE_PER_FILM`). A nine-shot film asked a query and then
+// its first word alone for every shot, spent the whole minute by itself, and every picture after that was drawn.
 export const OPENVERSE_DAY = 200;
 export const OPENVERSE_MINUTE = 20;
+export const OPENVERSE_PER_FILM = 8;
+// How long a search waits for a free slot in the minute before Commons is asked instead.
+export const OPENVERSE_WAIT = 20_000;
 export const OPENVERSE_SPENT = "today's two hundred free Openverse searches are used up, so photographs come from Wikimedia Commons until tomorrow";
-export const OPENVERSE_BUSY = 'Openverse allows twenty searches a minute and this film has asked for them all, so the next photographs come from Wikimedia Commons';
-type Count = { day: string; used: number; minute: number[]; left?: number };
+export const OPENVERSE_BUSY = "Openverse allows twenty searches a minute and they are spent, so the rest of this film's photographs come from Wikimedia Commons";
+export const OPENVERSE_FILM = "this film has used up its eight Openverse searches, so the rest of its photographs come from Wikimedia Commons";
+type Count = { day: string; used: number; minute: number[]; left?: number; burst?: number; burstAt?: number };
 export function allowance(file: string | null, now: () => number = Date.now) {
   const today = () => new Date(now()).toISOString().slice(0, 10);
   let held: Count | null = null;
@@ -102,6 +109,8 @@ export function allowance(file: string | null, now: () => number = Date.now) {
     if (!held) held = file ? await readFile(file, 'utf8').then((raw) => JSON.parse(raw) as Count).catch(() => null) : null;
     if (!held || held.day !== today()) held = { day: today(), used: 0, minute: [] };
     held.minute = held.minute.filter((at) => now() - at < 60_000);
+    // What Openverse said was left of the minute holds for that minute only.
+    if (held.burstAt !== undefined && now() - held.burstAt >= 60_000) { held.burst = undefined; held.burstAt = undefined; }
     return held;
   };
   const save = async () => { if (file && held) await writeFile(file, JSON.stringify(held)).catch(() => {}); };
@@ -110,8 +119,16 @@ export function allowance(file: string | null, now: () => number = Date.now) {
     async blocked(): Promise<string | null> {
       const count = await load();
       if (count.used >= OPENVERSE_DAY || count.left === 0) return OPENVERSE_SPENT;
-      if (count.minute.length >= OPENVERSE_MINUTE) return OPENVERSE_BUSY;
+      if (count.minute.length >= OPENVERSE_MINUTE || count.burst === 0) return OPENVERSE_BUSY;
       return null;
+    },
+    // How long until the minute has room for one more search: 0 when it has room now. Openverse's own count of the
+    // minute wins over ours, the same as for the day.
+    async room(): Promise<number> {
+      const count = await load();
+      const ours = count.minute.length >= OPENVERSE_MINUTE ? count.minute[0] + 60_000 - now() : 0;
+      const theirs = count.burst === 0 && count.burstAt !== undefined ? count.burstAt + 60_000 - now() : 0;
+      return Math.max(0, ours, theirs);
     },
     async spend(headers?: Headers) {
       const count = await load();
@@ -119,6 +136,8 @@ export function allowance(file: string | null, now: () => number = Date.now) {
       count.minute.push(now());
       const left = Number(headers?.get('x-ratelimit-available-anon_sustained') ?? NaN);
       if (Number.isFinite(left)) count.left = left;
+      const burst = Number(headers?.get('x-ratelimit-available-anon_burst') ?? NaN);
+      if (Number.isFinite(burst)) { count.burst = burst; count.burstAt = now(); }
       await save();
     },
     async spent(which: 'day' | 'minute') {
@@ -132,6 +151,13 @@ export function allowance(file: string | null, now: () => number = Date.now) {
     },
   };
 }
+
+const pause = (ms: number, signal?: AbortSignal): Promise<void> => new Promise((done, fail) => {
+  if (signal?.aborted) { fail(new Error('stopped')); return; }
+  const timer = setTimeout(() => { signal?.removeEventListener('abort', stop); done(); }, ms);
+  const stop = () => { clearTimeout(timer); fail(new Error('stopped')); };
+  signal?.addEventListener('abort', stop, { once: true });
+});
 
 // --- fetching a file once ----------------------------------------------------------------------------------------
 
@@ -161,19 +187,31 @@ function keeper(dir: string, http: typeof fetch, taken: Found[]) {
 
 // --- Openverse ----------------------------------------------------------------------------------------------------
 
-export function openverse(http: typeof fetch = fetch, dir = '.cache/stock', now: () => number = Date.now): Stock {
+// `film()` is one film's own view of it: at most eight searches, a query it has already asked answered from what came
+// back the first time (the film's topic is asked for shot after shot), and a full minute waited out for up to twenty
+// seconds rather than spent. The same library with no film around it (a probe, a test) has no cap of its own.
+export function openverse(http: typeof fetch = fetch, dir = '.cache/stock', now: () => number = Date.now,
+  wait: (ms: number, signal?: AbortSignal) => Promise<void> = pause): Stock {
   const taken: Found[] = [];
   const count = allowance(join(dir, 'openverse-count.json'), now);
-  return {
+  const view = (film?: { asked: number; seen: Map<string, Found[]> }): Stock => ({
     name: 'Openverse',
     ready: () => null,
+    film: () => view({ asked: 0, seen: new Map() }),
     async find(want, signal) {
       // Openverse holds pictures and sound, not footage.
       if ((want.kind ?? 'photo') === 'video') return [];
       const query = queryOf(want.query);
       if (!query) return [];
+      const key = `${query}|${want.shape ?? ''}|${want.many ?? 8}`;
+      const before = film?.seen.get(key);
+      if (before) return before;
+      if (film && film.asked >= OPENVERSE_PER_FILM) throw new Error(OPENVERSE_FILM);
+      const full = await count.room();
+      if (full > 0 && full <= OPENVERSE_WAIT) await wait(full, signal);
       const blocked = await count.blocked();
       if (blocked) throw new Error(blocked);
+      if (film) film.asked += 1;
       const aspect = want.shape === 'tall' ? 'tall' : want.shape === 'square' ? 'square' : 'wide';
       const url = `https://api.openverse.org/v1/images/?q=${encodeURIComponent(query)}&license=cc0,pdm,by&aspect_ratio=${aspect}&size=large&mature=false&page_size=20`;
       await mkdir(dir, { recursive: true }).catch(() => {});
@@ -186,7 +224,7 @@ export function openverse(http: typeof fetch = fetch, dir = '.cache/stock', now:
       await count.spend(answer.headers);
       if (!answer.ok) throw new Error(`Openverse answered ${answer.status}`);
       const said = (await answer.json()) as { results?: Record<string, unknown>[] };
-      return (said.results ?? []).flatMap((item): Found[] => {
+      const found = (said.results ?? []).flatMap((item): Found[] => {
         const licence = licenceOf(`${String(item.license ?? '') === 'by' ? 'CC BY' : String(item.license ?? '')} ${String(item.license_version ?? '')}`.trim());
         const width = Number(item.width ?? 0);
         const height = Number(item.height ?? 0);
@@ -210,10 +248,13 @@ export function openverse(http: typeof fetch = fetch, dir = '.cache/stock', now:
           people: peopleIn(`${title} ${tags}`), credit,
         }];
       }).slice(0, want.many ?? 8);
+      film?.seen.set(key, found);
+      return found;
     },
     get: keeper(dir, http, taken),
     used: () => [...taken],
-  };
+  });
+  return view();
 }
 
 // --- Wikimedia Commons ----------------------------------------------------------------------------------------------
@@ -301,6 +342,9 @@ export function commons(http: typeof fetch = fetch, dir = '.cache/stock'): Stock
 // the minute, or one that refuses a key, is set aside for the rest of the film and the founder is told once; one
 // that merely errored is passed over this time. If none of them answers, the error says so in plain words and the
 // film draws the picture.
+//
+// `film()` is the same chain for one film: a library set aside is set aside for that film, not for every film after
+// it, and each library hands over its own film's view (Openverse's eight searches).
 export function stockChain(sources: Stock[]): Stock {
   const resting = new Set<string>();
   const lines: string[] = [];
@@ -352,6 +396,7 @@ export function stockChain(sources: Stock[]): Stock {
       return source.get(one, signal);
     },
     used: () => sources.flatMap((one) => one.used()),
+    film: () => stockChain(sources.map((one) => one.film?.() ?? one)),
     heard: () => lines.splice(0),
     footageFrom: () => live().filter((one) => one.moving).map((one) => (one.name === 'pexels' ? 'Pexels' : one.name)),
   };
@@ -361,5 +406,6 @@ export function stockChain(sources: Stock[]): Stock {
 export function photoLibrary(env: NodeJS.ProcessEnv = process.env, http: typeof fetch = fetch, dir = '.cache/stock'): Stock {
   const free = [openverse(http, dir), commons(http, dir)];
   const chain = stockChain(env.PEXELS_API_KEY?.trim() ? [pexels(env, http, dir), ...free] : free);
-  return { ...chain, noClip: () => missedClip(dir) };
+  const noClip = () => missedClip(dir);
+  return { ...chain, noClip, film: () => ({ ...chain.film!(), noClip }) };
 }

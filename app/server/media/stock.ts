@@ -63,6 +63,8 @@ export type Stock = {
   footageFrom?(): string[];
   // Counts one clip a film asked for and found nowhere, so Health can say so.
   noClip?(): Promise<void>;
+  // The library as one film uses it: its own allowance, and a library set aside for that film only.
+  film?(): Stock;
 };
 
 // A photographer's name and the page their picture lives on, said the way a credit is said.
@@ -91,13 +93,13 @@ export const NONE_ANSWERED = 'no free photograph library answered';
 export function trouble(error: unknown): { say: string; stop: boolean } {
   const message = error instanceof Error ? error.message : String(error);
   if (message === PEXELS_HINT) return { say: '', stop: true };
+  // Every free library tried and none answered: said once, and the picture is drawn. The next scene asks again,
+  // because a library that blinked for one search is usually back for the next, unless every one is set aside.
+  if (message.startsWith(NONE_ANSWERED)) return { say: message, stop: /the rest of the pictures are drawn/.test(message) };
   if (/used up/i.test(message) || /\b429\b/.test(message)) return { say: message, stop: true };
   // Only the search itself carries the key. A 403 on fetching one photograph is the picture's CDN saying no to that
   // one file, not Pexels refusing the founder's key.
   if (/stock library answered (401|403)\b/.test(message)) return { say: PEXELS_REFUSED, stop: true };
-  // Every free library tried and none answered: said once, and the picture is drawn. The next scene asks again,
-  // because a library that blinked for one search is usually back for the next.
-  if (message.startsWith(NONE_ANSWERED)) return { say: message, stop: false };
   return { say: '', stop: false };
 }
 
@@ -134,7 +136,9 @@ export function clipMissLine(misses: ClipMiss[], from: string[]): string {
   const where = from.length ? from.join(' and ') : 'the free footage libraries';
   return `no free clip for '${misses[0].query}'; tried ${where}, ${seen ? `${fit} of ${seen} fit` : 'none came back with a free licence, a wide enough frame and three to ninety seconds'}`;
 }
-export function filmStock(stock: Stock | undefined, pack: string, report: (line: string) => void): FilmStock {
+export function filmStock(library: Stock | undefined, pack: string, report: (line: string) => void): FilmStock {
+  // This film's own use of the library: what it sets aside and what it spends is its own.
+  const stock = library?.film?.() ?? library;
   const on = !!stock && photographable(pack);
   let troubled = false;
   const said = new Set<string>();
