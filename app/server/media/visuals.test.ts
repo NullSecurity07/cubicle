@@ -397,7 +397,9 @@ describe('photographs of the whole topic, and of nowhere the brief never went', 
     expect(topic).toEqual(['farmers', 'market']);
     expect(photoOfTheLine('Kuay Makuach, farmer, Lankien', question, topic, brief)).toBe(false);
     expect(photoOfTheLine("Arcata Farmer's Market", question, topic, brief)).toBe(true);
-    expect(photoOfTheLine('Ripe tomatoes on the vine', question, topic, brief)).toBe(true);
+    expect(photoOfTheLine('Tomatoes at a market stall', question, topic, brief)).toBe(true);
+    // A line's thing alone is not enough beside a two-word topic: a concert crowd is not a market crowd.
+    expect(photoOfTheLine('DJ Snake looking down to the crowd', { line: 'You plan a stop, avoiding crowds.' }, topic, brief)).toBe(false);
   });
 
   it('refuses a picture of a country, a city or a news day the brief does not name', () => {

@@ -231,7 +231,10 @@ export const photoOfTheLine = (what: string, visual: Pick<Visual, 'line' | 'abou
   const nouns = [...new Set([...things, ...topic])];
   // A line that names nothing ("you decide") takes any photograph; one whose only things were numbers takes none.
   if (!nouns.length) return !nounsOf(said).length;
-  if (hasNoun(what, things)) return true;
+  // With a topic of two words, a line's thing counts beside one of them: "DJ Snake looking down to the crowd" shares
+  // "crowd" with a line about avoiding crowds, and is still a concert rather than a farmers market.
+  const topical = whole.some((word) => hasNoun(what, [word]));
+  if (hasNoun(what, things) && (whole.length < 2 || topical)) return true;
   if (!whole.length) return false;
   return whole.every((word) => hasNoun(what, [word]));
 };
@@ -253,7 +256,8 @@ export const numberish = (word: string): boolean => NUMBERISH.has(word.toLowerCa
 // The commonest words for how a thing is rather than what it is, which a title search reads as things.
 const QUALITIES = new Set(['wet', 'dry', 'old', 'young', 'little', 'tiny', 'huge', 'large', 'empty', 'full', 'quiet', 'loud',
   'bright', 'dark', 'black', 'white', 'red', 'blue', 'green', 'yellow', 'brown', 'grey', 'gray', 'soft', 'hard', 'warm',
-  'cold', 'slow', 'fast', 'long', 'short', 'high', 'low', 'rough', 'smooth', 'clean', 'dirty', 'fresh', 'raw', 'shape']);
+  'cold', 'slow', 'fast', 'long', 'short', 'high', 'low', 'rough', 'smooth', 'clean', 'dirty', 'fresh', 'raw', 'shape',
+  'golden', 'natural', 'gentle', 'vibrant', 'busy', 'colourful', 'colorful', 'ripe', 'rustic']);
 
 // A line's photographable things: its nouns, less every number, sum and date and the words for a quality.
 export const thingsOf = (line: string): string[] => nounsOf(line).filter((word) => !numberish(word) && !QUALITIES.has(word));
