@@ -1,3 +1,4 @@
+import { now as clockNow } from '../clock.ts';
 import { leadName } from '../../shared/leads.ts';
 import { readAskId, replyAsk, waitingReply } from '../../shared/leads-thread.ts';
 import type { Slice } from '../install.ts';
@@ -22,7 +23,7 @@ export function threadSlice(make: { mail?: () => Pick<Mail, 'received' | 'ways'>
     order: 120,
     install(deps) {
       // Until the one clock lands, the moment comes from here, so a test can move it.
-      const now = make.now ?? (() => Date.now());
+      const now = make.now ?? clockNow;
       // In fake mode there is never a mailbox to read: replies come in by hand, as they do without a key.
       const mail = make.mail ? make.mail() : deps.fake ? createMail({}) : createMail();
       const thread = createThread({ leads: leadsFor(deps.workspace), boards: deps.boards, metrics: () => metricsFor(deps.workspace), loadStage: () => deps.store.loadStage(), now });

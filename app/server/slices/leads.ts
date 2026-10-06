@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 import { unreachedFor } from '../tools/unread.ts';
 import { LEAD_STAGES, leadName, leadsChannel, STAGE_NAMES, type Lead, type LeadsEvent } from '../../shared/leads.ts';
-import { shortDay } from '../clock.ts';
+import { now as clockNow, shortDay } from '../clock.ts';
 import { hub } from '../events.ts';
 import type { Slice } from '../install.ts';
 import { createOutreach, fakeRunner, outreachEnv, uvxRunner } from '../leads/openoutreach.ts';
@@ -153,7 +153,7 @@ export default {
     };
     // An email the founder said yes to, to somebody on a wired Leads card, is the founder contacting them; one a
     // person drafted is written on the thread of whoever it is to, so the founder opening it in Gmail can count too.
-    const thread = createThread({ leads, boards: deps.boards, metrics: () => metricsFor(deps.workspace), loadStage: () => deps.store.loadStage(), now: () => Date.now() });
+    const thread = createThread({ leads, boards: deps.boards, metrics: () => metricsFor(deps.workspace), loadStage: () => deps.store.loadStage(), now: clockNow });
     const after: Handler<'tool:after'> = async (payload, next) => {
       const { event, roomId } = payload;
       if ((event.name === 'send_email' || event.name === 'draft_email') && event.ok) {
