@@ -67,5 +67,11 @@ const extOf = (name: string) => name.split('.').pop()?.toLowerCase() ?? '';
 
 // A shared file: known kinds by name, other text as plain text, anything else as bytes.
 export const typeOf = (name: string) => (!OWN_ONLY.has(extOf(name)) && MIME[extOf(name)]) || (TEXT_FILE.test(name) ? 'text/plain' : 'application/octet-stream');
+// The header a shared file goes out with. Text says it is UTF-8, or a browser reads it as Latin-1 and a film's credits
+// file shows "Â·" for every middle dot and "â€”" for every dash.
+export const servedType = (name: string): string => {
+  const type = typeOf(name);
+  return /^text\/|^application\/json$|^image\/svg\+xml$/.test(type) ? `${type}; charset=utf-8` : type;
+};
 // A file of the built client.
 export const staticType = (path: string) => MIME[extname(path).slice(1).toLowerCase()] ?? 'application/octet-stream';

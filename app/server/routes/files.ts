@@ -1,5 +1,5 @@
 import { pipeline } from 'node:stream/promises';
-import { answer, raw, typeOf, type Route } from '../http.ts';
+import { answer, raw, servedType, typeOf, type Route } from '../http.ts';
 import { rangeOf } from '../static.ts';
 import type { Store } from '../store.ts';
 
@@ -19,7 +19,7 @@ export function fileRoutes(deps: { store: Store }): Route {
       const size = await store.fileSize(name);
       if (size === null) return answer(res, 404, { error: 'no such file' });
       // Files may hold anything a person or a page produced: never let one run as a page of this app.
-      const headers = { 'content-type': typeOf(name), 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox", 'x-content-type-options': 'nosniff', 'cache-control': 'no-cache', 'accept-ranges': 'bytes' };
+      const headers = { 'content-type': servedType(name), 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox", 'x-content-type-options': 'nosniff', 'cache-control': 'no-cache', 'accept-ranges': 'bytes' };
       // A player asks for a piece at a time, and will not play or seek a sound or a video that answers with the lot.
       // Only the piece asked for is read off the disk: seeking in a long film is not the whole film read again.
       const piece = rangeOf(Array.isArray(req.headers.range) ? req.headers.range[0] : req.headers.range, size);
