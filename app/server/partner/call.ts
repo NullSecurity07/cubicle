@@ -1,5 +1,6 @@
 import { markClaims } from '../tools/evidence.ts';
 import type { TurnResult } from '../loop.ts';
+import { saysGap, wideGap, type Economics } from './economics.ts';
 
 // Journey 11: asked "keep going, pivot, or stop?", the partner said "keep going" with reasons from the brief, and named
 // nothing that would change its mind or when to look. A co-founder's verdict commits: the call, the strongest reason
@@ -11,9 +12,11 @@ export type Decision = 'keep going' | 'change course' | 'stop';
 // The one measurable thing that would change the call: what it is with its threshold, the day to look, and anything
 // said after the day ("; if not, change course").
 export type KillSignal = { what: string; by: string; then?: string };
-export type PartnerCall = { decision?: Decision; why?: string; signal?: KillSignal; move?: string };
-export type CallField = 'call' | 'why' | 'kill signal' | 'date' | 'this week';
-export type ReadCall = PartnerCall & { missing: CallField[]; unsourced: string[]; rest: string };
+// `working`: the brief's numbers worked out with calc before the call, shown under the reason. `gap`: said when the
+// call is "keep going" far below break-even and nothing says how the gap closes.
+export type PartnerCall = { decision?: Decision; why?: string; signal?: KillSignal; move?: string; working?: string[]; gap?: string };
+export type CallField = 'call' | 'why' | 'kill signal' | 'date' | 'this week' | 'how the gap closes';
+export type ReadCall = PartnerCall & { missing: CallField[]; unsourced: string[]; rest: string; closes?: string };
 
 // A day of two to six weeks from today: soon enough to matter, long enough for the number to move.
 export const SOONEST = 14;
@@ -30,17 +33,18 @@ const between = (from: string, to: string) => Math.round((new Date(`${to}T12:00`
 // "should we kill it?", "go or no-go".
 export const asksVerdict = (said: string) => /\bverdict\b|\bkeep going\b[^.!\n]*\b(?:pivot|stop|quit|kill|change course)\b|\bshould (?:i|we) (?:keep going|continue|stop|quit|kill|shut|give up|pivot)\b|\bkill (?:it|this|the (?:idea|company|project|product))\b|\bgo or no[- ]go\b/i.test(said);
 
-export const callShape = (today: string) => `The founder asks for your verdict on the company. Start your answer with these four lines, each on its own line with its label, then at most a few short lines more:\n`
+export const callShape = (today: string, worked = false) => `The founder asks for your verdict on the company. Start your answer with these four lines, each on its own line with its label, then at most a few short lines more:\n`
   + 'My call: keep going, change course or stop (one of the three).\n'
-  + 'Why: the strongest reason, using only numbers from the Company document, the chat or what you read this turn. Never a number you worked out or guessed.\n'
+  + `Why: the strongest reason, using only numbers from the Company document, the chat or what you read this turn${worked ? ', and the break-even and runway working given you below' : ''}. Never a number you worked out or guessed.\n`
   + `Kill signal: one number the founder can measure and the threshold that would change your call, then "by YYYY-MM-DD", a day from ${plusDays(today, SOONEST)} to ${plusDays(today, LATEST)} (today is ${today}).\n`
   + 'This week: the first move, one thing the founder does this week.';
 
-const LABELS: { field: 'call' | 'why' | 'kill' | 'week'; label: RegExp }[] = [
+const LABELS: { field: 'call' | 'why' | 'kill' | 'week' | 'gap'; label: RegExp }[] = [
   { field: 'call', label: /^(?:my call|verdict|decision|the call)\s*:\s*/i },
   { field: 'why', label: /^(?:why|reason|the reason|strongest reason|because)\s*:\s*/i },
   { field: 'kill', label: /^(?:kill signal|kill criterion|kill metric|kill switch|kill line|tripwire)\s*:\s*/i },
   { field: 'week', label: /^(?:this week|first move(?: this week)?|next move|first step)\s*:\s*/i },
+  { field: 'gap', label: /^(?:gap|the gap|how the gap closes)\s*:\s*/i },
 ];
 // A line as the label sees it: no bullet, no bold or italics, no heading marks.
 const plain = (line: string) => line.replace(/^\s*(?:[-*+]|\d+[.)]|#+)\s+/, '').replace(/[*_`]/g, '').trim();
@@ -103,15 +107,18 @@ export function unsourcedIn(text: string, evidence: string): string[] {
   return out;
 }
 
+const WORKING = /^(?:break[- ]?even|runway)\s*:/i;
+
 // The verdict in a reply: each labelled line read, what is missing named, and the reply's other lines kept as they are.
-export function readCall(text: string, today: string, evidence: string): ReadCall {
-  const said: Partial<Record<'call' | 'why' | 'kill' | 'week', string>> = {};
+export function readCall(text: string, today: string, evidence: string, economics?: Economics | null): ReadCall {
+  const said: Partial<Record<'call' | 'why' | 'kill' | 'week' | 'gap', string>> = {};
   const rest: string[] = [];
   for (const line of text.split('\n')) {
     const bare = plain(line);
     const hit = LABELS.find((one) => one.label.test(bare));
     if (hit && !said[hit.field]) said[hit.field] = tidy(bare.replace(hit.label, ''));
-    else if (!hit) rest.push(line);
+    // The working is shown under the reason from the calc results themselves, so a copy of it in the reply goes.
+    else if (!hit && !(economics && WORKING.test(bare))) rest.push(line);
   }
   const missing: CallField[] = [];
   const decision = said.call ? decisionOf(said.call) : undefined;
@@ -123,17 +130,23 @@ export function readCall(text: string, today: string, evidence: string): ReadCal
   missing.push(...kill.missing);
   const move = said.week || undefined;
   if (!move) missing.push('this week');
-  return { decision, why, signal: kill.signal, move, missing, unsourced, rest: rest.join('\n').replace(/\n{3,}/g, '\n\n').trim() };
+  const restText = rest.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  const closed = !!economics && saysGap(`${why ?? ''}\n${said.gap ?? ''}\n${move ?? ''}\n${restText}`, economics);
+  if (decision === 'keep going' && wideGap(economics) && !closed) missing.push('how the gap closes');
+  return { decision, why, signal: kill.signal, move, missing, unsourced, rest: restText, ...(said.gap ? { closes: said.gap } : {}) };
 }
 
 // The second look asks only for what is missing, each line with its rule.
-export function callNudge(read: Pick<ReadCall, 'missing' | 'unsourced'>, today: string): string {
+export function callNudge(read: Pick<ReadCall, 'missing' | 'unsourced'>, today: string, economics?: Economics | null): string {
   const lines: string[] = [];
+  if (read.missing.includes('how the gap closes') && economics) lines.push(`Gap: your call is keep going, but break-even is ${economics.breakEven} ${economics.unit} and the company has ${economics.current}. In one line, say how that gap closes (price, cost, or reaching ${economics.breakEven} by when), or change the call.`);
   if (read.missing.includes('call')) lines.push('My call: keep going, change course or stop (one of the three).');
   if (read.missing.includes('why')) lines.push(`Why: the strongest reason, with only numbers the Company document, the chat or what you read gives${read.unsourced.length ? ` (nothing on record gives ${read.unsourced.join(', ')})` : ''}.`);
   if (read.missing.includes('kill signal') || read.missing.includes('date')) lines.push(`Kill signal: one number the founder can measure and the threshold that would change your call, then "by YYYY-MM-DD", a day from ${plusDays(today, SOONEST)} to ${plusDays(today, LATEST)} (today is ${today}).`);
   if (read.missing.includes('this week')) lines.push('This week: the first move, one thing the founder does this week.');
   const names = read.missing.filter((one, index, all) => all.indexOf(one) === index && !(one === 'date' && all.includes('kill signal')));
+  // A gap asked about may change the call itself, so the call line is answered again with it.
+  if (read.missing.includes('how the gap closes') && !read.missing.includes('call')) lines.unshift('My call: keep going, change course or stop (one of the three).');
   return `Take another look before this goes to the founder: your verdict is missing ${names.join(', ')}. Answer with only these lines, nothing else:\n${lines.join('\n')}`;
 }
 
@@ -144,6 +157,8 @@ export function renderCall(call: PartnerCall, rest = ''): string {
   const lines = [
     ...(call.decision ? [`My call: **${call.decision}**.`] : []),
     ...(call.why ? [`Why: ${sentence(call.why)}`] : []),
+    ...(call.working ?? []).map((line) => `- ${sentence(line)}`),
+    ...(call.gap ? [`Gap: ${sentence(call.gap)}`] : []),
     call.signal ? `Kill signal: ${call.signal.what} by ${call.signal.by}${call.signal.then ? `; ${call.signal.then.replace(/[\s.]+$/, '')}` : ''}.` : `Kill signal: ${NO_SIGNAL}.`,
     ...(call.move ? [`This week: ${sentence(call.move)}`] : []),
   ];
@@ -158,26 +173,40 @@ export const checkTitle = (signal: KillSignal) => `Check: ${signal.what} by ${si
 // `said` is what may back a claim of evidence in the reason ("the product works"): the founder's words, the Company
 // document and this turn's tool results, never the partner's own past replies. One nothing backs stays, marked
 // "(assumption)" (server/tools/evidence.ts).
-export async function holdCall(asked: string, first: TurnResult, again: ((first: TurnResult, nudge: string) => Promise<TurnResult>) | undefined, today: string, evidence: string, said: string[] = [evidence]): Promise<{ reply: TurnResult; call: PartnerCall | null; askedAgain: boolean }> {
+export async function holdCall(asked: string, first: TurnResult, again: ((first: TurnResult, nudge: string) => Promise<TurnResult>) | undefined, today: string, evidence: string, said: string[] = [evidence], economics?: Economics | null): Promise<{ reply: TurnResult; call: PartnerCall | null; askedAgain: boolean }> {
   if (first.stopped || !asksVerdict(asked)) return { reply: first, call: null, askedAgain: false };
-  const read = readCall(first.text, today, evidence);
-  let call: PartnerCall = { decision: read.decision, why: read.why, signal: read.signal, move: read.move };
+  // The brief's working is on record for the reason: its figures are calc results, not the partner's guesses.
+  const working = economics?.working.map((one) => one.line) ?? [];
+  const held = [evidence, ...working].join('\n');
+  const read = readCall(first.text, today, held, economics);
+  let call: PartnerCall = { decision: read.decision, why: read.why, signal: read.signal, move: read.move, ...(read.closes ? { gap: read.closes } : {}) };
   let reply = first;
+  let gapOpen = read.missing.includes('how the gap closes');
   const askedAgain = !!read.missing.length && !!again;
   if (askedAgain) {
-    const second = await again!(first, callNudge(read, today));
+    const second = await again!(first, callNudge(read, today, economics));
     if (!second.stopped) {
-      const more = readCall(second.text, today, evidence);
+      const more = readCall(second.text, today, held, economics);
+      // Asked how the gap closes, the partner may change the call: the second call stands then. Their line on how it
+      // closes is kept as the Gap line, labelled or not.
+      const closes = more.closes ?? (economics ? more.rest.split('\n').map((line) => plain(line)).find((line) => saysGap(line, economics)) : undefined);
       call = {
-        decision: call.decision ?? more.decision,
+        decision: gapOpen && more.decision ? more.decision : call.decision ?? more.decision,
         // A reason with a number nothing gives is put right by a second one that is sourced; else the first stands.
         why: !read.why || (read.unsourced.length && more.why && !more.unsourced.length) ? more.why ?? call.why : call.why,
         signal: call.signal ?? more.signal,
         move: call.move ?? more.move,
+        ...(closes ?? call.gap ? { gap: closes ?? call.gap } : {}),
       };
+      if (gapOpen) gapOpen = !closes;
     }
     reply = { ...second, tools: [...first.tools, ...second.tools], usage: { input: first.usage.input + second.usage.input, output: first.usage.output + second.usage.output } };
   }
-  if (call.why) call = { ...call, why: markClaims(call.why, said) };
+  // Still "keep going" far below break-even with nothing said on how that closes: said so, never filled in.
+  if (gapOpen && economics && call.decision === 'keep going') call = { ...call, gap: `break-even is ${economics.breakEven} ${economics.unit} and the company has ${economics.current}; nothing said yet closes that gap` };
+  // A gap line belongs to a "keep going" only, and never repeats the reason.
+  if (call.gap && (call.decision !== 'keep going' || tidy(call.gap) === tidy(call.why ?? ''))) { const { gap: _gap, ...rest } = call; call = rest; }
+  if (working.length) call = { ...call, working };
+  if (call.why) call = { ...call, why: markClaims(call.why, [...said, ...working]) };
   return { reply: { ...reply, text: renderCall(call, read.rest) }, call, askedAgain };
 }

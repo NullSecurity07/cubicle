@@ -146,9 +146,11 @@ export function briefRow(numbers: string, metric: string): BriefRow | null {
   return rows.length === 1 ? rows[0] : null;
 }
 export const briefReading = (row: BriefRow): Reading => ({ value: row.value, said: `${row.label} is ${formatValue(row.value, row.unit)}, read from the Company brief`, better: guessBetter(row.label) });
-// The Metrics card a taken bet adds: one row, today's reading from the brief.
-export const briefMetrics = (row: BriefRow, today: string, at: number): Metrics => ({ updatedAt: at, metrics: [{
+// The Metrics card a taken bet adds: one row, today's reading from the brief, and the bet's own number and day as
+// the row's target, so the card shows the aim the founder just took instead of asking for one (journey 13).
+export const briefMetrics = (row: BriefRow, today: string, at: number, target?: { value: number; by: string }): Metrics => ({ updatedAt: at, metrics: [{
   key: keyOf(row.label), label: row.label, better: guessBetter(row.label), ...(row.unit ? { unit: row.unit } : {}), points: [{ at: today, value: row.value, from: 'the Company brief' }],
+  ...(target ? { target } : {}),
 }] });
 export const BRIEF_CARD = 'Add a Metrics card from the brief and take the bet';
 

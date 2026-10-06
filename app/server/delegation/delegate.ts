@@ -4,7 +4,7 @@ import { runTurn } from '../loop.ts';
 import { colleagueIds } from '../prompt.ts';
 import type { ModelMessage } from '../prompt.ts';
 import { complete, promptSize, type ModelClient } from '../providers.ts';
-import { route } from '../router.ts';
+import { turnRoute } from '../partner/route.ts';
 import type { Seams } from '../seams.ts';
 import type { Store } from '../store.ts';
 import { text, type Tool } from '../tools/registry.ts';
@@ -81,7 +81,7 @@ export function delegationTools(deps: DelegateDeps): Tool[] {
         const mine = deps.toolsFor(stage, target.id).filter((tool) => !DEPTH.has(tool.name));
         const messages = await deps.promptFor(stage, target.id, mine.map((tool) => tool.name), true);
         messages.push({ role: 'user', content: brief });
-        const { order } = route(deps.clients, deps.usage, { pinned: target.model, promptChars: promptSize(messages), tools: true });
+        const { order } = turnRoute(target, deps.clients, deps.usage, { promptChars: promptSize(messages), tools: true });
         alive();
         const reply = await runTurn({
           messages, tools: mine, clients: order, usage: deps.usage, signal: stop.signal, seams: deps.seams, source: 'run', query: goal,

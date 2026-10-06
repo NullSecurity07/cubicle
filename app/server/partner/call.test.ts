@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TurnResult } from '../loop.ts';
+import { economicsOf } from './economics.ts';
 import { asksVerdict, callNudge, callShape, checkTitle, holdCall, killOf, NO_SIGNAL, plusDays, readCall, renderCall, unsourcedIn } from './call.ts';
 
 const today = '2026-10-06';
@@ -107,5 +108,44 @@ describe('a claim of evidence in the reason', () => {
   it('stands when the founder said it', async () => {
     const out = await holdCall('your verdict?', turn(works), undefined, today, brief, [brief, 'Our studios say the build flow works for them.']);
     expect(out.call?.why).not.toContain('(assumption)');
+  });
+});
+
+// Journey 13: "keep going" for a goal of 10 paying offices while the brief's numbers put break-even at 34.
+describe('a verdict held to the brief\'s break-even', () => {
+  const harvest = '- Paying offices: 3 (since September 2026)\n- Price: €240 a month per office\n- Produce + delivery cost: €41 per box, about €178 a month per office\n- Cash: €12,000\n- Burn: €2,100 a month';
+  const economics = economicsOf(harvest)!;
+  const blind = 'My call: keep going.\nWhy: We have €12,000 cash and €2,100 monthly burn to support our goal of 10 paying offices.\n'
+    + 'Kill signal: Paying offices below 5 by 2026-11-17.\nThis week: Pitch the remaining 2 pilot offices.';
+
+  it('shows the working under the reason, and its figures count as sourced', async () => {
+    const said = 'My call: change course.\nWhy: Break-even is 34 paying offices and runway is 6.3 months, so the pilot still loses money.\n'
+      + 'Break-even: ceil(2100 / (240 - 178)) = 34\nKill signal: Paying offices below 5 by 2026-11-17.\nThis week: Price a bigger box at €320.';
+    const out = await holdCall('your verdict?', turn(said), async () => { throw new Error('not asked'); }, today, harvest, [harvest], economics);
+    expect(out.askedAgain).toBe(false);
+    expect(out.reply.text).toBe('My call: **change course**.\nWhy: Break-even is 34 paying offices and runway is 6.3 months, so the pilot still loses money.\n'
+      + '- Break-even: ceil(2100 / (240 - 178)) = 34 paying offices to cover fixed costs; we have 3.\n- Runway: round(12000 / (2100 - 3 * (240 - 178)), 1) = 6.3 months at the net burn.\n'
+      + 'Kill signal: Paying offices below 5 by 2026-11-17.\nThis week: Price a bigger box at €320.');
+    expect(out.call?.working).toHaveLength(2);
+  });
+
+  it('asks a "keep going" far below break-even how the gap closes, and keeps the answer', async () => {
+    const nudges: string[] = [];
+    const out = await holdCall('Give me your verdict: keep going, pivot, or stop?', turn(blind), async (_, nudge) => { nudges.push(nudge); return turn('My call: keep going.\nGap: reach 34 paying offices by raising the price to €320 and signing 4 offices a month.'); }, today, harvest, [harvest], economics);
+    expect(nudges[0]).toContain('how the gap closes. Answer');
+    expect(nudges[0]).toContain('Gap: your call is keep going, but break-even is 34 paying offices and the company has 3.');
+    expect(out.reply.text).toContain('Gap: reach 34 paying offices by raising the price to €320 and signing 4 offices a month.');
+    expect(out.call?.decision).toBe('keep going');
+  });
+
+  it('takes a changed call, and says so in words when nothing closes the gap', async () => {
+    const changed = await holdCall('your verdict?', turn(blind), async () => turn('My call: change course.'), today, harvest, [harvest], economics);
+    expect(changed.call?.decision).toBe('change course');
+    expect(changed.reply.text).not.toContain('Gap:');
+    // A gap line the partner wrote on a call that is not "keep going" is not shown.
+    const labelled = await holdCall('your verdict?', turn(blind.replace('keep going', 'change course') + '\nGap: break-even is far off, so the price has to rise.'), undefined, today, harvest, [harvest], economics);
+    expect(labelled.reply.text).not.toContain('Gap:');
+    const silent = await holdCall('your verdict?', turn(blind), async () => turn('My call: keep going.'), today, harvest, [harvest], economics);
+    expect(silent.reply.text).toContain('Gap: break-even is 34 paying offices and the company has 3; nothing said yet closes that gap.');
   });
 });

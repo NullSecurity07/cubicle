@@ -14,6 +14,7 @@ import { FAKE_MORNING, MOST_TRIES, morningDue, morningInputs, morningMessage, wr
 import { addPlan, boardFor, boardForPlan, NO_BOARD, planAttention, stepsFrom } from '../partner/plans.ts';
 import { asksWhatNext, holdSynthesis, standingFacts } from '../partner/synthesis.ts';
 import { asksVerdict, callShape, holdCall } from '../partner/call.ts';
+import { economicsBlock, economicsOf, workingTools } from '../partner/economics.ts';
 import { chaseLine, keptPromiseLine, promiseLine, promisesAttention, promisesBook, promisesIn } from '../partner/promises.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import { staleNeeds, standingBlock, standingParts, stillWaiting, teamVerdict, type StandingParts } from '../partner/standing.ts';
@@ -22,7 +23,7 @@ import { CUSTOMER_LINE, customerReply, forCustomers } from '../partner/audience.
 import { wired } from '../prompt.ts';
 import type { ModelMessage } from '../prompt.ts';
 import { complete, fakeClient, promptSize } from '../providers.ts';
-import { partnerRoute } from '../partner/route.ts';
+import { markVerdict, partnerRoute } from '../partner/route.ts';
 import { withSystem, type Handler } from '../seams.ts';
 import { newId, patchStageVia } from '../slice-kit.ts';
 import { speaker, text, type Tool } from '../tools/registry.ts';
@@ -121,11 +122,11 @@ async function briefNumber(stage: Stage, store: { readDoc(id: string): Promise<s
   return briefRow(sectionText(await store.readDoc(company.id).catch(() => ''), 'Numbers'), metric);
 }
 
-// The founder took a bet whose number only the brief held: a Metrics card with that row, wired to the partner (or
-// whoever proposed it), so the check day has a number to read. Named by the metric's key, so two quick yeses make one card.
-export async function metricsFromBrief(workspace: string, store: Pick<Deps['store'], 'patchStage'>, row: BriefRow, roomId: string | undefined, now: number): Promise<string> {
+// The founder took a bet whose number only the brief held: a Metrics card with that row and the bet's target on it,
+// wired to the partner (or whoever proposed it), so the check day has a number to read. Named by the metric's key, so two quick yeses make one card.
+export async function metricsFromBrief(workspace: string, store: Pick<Deps['store'], 'patchStage'>, row: BriefRow, roomId: string | undefined, now: number, target?: { value: number; by: string }): Promise<string> {
   const id = `metrics-${keyOf(row.label)}`;
-  await writeAtomic(join(workspace, 'metrics', `${id}.json`), JSON.stringify(briefMetrics(row, localDay(now), now), null, 2), { mkdir: true });
+  await writeAtomic(join(workspace, 'metrics', `${id}.json`), JSON.stringify(briefMetrics(row, localDay(now), now, target), null, 2), { mkdir: true });
   await store.patchStage((draft) => {
     if (!(draft.cards ?? []).some((card) => card.id === id)) draft.cards = [...(draft.cards ?? []), { id, kind: 'metrics', title: 'Numbers', ...placeOf(draft), w: 380, h: 440 }];
     // A card of that key already there (left from before, or the other yes) is wired, never wired twice.
@@ -189,6 +190,8 @@ export function createPartner(options: PartnerOptions = {}) {
       await state.change((held) => { held.companyId = made.id; });
       return made;
     };
+    // A verdict kept from before a restart still reserves the next hour's pushback.
+    await state.read().then((held) => { if (held.call?.roomId && typeof held.call.at === 'number') markVerdict(held.call.roomId, held.call.at); }).catch(() => {});
     if (makeAtStart && !(await state.read()).companyId) await adopt().catch((error: Error) => console.error(`partner: ${error.message}`));
     // The document as it is now: the recorded one if it is still on the stage (renamed or not), nothing once the
     // founder took it away, and a pinned company doc by its title only while nothing has been recorded.
@@ -196,6 +199,11 @@ export function createPartner(options: PartnerOptions = {}) {
       const on = stage ?? await deps.store.loadStage();
       const { companyId } = await state.read();
       return companyId ? companyDocOf(on, companyId) : companyDocOf(on);
+    };
+    // The brief's Numbers worked out with calc (server/partner/economics.ts), or nothing when they do not hold enough.
+    const economicsNow = async (stage?: Stage) => {
+      const doc = await companyNow(stage);
+      return doc ? economicsOf(sectionText(await deps.store.readDoc(doc.id).catch(() => ''), 'Numbers')) : null;
     };
     // The morning turn spends a model call every day, so a fake run (the browser tests) only takes one when asked:
     // STAGE_PARTNER_MORNING=1, or the founder's own "morning note".
@@ -242,7 +250,8 @@ export function createPartner(options: PartnerOptions = {}) {
     // ------------------------------------------------------------ the morning turn
 
     const ask = options.ask ?? (deps.fake ? async () => ({ text: FAKE_MORNING, provider: fakeClient.name, model: fakeClient.model }) : async (messages: ModelMessage[]) => {
-      const { order } = partnerRoute(deps.clients, deps.usage, { promptChars: promptSize(messages), tools: false });
+      // The morning note is one of the partner-only model's reserved turns.
+      const { order } = partnerRoute(deps.clients, deps.usage, { promptChars: promptSize(messages), tools: false, reserved: true });
       // Nothing is shown while the note is written, so a stream that breaks part way goes straight to the next model.
       const reply = await complete(messages, { onToken: () => {}, onRestart: () => {} }, order, ({ client, error }) => deps.usage.failed(client.name, error), (client) => deps.usage.admit(client.name));
       if (!reply.reported) deps.usage.record(reply.client.name, reply.usage, reply.quota);
@@ -371,8 +380,13 @@ export function createPartner(options: PartnerOptions = {}) {
         out = withSystem(out, block);
         // Written for customers: said before it is written, and held to it after (the reply seam below).
         if (forCustomers(payload.query)) out = withSystem(out, CUSTOMER_LINE);
-        // A verdict on the company comes in four lines, held to them after (the reply seam below).
-        if (asksVerdict(payload.query)) out = withSystem(out, callShape(localDay(now())));
+        // A verdict on the company comes in four lines, held to them after (the reply seam below). The brief's numbers
+        // are worked out with calc first (break-even, runway), so the call is made with them in view.
+        if (asksVerdict(payload.query)) {
+          const economics = await economicsNow(stage).catch(() => null);
+          out = withSystem(out, callShape(localDay(now()), !!economics));
+          if (economics) out = withSystem(out, economicsBlock(economics));
+        }
       }
       return next(out);
     };
@@ -405,10 +419,17 @@ export function createPartner(options: PartnerOptions = {}) {
           ]);
           const evidence = [company, block, payload.query, ...chat.slice(-30).map((one) => one.text ?? ''), ...payload.reply.tools.map((tool) => tool.result ?? '')].join('\n');
           const said = [company, payload.query, ...chat.slice(-30).filter((one) => one.role === 'user' && !one.from).map((one) => one.text ?? ''), ...payload.reply.tools.filter((tool) => tool.ok !== false).map((tool) => tool.result ?? '')];
-          const { reply, call, askedAgain } = await holdCall(payload.query, payload.reply, payload.again, today, evidence, said);
+          const economics = company ? economicsOf(sectionText(company, 'Numbers')) : null;
+          const { reply, call, askedAgain } = await holdCall(payload.query, payload.reply, payload.again, today, evidence, said, economics);
           if (call) {
-            payload = { ...payload, reply, lookedAgain: payload.lookedAgain || askedAgain };
-            await state.change((held) => { held.call = { ...call, at: now(), day: today, roomId: me.id }; });
+            // The working rides with the turn as the calc tool's own results, so the guard and the founder see where
+            // each figure in the reason came from.
+            const worked = economics ? workingTools(economics, (index) => `calc-brief-${now()}-${index}`) : [];
+            payload = { ...payload, reply: { ...reply, tools: [...worked, ...reply.tools] }, lookedAgain: payload.lookedAgain || askedAgain };
+            const at = now();
+            await state.change((held) => { held.call = { ...call, at, day: today, roomId: me.id }; });
+            // The founder's pushback in the next hour is answered on the partner-only model too.
+            markVerdict(me.id, at);
             if (call.signal) {
               await promises.add({ what: call.signal.what, due: call.signal.by, roomId: me.id, check: true });
               await deps.attention.refresh().catch(() => {});
@@ -563,7 +584,7 @@ export function createPartner(options: PartnerOptions = {}) {
               if (taking?.brief && (await readMetric(deps.workspace, stage, taking.metric)).value === null) {
                 // The brief as it stands now, in case the founder changed the number since the bet was put.
                 const row = await briefNumber(stage, deps.store, taking.metric).catch(() => null) ?? taking.brief as BriefRow;
-                await metricsFromBrief(deps.workspace, deps.store, row, partnerOf(stage)?.id ?? taking.roomId, now());
+                await metricsFromBrief(deps.workspace, deps.store, row, partnerOf(stage)?.id ?? taking.roomId, now(), { value: taking.target, by: taking.checkDate });
               }
               await book.answer(bet[1], sent?.accept === true); await betsChanged(); deps.json(res, 200, { ok: true }); return true;
             }

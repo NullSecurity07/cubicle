@@ -237,9 +237,9 @@ describe('one order for every turn, the partner\'s (pass 8)', () => {
       .toEqual(['gemini', 'nvidia-ultra', 'ollama-cloud', 'nvidia', 'ollama-gpt-oss', 'mistral', 'sambanova', 'cloudflare-gpt-oss', 'openrouter-qwen', 'zai-flash', 'vercel', 'groq', 'cerebras', 'hf']);
   });
 
-  it('puts Gemini 3.5 Flash first for the partner and keeps gpt-oss on Cloudflare behind the two Nemotron Ultras for them', () => {
+  it('puts Gemini 3.5 Flash first for the reserved turns of the partner and keeps gpt-oss on Cloudflare behind the two Nemotron Ultras for them', () => {
     expect(tierOrder(true).slice(0, 9)).toEqual(['gemini-flash', 'gemini', 'nvidia-ultra', 'ollama-cloud', 'cloudflare-gpt-oss', 'nvidia', 'ollama-gpt-oss', 'mistral', 'sambanova']);
-    expect(names(partnerRoute(listed(), createUsage(null), { promptChars: 10, tools: true })))
+    expect(names(partnerRoute(listed(), createUsage(null), { promptChars: 10, tools: true, reserved: true })))
       .toEqual(['gemini-flash', 'gemini', 'nvidia-ultra', 'ollama-cloud', 'cloudflare-gpt-oss', 'nvidia', 'ollama-gpt-oss', 'mistral', 'sambanova', 'openrouter-qwen', 'zai-flash', 'vercel', 'cerebras', 'hf']);
   });
 

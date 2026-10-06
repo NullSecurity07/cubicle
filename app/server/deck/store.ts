@@ -117,7 +117,8 @@ export function createDecks(deps: DeckDeps) {
         const gathered = await deps.gather(cardId, ask.roomId);
         gathered.material = { ...gathered.material, brief: ask.brief };
         if (gathered.using.length) line(`using ${gathered.using.join(', ')}`);
-        if (!gathered.material.metrics) line('no Metrics card is wired, so traction says "No numbers yet."');
+        if (!gathered.material.metrics) line('no Metrics card is wired and the Company brief has no Numbers, so traction says "No numbers yet."');
+        else if (gathered.material.metrics.name !== 'Metrics card') line(`no Metrics card is wired, so traction reads ${gathered.material.metrics.name}'s Numbers`);
         const made = await writeStoryboard({ brief: ask.brief, purpose: ask.purpose, material: gathered.material, think: deps.think, ids: idsFrom([]), now: now(), report: line, signal });
         for (const said of made.said) line(said);
         const number = nextNumber(before);

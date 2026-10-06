@@ -637,6 +637,36 @@ describe('the first-word clock for a slow model (round 6 review)', () => {
   });
 });
 
+// Journey 13: the partner's pushback went to Flash-Lite. The partner-only model thinks before its first word; with a
+// model behind it, it still keeps its own wait, where any other model is cut at the usual 20 s.
+describe('the first-word clock for the partner-only model', () => {
+  it('waits out 25 s of silence from it with another model behind, and cuts Flash-Lite at 20', async () => {
+    vi.useFakeTimers();
+    try {
+      const clients = realClients({ GEMINI_API_KEY: 'k' } as NodeJS.ProcessEnv);
+      const silent = (one: ModelClient) => {
+        (one.openai!.chat.completions as unknown as { create: unknown }).create = (_body: unknown, options: { signal?: AbortSignal }) => ({
+          withResponse: () => new Promise((done, fail) => {
+            const timer = setTimeout(() => { async function* chunks() { yield { choices: [{ delta: { content: 'thought it through' } }] }; } done({ data: chunks(), response: { headers: new Headers() } }); }, 25_000);
+            options.signal?.addEventListener('abort', () => { clearTimeout(timer); fail(new Error('Request was aborted.')); }, { once: true });
+          }),
+        });
+      };
+      const flash = clients.find((one) => one.name === 'gemini-flash')!;
+      const lite = clients.find((one) => one.name === 'gemini')!;
+      silent(flash);
+      silent(lite);
+      let said = '';
+      const partner = flash.step(messages, { onToken: (token) => { said += token; }, behind: true });
+      const other = lite.step(messages, { onToken: () => {}, behind: true }).catch((error: Error) => error);
+      await vi.advanceTimersByTimeAsync(26_000);
+      await partner;
+      expect(said).toBe('thought it through');
+      expect(((await other) as Error).message).toMatch(/no first word within 20 s/);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
 describe('the request clock for a slow model (round 6 integrate)', () => {
   it('gives a request whose first word may take over 30 s that long plus 15 s, so the 45 s request clock never cuts it first', async () => {
     const clients = realClients({ NVIDIA_API_KEY: 'nvapi-x', GROQ_API_KEY: 'g' } as NodeJS.ProcessEnv);

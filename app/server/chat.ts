@@ -4,7 +4,7 @@ import { askFounder, type Approvals } from './approvals.ts';
 import type { AttentionBook } from './attention.ts';
 import { json } from './http.ts';
 import { holdPartner, PRECONDITION_NUDGE } from './partner/pushback.ts';
-import { partnerRoute } from './partner/route.ts';
+import { turnRoute } from './partner/route.ts';
 import { SYNTHESIS_HEAD } from './partner/synthesis.ts';
 import { teamVerdict } from './partner/standing.ts';
 import { runTurn, type TurnResult } from './loop.ts';
@@ -63,8 +63,7 @@ export function createChat(deps: Deps) {
         messages = (await seams.run('turn:before', { ...before, messages: await promptFor(stage, toRoomId, [], false, true), slim })).messages;
       }
     }
-    const { order } = target.partner && !target.model ? partnerRoute(clients, usage, { promptChars: promptSize(messages), tools: false })
-      : route(clients, usage, { pinned: target.model, promptChars: promptSize(messages), tools: false });
+    const { order } = turnRoute(target, clients, usage, { promptChars: promptSize(messages), tools: false });
     // The same road a turn takes: a key that is resting is passed over, and a key that fails is rested.
     // Nothing is shown while a colleague answers, so a stream that breaks part way can go straight to the next model.
     const ask = (these: ModelMessage[]) => complete(these, { onToken: () => {}, onRestart: () => {}, signal }, order, ({ client, error }) => usage.failed(client.name, error), (client) => usage.admit(client.name), (client) => usage.resting(client.name), (client) => usage.blocked(client.name));
@@ -126,8 +125,7 @@ export function createChat(deps: Deps) {
       const room = stage.rooms.find((candidate) => candidate.id === roomId)!;
       const vision = messages.some((message) => message.role === 'user' && !!message.images?.length);
       // The partner answers on the strongest free models unless the founder pinned one for them.
-      const { order, notice } = room.partner && !room.model ? partnerRoute(clients, usage, { promptChars: promptSize(messages), tools: true, vision })
-        : route(clients, usage, { pinned: room.model, promptChars: promptSize(messages), tools: true, vision });
+      const { order, notice } = turnRoute(room, clients, usage, { promptChars: promptSize(messages), tools: true, vision }, { query: text });
       if (vision && !order[0]?.vision) send({ notice: 'No model that can see images is set up (Gemini can), so the picture is described to the model only by its file name.' });
       if (notice) send({ notice });
       if (slim && order[0]) send({ notice: slimNotice(order[0]) });
