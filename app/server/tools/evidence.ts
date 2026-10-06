@@ -333,13 +333,13 @@ const CLAIMS: { said: RegExp; keys: RegExp }[] = [
 // and shares a word of substance with it, so the brief's "evening pickup" is no source for "strong pickup".
 const SUBJECTS = 'customers?|users?|clients?|hosts?|buyers?|managers?|offices?|staff|employees|teams?|people|HR|members?|pilots?|everyone|tenants?|guests?|they';
 const FEEDBACK: RegExp[] = [
-  new RegExp(`\\b(?:${SUBJECTS})\\b(?:\\s+(?!and\\b|but\\b)[\\w/'-]+){0,2}?\\s+(?:really\\s+|often\\s+|all\\s+|keep\\s+)?(?:report(?:s|ed)?|say|says|said|told us|tell us|love[sd]?|appreciat(?:e|es|ed)|enjoy(?:s|ed)?|asks? for|asked for|asking for|request(?:s|ed)?|prais(?:e|es|ed)|rave[sd]?|complain(?:s|ed)?|prefer(?:s|red)?|describe[sd]?|call(?:s|ed)? it)\\b`, 'i'),
-  /\b(?:strong|high|good|great|solid|growing|huge|clear|positive|steady|encouraging|enthusiastic)\s+(?:[\w-]+\s+)?(?:pickup|pick-up|uptake|adoption|engagement|demand|interest|feedback|response|reception)\b/i,
+  new RegExp(`\\b(?:${SUBJECTS})\\b(?:\\s+(?!and\\b|but\\b)[\\w/'-]+){0,2}?\\s+(?:really\\s+|often\\s+|all\\s+|keep\\s+)?(?:report(?:s|ed)?|say|says|said|told us|tell us|love[sd]?|appreciat(?:e|es|ed)|enjoy(?:s|ed)?|asks? for|asked for|asking for|request(?:s|ed)?|prais(?:e|es|ed)|rave[sd]?|complain(?:s|ed)?|prefer(?:s|red)?|describe[sd]?|call(?:s|ed)? it|await(?:s|ed)?|look(?:s|ed)? forward|can['’]t wait|(?:are|were|is) (?:excited|thrilled|delighted|happy)|recommend(?:s|ed)?|rel(?:y|ies|ied) on)\\b`, 'i'),
+  /\b(?:strong|high|good|great|solid|growing|huge|clear|positive|steady|encouraging|enthusiastic)\s+(?:[\w-]+\s+)?(?:pickup|pick-up|uptake|adoption|engagement|demand|interest|feedback|response|reception|participation|usage|attendance|turnout|enthusiasm|excitement|satisfaction)\b/i,
   /\b(?:popular|well[- ]received|went down well|a hit with|in high demand|sought[- ]after)\b/i,
   /\b(?:feedback|response|reception|pickup|uptake|engagement|demand)\s+(?:is|was|has been|have been|so far)\s+(?:\w+\s+)?(?:positive|strong|great|good|high|excellent|encouraging)\b/i,
 ];
 // What a source has to be to back one: itself a claim of feedback, or a record of what someone said.
-const RECORD = /\b(?:said|says|told|feedback|interview\w*|survey\w*|quoted?|replied|wrote|answered|complain\w*|asked|reported)\b/i;
+const RECORD = /\b(?:said|says|told|interview\w*|survey\w*|quoted?|replied|wrote|answered|complain\w*|reported)\b/i;
 // Words that say nothing about what the feedback was about.
 const GENERIC = new Set(`${SUBJECTS.replace(/\?/g, '').split('|').join(' ')} customer user client manager office member pilot tenant guest staff team report reported reports say said told love loved appreciate appreciated enjoy enjoyed ask asked request requested praise rave complain prefer describe call strong high good great solid growing huge clear positive steady encouraging enthusiastic pickup pick-up uptake adoption engagement demand interest feedback response reception popular initial early really often keep`.split(' '));
 const substance = (sentence: string) => content(sentence).filter((word) => word.length > 3 && !GENERIC.has(word.toLowerCase())).map(stem);
@@ -347,14 +347,25 @@ const substance = (sentence: string) => content(sentence).filter((word) => word.
 type Record = { words: string[]; feedback: boolean };
 const records = (read: string[]): Record[] => sentencesOf(read.map((one) => one.split('\n').filter((line) => !line.includes(MARK)).join('\n')))
   .flatMap((sentence) => {
-    const feedback = FEEDBACK.some((claim) => claim.test(sentence));
-    return feedback || RECORD.test(sentence) ? [{ words: substance(sentence), feedback }] : [];
+    if (/\?\s*$/.test(sentence)) return [];
+    // A question about feedback records none: "a doc on how the offices feel and what office managers say".
+    const told = (hit: RegExpExecArray | null) => !!hit && !ASKED.test(sentence.slice(0, hit.index));
+    const feedback = FEEDBACK.some((claim) => told(claim.exec(sentence)));
+    return feedback || told(RECORD.exec(sentence)) ? [{ words: substance(sentence), feedback }] : [];
   });
+const ASKED = /\b(?:what|how|whether|if|ask|find out)\b/i;
 // The claims of feedback in one sentence that nothing read backs, each as written. A question, a doubt or a thing to
 // find out is no claim: "find out whether staff appreciate it", "no feedback on record".
-function unbackedFeedback(sentence: string, read: Record[]): string[] {
+// Words said in quote marks under a heading or label about what customers said: an invented testimonial.
+const QUOTE = /["“][^"”]*\b\w+\s+\w+\s+\w+[^"”]*["”]/;
+const SAYING = /\b(?:quotes?|feedback|testimonials?|said|says|reviews?|customers?|managers?|users?|clients?|staff|employees)\b/i;
+function unbackedFeedback(sentence: string, read: Record[], heading = ''): string[] {
   if (/\?\s*$/.test(sentence) || /\bno feedback\b/i.test(sentence)) return [];
   const words = substance(sentence);
+  const quoted = QUOTE.exec(sentence);
+  if (quoted && (SAYING.test(heading) || SAYING.test(sentence.slice(0, quoted.index)))) {
+    return read.some((source) => source.words.some((one) => words.some((word) => alike(word, one)))) ? [] : [quoted[0].length > 60 ? `${quoted[0].slice(0, 59)}…` : quoted[0]];
+  }
   return FEEDBACK.flatMap((claim) => {
     const hit = claim.exec(sentence);
     if (!hit || DENIED.test(sentence.slice(0, hit.index)) || LEARNING.test(sentence.slice(0, hit.index))) return [];
@@ -371,10 +382,10 @@ export function markFeedback(input: { before: string; after: string; read: strin
   const read = records(input.read);
   const lines = input.after.split('\n');
   const marked: string[] = [];
-  for (const { line } of added(input.before, input.after)) {
+  for (const { line, heading } of added(input.before, input.after)) {
     if (/^\s*(?:>|```)/.test(lines[line])) continue;
     lines[line] = lines[line].split(/(?<=[.!?])\s+/).map((sentence) => {
-      if (sentence.includes(MARK) || !unbackedFeedback(sentence, read).length) return sentence;
+      if (sentence.includes(MARK) || !unbackedFeedback(sentence, read, heading).length) return sentence;
       marked.push(sentence.trim());
       return sentence.replace(/([.!?]*)(\s*)$/, ` ${MARK}$1$2`);
     }).join(' ');
@@ -443,7 +454,7 @@ export function evidenceCheck(input: { before: string; after: string; counts: st
       if (/^\s*(?:>|```)/.test(lines[line])) continue;
       lines[line] = lines[line].split(/(?<=[.!?])\s+/).map((sentence) => {
         if (sentence.includes(MARK)) return sentence;
-        const hits = unbackedFeedback(sentence, heardOf);
+        const hits = unbackedFeedback(sentence, heardOf, heading);
         if (!hits.length) return sentence;
         if (VIEW.test(sentence)) {
           marked.push(sentence.trim());
@@ -466,7 +477,7 @@ export function evidenceCheck(input: { before: string; after: string; counts: st
         if (!hit || DENIED.test(sentence.slice(0, hit.index))) continue;
         if (!said.some((one) => keys.test(one))) claims.push(`"${hit[0]}" in "${heading}"`);
       }
-      const heard = unbackedFeedback(sentence, heardOf).filter((hit) => !claims.some((one) => one.startsWith(`"${hit}"`)));
+      const heard = unbackedFeedback(sentence, heardOf, heading).filter((hit) => !claims.some((one) => one.startsWith(`"${hit}"`)));
       if (heard.length) feedback = true;
       claims.push(...heard.map((hit) => `"${hit}" in "${heading}"`));
       return sentence;

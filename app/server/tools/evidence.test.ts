@@ -221,3 +221,20 @@ describe('a derived figure with no calc behind it', () => {
       expect(mark(line, [BRIEF13, ASK]).marked).toEqual([]);
   });
 });
+
+// Live run of the fix: an "upbeat" pilot feedback doc made up office manager quotes and eager teams.
+describe('invented testimonials and eagerness', () => {
+  const ASK = 'Make a doc called Pilot feedback: how the pilot offices feel about the boxes so far, what office managers say, and how pickup is going.';
+  const plain = (text: string, read = [ASK]) => markFeedback({ before: '', after: text, read });
+  it('marks a quote under a heading about what people said, and eager behaviour, when nothing read says it', () => {
+    const doc = '# Pilot feedback\n\n## Office manager quotes\n- *"It has completely changed our Tuesday routine, everyone hangs around the kitchen."*\n\n## Office sentiment\n- **Excitement:** Teams eagerly await Tuesday deliveries.\n- **Pickup:** Evening pickups are running smoothly with steady participation.';
+    const out = plain(doc);
+    expect(out.marked).toHaveLength(3);
+    expect(out.text).toContain('kitchen."* (assumption)');
+  });
+  it('lets a quote read in interview notes stand, and does not read the founder\'s question as a record', () => {
+    const notes = 'Interview notes: the Acme office manager said "it has completely changed our Tuesday routine".';
+    expect(plain('## Quotes\n- "It has completely changed our Tuesday routine."', [ASK, notes]).marked).toEqual([]);
+    expect(plain('## Quotes\n- "Pickup is going great for the pilot offices."').marked).toHaveLength(1);
+  });
+});
