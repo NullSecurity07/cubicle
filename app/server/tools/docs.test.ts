@@ -46,6 +46,22 @@ describe('doc tools', () => {
     expect(await store.readDoc(made.effect!.id!)).toBe('Short.');
   });
 
+  // Journey 15: Otto's create_doc was tried again after each guard bounce, and the stage showed "Runway" three times.
+  it('makes one doc per title: the same title again this turn writes into it, and one on the stage is never made twice', async () => {
+    const { store, call, context } = await setup();
+    const first = await call('create_doc', { title: 'Runway', text: '# Runway\n\nFirst try.' });
+    const again = await call('create_doc', { title: 'runway', text: '# Runway\n\nSecond try.' });
+    expect(again).toMatchObject({ ok: true, effect: { kind: 'doc-changed', id: first.effect!.id } });
+    expect(again.text).toContain('no second "Runway"');
+    expect(await store.readDoc(first.effect!.id!)).toBe('# Runway\n\nSecond try.');
+    expect([...context.granted.values()]).toEqual(['Runway']);
+    const onStage = await call('create_doc', { title: 'Brand doc', text: '# Another' });
+    expect(onStage.ok).toBe(true);
+    expect(onStage.effect).toBeUndefined();
+    expect(onStage.text).toContain('A document called "Brand doc" is already on the stage, so no second one was made.');
+    expect((await store.loadStage()).docs.filter((doc) => doc.title.toLowerCase() === 'runway')).toHaveLength(1);
+  });
+
   it('names a doc made from the whole ask short, and still finds it by the long title', async () => {
     const { store, call } = await setup();
     const made = await call('create_doc', { title: 'Write me a doc about our pricing in 400 words', text: '# Pricing\n\nTBD' });
