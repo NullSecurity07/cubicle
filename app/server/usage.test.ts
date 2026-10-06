@@ -144,3 +144,27 @@ describe('a key check that did not pass', () => {
     expect(rail.map((one) => [one.name, !!one.partnerOnly])).toEqual([['gemini', false], ['gemini-flash', true]]);
   });
 });
+
+describe('a turn told the day is used', () => {
+  it('marks the key spent for the rest of the day, kept across a restart, and lets it go the next day', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dots-'));
+    let now = new Date('2026-10-06T10:00').getTime();
+    const flash = { ...client('gemini-flash'), limits: { rpd: 20 } };
+    const first = createUsage(join(dir, 'usage.json'), () => now);
+    expect(first.left(flash)).toBe(1);
+    // A busy minute is not the day.
+    first.failed('gemini-flash', Object.assign(new Error('429 Too many requests per minute'), { status: 429 }));
+    expect(first.left(flash)).toBe(1);
+    first.failed('gemini-flash', Object.assign(new Error('429 Quota exceeded for metric: generate_content_free_tier_requests, limit: 20, GenerateRequestsPerDayPerProjectPerModel'), { status: 429 }));
+    expect(first.left(flash)).toBe(0);
+    expect(first.spent(flash)).toBe(true);
+    expect(first.info([flash], true)[0].left).toBe(0);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const second = createUsage(join(dir, 'usage.json'), () => now);
+    await second.load();
+    expect(second.left(flash)).toBe(0);
+    now += 24 * 3_600_000;
+    expect(second.left(flash)).toBe(1);
+    expect(second.spent(flash)).toBe(false);
+  });
+});
