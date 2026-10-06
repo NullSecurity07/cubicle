@@ -160,6 +160,8 @@ export type AttentionKind = 'approval' | 'run-approval' | 'proposed-task' | 'pro
   | 'backup-failed'
   // The partner's: the morning note, a bet to check or to take on, and a plan's steps to put on the board.
   | 'morning-note' | 'bet-check' | 'proposed-bet' | 'proposed-plan'
+  // A move the partner proposes unasked, woken by a number, a lead, a page or a late promise, with its draft ready to run.
+  | 'partner-proposal'
   // Something the founder said they would do, on its day and after.
   | 'promise'
   // An email a person drafted, waiting in the founder's Gmail for them to send (`url` opens the draft).
