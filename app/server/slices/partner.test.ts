@@ -7,6 +7,7 @@ import { COMPANY_LINE, companyLine } from '../../shared/partner.ts';
 import type { Deps, Installed } from '../install.ts';
 import { companyDocOf } from '../partner/company.ts';
 import { partnerState } from '../partner/state.ts';
+import { promisesAttention, promisesBook } from '../partner/promises.ts';
 import { stubDeps } from '../slice-stubs.ts';
 import { decisionAttention } from '../decisions.ts';
 import { hub } from '../events.ts';
@@ -786,5 +787,33 @@ describe('the partner slice: a promises book that cannot be read', () => {
       expect(out.reply.text).toBe('Good.');
       expect(quiet.mock.calls.some(([line]) => String(line).includes('could not keep'))).toBe(true);
     } finally { quiet.mockRestore(); await part.close!(); }
+  });
+});
+
+// Journey 11: the verdict named no kill signal and no day. It is asked for in four lines and held to them in code.
+describe('the partner slice: a verdict that commits', () => {
+  it('asks for the shape, keeps the call, and puts the kill signal in Needs you for its day', async () => {
+    const { deps, part, workspace } = await installed({}, { now: () => new Date('2026-10-06T10:00').getTime(), ask: async () => SHAPED });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true }), room('r1', 'Nadia')]);
+    await part.tick!();
+    const company = companyDocOf(await deps.store.loadStage())!;
+    await deps.store.writeDoc(company.id, `${await deps.store.readDoc(company.id)}`.replace('## Numbers', '## Numbers\n\n- Beta users: 12 (2 paying)\n- Price: €39 a month'));
+    const system = async (roomId: string) => (await deps.seams.run('turn:before', { roomId, source: 'chat', query: 'Your verdict: keep going or stop?', messages: [{ role: 'system', content: 'You are someone.' }] })).messages[0].content as string;
+    expect(await system('p1')).toContain('Kill signal: one number the founder can measure');
+    expect(await system('r1')).not.toContain('Kill signal');
+    const base = { tools: [], provider: 'p', model: 'm', usage: { input: 1, output: 1 }, stopped: false };
+    const nudges: string[] = [];
+    const out = (await deps.seams.run('turn:reply', {
+      roomId: 'p1', query: 'Your verdict: keep going or stop?', reply: { ...base, text: 'My call: keep going.\nWhy: 2 of 12 beta users pay €39.\nThis week: ask the 10 free users to pay.' },
+      again: async (_first, nudge) => { nudges.push(nudge); return { ...base, text: 'Kill signal: 6 paying users by 2026-11-03; if not, change course.' }; },
+    })).reply.text;
+    expect(nudges).toHaveLength(1);
+    expect(out).toBe('My call: **keep going**.\nWhy: 2 of 12 beta users pay €39.\nKill signal: 6 paying users by 2026-11-03; if not, change course.\nThis week: ask the 10 free users to pay.\n\n*Kept as a check: it comes to Needs you on 2026-11-03.*');
+    expect((await partnerState(workspace).read()).call).toMatchObject({ decision: 'keep going', signal: { what: '6 paying users', by: '2026-11-03' }, day: '2026-10-06', roomId: 'p1' });
+    // Not in Needs you before its day.
+    expect((await deps.attention.list()).some((one) => one.title.startsWith('Check:'))).toBe(false);
+    const [check] = (await promisesBook(workspace).list()).filter((one) => one.check);
+    expect(promisesAttention([check], '2026-11-03')[0]).toMatchObject({ kind: 'promise', title: 'Check: 6 paying users by 2026-11-03?', roomId: 'p1' });
+    await part.close!();
   });
 });
