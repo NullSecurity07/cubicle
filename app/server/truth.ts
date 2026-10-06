@@ -96,6 +96,21 @@ const UNITS = 'users|customers|clients|signups|sign-ups|subscribers|downloads|vi
 // A figure worth checking: money, a percentage, or a count with a unit. Bare numbers (dates, section numbers, steps)
 // are not figures here.
 const FIGURE = new RegExp(String.raw`[$€£]\s?${AMOUNT}\s?(k|mm|m|bn|b|thousand|million|billion)?\b|${AMOUNT}\s?(%|percent\b)|${AMOUNT}\s?(k|m|x|×)?\s?(${UNITS})\b|${AMOUNT}(x|×)(?![\w])`, 'gi');
+// LaTeX math is not money: journey 14's "$$900 / 49 = 18.37$$" read as "$900" and drew "Currency changed: $900
+// (source €)" under a reply in euros. The dollar signs of a math span are blanked, one for one so every place in the
+// text stays where it was: a closed "$$…$$", an inline "$…$" that holds math ("$x$", "$a^2$", "$900/49$"), and an
+// unclosed "$$" whose line holds nothing but math after it. "costs $$900 a month" is a doubled sign in words: one
+// dollar amount, read once.
+const MATH_INLINE = /(?<![$\\\d])\$(?=[^\s$])([^$\n]{1,80}?)(?<=[^\s$])\$(?![$\d])/g;
+const MATH_ONLY = /^[\d\s.,+\-*/×÷=<>()[\]^_{}\\a-zA-Z]*$/;
+export function unmath(text: string): string {
+  if (!text.includes('$')) return text;
+  const blank = (span: string) => span.replace(/\$/g, ' ');
+  return text
+    .replace(/\$\$[^$]{1,400}?\$\$/g, blank)
+    .replace(/\$\$(?=\S)([^\n]*)/g, (whole, rest: string) => (MATH_ONLY.test(rest) && !/[a-zA-Z]{3,}/.test(rest.replace(/\\[a-zA-Z]+/g, '')) ? blank(whole) : ` ${whole.slice(1)}`))
+    .replace(MATH_INLINE, (whole, inner: string) => (/^[a-zA-Z]{1,3}$|[\\^_{}=/]/.test(inner) && !/\$|\s[a-zA-Z]{3,}/.test(inner) ? blank(whole) : whole));
+}
 // Hours, days and weeks are nearly always advice ("reply within 24 hours"), so they count only as a range ("20–40
 // hours") or a rate ("12 hours per week", "12 hours/week"; not "a", which is as often "within 24 hours a customer"), which is a claim about the world that has to come from somewhere.
 const SPAN = new RegExp(String.raw`${AMOUNT}(?:\s?(?:–|—|-|to)\s?${AMOUNT})?\s?(hours|days|weeks)\b(?=(\s*\/\s*\w|\s+per\b)?)`, 'gi');
@@ -281,9 +296,10 @@ function otherFrom(a: Known, b: Known): number[] {
 // Whose time it is has to be said: "of the time" is how often, a claim ("it fails 100% of the time").
 const ALL_OR_NONE = /^\s*of\s+(?:(?:your|my|our|their|his|her)\s+(?:time|effort|focus|attention|energy)|the\s+(?:effort|focus|attention|energy))\b/i;
 export function figureCheck(reply: string, sources: string[]): { unsourced: string[]; proposals: string[]; drifted?: { label: string; source: string }[] } {
+  reply = unmath(reply);
   const known: Known[] = [];
   for (const source of sources) {
-    for (const match of stripFlagged(source).matchAll(TOKEN)) {
+    for (const match of stripFlagged(unmath(source)).matchAll(TOKEN)) {
       const raw = valueOf(match[2], match[3]);
       const closer = match[5]?.trim().toLowerCase();
       const kind: Kind = match[1] ? 'money' : closer ? 'share' : 'other';

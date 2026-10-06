@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PARTNER_STANCE, STANCE } from '../shared/model.ts';
-import { checkReply, dropFlagged, figureCheck, holdVerdict, NOT_WRITTEN, proseToolCall, stripFlagged, turnEvidence, turnSources, unreceiptedClaims, unsourcedFigures, verdictRefused, verdictStanding, VERDICT_WRITTEN } from './truth.ts';
+import { checkReply, dropFlagged, figureCheck, holdVerdict, NOT_WRITTEN, proseToolCall, stripFlagged, unmath, turnEvidence, turnSources, unreceiptedClaims, unsourcedFigures, verdictRefused, verdictStanding, VERDICT_WRITTEN } from './truth.ts';
 
 const wrote = { name: 'write_doc', ok: true };
 const failedWrite = { name: 'write_doc', ok: false };
@@ -441,6 +441,35 @@ describe('money in another currency than its source', () => {
     expect(lines).toContain('Currency changed: €29 (source $), €87 (source $).');
     expect(lines).toContain('Unsourced figures: $95 (not found in anything this turn read).');
     expect(checkReply({ reply: 'Revenue $29 × 3 = $87 a month.', receipts: [], sources })).toEqual([]);
+  });
+});
+
+// Journey 14: "$$900 / 49 = 18.37$$" in a reply in euros drew "Currency changed: $900 (source €)" twice.
+describe('LaTeX math is not money', () => {
+  const euros = ['Price €49 a month per practice. Burn €900 a month. Cash €4,000.'];
+  const money = (text: string) => figureCheck(text, []).unsourced;
+  it.each([
+    ['$900', ['$900']],
+    ['US$900', ['$900']],
+    ['$$x$$', []],
+    ['$x$', []],
+    ['$$900', []],
+    ['$$900$$', []],
+    ['$$900 / 49 = 18.37$$', []],
+    ['$900/49$', []],
+    ['$a^2 + 900$', []],
+    ['costs $$900 a month', ['$900']],
+    ['$900 and $49 a month', ['$900', '$49']],
+  ])('%s', (text, want) => {
+    expect(money(text)).toEqual(want);
+    expect(unmath(text)).toHaveLength(text.length);
+  });
+
+  it('gives no currency notice for the journey\'s break-even in math', () => {
+    const reply = 'Break-even: 19 paying practices ($$900 / 49 = 18.37$$, rounded up to 19).';
+    expect(checkReply({ reply, receipts: [], sources: euros }).filter((line) => line.startsWith('Currency changed'))).toEqual([]);
+    // Dollars written in words still change currency once.
+    expect(checkReply({ reply: 'It costs $$900 a month.', receipts: [], sources: euros })).toContain('Currency changed: $900 (source €).');
   });
 });
 
