@@ -173,7 +173,28 @@ describe('a word with each model', () => {
       expect(nvidia.ok).toBe(true);
       expect(groq).toMatchObject({ ok: false });
       expect(mistral).toMatchObject({ ok: false, detail: PLANLESS, fix: 'Turn on the free plan at console.mistral.ai; the key itself is fine.' });
-      expect(groq.fix).toMatch(/key in \.env/);
+      expect(groq).toMatchObject({ outcome: 'slow', detail: 'slow (no answer in 30 s)' });
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('asks every model at once under the key check\'s 20 s cap, and says one still silent then is slow, a 404 a model gone', async () => {
+    vi.useFakeTimers();
+    try {
+      // Never answers and never hears the stop: the cap still holds.
+      const deaf = { name: 'nvidia', model: 'kimi', firstWordMs: 60_000, step: () => new Promise(() => {}) };
+      const gone = { name: 'openrouter-qwen', model: 'q', step: async () => { throw Object.assign(new Error('404 No endpoints found'), { status: 404 }); } };
+      const down = { name: 'cerebras', model: 'c', step: async () => { throw Object.assign(new Error('503 busy'), { status: 503 }); } };
+      const good = { name: 'groq', model: 'g', step: async () => ({ text: 'ok', calls: [] }) };
+      let done = false;
+      const asked = liveChecks([deaf, gone, down, good] as never, undefined, 20_000).then((all) => { done = true; return all; });
+      await vi.advanceTimersByTimeAsync(19_000);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(1_100);
+      const [nvidia, qwen, cerebras, groq] = await asked;
+      expect(nvidia).toMatchObject({ ok: false, outcome: 'slow', detail: 'slow (no answer in 20 s)' });
+      expect(qwen).toMatchObject({ ok: false, outcome: 'not-found', status: 404 });
+      expect(cerebras).toMatchObject({ ok: false, outcome: 'down', status: 503 });
+      expect(groq).toMatchObject({ ok: true, outcome: 'ok' });
     } finally { vi.useRealTimers(); }
   });
 });

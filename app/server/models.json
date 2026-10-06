@@ -16,5 +16,5 @@
   { "name": "sambanova", "baseURL": "https://api.sambanova.ai/v1", "keyEnv": "SAMBANOVA_API_KEY", "model": "DeepSeek-V3.1", "maxPromptChars": 100000, "maxTokens": 4096, "tools": true, "limits": { "rpm": 20, "rpd": 20, "tpd": 200000 } },
   { "name": "mistral", "baseURL": "https://api.mistral.ai/v1", "keyEnv": "MISTRAL_API_KEY", "model": "mistral-small-latest", "maxPromptChars": 100000, "maxTokens": 4096, "tools": true, "streamUsage": false, "concurrency": 1, "shortCallIds": true, "limits": { "rpm": 60, "tpm": 500000 } },
   { "name": "openrouter", "baseURL": "https://openrouter.ai/api/v1", "keyEnv": "OPENROUTER_API_KEY", "model": "nvidia/nemotron-3-super-120b-a12b:free", "maxPromptChars": 100000, "maxTokens": 4096, "tools": true, "pool": "openrouter", "limits": { "rpm": 20, "rpd": 50 } },
-  { "name": "openrouter-qwen", "baseURL": "https://openrouter.ai/api/v1", "keyEnv": "OPENROUTER_API_KEY", "model": "qwen/qwen3.8-27b:free", "maxPromptChars": 100000, "maxTokens": 4096, "tools": true, "pool": "openrouter", "vision": true, "limits": { "rpm": 20, "rpd": 50 } }
+  { "name": "openrouter-qwen", "baseURL": "https://openrouter.ai/api/v1", "keyEnv": "OPENROUTER_API_KEY", "model": "dots-studio/dots-3-note-preview:free", "maxPromptChars": 100000, "maxTokens": 4096, "tools": true, "pool": "openrouter", "vision": true, "limits": { "rpm": 20, "rpd": 50 } }
 ]

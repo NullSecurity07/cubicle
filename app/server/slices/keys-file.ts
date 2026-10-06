@@ -11,6 +11,7 @@ import { liveChecks } from '../openends/health.ts';
 import { planlessWords } from '../attention.ts';
 import { PLANLESS, refused } from '../breaker.ts';
 import { ENTRIES, providerOf, type ModelClient } from '../providers.ts';
+import { CHECK_CAP_MS, checkWords, type KeyCheck } from '../../shared/model.ts';
 
 // The founder's keys, set from the window instead of by editing `.env` by hand. The file is the one the app reads when
 // it starts: `.env` at the repository root, or beside the workspace in fake mode so a check run never touches the
@@ -43,6 +44,19 @@ export function failuresOf(clients: Pick<ModelClient, 'name'>[], checks: { ok: b
     if (!failed.has(name)) failed.set(name, check.detail === PLANLESS ? planlessWords(entry.keyEnv) : check.detail);
   });
   return failed;
+}
+
+// The last key check as kept by the usage book (model-dots.json), as the failures and the time the panel says after a
+// restart: a check that timed out or found no model is not forgotten because the app started again. A key that answered
+// after its check is not failing.
+export function keptChecks(clients: Pick<ModelClient, 'name'>[], kept: Record<string, KeyCheck>, answered: (name: string) => number | undefined = () => undefined) {
+  const checks = clients.map((client) => {
+    const check = kept[client.name];
+    const failing = !!check && check.outcome !== 'ok' && !((answered(client.name) ?? 0) > check.at);
+    return { ok: !failing, detail: failing ? checkWords(check) : '' };
+  });
+  const times = clients.map((client) => kept[client.name]?.at ?? 0).filter(Boolean);
+  return { failing: failuresOf(clients, checks), checkedAt: times.length ? Math.max(...times) : null };
 }
 
 // The rows, from what the file says now, what the app started with, and the last check.
@@ -80,8 +94,8 @@ export default {
     // waiting for a start, and whether a value came from the shell rather than from the file.
     const started: Record<string, string | undefined> = { ...process.env };
     const startedFile = await readFileEnv();
-    let failing = new Map<string, string>();
-    let checkedAt: number | null = null;
+    const asked = () => deps.clients.filter((client) => client.name !== 'fake' && client.name !== 'ollama');
+    let { failing, checkedAt } = keptChecks(asked(), deps.usage?.checks() ?? {}, (name) => deps.usage?.answeredAt(name));
     let writing: Promise<unknown> = Promise.resolve();
     // A key a provider refuses in a turn is failing here from that moment, not only after the next check, and is set
     // again as soon as it answers. Named the way the rows are: `nvidia#2` is NVIDIA_API_KEY_2, shown on NVIDIA's row.
@@ -127,11 +141,18 @@ export default {
         }
         // One word with every model the app started with: which of its keys still answer.
         if (path === '/api/keys-file/check' && method === 'POST') {
-          const clients = deps.clients.filter((client) => client.name !== 'fake' && client.name !== 'ollama');
+          const clients = asked();
           // A key refused here (a plan that is off, say) is refused in the usage book too: its row and dot say so now.
-          const checks = await liveChecks(clients, (client, error) => { if (refused(error)) deps.usage?.failed(client.name, error); });
+          // All at once, each given 20 s: one that has not answered by then is slow, and the panel answers in 20 s.
+          const checks = await liveChecks(clients, (client, error) => { if (refused(error)) deps.usage?.failed(client.name, error); }, CHECK_CAP_MS);
           // A key that answered is back now, not after the six hours a refusal rests it (a plan just turned on, say).
-          clients.forEach((client, index) => { if (checks[index]?.ok) deps.usage?.revive(client.name); });
+          // One that did not is kept as what it came to, so its dot and row say that, after a restart too.
+          clients.forEach((client, index) => {
+            const check = checks[index];
+            if (!check) return;
+            if (check.ok) deps.usage?.revive(client.name);
+            else if (check.outcome !== 'ok') deps.usage?.checkFailed(client.name, check.outcome, check.status);
+          });
           failing = failuresOf(clients, checks);
           checkedAt = Date.now();
           deps.json(res, 200, await view());

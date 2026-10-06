@@ -263,7 +263,27 @@ export type RoomEvent = { roomId: string } & (
 // `lastAnswerAt`: when any of its keys last answered, known across a new day's zeroed count; `checked`: a key check found
 // a key answering; `slow`: every key rests after giving no first word twice (breaker.ts). What a dot is drawn from.
 // `needsCard`: every key this provider has is refused until its account has a card or payment method on file.
-export type ModelInfo = { name: string; model: string; ready: boolean; left: number; requests: number; tokens: number; planOff?: boolean; needsCard?: boolean; lastAnswerAt?: number; checked?: boolean; slow?: boolean };
+// `check`: how the last key check went. A check that did not pass is what the dot says until the model answers again.
+export type ModelInfo = { name: string; model: string; ready: boolean; left: number; requests: number; tokens: number; planOff?: boolean; needsCard?: boolean; lastAnswerAt?: number; checked?: boolean; check?: KeyCheck; slow?: boolean };
+
+// What a key check with one model came to. Only `ok` is a key that passed: the rest are each said as what they are.
+export type CheckOutcome = 'ok' | 'slow' | 'not-found' | 'refused' | 'card' | 'plan' | 'down' | 'failed';
+export type KeyCheck = { outcome: CheckOutcome; at: number; status?: number };
+// How long a key check waits for one model's word before it calls that model slow.
+export const CHECK_CAP_MS = 20_000;
+// A check that did not pass, in the founder's words: the same on the rail's dot and on the key's row.
+export function checkWords(check: Pick<KeyCheck, 'outcome' | 'status'>): string {
+  switch (check.outcome) {
+    case 'ok': return 'key checked';
+    case 'slow': return `slow (no answer in ${CHECK_CAP_MS / 1000} s)`;
+    case 'not-found': return 'model not found (404), so its name needs changing';
+    case 'refused': return `key refused${check.status ? ` (${check.status})` : ''}`;
+    case 'card': return 'needs a card on file';
+    case 'plan': return 'free plan not on';
+    case 'down': return `provider error${check.status ? ` (${check.status})` : ''}, try again later`;
+    default: return `check failed${check.status ? ` (${check.status})` : ''}`;
+  }
+}
 
 export const newMessageId = () => `m-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 export const newTurnId = () => `t-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;

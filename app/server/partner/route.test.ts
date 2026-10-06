@@ -77,7 +77,7 @@ describe('the partner route from the keys in .env', () => {
 
   it('puts OpenRouter\'s free Qwen between the two Cloudflare models once the key is set', () => {
     expect(names({ ...env, OPENROUTER_API_KEY: 'o' })).toEqual(['gemini', 'cloudflare-gpt-oss', 'openrouter-qwen', 'cloudflare-qwen', 'cloudflare', 'openrouter']);
-    expect(realClients({ OPENROUTER_API_KEY: 'o' } as NodeJS.ProcessEnv).find((one) => one.name === 'openrouter-qwen')).toMatchObject({ model: 'qwen/qwen3.8-27b:free', tools: true, limits: { rpd: 50 } });
+    expect(realClients({ OPENROUTER_API_KEY: 'o' } as NodeJS.ProcessEnv).find((one) => one.name === 'openrouter-qwen')).toMatchObject({ model: 'dots-studio/dots-3-note-preview:free', tools: true, limits: { rpd: 50 } });
   });
 
   it('leaves Groq off a small partner turn too, where it would fit', () => {

@@ -1,4 +1,4 @@
-import type { Attention, ModelInfo } from '../shared/model';
+import { checkWords, type Attention, type ModelInfo } from '../shared/model';
 // Which key each model answers with: read-only data the server loads its providers from, so a refused key names its models.
 import entries from '../server/models.json';
 
@@ -25,7 +25,11 @@ export function dotOf(model: ModelInfo, refused: Map<string, string>): Dot {
   const told = key ? refused.get(key) : undefined;
   if (told) return { tone: 'refused', words: told };
   if (model.slow) return { tone: 'slow', words: 'slow to start, resting' };
-  if (!model.requests && !model.lastAnswerAt && !model.checked) return { tone: 'untested', words: 'untested' };
+  // A key check that timed out, found no such model or got an error is said as that until the model answers after it:
+  // never as a key that passed with all its day left.
+  const check = model.check;
+  if (check && check.outcome !== 'ok' && !((model.lastAnswerAt ?? 0) > check.at)) return { tone: check.outcome === 'slow' ? 'slow' : 'refused', words: checkWords(check) };
+  if (!model.requests && !model.lastAnswerAt && !(model.checked || check?.outcome === 'ok')) return { tone: 'untested', words: 'untested' };
   const left = Math.round(model.left * 100);
   const known = !model.requests && !model.lastAnswerAt ? 'key checked, ' : '';
   return { tone: model.left <= 0.05 ? 'out' : model.left < 0.2 ? 'low' : 'fine', words: `${known}${left}% left` };

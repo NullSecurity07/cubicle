@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { KeysView } from '../../shared/keys-file.ts';
 import type { Deps } from '../install.ts';
 import { chosenBackupDir } from '../openends/backup.ts';
-import keysFile, { envFileOf, failuresOf, fromOwnPage, rowsOf } from './keys-file.ts';
+import keysFile, { envFileOf, failuresOf, fromOwnPage, keptChecks, rowsOf } from './keys-file.ts';
 import { createUsage, type UsageBook } from '../usage.ts';
 import { PLANLESS } from '../breaker.ts';
 import type { ModelClient } from '../providers.ts';
@@ -159,5 +159,21 @@ describe('a Mistral key whose free plan is off, in a Keys check (round 6 final)'
     expect(usage.info([answering])[0].checked).toBeUndefined();
     await call('/api/keys-file/check', 'POST');
     expect(usage.info([answering])[0]).toMatchObject({ name: 'nvidia', requests: 0, checked: true });
+  });
+});
+
+describe('the last key check after a restart (journey 11)', () => {
+  it('names a key whose check timed out or found no model as failing, with when, unless it answered since', () => {
+    const kept = { nvidia: { outcome: 'slow' as const, at: 100 }, 'openrouter-qwen': { outcome: 'not-found' as const, at: 120, status: 404 }, groq: { outcome: 'ok' as const, at: 90 }, cerebras: { outcome: 'down' as const, at: 80, status: 503 } };
+    const { failing, checkedAt } = keptChecks([{ name: 'nvidia' }, { name: 'openrouter-qwen' }, { name: 'groq' }, { name: 'cerebras' }], kept, (name) => (name === 'cerebras' ? 200 : undefined));
+    expect(checkedAt).toBe(120);
+    expect(failing.get('NVIDIA_API_KEY')).toBe('slow (no answer in 20 s)');
+    expect(failing.get('OPENROUTER_API_KEY')).toBe('model not found (404), so its name needs changing');
+    expect(failing.has('GROQ_API_KEY')).toBe(false);
+    expect(failing.has('CEREBRAS_API_KEY')).toBe(false);
+  });
+
+  it('says nothing was checked when nothing was', () => {
+    expect(keptChecks([{ name: 'groq' }], {})).toEqual({ failing: new Map(), checkedAt: null });
   });
 });
