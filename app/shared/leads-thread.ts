@@ -60,7 +60,55 @@ export function saysPaying(notes: string): boolean {
   }
   return false;
 }
-export const readingOf = (notes: string): { conversations: number; paying: number } => ({ conversations: 1, paying: saysPaying(notes) ? 1 : 0 });
+
+// How many people the notes say pay, and the working. Journey 16: "Anna and two ward colleagues signed up and paid"
+// logged one paying customer for three. The people of the clause before the word for paying are counted: each name
+// once ("Anna Kowalski" is one), "two colleagues" by its number, "three of us" as all of them; no one named is one.
+const NUMBERS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, both: 2, 'a couple of': 2, 'a pair of': 2 };
+const NUMBER = `\\d{1,3}|${Object.keys(NUMBERS).filter((one) => one !== 'both').join('|')}`;
+const valueOf = (word: string) => NUMBERS[word.toLowerCase()] ?? Number(word);
+const WHOLE = new RegExp(`\\b(${NUMBER}|all|both)\\s+of\\s+(?:us|them|you|the\\s+[\\p{L}-]+)\\b`, 'iu');
+const MORE = new RegExp(`\\b(${NUMBER})\\s+(?:more\\s+|other\\s+)?(?:(?:of\\s+)?(?:her|his|their|my|our|the)\\s+)?((?:[\\p{L}-]+\\s+){0,2}?(?:[\\p{L}-]+s|people|staff|others))\\b`, 'giu');
+// Capitalised words that name nobody.
+const NOBODY = /^(?:she|he|they|we|i|you|the|and|but|both|all|also|after|before|then|today|yesterday|good|great|meeting|call|notes?|monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december|st|saint|hospital|clinic|ward|team|so|on|in|at|it|this|that|there|our|my|her|his|their)$/i;
+export function payingPeople(notes: string): { count: number; working?: string } | null {
+  for (const match of notes.matchAll(PAID)) {
+    const head = notes.slice(0, match.index).split(/[.!?;\n]/).at(-1)!;
+    if (NOT.test(head.split(/\s+/).filter(Boolean).slice(-4).join(' '))) continue;
+    // The clause that pays: after the last "but" or "then", and never what someone else did before it.
+    const who = head.split(/\b(?:but|then|while|whereas)\b/i).at(-1)!;
+    const whole = WHOLE.exec(who);
+    if (whole) {
+      const count = whole[1].toLowerCase() === 'all' ? 0 : valueOf(whole[1]);
+      if (count) return { count, ...(count > 1 ? { working: `${whole[0].trim()} = ${count}` } : {}) };
+    }
+    const parts: string[] = [];
+    let count = 0;
+    let rest = who;
+    for (const more of who.matchAll(MORE)) {
+      count += valueOf(more[1]);
+      parts.push(more[0].trim());
+      rest = rest.replace(more[0], ' ');
+    }
+    // Each name once, not one an organisation's ("from St. Marien"), nor one whose people are meant ("Anna's colleagues").
+    const names = [...rest.matchAll(/(?<![\p{L}'])(\p{Lu}[\p{Ll}-]+(?:\s+\p{Lu}[\p{Ll}-]+)*)(?![\p{L}'’-])/gu)]
+      .filter((name) => !/\b(?:from|at|of|with|for|in)\s+$/i.test(rest.slice(0, name.index)))
+      .map((name) => name[1].split(/\s+/).filter((word) => !NOBODY.test(word)).join(' ')).filter(Boolean);
+    // "She and 4 night nurses": the one the notes are about, named by a pronoun.
+    const one = !names.length && /\b(?:she|he)\b/i.exec(rest);
+    if (one) names.push(one[0]);
+    count += names.length;
+    parts.unshift(...names);
+    if (!count && /\bboth\b/i.test(who)) return { count: 2, working: 'both = 2' };
+    if (!count) return { count: 1 };
+    return { count, ...(count > 1 ? { working: `${parts.join(' + ')} = ${count}` } : {}) };
+  }
+  return null;
+}
+export const readingOf = (notes: string): { conversations: number; paying: number; working?: string } => {
+  const paying = payingPeople(notes);
+  return { conversations: 1, paying: paying?.count ?? 0, ...(paying?.working ? { working: paying.working } : {}) };
+};
 
 // The address in a From line, "Ana Ruiz <ana@example.com>" or just the address.
 export function addressOf(from: string): string {
@@ -106,4 +154,4 @@ export function readingTitle(lead: Pick<Lead, 'person'>, reading: { conversation
   const parts = [`conversations +${reading.conversations}`, ...(reading.paying ? [`paying customers +${reading.paying}`] : [])];
   return `Log ${parts.join(' and ')} from the meeting with ${lead.person.name}?`;
 }
-export const readingDetail = (notes: ThreadEvent) => `From your notes: "${short(notes.text ?? '', 160)}"`;
+export const readingDetail = (notes: ThreadEvent) => `From your notes: "${short(notes.text ?? '', 160)}"${notes.reading?.working ? `\nPaying counted: ${notes.reading.working}` : ''}`;

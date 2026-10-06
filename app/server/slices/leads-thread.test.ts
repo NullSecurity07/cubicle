@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Lead } from '../../shared/leads.ts';
-import { readingOf, saysPaying, stageAfter } from '../../shared/leads-thread.ts';
+import { payingPeople, readingOf, saysPaying, stageAfter } from '../../shared/leads-thread.ts';
 import { draftId } from '../../shared/maildraft.ts';
 import { createAttention } from '../attention.ts';
 import { createBoards } from '../boards.ts';
@@ -95,6 +95,20 @@ describe('the stage rules', () => {
     expect(saysPaying('They might pay if we add invoices.')).toBe(false);
     expect(saysPaying('They did not sign anything.')).toBe(false);
     expect(readingOf('Liked it, will think.')).toEqual({ conversations: 1, paying: 0 });
+  });
+
+  // Journey 16: "Anna and two ward colleagues signed up and paid" logged one paying customer for three.
+  it('counts every person the notes say pays, and says the working', () => {
+    expect(readingOf('Anna + two colleagues paid.')).toEqual({ conversations: 1, paying: 3, working: 'Anna + two colleagues = 3' });
+    expect(payingPeople('Anna and two ward colleagues signed up and paid.')).toEqual({ count: 3, working: 'Anna + two ward colleagues = 3' });
+    expect(payingPeople('Great call. Three of us paid on the spot.')).toEqual({ count: 3, working: 'Three of us = 3' });
+    expect(payingPeople('She and 4 night nurses subscribed.')).toEqual({ count: 5, working: 'She + 4 night nurses = 5' });
+    expect(payingPeople('Ben and Clara both paid.')).toEqual({ count: 2, working: 'Ben + Clara = 2' });
+    // One person, however they are named; an organisation or someone whose people are meant is nobody.
+    expect(payingPeople('Anna Kowalski from St. Marien paid.')).toEqual({ count: 1 });
+    expect(payingPeople("Anna's two colleagues paid.")).toEqual({ count: 2, working: 'two colleagues = 2' });
+    expect(payingPeople('Good meeting. Anna paid for two weeks.')).toEqual({ count: 1 });
+    expect(payingPeople('They might pay later.')).toBeNull();
   });
 });
 
@@ -207,6 +221,19 @@ describe('a lead\'s thread', () => {
     expect((await lead(ada.id)).stage).toBe('customer');
     expect((await needs()).filter((entry) => entry.kind === 'lead-reading')).toEqual([]);
     expect((await call('/api/leads-thread/answer', { id: reading.id, do: 'log' })).status).toBe(400);
+  });
+
+  it('a reading of three paying logs three, and the ask says how they were counted', async () => {
+    const { call, add, needs, workspace, close } = await setup();
+    closing = close;
+    const anna = await add('Anna', 'anna@marien.example');
+    await call(`/api/leads/leads-1/${anna.id}/meeting`, { day: '2026-10-01' });
+    await call(`/api/leads/leads-1/${anna.id}/meeting-notes`, { text: 'Anna and two ward colleagues signed up and paid.' });
+    const [reading] = (await needs()).filter((entry) => entry.kind === 'lead-reading');
+    expect(reading.title).toBe('Log conversations +1 and paying customers +3 from the meeting with Anna?');
+    expect(reading.detail).toContain('Paying counted: Anna + two ward colleagues = 3');
+    expect((await call('/api/leads-thread/answer', { id: reading.id, do: 'log' })).status).toBe(200);
+    expect((await metricsFor(workspace).load('metrics-1')).metrics.find((one) => one.label === 'Paying customers')!.points.at(-1)).toMatchObject({ value: 3 });
   });
 
   it('a reading declined logs nothing, and none is offered without a Metrics card', async () => {
