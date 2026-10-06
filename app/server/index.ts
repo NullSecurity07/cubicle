@@ -65,7 +65,8 @@ import { wireStudios } from './wiring/studios.ts';
 // failure, which dev.mjs starts again.
 guardProcess();
 const root = resolve(import.meta.dirname, '../..');
-try { process.loadEnvFile(resolve(root, '.env')); } catch { /* no .env: only the fake model will work */ }
+// A check run (playwright, site shots) says STAGE_NO_ENV_FILE so the founder's own keys never reach its stage.
+if (!process.env.STAGE_NO_ENV_FILE) { try { process.loadEnvFile(resolve(root, '.env')); } catch { /* no .env: only the fake model will work */ } }
 
 const port = Number(process.env.STAGE_API_PORT ?? 7421);
 const fake = process.env.STAGE_FAKE_MODEL === '1';
