@@ -4,7 +4,8 @@
 // under its opening question, because "farmer" was one of the film's words. A picture whose title names a country,
 // a region or an event the brief never mentions is a picture of that place or that event, not of the film's subject.
 // The list is short on purpose: the countries and regions a library's titles name most, and the words for a news
-// event. A place the brief or the line itself names is allowed.
+// event. Any other name a title gives is caught by its capital (`namesInTitle`). A place the brief or the line itself
+// names is allowed.
 
 const PLACES = [
   'afghanistan', 'albania', 'algeria', 'angola', 'argentina', 'armenia', 'australia', 'austria', 'azerbaijan', 'bangladesh',
@@ -29,11 +30,51 @@ const EVENTS = ['war', 'protest', 'protests', 'riot', 'riots', 'refugee', 'refug
   'flood', 'flooding', 'famine', 'hurricane', 'cyclone', 'massacre', 'troops', 'military', 'army', 'soldiers', 'election',
   'elections', 'funeral', 'crash', 'disaster', 'conflict', 'crisis', 'shelling', 'evacuation', 'drought'];
 
-const NAMED = new RegExp(`\\b(?:${[...PLACES, ...EVENTS].map((one) => one.replace(/ /g, '\\s+')).join('|')})\\b`, 'gi');
+// Landmarks: a photograph of a city hall, a cathedral or a shopping mall is of that building, whatever its tags share
+// with the film. Journey 15's film about a marketplace for idle 3D printers was handed "Old marketplace and city hall in
+// Poznań" and "International Marketplace - Waikiki" because "marketplace" was one of its words.
+const LANDMARKS = ['city hall', 'town hall', 'market square', 'town square', 'old town', 'cathedral', 'basilica', 'church',
+  'mosque', 'temple', 'palace', 'castle', 'monument', 'mall', 'shopping mall', 'shopping centre', 'shopping center', 'plaza',
+  'skyline', 'downtown', 'harbour', 'harbor', 'boulevard'];
 
-// The places and events a title names that the film's own words do not.
+const NAMED = new RegExp(`\\b(?:${[...PLACES, ...EVENTS, ...LANDMARKS].map((one) => one.replace(/ /g, '\\s+')).join('|')})\\b`, 'gi');
+
+// Capitalised words that are not somebody's or somewhere's name.
+const NOT_NAMES = new Set(['i', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'january',
+  'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december', 'mr', 'mrs',
+  'ms', 'dr', 'the', 'a', 'an', 'my', 'our', 'photo', 'image', 'picture', 'flickr', 'wikimedia', 'commons', 'creative']);
+// What comes before a name: a separator in a title ("International Marketplace - Waikiki", "farmer, Lankien") or a
+// word that puts a thing somewhere ("city hall in Poznań").
+const BEFORE_NAME = /^(?:[-–—|(:,]|in|at|near|from|outside|inside)$/i;
+
+// The proper names a title gives that the film's words do not: a capitalised word in the middle of a sentence ("city
+// hall in Poznań"), after a separator ("International Marketplace - Waikiki"), or spelt with letters English does not
+// use. A list of places can never be long enough; a library's titles name every town on earth. A title written in
+// Title Case is read for the names after a separator or a place word only, since every word in it has a capital.
+export function namesInTitle(title: string): string[] {
+  const tokens = (title ?? '').replace(/([-–—|(:])/g, ' $1 ').split(/\s+/).filter(Boolean);
+  const names: string[] = [];
+  tokens.forEach((token, at) => {
+    const word = token.replace(/^[^\p{L}]+|[^\p{L}'-]+$/gu, '');
+    if (at === 0 || !/^\p{Lu}\p{Ll}/u.test(word) || NOT_NAMES.has(word.toLowerCase())) return;
+    const before = tokens[at - 1];
+    if (/[.!?]$/.test(before)) return;
+    const lowerBefore = /^\p{Ll}[\p{Ll}'-]*$/u.test(before);
+    const separated = /,$/.test(before) || BEFORE_NAME.test(before.replace(/,$/, ''));
+    const foreign = /[^\x00-\x7F]/.test(word);
+    if (lowerBefore || separated || foreign) names.push(word.toLowerCase());
+  });
+  return [...new Set(names)];
+}
+
+const stemOf = (word: string) => word.replace(/(?:'s|s)$/, '');
+
+// The places, landmarks, events and names a title has that the film's own words do not.
 export function foreignIn(title: string, allowed: string): string[] {
   const own = (allowed ?? '').toLowerCase();
+  const said = new Set(own.split(/[^\p{L}\p{N}'-]+/u).filter(Boolean).map(stemOf));
   const named = [...(title ?? '').matchAll(NAMED)].map((match) => match[0].toLowerCase().replace(/\s+/g, ' '));
-  return [...new Set(named)].filter((one) => !new RegExp(`\\b${one.replace(/ /g, '\\s+')}\\b`, 'i').test(own));
+  const listed = [...new Set(named)].filter((one) => !new RegExp(`\\b${one.replace(/ /g, '\\s+')}\\b`, 'i').test(own));
+  const names = namesInTitle(title).filter((one) => !said.has(stemOf(one)) && !listed.includes(one));
+  return [...listed, ...names];
 }

@@ -227,10 +227,14 @@ export const heldUp = (visual: Visual): boolean =>
 // Given the film's world, a photograph is also of that world: a museum's object or catalogue entry the founder never
 // named is refused, and a photograph that met the line on one of its things also names a thing of the world beside it
 // ("a rotary phone" is a phone; "a phone at a dental reception" is this film's phone). A miss is drawn instead.
+//
+// A world with no concrete thing in it ("an explainer about our app", and nothing pinned) has nothing a photograph can
+// be of, so every picture of that film is drawn.
 export const photoOfTheLine = (what: string, visual: Pick<Visual, 'line' | 'about'>, topic: string[] = [], brief = '', world?: World): boolean => {
   const said = `${visual.line} ${visual.about ?? ''}`;
-  if (foreignIn(what, `${brief} ${said} ${topic.join(' ')}`).length) return false;
+  if (foreignIn(what, `${brief} ${said} ${topic.join(' ')} ${world?.named ?? ''}`).length) return false;
   if (world && standInOf(what, `${world.named} ${said}`)) return false;
+  if (world && !world.words.length) return false;
   if (world?.words.length) {
     const met = thingsOf(said).filter((word) => hasNoun(what, [word])).map(THING_STEM);
     const beside = world.words.filter((word) => !met.includes(THING_STEM(word)) && hasNoun(what, [word]));
@@ -269,8 +273,18 @@ const QUALITIES = new Set(['wet', 'dry', 'old', 'young', 'little', 'tiny', 'huge
   'cold', 'slow', 'fast', 'long', 'short', 'high', 'low', 'rough', 'smooth', 'clean', 'dirty', 'fresh', 'raw', 'shape',
   'golden', 'natural', 'gentle', 'vibrant', 'busy', 'colourful', 'colorful', 'ripe', 'rustic']);
 
-// A line's photographable things: its nouns, less every number, sum and date and the words for a quality.
-export const thingsOf = (line: string): string[] => nounsOf(line).filter((word) => !numberish(word) && !QUALITIES.has(word));
+// What a product is as a kind of business rather than a thing anybody can photograph. Journey 15's explainer "about
+// our marketplace" (renting idle 3D printers to local makers) was handed an old market square in Poznań, a Waikiki
+// shopping mall and drawn ceramic tiles: "marketplace" had been read as a place. The film's world is the brief's
+// concrete things (printers, makers, filament), and a word from here is never one of them.
+export const PRODUCT_KINDS = new Set(['marketplace', 'marketplaces', 'platform', 'platforms', 'app', 'apps', 'application',
+  'applications', 'service', 'services', 'network', 'networks', 'hub', 'hubs', 'solution', 'solutions', 'ecosystem',
+  'software', 'saas', 'website', 'websites', 'portal', 'portals', 'startup', 'startups', 'company', 'companies',
+  'business', 'businesses', 'product', 'products', 'community', 'communities', 'system', 'systems', 'brand', 'brands']);
+
+// A line's photographable things: its nouns, less every number, sum and date, the words for a quality and the words
+// for a kind of business.
+export const thingsOf = (line: string): string[] => nounsOf(line).filter((word) => !numberish(word) && !QUALITIES.has(word) && !PRODUCT_KINDS.has(word));
 
 // What the film is about, in its own nouns: the words after "about" (or "of", "on") in the brief, else the brief's
 // things less the words for a film. "A 20 second documentary clip about a pottery class, with real photographs" is
@@ -290,7 +304,8 @@ export function topicOf(brief: string): string[] {
 const ABSTRACT = new Set(['after', 'before', 'while', 'within', 'during', 'until', 'since', 'upon', 'into', 'onto', 'miss', 'misses',
   'chaos', 'mess', 'problem', 'problems', 'pain', 'pains', 'stress', 'overload', 'frustration',
   'confusion', 'struggle', 'struggles', 'explainer', 'elsewhere', 'front', 'back', 'side', 'top', 'bottom', 'way', 'ways',
-  'thing', 'things', 'stuff', 'lot', 'lots', 'kind', 'idea', 'ideas', 'point', 'part', 'fact', 'case', 'issue', 'issues']);
+  'thing', 'things', 'stuff', 'lot', 'lots', 'kind', 'idea', 'ideas', 'point', 'part', 'fact', 'case', 'issue', 'issues',
+  ...PRODUCT_KINDS]);
 
 // --- the film's world ---------------------------------------------------------------------------------------------
 //
@@ -306,6 +321,18 @@ export type World = {
   named: string;
   // Where the brief set the film, as a phrase a picture can end on.
   setting?: string;
+  // The kind the founder wrote a thing with, by the thing: "3D printers" is { printers: '3D' }. Drawn without it, the
+  // film's 3D printers came back as a laser printer, an inkjet and an ink cartridge.
+  kinds?: Record<string, string>;
+};
+
+// A kind a picture model reads the thing by: "3D", "2D". Written "3-D" or "3‑D" by a model, it is the same kind.
+const KIND = /\b(\d)\s*[-‑–]?\s*(d)\b/gi;
+const kindOf = (text: string): string[] => [...(text ?? '').matchAll(KIND)].map((hit) => `${hit[1]}${hit[2]}`.toUpperCase());
+// A thing of the world as the founder wrote it, kind and all.
+export const worldThing = (word: string, world?: World): string => {
+  const kind = world?.kinds?.[THING_STEM(word)];
+  return kind ? `${kind} ${word}` : word;
 };
 
 // The rough setting of a brief: the first "at ...", "in ..." or "inside ..." phrase that names a thing of the film.
@@ -323,9 +350,14 @@ export function settingOf(brief: string): string | undefined {
 // People by what they are to a business: drawn, they are a stranger, which a film has one of at most.
 const PEOPLE_WORDS = /^(?:patients?|callers?|dentists?|doctors?|nurses?|staff|receptionists?|users?|customers?|clients?|guests?|students?|owners?|buyers?|sellers?|visitors?|members?)$/i;
 
+// Words a brief uses that no photograph can be of: anybody at all, a place relative to somebody, what is done.
+// "Old marketplace with people" matched "people" from "people rent out their idle 3D printers".
+const NOT_WORLD = new Set(['people', 'person', 'persons', 'everyone', 'anyone', 'nearby', 'idle', 'rent', 'rents', 'send',
+  'sends', 'need', 'needs', 'get', 'gets', 'sit', 'sits', 'wait', 'waits', 'pay', 'pays']);
+
 // The film's world out of the founder's ask and, for a film about the company, the product's own facts.
 export function worldOf(ask: string, facts = ''): World {
-  const keep = (text: string) => thingsOf(text).filter((word) => !FILM_WORDS.has(word) && !ABSTRACT.has(word) && word.length > 2);
+  const keep = (text: string) => thingsOf(text).filter((word) => !FILM_WORDS.has(word) && !ABSTRACT.has(word) && !NOT_WORLD.has(word) && word.length > 2);
   const own = keep(ask);
   // The product's own name is not a thing anybody can photograph: "a callback, at the front desk".
   // A word the facts only ever write with a capital is a name.
@@ -338,7 +370,14 @@ export function worldOf(ask: string, facts = ''): World {
     ...[...(facts ?? '').matchAll(/\b(?:it|nobody|somebody|someone|who|that|which|they|he|she)\s+([a-z]+s)\b/gi)].map((hit) => hit[1].toLowerCase()),
   ]);
   const product = keep(facts).filter((word) => !own.includes(word) && !names.has(word) && !does.has(word)).slice(0, 12);
-  return { words: [...new Set([...topicOf(ask), ...own, ...product])], named: `${ask ?? ''} ${facts ?? ''}`, setting: settingOf(ask) };
+  const words = [...new Set([...topicOf(ask), ...own, ...product])];
+  const named = `${ask ?? ''} ${facts ?? ''}`;
+  const kinds: Record<string, string> = {};
+  for (const hit of named.matchAll(/\b(\d\s*[-‑–]?\s*d)\s+([a-z][a-z'-]+)/gi)) {
+    const thing = THING_STEM(hit[2].toLowerCase());
+    if (words.some((word) => THING_STEM(word) === thing)) kinds[thing] = kindOf(hit[1])[0];
+  }
+  return { words, named, setting: settingOf(ask), ...(Object.keys(kinds).length ? { kinds } : {}) };
 }
 
 // Objects that stand in for an idea rather than show the film's world, and the marks of a museum's or an archive's
@@ -353,6 +392,21 @@ export function standInOf(text: string, named = ''): string | null {
     if (!mine.has(THING_STEM(word))) return word;
   }
   return CATALOGUE_NUMBER.test(text ?? '') ? 'a catalogue number' : null;
+}
+
+// Whether a drawn picture has one of the film's own things in it. "Nine small ceramic tiles" under "Already nine
+// printers are listed" declared itself a stand-in for the listing and drew something no 3D printer marketplace has. A
+// film with no world, or a world with no things, asks nothing of it.
+//
+// A thing the founder wrote with its kind counts only with it: a laser printer is not one of the film's 3D printers.
+export function ofTheWorld(subject: string, world?: World): boolean {
+  if (!world?.words.length) return true;
+  const kinds = kindOf(subject);
+  return world.words.some((word) => {
+    if (!hasNoun(subject, [word])) return false;
+    const kind = world.kinds?.[THING_STEM(word)];
+    return !kind || kinds.includes(kind);
+  });
 }
 
 // How well a picture or a photograph sits in the film's world: a stand-in is below zero, and anything else counts
@@ -387,7 +441,12 @@ export function closeHolds(owners: number[], scores: Map<number, number>): numbe
 // What a photo library is asked for one shot, in order of hope: the shot's own things beside the film's topic, then
 // the topic alone. Two tries, after which the picture is drawn. A subject's words count only when they are the
 // line's or the topic's: "an eighty beside a seven, on a linen cloth" is the director's word salad for a number.
-export function stockQueries(visual: Pick<Visual, 'line' | 'about' | 'subject'>, topic: string[] = []): string[] {
+//
+// A film whose ask names no thing ("an explainer about our marketplace") has no topic, and its lines name the product
+// and anybody at all: Journey 15 searched "printnear people" and "already printers". Given its world, such a film asks
+// for the line's own things that are of the world, and then for the world's first thing.
+export function stockQueries(visual: Pick<Visual, 'line' | 'about' | 'subject'>, topic: string[] = [], world?: World): string[] {
+  if (!topic.length && world?.words.length) return worldQueries(visual, world);
   // "documentary" and "photograph" are what the shot is, not what it is of.
   const line = thingsOf(`${visual.line} ${visual.about ?? ''}`).filter((word) => !FILM_WORDS.has(word));
   const subject = thingsOf(visual.subject ?? '').filter((word) => !FILM_WORDS.has(word));
@@ -396,6 +455,15 @@ export function stockQueries(visual: Pick<Visual, 'line' | 'about' | 'subject'>,
   const second = topic.slice(0, 2).join(' ');
   if (!lead.length) return second ? [second] : [];
   const first = [...lead.slice(0, 1), ...topic.slice(0, 1), ...lead.slice(1, 2)].filter((word, index, all) => all.indexOf(word) === index).slice(0, 2).join(' ');
+  return [first, second].filter((query, index, all) => query && all.indexOf(query) === index);
+}
+
+function worldQueries(visual: Pick<Visual, 'line' | 'about' | 'subject'>, world: World): string[] {
+  const things = world.words.filter((word) => !PEOPLE_WORDS.test(word));
+  const said = [...thingsOf(visual.subject ?? ''), ...thingsOf(`${visual.line} ${visual.about ?? ''}`)];
+  const mine = [...new Set(said.flatMap((word) => world.words.filter((one) => THING_STEM(one) === THING_STEM(word))))];
+  const first = mine.slice(0, 2).join(' ');
+  const second = things.slice(0, 1).join(' ');
   return [first, second].filter((query, index, all) => query && all.indexOf(query) === index);
 }
 
@@ -430,6 +498,7 @@ export function criticiseVisuals(visuals: Visual[], world?: World): Finding[] {
     }
     const standIn = world ? standInOf(visual.subject, `${world.named} ${visual.line}`) : null;
     if (standIn) say('standin', index, `${where} is ${standIn === 'a catalogue number' ? 'a museum piece' : `a ${standIn}`}, a stand-in nobody asked for — show a real thing from the film's world (${world!.words.slice(0, 6).join(', ')})`);
+    else if (!ofTheWorld(visual.subject, world)) say('offworld', index, `${where} is "${trimTo(visual.subject, 8)}", which has none of the film's own things in it — show one of them (${world!.words.slice(0, 6).join(', ')})`);
     const head = headNoun(visual.subject);
     if (head) {
       const before = heads.get(head);
@@ -531,12 +600,12 @@ export function visualFrom(line: string, at: number, used: Set<string>, world?: 
   const place = world?.setting ?? PLACES[at % PLACES.length];
   if (picked.length) {
     for (const word of picked) used.add(word);
-    return `${picked.map(withArticle).join(' beside ')}, ${place}`;
+    return `${picked.map((word) => withArticle(worldThing(word, world))).join(' beside ')}, ${place}`;
   }
   const spare = world?.words.find((word) => !used.has(word) && !somebodyIn(word) && !PEOPLE_WORDS.test(word) && !(world.setting ?? '').includes(word));
   if (spare) {
     used.add(spare);
-    return `${withArticle(spare)}, ${place}`;
+    return `${withArticle(worldThing(spare, world))}, ${place}`;
   }
   const words = subjectWords(line, used, 3);
   for (const word of words) used.add(word);
@@ -560,6 +629,7 @@ export function repairVisuals(visuals: Visual[], world?: World): { visuals: Visu
     const apart = (subject: string) => (world?.setting ? subject.replace(world.setting, ' ') : subject);
     const wrong = () => {
       if (world && standInOf(one.subject, `${world.named} ${one.line}`)) return 'standin';
+      if (!ofTheWorld(apart(one.subject), world)) return 'offworld';
       const filler = fillerShot(one.subject);
       if (filler && !content(one.line).some((word) => filler.includes(word))) return 'generic';
       if (countWords(one.subject) < 4 || listSubject(one.subject)) return 'thin';
@@ -576,6 +646,7 @@ export function repairVisuals(visuals: Visual[], world?: World): { visuals: Visu
       note(fault === 'generic' ? 'a picture that could have illustrated any sentence was drawn from the line it sits under instead'
         : fault === 'repeated' ? 'two pictures in the film were the same picture, so the second is drawn from its own line'
           : fault === 'standin' ? "a picture was a stand-in object rather than a thing of the film's world, so it is drawn from its line where the film is set"
+          : fault === 'offworld' ? "a picture had none of the film's own things in it, so it is drawn from the brief's things where the film is set"
           : 'a picture was of something the line never mentions, so it is drawn from the line instead');
       one = { ...one, subject: visualFrom(content(one.line).length >= 2 ? one.line : (one.about ?? one.line), index, used, world), metaphor: undefined };
     } else {
@@ -643,7 +714,7 @@ export function visualsPrompt(slots: Visual[], bible: string, angle: string, wor
 
 // The film's world, said to the model the way the critic will read it.
 export const worldRule = (world: World): string =>
-  `- Every picture is a real thing from the film's world${world.setting ? `, ${world.setting}` : ''}: ${world.words.slice(0, 10).join(', ')}. `
+  `- Every picture is a real thing from the film's world${world.setting ? `, ${world.setting}` : ''}: ${world.words.slice(0, 10).map((word) => worldThing(word, world)).join(', ')}. `
   + 'Never a stand-in object for an idea: no paperweight, bell, anchor, sculpture, trophy, medal, coin, hourglass, antique or museum piece.';
 
 // What came back, read as loosely as it can honestly be read, with everything missing left for the repair.

@@ -123,7 +123,7 @@ const number = (value: unknown, what: string, low: number, high: number): number
 };
 
 // Which layouts need what, said once so the parser and the prompt cannot drift apart.
-const NEEDS_HEADING = new Set<Layout>(['title', 'stat', 'logo']);
+export const NEEDS_HEADING = new Set<Layout>(['title', 'stat', 'logo']);
 // One bar of a chart: a label and the figure it stands for, in either order. The figure is what the bar is as long
 // as; the rest of the line is what it is called.
 export const BAR = /(\d+(?:\.\d+)?)\s*(%|per ?cent|x\b|k\b|m\b|bn\b)?/i;
@@ -148,7 +148,7 @@ export const barOf = (line: string): { label: string; value: number; unit: strin
   return { label: label || 'Total', value, unit };
 };
 const NEEDS_TEXT = new Set<Layout>(['statement', 'quote', 'outro', 'hook', 'cta']);
-const NEEDS_BULLETS = new Set<Layout>(['bullets', 'checklist', 'steps', 'chart']);
+export const NEEDS_BULLETS = new Set<Layout>(['bullets', 'checklist', 'steps', 'chart']);
 // A scene that is a moving picture the studio has to make or cut before there is anything to show.
 export const AI_LAYOUTS = new Set<Layout>(['clip', 'presenter']);
 // A scene that already fills the frame with something. Everything else gets a background drawn behind it.

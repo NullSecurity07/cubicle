@@ -30,7 +30,7 @@ import {
 import { creditOf, filmStock, photoCredits } from './stock.ts';
 import {
   afforded, closeHolds, drawnAs, heldUp, lineUnder, photoOfTheLine, sceneLine, shareOut, shotKey, slotsFor, standInOf, stockQueries, topicOf,
-  worldOf, worldScore, type Slot, type Visual,
+  ofTheWorld, worldOf, worldScore, type Slot, type Visual,
 } from './visuals.ts';
 import { isDraft, makingWords, secondsEach } from '../../shared/film-time.ts';
 import { filmMemory, storyboardKey, subjectKey, type KeptSubject } from './remembered.ts';
@@ -369,7 +369,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
               // a clip that is of neither, or of a place or a day the brief never named, is refused.
               const wanted = { line: scene.clip_prompt ?? scene.text ?? '', subject: scene.clip_prompt ?? '' };
               let real = null as Awaited<ReturnType<typeof photoLibrary.clip>>;
-              for (const query of stockQueries(wanted, topic)) {
+              for (const query of stockQueries(wanted, topic, world)) {
                 real = await photoLibrary.clip({
                   query, shape, seconds: scene.seconds ?? 4,
                   speaker: !!scene.person, names: [material.brand?.name ?? ''].filter(Boolean),
@@ -604,7 +604,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
               // Asked twice at most, the shot's own things beside the film's topic and then the topic alone; a
               // photograph that shares no word with either is refused, and after two misses the picture is drawn.
               let photo = null as Awaited<ReturnType<typeof photoLibrary.take>>;
-              for (const query of stockQueries(visual, topic)) {
+              for (const query of stockQueries(visual, topic, world)) {
                 photo = await photoLibrary.take({
                   query, shape,
                   speaker: !!scene.person || scene.layout === 'presenter', names: [material.brand?.name ?? ''].filter(Boolean),
@@ -688,7 +688,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           const known = await memory.subjects([...keys.values()]);
           const unknown = wanted.filter((one) => {
             const before = known.get(keys.get(one.at)!);
-            return !before || !heldUp({ ...one, ...before }) || !!standInOf(before.subject, world.named);
+            return !before || !heldUp({ ...one, ...before }) || !!standInOf(before.subject, world.named) || !ofTheWorld(before.subject, world);
           });
           const written = unknown.length ? await photograph(unknown, bible, angle, deps.think, { report, signal }, world) : [];
           await memory.keepSubjects(written.filter((one) => one.subject.trim())
@@ -698,7 +698,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
             // A subject remembered from an earlier film is held to today's rules like a new one: one that does not
             // hold up is written again rather than drawn again.
             const remembered = before ? { ...slot, ...before } : undefined;
-            const visual = remembered && heldUp(remembered) && !standInOf(remembered.subject, world.named) ? remembered : written.find((one) => one.at === slot.at) ?? slot;
+            const visual = remembered && heldUp(remembered) && !standInOf(remembered.subject, world.named) && ofTheWorld(remembered.subject, world) ? remembered : written.find((one) => one.at === slot.at) ?? slot;
             const key = shotKey(visual);
             const mine = new AbortController();
             stops.set(key, mine);

@@ -1,11 +1,11 @@
 import {
-  budgetOf, content, countWords, echoes, HEADING_WORDS, MAX_SCENES, saidWords, STOP, TEXT_WORDS,
+  budgetOf, content, countWords, echoes, HEADING_WORDS, MAX_SCENES, NEEDS_BULLETS, NEEDS_HEADING, saidWords, STOP, TEXT_WORDS,
   type Layout, type Purpose, type Scene, type Spec,
 } from './spec.ts';
 import type { Pace } from './templates/looks.ts';
 import type { Pack } from './templates/packs.ts';
 import { contradictions, factLine, factsIn, factSteps } from './against-brief.ts';
-import { claimsOf, figureSaid, fillerIn, flat, fromBrief, madeUpNames, preciseFigures, realLine, saysMostOf, unfill, ungrounded, type Sources } from './grounding.ts';
+import { claimsOf, figureSaid, fillerIn, flat, fromBrief, madeUpNames, preciseFigures, realLine, saysMostOf, unfill, ungrounded, unscripted, type Sources } from './grounding.ts';
 import { inStyle, offStyle, photographic } from './style.ts';
 import { closeScene, firstHeadline, namesTheBrief, type Close } from './close.ts';
 import { freshHeadlines, phraseFor, repeatsCaptions, type Phrases } from './headlines.ts';
@@ -177,6 +177,7 @@ export function criticise(spec: Spec, want: Want): Finding[] {
   // What the film says is so. A claim that cannot be pointed at is not a style problem, it is a lie, and a founder
   // cannot publish a film that invents their own product's features.
   if (want.sources) {
+    const script = scenes.map((one) => one.say ?? '').join(' ');
     scenes.forEach((scene, index) => {
       const at = index + 1;
       const claims = claimsOf(scene);
@@ -202,6 +203,9 @@ export function criticise(spec: Spec, want: Want): Finding[] {
         const made = ungrounded(scene, want.sources!);
         if (made) say('invented', `scene ${at} says "${trimTo(made, 8)}", which is nowhere in what you wired to the card`, at);
       }
+      // The words on screen are the script's own line or the brief's, never a caption the storyboard made up.
+      const shown = unscripted(scene, script, want.sources!)[0];
+      if (shown) say('caption', `scene ${at} puts "${trimTo(shown, 8)}" on screen, which neither its narration nor your brief says — show the script's own words`, at);
     });
   }
 
@@ -337,8 +341,25 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
     const used = new Set<string>();
     const keep: Scene[] = [];
     let dropped = 0;
+    const script = scenes.map((one) => one.say ?? '').join(' ');
     for (const scene of scenes) {
       let made = { ...scene };
+      // A caption the narration never says and the brief never wrote comes off the screen. What a layout cannot be
+      // without is the scene's own spoken line, set as a headline; a list that loses its made-up steps becomes the line.
+      const offScript = new Set(unscripted(made, script, sources));
+      if (offScript.size) {
+        const own = (cap: number) => headlineOf(made.say ?? '', cap) || undefined;
+        const kept = made.bullets?.filter((one) => !offScript.has(one));
+        const heading = made.heading && offScript.has(made.heading) ? (NEEDS_HEADING.has(made.layout) ? own(HEADING_WORDS) ?? made.heading : undefined) : made.heading;
+        const text = made.text && offScript.has(made.text) ? (NEEDS_TEXT.has(made.layout) ? own(TEXT_WORDS) ?? made.text : undefined) : made.text;
+        made = { ...made, heading, text, bullets: kept };
+        if (made.bullets && NEEDS_BULLETS.has(made.layout) && made.bullets.length < 2) {
+          made = can('statement') && made.say
+            ? { ...made, layout: 'statement', text: own(TEXT_WORDS), bullets: undefined }
+            : { ...made, bullets: scene.bullets };
+        }
+        note('a caption said what neither the narration nor your brief does, so the screen shows the script\'s own words instead');
+      }
       // A line that says the product works the way the brief says it does not is put right with the brief's own fact:
       // the line said becomes the fact, a headline that says it goes, and a list keeps only its true steps or becomes
       // the fact's own steps.
