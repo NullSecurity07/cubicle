@@ -622,6 +622,18 @@ describe('Journey 17: the meal-prep film', () => {
     expect(packedFor(nurse, world)).toBe(nurse);
   });
 
+  it('draws a food line with nobody in it as the pack, never "a prep" or "a night beside a shift"', () => {
+    const fresh = 'Fresh food arrives every Sunday evening before your week begins.';
+    const table = packedFor(shotOf(fresh, 'a prep, on a linen cloth in soft window light'), world);
+    expect(table.subject).toMatch(/delivery box/);
+    expect(visualFrom(fresh, 2, new Set(), world)).toMatch(/delivery box/);
+    const said = visualFrom(LINES[1], 1, new Set(), world);
+    expect(said).not.toMatch(/\bnight\b|\bshift\b|\bprep\b/);
+    // A canteen under "nurses eat badly" is not a food shot.
+    const canteen = shotOf(LINES[0], 'a dusty steel counter in a silent hospital canteen');
+    expect(packedFor(canteen, world)).toBe(canteen);
+  });
+
   it('packs nothing for a film whose product is not boxed food', () => {
     expect(packOf('A 20 second clip about a weekly pottery class making bowls and plates')).toBeUndefined();
     expect(packOf('Callback turns a dental practice\'s voicemail into booked appointments.')).toBeUndefined();

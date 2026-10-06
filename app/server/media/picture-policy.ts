@@ -1,4 +1,4 @@
-import { hasNoun, photoOfTheLine, stockQueries, THING_STEM, thingsOf, type Visual, type World } from './visuals.ts';
+import { hasNoun, NOT_CONCRETE, photoOfTheLine, stockQueries, THING_STEM, thingsOf, type Visual, type World } from './visuals.ts';
 
 // Where a film's pictures come from first.
 //
@@ -26,15 +26,6 @@ export type PicturePolicy = 'drawn-first' | 'photo-first';
 export const REAL_ASK = /\b(?:documentar(?:y|ies)|real[- ](?:world\s+)?(?:footage|photos?|photographs?|pictures?|images?|clips?|people|places?)|stock\s+(?:photos?|photographs?|footage|images?|clips?)|b-?roll|archive\s+footage|archival|actual\s+(?:footage|photos?|photographs?)|news\s*reel|photo\s*essay)\b/i;
 
 export const picturePolicy = (ask: string): PicturePolicy => (REAL_ASK.test(ask ?? '') ? 'photo-first' : 'drawn-first');
-
-// Words a brief's world holds that are not a thing anybody could photograph on its own: what is done, when, how
-// often. ShiftMeals' world was "meal, prep, delivery, night, shift, nurses, hospital, canteens, close, begins, ready".
-const NOT_CONCRETE = new Set(['close', 'closes', 'closed', 'begin', 'begins', 'start', 'starts', 'end', 'ends', 'ready',
-  'shift', 'shifts', 'night', 'nights', 'morning', 'evening', 'delivery', 'deliveries', 'deliver', 'delivers', 'prep',
-  'weekly', 'daily', 'monthly', 'plan', 'plans', 'order', 'orders', 'help', 'helps', 'work', 'works', 'time', 'times',
-  'week', 'weeks', 'day', 'days', 'subscription', 'subscriptions', 'booking', 'bookings', 'offer', 'offers', 'slot',
-  'slots', 'call', 'calls', 'return', 'returns', 'returned', 'turn', 'turns', 'answer', 'answers', 'save', 'saves',
-  'cost', 'costs', 'free', 'new', 'own', 'more', 'less', 'every', 'each', 'local', 'nearby']);
 
 // The world's things a camera could be pointed at.
 export const concreteOf = (world?: World): string[] => (world?.words ?? []).filter((word) => !NOT_CONCRETE.has(word));

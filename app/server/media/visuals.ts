@@ -414,10 +414,12 @@ export function packOf(text: string): string | undefined {
   if (boxed || /\bmeal[- ]?prep\b/i.test(said)) return /\bmeal[- ]?prep\b/i.test(said) ? 'sealed meal-prep containers packed in a cardboard delivery box' : IN_A_BOX;
   return SUBSCRIBED.test(said) ? IN_A_BOX : undefined;
 }
-// Whether a picture is of the product's food, by what is drawn in it: the line only when there is no subject yet.
-// A nurse under "nurses eat badly" is a picture of a nurse.
+// Whether a picture is of the product's food: by what is drawn in it, or by its line when nobody is in it. A nurse
+// under "nurses eat badly" is a picture of a nurse; a table under "fresh food arrives" is a picture of the food.
 export const foodShot = (visual: Pick<Visual, 'line' | 'about' | 'subject'>): boolean =>
-  FOOD_SHOT.test((visual.subject ?? '').trim() || (visual.line ?? ''));
+  FOOD_SHOT.test(visual.subject ?? '') || (FOOD.test(`${visual.line ?? ''} ${visual.about ?? ''}`) && !personIn(visual.subject ?? ''));
+// Somebody in a subject, by the words for anybody or for what they are to a business.
+const personIn = (subject: string): boolean => !!somebodyIn(subject) || content(subject).some((word) => PEOPLE_WORDS.test(word));
 // How a picture model plates food when nobody says otherwise, which a packed product never is.
 const PLATED = /\b(?:(?:served|plated|arranged|laid out)\s+)?(?:on|in|onto|into)\s+(?:a\s+|an\s+|the\s+|two\s+|three\s+|four\s+|five\s+|several\s+)?(?:[\p{L}-]+\s+){0,2}(?:plates?|bowls?|dish(?:es)?|pots?|platters?|trays?)\b/giu;
 // A food shot of a film whose product is packed, drawn in its pack: its plates and bowls taken out of the subject
@@ -457,6 +459,15 @@ const PEOPLE_WORDS = /^(?:patients?|callers?|dentists?|doctors?|nurses?|staff|re
 // "Old marketplace with people" matched "people" from "people rent out their idle 3D printers".
 const NOT_WORLD = new Set(['people', 'person', 'persons', 'everyone', 'anyone', 'nearby', 'idle', 'rent', 'rents', 'send',
   'sends', 'need', 'needs', 'get', 'gets', 'sit', 'sits', 'wait', 'waits', 'pay', 'pays']);
+
+// Words a brief's world holds that are not a thing anybody could photograph on its own: what is done, when, how
+// often. ShiftMeals' world was "meal, prep, delivery, night, shift, nurses, hospital, canteens, close, begins, ready".
+export const NOT_CONCRETE = new Set(['close', 'closes', 'closed', 'begin', 'begins', 'start', 'starts', 'end', 'ends', 'ready',
+  'shift', 'shifts', 'night', 'nights', 'morning', 'evening', 'delivery', 'deliveries', 'deliver', 'delivers', 'prep',
+  'weekly', 'daily', 'monthly', 'plan', 'plans', 'order', 'orders', 'help', 'helps', 'work', 'works', 'time', 'times',
+  'week', 'weeks', 'day', 'days', 'subscription', 'subscriptions', 'booking', 'bookings', 'offer', 'offers', 'slot',
+  'slots', 'call', 'calls', 'return', 'returns', 'returned', 'turn', 'turns', 'answer', 'answers', 'save', 'saves',
+  'cost', 'costs', 'free', 'new', 'own', 'more', 'less', 'every', 'each', 'local', 'nearby']);
 
 // The film's world out of the founder's ask and, for a film about the company, the product's own facts.
 export function worldOf(ask: string, facts = ''): World {
@@ -698,7 +709,10 @@ export function visualFrom(line: string, at: number, used: Set<string>, world?: 
   const inWorld = (word: string) => !!world && hasNoun(word, world.words);
   // With a world, only the line's things that are of it: the rest of a line's words ("returns", "instead", "costs")
   // are what a sentence does, and a picture of them is a picture of nothing.
-  const things = nounsOf(line).filter((word) => !used.has(word) && (!world?.words.length || (inWorld(word) && !ABSTRACT.has(word))));
+  // Nor a word of the world that is a time or a doing rather than a thing: Journey 17 drew "a night beside a shift"
+  // and "a prep, on a linen cloth".
+  const things = nounsOf(line).filter((word) => !used.has(word) && !NOT_CONCRETE.has(word)
+    && (!world?.words.length || (inWorld(word) && !ABSTRACT.has(word))));
   const still = things.filter((word) => !somebodyIn(word) && !PEOPLE_WORDS.test(word));
   const picked = (still.length || world?.words.length ? still : things).sort((a, b) => Number(inWorld(b)) - Number(inWorld(a)) || b.length - a.length).slice(0, 2);
   const place = world?.setting ?? PLACES[at % PLACES.length];
@@ -706,7 +720,9 @@ export function visualFrom(line: string, at: number, used: Set<string>, world?: 
     for (const word of picked) used.add(word);
     return `${picked.map((word) => withArticle(worldThing(word, world))).join(' beside ')}, ${place}`;
   }
-  const spare = world?.words.find((word) => !used.has(word) && !somebodyIn(word) && !PEOPLE_WORDS.test(word) && !(world.setting ?? '').includes(word));
+  // A food line of a film whose product is packed is a picture of the pack: "Fresh food arrives every Sunday".
+  if (world?.product && FOOD.test(line ?? '')) return `${world.product}, ${place}`;
+  const spare = world?.words.find((word) => !used.has(word) && !NOT_CONCRETE.has(word) && !somebodyIn(word) && !PEOPLE_WORDS.test(word) && !(world.setting ?? '').includes(word));
   if (spare) {
     used.add(spare);
     return `${withArticle(worldThing(spare, world))}, ${place}`;
@@ -914,7 +930,7 @@ export function drawnAs(visual: Visual, bible: string): string {
   // out of "an exhausted nurse resting her head against a locker" under a line about eating badly. So anybody drawn
   // stands or sits upright at work, unless the line itself has somebody lying down. It is said as what they do, never
   // as what they do not: a picture model reads "not lying down" as "lying down".
-  const who = somebodyIn(body) || content(body).some((word) => PEOPLE_WORDS.test(word))
+  const who = personIn(body)
     ? `, anybody in the picture is ${liesDown(`${visual.line} ${visual.about ?? ''}`) ? '' : 'standing or sitting upright at work in a natural pose, '}turned away from the camera`
     : '';
   // How big and through what, where the storyboard said: a phrase about focus and distance, never anybody's name.
