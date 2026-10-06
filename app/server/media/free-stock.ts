@@ -1,7 +1,7 @@
 import { digestOf } from './hash.ts';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { NONE_ANSWERED, peopleIn, pexels, remember, type Found, type Stock, type StockKind } from './stock.ts';
+import { NONE_ANSWERED, peopleIn, pexels, remember, served, type Found, type Stock, type StockKind } from './stock.ts';
 import { nounsOf, numberish } from './visuals.ts';
 
 // Real photographs and real footage with no key at all.
@@ -147,12 +147,13 @@ function keeper(dir: string, http: typeof fetch, taken: Found[]) {
     const ext = extOf(one);
     const file = join(dir, `${digestOf(one.id, 24)}.${ext}`);
     const held = await readFile(file).catch(() => null);
-    if (held?.length) { if (!taken.some((other) => other.id === one.id)) taken.push(one); return { ext, bytes: held }; }
+    if (held?.length) { if (!taken.some((other) => other.id === one.id)) taken.push(one); await served(dir, one); return { ext, bytes: held }; }
     const answer = await http(one.url, { headers: { 'user-agent': AGENT }, signal });
     if (!answer.ok) throw new Error(`that ${one.kind === 'video' ? 'clip' : 'photograph'} could not be fetched (${answer.status})`);
     const bytes = Buffer.from(await answer.arrayBuffer());
     await writeFile(file, bytes).catch(() => {});
     await remember(dir, one);
+    await served(dir, one);
     taken.push(one);
     return { ext, bytes };
   };

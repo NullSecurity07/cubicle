@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { PLANLESS } from '../breaker.ts';
+import { served, servedToday } from '../media/stock.ts';
 import { backupRow, checkAll, freeProviders, healthRows, keyChecks, keyPools, keysOf, liveChecks, liveReaders, LIVE_FEED, LIVE_REDDIT, LIVE_REDDIT_FEED, onPath, refusals, ytdlpVersion } from './health.ts';
 import type { Check } from '../../shared/openends.ts';
 
@@ -246,13 +247,29 @@ describe('reading videos, feeds and Reddit', () => {
 describe('the rows for keys and for slices', () => {
   it('say which services have their keys, and never show a value', async () => {
     const none = keyChecks({}, '/nowhere');
-    expect(none.map((one) => [one.name, one.ok])).toEqual([['Email', false], ['Drawing pictures', false], ['Making clips', false], ['Real photographs', false], ['More music', false], ['Finding leads', false]]);
+    expect(none.map((one) => [one.name, one.ok])).toEqual([['Email', false], ['Drawing pictures', false], ['Making clips', false], ['Real photographs', true], ['More music', false], ['Finding leads', false]]);
     expect(none.find((one) => one.name === 'Finding leads')!.detail).toMatch(/uvx is not on this machine/);
     const env = { AGENTMAIL_API_KEY: 'am-secret', CLOUDFLARE_API_TOKEN: 'cf-secret', CLOUDFLARE_ACCOUNT_ID: 'acc-secret', HF_TOKEN: 'hf_secret', PEXELS_API_KEY: 'px-secret', FREESOUND_API_KEY: 'fs-secret' };
     const some = keyChecks(env, '/nowhere');
     expect(some.filter((one) => one.ok).map((one) => one.name)).toEqual(['Email', 'Drawing pictures', 'Making clips', 'Real photographs', 'More music']);
     expect(JSON.stringify(some)).not.toContain('secret');
     expect(keyChecks({ STAGE_IMAGE_BACKEND: 'local' }, '/nowhere').find((one) => one.name === 'Drawing pictures')!.ok).toBe(true);
+  });
+
+  // Journey 12: the row said "films use drawn pictures only" on the day a film used two Openverse photographs.
+  it('says which library served photographs today, and how many', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'served-'));
+    await served(dir, { id: 'openverse-photo-1' });
+    await served(dir, { id: 'openverse-photo-2' });
+    await served(dir, { id: 'commons-photo-9' });
+    const row = keyChecks({}, '/nowhere', await servedToday(dir)).find((one) => one.name === 'Real photographs')!;
+    expect(row.ok).toBe(true);
+    expect(row.detail).toContain('Openverse 2, Wikimedia Commons 1');
+    expect(row.detail).not.toMatch(/drawn pictures only/);
+    const quiet = keyChecks({}, '/nowhere').find((one) => one.name === 'Real photographs')!;
+    expect(quiet.detail).toMatch(/no film has used a photograph today.*Openverse, then Wikimedia Commons/);
+    // Yesterday's tally is not today's.
+    expect(await servedToday(dir, Date.now() + 86_400_000)).toEqual({});
   });
 
   it('names the OpenOutreach settings still missing once uvx is here', async () => {
