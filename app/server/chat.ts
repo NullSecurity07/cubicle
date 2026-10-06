@@ -116,6 +116,16 @@ export function createChat(deps: Deps) {
       await store.appendChat(roomId, { id: newMessageId(), role: 'user', text, at: Date.now(), ...(extra.via ? { via: extra.via } : {}), ...(extra.attachments?.length ? { attachments: extra.attachments } : {}) });
       kept.id = newMessageId();
       roomFeed.tell({ roomId, turn, started: { ...(extra.via ? { via: extra.via } : {}) } });
+      // Answered in code, with no model: said, kept, done.
+      const direct = extra.attachments?.length ? undefined : (await seams.run('turn:answer', { roomId, query: text })).answer;
+      if (direct) {
+        send({ token: direct });
+        roomFeed.tell({ roomId, turn, token: direct });
+        const message = { id: kept.id, role: 'assistant' as const, text: direct, at: Date.now(), provider: 'app', model: 'code', usage: { input: 0, output: 0 } };
+        await store.putMessage(roomId, message);
+        send({ done: true, message });
+        return;
+      }
       // The names in the prompt are the narrowed list too: a person is never told about a tool they are not offered.
       const mine = deps.toolsFor(stage, roomId);
       let messages = await promptFor(stage, roomId, mine.map((tool) => tool.name));

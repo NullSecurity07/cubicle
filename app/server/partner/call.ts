@@ -35,7 +35,7 @@ const between = (from: string, to: string) => Math.round((new Date(`${to}T12:00`
 
 // The founder asks for the verdict on the company, not on one task: "your verdict", "keep going or stop?",
 // "should we kill it?", "go or no-go".
-export const asksVerdict = (said: string) => /\bverdict\b|\bkeep going\b[^.!\n]*\b(?:pivot|stop|quit|kill|change course)\b|\bshould (?:i|we) (?:keep going|continue|stop|quit|kill|shut|give up|pivot)\b|\bkill (?:it|this|the (?:idea|company|project|product))\b|\bgo or no[- ]go\b/i.test(said);
+export const asksVerdict = (said: string) => /\bverdict\b|\b(?:redo|remake|rework|revise|update|make again)\s+(?:the|your|that)\s+call\b|\bkeep going\b[^.!\n]*\b(?:pivot|stop|quit|kill|change course)\b|\bshould (?:i|we) (?:keep going|continue|stop|quit|kill|shut|give up|pivot)\b|\bkill (?:it|this|the (?:idea|company|project|product))\b|\bgo or no[- ]go\b/i.test(said);
 
 // Journey 14: "I don't buy it. Your kill signal ... can only fire if I lose one. Give me a sharper call and a kill
 // signal that can actually fail." The partner gave a new kill signal in loose prose; nothing read it, and the check
@@ -181,7 +181,7 @@ export function unsourcedIn(text: string, evidence: string): string[] {
   return out;
 }
 
-const WORKING = /^(?:break[- ]?even|runway)\s*:/i;
+const WORKING = /^(?:break[- ]?even|runway|mrr|net burn)\s*:/i;
 
 // The verdict in a reply: each labelled line read, what is missing named, and the reply's other lines kept as they are.
 // `numbers`: the Company brief's Numbers section, which a kill signal is held against (deadSignal).

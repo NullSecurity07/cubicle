@@ -9,7 +9,7 @@ import { checkReply, FLAG_LINE, stripFlagged, turnSources } from '../truth.ts';
 import { gatherMonth } from '../slices/month.ts';
 import { cardOf } from './bets.ts';
 import { learnedSection, sectionText } from './company.ts';
-import { economicsOf, figuresFix } from './economics.ts';
+import { breakEvenFix, breakEvenLine, economicsOf, figuresFix, type EconomicsState } from './economics.ts';
 import { runwayFix } from './keep.ts';
 import type { FounderPromise } from './promises.ts';
 import { ruledOutBy, ruledOutLine, saidNoFor, type SaidNoEntry } from './saidno.ts';
@@ -94,6 +94,8 @@ export type MorningSources = {
   // The founder's promises and a Metrics card's numbers, for what changed since yesterday at the head of the note.
   promises?: () => Promise<FounderPromise[]>;
   metrics?: (cardId: string) => Promise<SinceInput['metrics']>;
+  // The one picture of the numbers (economics.ts), with the founder's corrections and readings in it.
+  economics?: () => Promise<EconomicsState | null>;
 };
 
 const VERDICT_CHARS = 400;
@@ -176,14 +178,21 @@ export async function gatherMorning(from: MorningSources, since?: string[]): Pro
     ...(got.flagged.length ? [`Flagged by the truth net since ${got.yesterday} (figures nothing backed):`, ...got.flagged] : []),
     `Company Numbers:\n${got.numbers || '- none written'}`,
     // The one runway and break-even: worked with calc here, never a figure a person or the partner said in a room.
-    ...(working(from.company).length ? ['Worked with calc from the Company Numbers (the only runway and break-even to use; a figure said in a room is not one):', ...working(from.company)] : []),
+    ...(await working(from)).flatMap((lines, index, all) => (index === 0 && all.length ? ['Worked with calc from the Company Numbers (the only runway and break-even to use; a figure said in a room is not one):'] : []).concat(lines)),
     'On the board for today:', ...(got.planned.length ? got.planned.slice(0, 12) : ['- nothing dated today']),
     'Bets:', ...(got.open.length || got.closed.length ? [...got.open, ...got.closed].map(betLine) : ['- none on record']),
     ...(got.closed.length ? ['What we learned (closed bets):', ...learnedSection(got.closed)] : []),
   ].join('\n');
 }
 
-const working = (company = '') => (economicsOf(sectionText(company, 'Numbers'))?.working ?? []).map((one) => `- ${one.line}`);
+// The working, from the one state when the slice gives it (the founder's corrections and readings in it), with where
+// the count stands against break-even said in code, never by the model.
+const working = async (from: MorningSources): Promise<string[]> => {
+  const state = await from.economics?.().catch(() => null);
+  const lines = state ? state.explain() : (economicsOf(sectionText(from.company ?? '', 'Numbers'))?.working ?? []).map((one) => one.line);
+  const side = breakEvenLine(state);
+  return [...lines, ...(side ? [side] : [])].map((line) => `- ${line}`);
+};
 
 // Journey 14's note: "the confirmed 4.4-month runway calculated by Ops". Ops had worked out 4.99; 4.4 was the partner's
 // own wrong sum, and nothing read confirmed it. "Confirmed" (or verified, validated) stands only beside figures a read
@@ -247,9 +256,11 @@ export async function writeMorning(input: {
   // Runway is never rounded toward the better side, in the note either.
   const numbers = `${sectionText(sources.company ?? '', 'Numbers')}`;
   // Runway and break-even as the calc working gives them, never as a room said them; "confirmed" only beside a read.
-  const economics = economicsOf(numbers);
+  const state = await sources.economics?.().catch(() => null) ?? null;
+  const economics = state ? state.economics() : economicsOf(numbers);
   const reads = [numbers, ...(economics?.working ?? []).map((one) => one.result), ...since];
-  const fix = (line: string) => confirmedFix(runwayFix(figuresFix(line, economics), numbers), reads);
+  // "Further below break-even" at 9.5 paying with break-even 8 (journey 16): the side is the numbers', not the model's.
+  const fix = (line: string) => breakEvenFix(confirmedFix(runwayFix(figuresFix(line, economics), numbers), reads), state);
   // A move still set against a no after the second ask is dropped, and the note says which no it kept to.
   const dropped = [...new Set(reply.read.things.map(against).filter((one): one is SaidNoEntry => !!one))];
   const things = reply.read.things.filter((thing) => !against(thing));

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { derivedRows, economicsBlock, economicsOf, figuresFix, saysGap, wideGap, workingTools } from './economics.ts';
+import { breakEvenFix, breakEvenLine, derivedRows, economicsBlock, economicsOf, figuresFix, saysGap, stateOf, wideGap, workingTools } from './economics.ts';
+import { inputFixesIn } from './corrections.ts';
 
 // The Numbers of journey 13's Company brief, as the founder wrote them.
 const HARVEST = `- Offices in pilot: 5
@@ -95,5 +96,98 @@ describe('runway and break-even only from calc', () => {
     // A price a month per paying office, and one per the very thing the paying row counts, stay the paying unit.
     expect(economicsOf('- Price: €240 per office a month\n- Paying offices: 5\n- Burn: €2,100 a month')!.unit).toBe('paying offices');
     expect(economicsOf('- Price: €40 per office\n- Paying offices: 5\n- Burn: €2,100 a month\n- Cash: €9,000')!.working[1].expression).toBe('round(cash / (burn - paying * price), 1)');
+  });
+});
+
+// Journey 16 rebuilt the partner's numbers as one state: the inputs with their periods, the founder's corrections over
+// them, every derived figure worked again on each read. These are the four journeys' briefs with their exact numbers.
+describe('one state of the numbers, from journeys 13 to 16', () => {
+  it('J13: 10 offices goal, €240 a month against €178 of cost, €2,100 fixed: break-even 34', () => {
+    const state = stateOf(HARVEST);
+    expect(state.breakEven()).toBe(34);
+    expect(state.current()).toBe(3);
+    expect(state.side()).toBe('below');
+    expect(state.gap()).toBe(31);
+    expect(state.runway()).toEqual({ value: 6.3, display: '6.3' });
+  });
+
+  it('J14: €49 a month, 2 paying, €4,000 cash, €900 burn: runway at the net burn and break-even 19', () => {
+    const state = stateOf(CALLBACK);
+    expect(state.runway()).toEqual({ value: 5, display: '5' });
+    expect(state.breakEven()).toBe(19);
+    expect(state.net()).toBe(802);
+    expect(state.cashPositive()).toBe(false);
+  });
+
+  it('J15: €12 per print job, 4 jobs, €2,500 cash, €600 burn: counted in jobs, the burn never netted', () => {
+    const state = stateOf('- Price: €12 per print job (paid by the maker)\n- Print jobs done: 4\n- Paying hosts: 1\n- Cash: €2,500\n- Burn: €600 a month');
+    expect(state.unit).toBe('print jobs a month');
+    expect(state.breakEven()).toBe(50);
+    expect(state.runway()).toEqual({ value: 4.2, display: '4.2' });
+    expect(state.mrr()).toBeUndefined();
+    expect(state.side()).toBeUndefined();
+  });
+
+  const SHIFTMEALS = '- Price: €59 per week per subscriber\n- Subscribers: 14\n- Paying subscribers: 11\n- Cash: €6,000\n- Burn: €1,900 a month\n- Nurses contacted: 120';
+  it('J16: €59 a WEEK, 14 subscribers of whom 11 pay, €6,000 cash, €1,900 burn: MRR €2,812, cash-positive, break-even 8', () => {
+    const state = stateOf(SHIFTMEALS);
+    expect(state.inputs.price).toMatchObject({ value: 59, period: 'week' });
+    expect(state.inputs.paying).toMatchObject({ value: 11, label: 'Paying subscribers' });
+    expect(state.inputs.subscribers).toMatchObject({ value: 14 });
+    expect(Math.round(state.mrr()!)).toBe(2812);
+    expect(state.cashPositive()).toBe(true);
+    expect(state.runway()).toEqual({ value: Infinity, display: 'cash-positive', gross: { value: 3.2, display: '3.2' } });
+    expect(state.breakEven()).toBe(8);
+    expect(state.unit).toBe('paying subscribers');
+    expect(state.side()).toBe('above');
+    expect(state.explain()).toEqual([
+      'MRR: round(11 * 59 * 52 / 12, 2) = 2,812.33 a month from 11 paying subscribers at €59 a week',
+      'Break-even: ceil(1900 / (59 * 52 / 12)) = 8 paying subscribers to cover the burn (the brief gives no cost per unit); we have 11',
+      'Net burn: round(1900 - 11 * 59 * 52 / 12, 2) = -912.33 a month: more comes in than goes out, so the company is cash-positive',
+      'Runway: cash-positive, so the cash does not run down at the net; at the gross burn alone round(6000 / 1900, 1) = 3.2 months',
+    ]);
+    // The calc tool's own call rides with each line.
+    expect(workingTools(state.economics()!, (index) => `c${index}`)[1].args).toEqual({ expression: 'ceil(burn / (price * 52 / 12))', values: 'burn=1900, price=59' });
+    // A partner who says the old 5.6 months or 33 is put right in place.
+    expect(figuresFix('Your runway is 5.6 months.', state.economics())).toBe('Your runway is 3.2 months at the gross burn (cash-positive at the net).');
+    expect(figuresFix('Break-even is 33 paying subscribers.', state.economics())).toBe('Break-even is 8 paying subscribers.');
+    // The brief's own rows from the same state.
+    expect(derivedRows(`${SHIFTMEALS}\n- Runway: 5.6 months\n- Break-even: 33`).text.split('\n').slice(-2)).toEqual([
+      '- Runway: cash-positive, more comes in than goes out; 3.2 months at the gross burn alone (calc: round(6000 / 1900, 1) = 3.2)',
+      '- Break-even: 8 paying subscribers (calc: ceil(1900 / (59 * 52 / 12)) = 8)',
+    ]);
+  });
+
+  it('J16: nothing derived is stored; each read works the inputs again, and a later reading of the paying count stands', () => {
+    const state = stateOf(SHIFTMEALS, { readings: [{ label: 'Paying subscribers', value: 9.5, day: '2026-10-07' }] });
+    expect(state.current()).toBe(9.5);
+    expect(state.inputs.paying!.source).toBe('reading');
+    // 9.5 against a break-even of 8 is above it: "further below break-even" is put right from the numbers.
+    expect(state.side()).toBe('above');
+    expect(breakEvenFix('Risk: Paying subscribers dropped from 11 to 9.5, moving us further below break-even.', state))
+      .toBe('Risk: Paying subscribers dropped from 11 to 9.5, moving us above break-even (9.5 paying subscribers against 8).');
+    expect(breakEvenFix('We are above break-even.', state)).toBe('We are above break-even.');
+    expect(breakEvenLine(state)).toBe('Break-even is 8 paying subscribers; 9.5 is above it, and the company is cash-positive.');
+    // A worked row written into the brief is never read back as an input.
+    expect(stateOf(`${SHIFTMEALS}\n- Net burn: €-912.33 a month (calc: round(1900 - 11 * 59 * 52 / 12, 2) = -912.33)`).runway()?.display).toBe('cash-positive');
+    // The snapshot holds inputs only.
+    expect(JSON.stringify(state.snapshot())).not.toMatch(/2812|912|breakEven|runway/);
+  });
+
+  it('J16: the founder\'s correction stands over the brief with their words, until the brief itself changes', () => {
+    const monthly = '- Price: €59 per subscriber\n- Subscribers: 14\n- Paying subscribers: 14\n- Cash: €6,000\n- Burn: €1,900 a month';
+    const fixes = inputFixesIn('No, 14 subscribers is not 14 paying, 11 pay. And €59 is per week, not per month, so your break-even and runway are both wrong.', stateOf(monthly), '2026-10-06');
+    expect(fixes.map((one) => [one.field, one.value, one.period])).toEqual([['paying', 11, undefined], ['price', undefined, 'week']]);
+    const fixed = stateOf(monthly, { fixes });
+    expect([fixed.breakEven(), fixed.current(), fixed.cashPositive()]).toEqual([8, 11, true]);
+    expect(fixed.founderLines()).toEqual([
+      '- Price: €59 a week (founder, 2026-10-06: "And €59 is per week, not per month, so your break-even and runway are both wrong")',
+      '- Paying subscribers: 11 (founder, 2026-10-06: "No, 14 subscribers is not 14 paying, 11 pay")',
+    ]);
+    // The brief edited since to 12 paying: the brief's new figure stands over the older correction.
+    expect(stateOf(monthly.replace('Paying subscribers: 14', 'Paying subscribers: 12'), { fixes }).current()).toBe(12);
+    // Not a correction: a goal, a what-if, a question.
+    expect(inputFixesIn('Our goal is 30 paying by 2026-10-17. If 20 pay we are fine. Should we stop?', stateOf(monthly), 'd')).toEqual([]);
+    expect(inputFixesIn('burn is not €1,900 but €2,100 a month', stateOf(monthly), 'd').map((one) => [one.field, one.value, one.period])).toEqual([['burn', 2100, 'month']]);
   });
 });

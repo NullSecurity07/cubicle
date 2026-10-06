@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { dailyBudget, fixAsk, granted, phrasingHolds, reviewDoc, reviewLine } from './review.ts';
+import { stateOf } from './economics.ts';
 
 // The Numbers of journey 13's Company brief, as the founder wrote them.
 const HARVEST = `- Offices in pilot: 5
@@ -17,8 +18,9 @@ describe('the partner reviews a colleague\'s doc', () => {
     const tom = '# Unit Economics\n\n## Monthly\n- MRR: €720\n- Net burn at current MRR (€720): €1,380 per month\n- Runway at net burn: 8.7 months\n';
     const review = reviewDoc({ text: tom, numbers: HARVEST, read: [ASK, '2100 - 720 = 1380', '12000 / 1380 = 8.695652174 (exact: 8.695652173913043)'], said: [ASK] });
     expect(review.flags.map((flag) => flag.kind)).toEqual(['sense', 'sense']);
-    expect(review.flags[0].said).toBe('Net burn is €1,914 a month, not €1,380: 2100 + 3 * 178 - 3 * 240 = 1,914 (calc); it leaves out what the 3 paying offices cost (€534 a month).');
-    expect(review.flags[1].said).toBe('Runway is 6.3 months, not 8.7: round(12000 / 1914, 1) = 6.3 (calc).');
+    // Both workings: the one state's and the doc's own line.
+    expect(review.flags[0].said).toBe('Net burn is €1,914 a month, not €1,380: 2100 - 3 * (240 - 178) = 1,914 (calc); it leaves out what the 3 paying offices cost (€534 a month). The doc has "Net burn at current MRR (€720): €1,380 per month".');
+    expect(review.flags[1].said).toBe('Runway is 6.3 months, not 8.7: round(12000 / (2100 - 3 * (240 - 178)), 1) = 6.3 (calc). The doc has "Runway at net burn: 8.7 months".');
     expect(review.verdict).toBe('Fix first: net burn is €1,914 a month, not €1,380; runway is 6.3 months, not 8.7.');
     expect(reviewLine('Unit Economics', review)).toMatch(/^I read "Unit Economics"\.\n- Net burn is €1,914/);
     expect(fixAsk('Unit Economics', review)).toContain('Please fix "Unit Economics" before I act on it: Net burn is €1,914');
@@ -79,19 +81,48 @@ describe('the review of journey 15\'s docs', () => {
     expect(reviewDoc({ text: '# Runway\n\n- Runway: 4.2 months', before: '# Runway\n\n- Runway: 4.2 months', numbers: PRINTNEAR, read: [], said: [], title: 'Runway', twins: 1 }).verdict).toBe('Fix first: 2 docs are called "Runway".');
   });
 
-  it('flags a derived figure no calc gave, even one near the right figure, and passes one that calc gave', () => {
-    expect(reviewDoc({ text: '# Runway\n\n- Monthly runway at net burn: 4.3 months', numbers: PRINTNEAR, read: [ASKED], said: [ASKED] }).verdict).toMatch(/^Fix first: /);
-    // Read from the partner's own words, not worked out: still no calc behind it.
-    const near = reviewDoc({ text: '# Runway\n\n- Monthly runway at net burn: 4.3 months', numbers: PRINTNEAR, read: [ASKED, 'Sam: runway is 4.3 months at the net burn.'], said: [ASKED] });
+  it('flags a derived figure no calc gave, even one within rounding of the right figure, and passes one that calc gave', () => {
+    // 4.3 against 4.2 is more than two in a hundred: named with both workings.
+    expect(reviewDoc({ text: '# Runway\n\n- Monthly runway at net burn: 4.3 months', numbers: PRINTNEAR, read: [ASKED], said: [ASKED] }).flags.map((flag) => flag.short)).toEqual(['runway is 4.2 months, not 4.3']);
+    // Read from the partner's own words, not worked out: within rounding, but still no calc behind it.
+    const near = reviewDoc({ text: '# Runway\n\n- Monthly runway at net burn: 4.21 months', numbers: PRINTNEAR, read: [ASKED, 'Sam: runway is 4.21 months at the net burn.'], said: [ASKED] });
     expect(near.flags.map((flag) => flag.short)).toEqual(['a derived figure has no calc']);
-    expect(near.flags[0].said).toContain('"Monthly runway at net burn: 4.3 months" is a sum with no calc behind it');
+    expect(near.flags[0].said).toContain('"Monthly runway at net burn: 4.21 months" is a sum with no calc behind it');
     const worked = reviewDoc({ text: '# Runway\n\n- Runway: 4.2 months', numbers: PRINTNEAR, read: [ASKED, 'round(2500 / 600, 1) = 4.2'], said: [ASKED] });
     expect(worked.verdict).toBe('Fit for the founder.');
   });
 
   it('flags break-even said in the wrong unit, with the brief\'s working', () => {
     const review = reviewDoc({ text: '# Spec\n\n- Break-even: 50 paying hosts', numbers: PRINTNEAR, read: [ASKED, 'ceil(600 / 12) = 50'], said: [ASKED] });
-    expect(review.flags).toEqual([{ kind: 'sense', said: 'Break-even is 50 print jobs a month, not 50 paying hosts: ceil(600 / 12) = 50 (calc).', short: 'break-even is 50 print jobs a month, not 50 paying hosts' }]);
+    expect(review.flags).toEqual([{ kind: 'sense', said: 'Break-even is 50 print jobs a month, not 50 paying hosts: ceil(600 / 12) = 50 (calc). The doc has "Break-even: 50 paying hosts".', short: 'break-even is 50 print jobs a month, not 50 paying hosts' }]);
     expect(reviewDoc({ text: '# Spec\n\n- Break-even: 50 print jobs a month', numbers: PRINTNEAR, read: [ASKED, 'ceil(600 / 12) = 50'], said: [ASKED] }).verdict).toBe('Fit for the founder.');
+  });
+});
+
+// Journey 16: Otto's Runway was right (€255.67 a month each, +€912.37 a month, gross runway 3.16, break-even 8), and
+// the first "Sam flagged" ever ordered him to write the founder's corrected wrong figures back: "runway is 5.6 months,
+// not 3.16; break-even is 33 subscribers, not 8".
+describe('the review of journey 16\'s docs', () => {
+  const SHIFTMEALS = '- Price: €59 per week per subscriber\n- Subscribers: 14\n- Paying subscribers: 11\n- Cash: €6,000\n- Burn: €1,900 a month';
+  const OTTO = '# Runway\n\n- Revenue per subscriber: €59 × 52 / 12 = €255.67 a month (calc)\n- MRR: 11 × €255.67 = €2,812.37 a month (calc)\n- Net cash flow: €2,812.37 − €1,900 = +€912.37 a month (calc)\n- Gross runway: €6,000 / €1,900 = 3.16 months (calc)\n- Break-even: ceil(1900 / 255.67) = 8 paying subscribers (calc)';
+  const CALCS = ['59 * 52 / 12 = 255.67', '11 * 255.67 = 2,812.37', '2812.37 - 1900 = 912.37', '6000 / 1900 = 3.16', 'ceil(1900 / 255.67) = 8'];
+  const ASKED = 'Otto, put the runway in a doc called Runway.';
+  it('calls Otto\'s right doc fit for the founder, with no row', () => {
+    expect(reviewDoc({ text: OTTO, numbers: SHIFTMEALS, read: [ASKED, ...CALLS()], said: [ASKED] })).toEqual({ flags: [], verdict: 'Fit for the founder.', checked: true });
+  });
+  function CALLS() { return CALCS; }
+  it('flags the stale 33 with both workings, and only past rounding', () => {
+    const review = reviewDoc({ text: '# Runway\n\n- Break-even: 33 paying subscribers (calc: ceil(1900 / 59) = 33)\n- Runway: 5.6 months', numbers: SHIFTMEALS, read: [ASKED, 'ceil(1900 / 59) = 33', 'round(6000 / (1900 - 14 * 59), 1) = 5.6'], said: [ASKED] });
+    expect(review.flags.map((flag) => flag.said)).toEqual([
+      'Break-even is 8 paying subscribers, not 33: ceil(1900 / (59 * 52 / 12)) = 8 (calc). The doc has "Break-even: 33 paying subscribers (calc: ceil(1900 / 59) = 33)".',
+      'Runway is cash-positive (3.2 months at the gross burn alone), not 5.6: round(1900 - 11 * 59 * 52 / 12, 2) = -912.33 a month, cash-positive; at the gross burn round(6000 / 1900, 1) = 3.2 (calc). The doc has "Runway: 5.6 months".',
+    ]);
+  });
+  it('works from the founder\'s corrections when the brief is ambiguous', () => {
+    const monthly = SHIFTMEALS.replace('€59 per week per subscriber', '€59 per subscriber').replace('Paying subscribers: 11', 'Paying subscribers: 14');
+    const fixed = stateOf(monthly, { fixes: [{ field: 'paying', value: 11, said: '11 pay', day: 'd', over: { value: 14 } }, { field: 'price', period: 'week', said: 'per week', day: 'd', over: { value: 59 } }] });
+    expect(reviewDoc({ text: OTTO, numbers: monthly, read: [ASKED, ...CALCS], said: [ASKED], state: fixed }).verdict).toBe('Fit for the founder.');
+    // Without them the same doc reads wrong: the flag is the state's, never the brief's alone.
+    expect(reviewDoc({ text: OTTO, numbers: monthly, read: [ASKED, ...CALCS], said: [ASKED] }).verdict).toMatch(/^Fix first: /);
   });
 });

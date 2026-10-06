@@ -666,12 +666,16 @@ export const fakeClient: ModelClient = {
     }
     // `/say <words>` puts words in its mouth after the tools, so a browser test can watch a reply that claims too much.
     const scripted = /^\/say (.+)$/m.exec(heard)?.[1];
-    const reply = last?.role === 'tool'
+    // A fake partner asked for the verdict answers in its four lines, numbers left to the working, so a browser test can
+    // watch a call be kept, made stale by the founder's correction and made again.
+    const verdict = /The founder asks for your verdict on the company/.test(system) && last?.role === 'user'
+      ? 'My call: keep going\nWhy: the Company brief\'s numbers, as worked out below.\nThis week: ask the subscribers who do not pay yet what would make them pay.' : undefined;
+    const reply = verdict ?? (last?.role === 'tool'
       ? scripted ?? `Tool said: ${last.content}`
       : heard.startsWith('/markdown') ? '**Bold plan**\n\n- one\n- two'
       : heard.startsWith('/rich') ? 'A flow:\n\n```mermaid\ngraph TD; Idea-->Build; Build-->Launch;\n```\n\nA page:\n\n```html\n<!doctype html><html><body><h1 id="t">Landing</h1><script>document.getElementById("t").textContent += " page";</script></body></html>\n```'
       : last?.role === 'user' && last.images?.length ? `I can see ${last.images.length} picture: ${last.images[0].name.split('/').pop()}.`
-      : `${name} here. You said: "${heard}". Docs I can read: ${docs.join(', ') || 'none'}.${notes ? ` Notes: ${notes}.` : ''}${pages.length ? ` Pages: ${pages.join(', ')}.` : ''}${studios.length ? ` Studios: ${studios.join(', ')}.` : ''}${library.length ? ` Library: ${library.join('; ')}.` : ''}${playbook.length ? ` Playbook: ${playbook.join(', ')}.` : ''}`;
+      : `${name} here. You said: "${heard}". Docs I can read: ${docs.join(', ') || 'none'}.${notes ? ` Notes: ${notes}.` : ''}${pages.length ? ` Pages: ${pages.join(', ')}.` : ''}${studios.length ? ` Studios: ${studios.join(', ')}.` : ''}${library.length ? ` Library: ${library.join('; ')}.` : ''}${playbook.length ? ` Playbook: ${playbook.join(', ')}.` : ''}`);
     const delay = heard.startsWith('/slow') ? 150 : 15;
     for (const word of reply.split(/(?<= )/)) {
       await new Promise((resolve) => setTimeout(resolve, delay));

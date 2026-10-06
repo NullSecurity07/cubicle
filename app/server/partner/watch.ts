@@ -11,6 +11,7 @@ import type { ModelMessage } from '../prompt.ts';
 import type { Unasked } from '../usage.ts';
 import { plusDays, thresholdOf } from './call.ts';
 import type { FounderPromise } from './promises.ts';
+import { breakEvenFix, breakEvenLine, sameMetric, type EconomicsState } from './economics.ts';
 import { saidNoFor, type Proposal as SaidNoProposal } from './saidno.ts';
 import { filledIn, guardUnasked, leftOutLine } from './unasked.ts';
 
@@ -122,7 +123,8 @@ export type Output = { kind: 'email'; to: string; name: string; said?: string } 
 // One trigger. `key` is the event, never raised twice; `trigger` is what it is about, which has one open row at most
 // (a lead that replies again while the last reply's row waits is not a second row). `money` orders the day when the
 // budget cannot cover all of them (a number going to the kill line first). `number` is the figure, read in code.
-export type Spark = { key: string; trigger: string; kind: 'metric' | 'lead' | 'page' | 'promise'; at: number; money: number; why: string; facts: string; number?: string; out: Output; roomId?: string; cardId?: string; leadId?: string };
+// `kill`: the kill-signal trend's own numbers, for holding it to the one state (economics.ts).
+export type Spark = { key: string; trigger: string; kind: 'metric' | 'lead' | 'page' | 'promise'; at: number; money: number; why: string; facts: string; number?: string; out: Output; roomId?: string; cardId?: string; leadId?: string; kill?: { label: string; start: number; latest: number; line: number; below: boolean } };
 
 export type MetricsCard = { cardId: string; metrics: Metric[] };
 
@@ -145,6 +147,7 @@ export function metricSparks(cards: MetricsCard[], kill: FounderPromise | undefi
         why: toward.crossed ? `${metric.label} crossed the kill line` : toward.away ? `${metric.label} is moving away from the kill line it has to clear` : `${metric.label} is trending to the kill line`,
         facts: `${toward.crossed ? 'The number has crossed the kill line' : toward.away ? 'The number has not cleared the kill line yet and moved the wrong way since your verdict' : `The number is trending to the kill line: ${Math.round(toward.share * 100)}% of the way from where it stood at your verdict`}.\n${number}\n${kill.due >= localDay(at) ? `The verdict's check is on ${kill.due}.` : `The verdict's check day, ${kill.due}, has passed.`}`,
         out: { kind: 'task-or-decision' },
+        kill: { label: metric.label, start: read.start.value, latest: read.latest.value, line: lineOf.line, below: losesBelow(kill.what) },
       });
     }
   }
@@ -368,7 +371,22 @@ export type WatchDeps = {
   // Given the proposal before it is raised, the proposal (with the founder's earlier no quoted) or null to hold it back.
   // By default the founder's said-no log decides (`vetBySaidNo`).
   vet?(proposal: Proposal): Promise<Proposal | null>;
+  // The one picture of the numbers (economics.ts): where the count stands against break-even is said from it, never by
+  // the model, and a kill trend is raised only when it agrees.
+  economics?(): Promise<EconomicsState | null>;
 };
+
+// Journey 16: "Paying subscribers dropped from 11 to 9.5, moving us further below break-even" with break-even at 8. A
+// kill trend on the paying count is raised only when the one state agrees (the count it holds now is the one read, or
+// is moving toward the line too), and its facts carry the break-even side worked from the numbers.
+export function heldToState(spark: Spark, state: EconomicsState | null | undefined): Spark | null {
+  if (!spark.kill || !state) return spark;
+  const paying = state.inputs.paying;
+  const same = !!paying && sameMetric(paying.label, spark.kill.label);
+  if (same && Math.abs(paying!.value - spark.kill.latest) > 1e-9 && !killToward(spark.kill.start, paying!.value, spark.kill.line, spark.kill.below)) return null;
+  const side = same ? breakEvenLine(state, spark.kill.latest) : undefined;
+  return side ? { ...spark, facts: `${spark.facts}\n${side}` } : spark;
+}
 
 // A watch proposal in the words the said-no log keeps: an email is about its lead, a task or a decision is its title,
 // letting a promise go is about that promise.
@@ -438,7 +456,8 @@ export function createWatch(given: WatchDeps) {
       const leads = (await Promise.all((stage.cards ?? []).filter((card) => card.kind === 'leads').map(async (card) => (await deps.leads(card.id).catch(() => [])).map((lead) => ({ ...lead, cardId: card.id }))))).flat();
       const state = await read();
       const kill = promises.filter((one) => one.check && one.status === 'open').at(-1);
-      const sparks = [...metricSparks(cards, kill, bets, at), ...leadSparks(leads, state.seenLeads, at), ...promiseSparks(promises, at), ...pageSparks(rows, at)]
+      const numbers = await deps.economics?.().catch(() => null) ?? null;
+      const sparks = [...metricSparks(cards, kill, bets, at).flatMap((one) => heldToState(one, numbers) ?? []), ...leadSparks(leads, state.seenLeads, at), ...promiseSparks(promises, at), ...pageSparks(rows, at)]
         .sort((a, b) => b.money - a.money);
       const open = new Set(state.proposals.filter((one) => one.status === 'open').map((one) => one.trigger ?? one.key));
       const fired = new Set(state.fired);
@@ -453,7 +472,9 @@ export function createWatch(given: WatchDeps) {
         const reply = await deps.ask(messages).catch((error: Error) => { console.error(`partner watch: ${error.message}`); return null; });
         // No answer: the turn said nothing, so it goes back to the day's budget.
         if (!reply?.text.trim()) taken.release?.();
-        const shaped = guardProposal(spark, proposalOf(spark, reply?.text ?? '', today), await deps.sources?.(stage).catch(() => []) ?? []);
+        const raw = proposalOf(spark, reply?.text ?? '', today);
+        const fixed = { ...raw, move: breakEvenFix(raw.move, numbers), draft: raw.draft.kind === 'task' || raw.draft.kind === 'decision' ? { ...raw.draft, title: breakEvenFix(raw.draft.title, numbers) } : raw.draft };
+        const shaped = guardProposal(spark, fixed, await deps.sources?.(stage).catch(() => []) ?? []);
         let proposal: Proposal | null = {
           id: `${spark.kind}-${at.toString(36)}-${made.length}`, key: spark.key, trigger: spark.trigger, at, who: partner.name, roomId: partner.id, sparkKind: spark.kind,
           why: spark.why, ...(spark.number ? { number: spark.number } : {}), ...(spark.cardId ? { cardId: spark.cardId } : {}), ...(spark.leadId ? { leadId: spark.leadId } : {}), ...shaped, status: 'open',

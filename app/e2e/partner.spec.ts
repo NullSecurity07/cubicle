@@ -1,6 +1,7 @@
 import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
+import { advanceDay, resetClock } from './helpers.ts';
 
 // The partner, in fake mode. "add a partner called Sam" puts Sam on the stage wired to the stage's own Company brief,
 // which is adopted as the company's one document: its text kept, its six sections added, no second doc. "morning note" has Sam write today's note: it is said at the top of the
@@ -180,7 +181,7 @@ test('the partner reviews a colleague\'s doc unasked, and Fix sends the colleagu
   await page.request.post('/api/rooms/marketing/chat', { data: { text: `/tool calc ${calc}\n/tool create_doc ${doc}` } });
   const chat = async () => (await (await page.request.get('/api/rooms/marketing/chat')).json()) as { role: string; text: string; from?: string }[];
   await expect.poll(async () => (await chat()).find((one) => one.from === 'Sam')?.text ?? '', { timeout: 45_000 })
-    .toContain('Net burn is €1,914 a month, not €1,380: 2100 + 3 * 178 - 3 * 240 = 1,914 (calc)');
+    .toContain('Net burn is €1,914 a month, not €1,380: 2100 - 3 * (240 - 178) = 1,914 (calc)');
   // The line in Maya's room is Sam's review of her doc, not a question Sam asked (journey 16: "SAM ASKED").
   await expect(page.locator('.react-flow__node[data-id="marketing"] .msg--colleague').filter({ hasText: 'Unit Economics' }).last()).toContainText('Sam reviewed your doc');
 
@@ -268,5 +269,37 @@ test('a lead\'s reply wakes the partner, and the ready answer promises nothing t
     for (const one of ((await (await page.request.get(`/api/leads/${LEADS}`)).json()) as { leads: { id: string }[] }).leads ?? []) await page.request.delete(`/api/leads/${LEADS}/${one.id}`);
     const now = await (await page.request.get('/api/stage')).json();
     await page.request.put('/api/stage', { data: { ...now, cards: (now.cards ?? []).filter((card: { id: string }) => card.id !== LEADS) } });
+  }
+});
+
+// Journey 16: the founder put two inputs right in chat (11 of 14 pay; €59 is a week's price) and the stored call never
+// heard it; the next morning's refresh said "stop". Now the correction is kept in code with the founder's words, the
+// call made on the numbers before is stale, and the next morning's look quotes the old call and what changed, with
+// break-even worked from the one picture of the numbers.
+test('the founder\'s correction makes the verdict stale, and the next morning\'s refresh quotes it', async ({ page }) => {
+  test.setTimeout(120_000);
+  await bar(page, 'add a partner called Sam', 'Add Sam, your partner');
+  await expect(page.getByRole('status').filter({ hasText: 'Sam is your partner' })).toBeVisible({ timeout: 15_000 });
+  const sam = (await stageOf(page)).rooms.find((room) => room.name === 'Sam')!;
+  const company = ((await (await page.request.get('/api/docs/company-brief')).json()) as { text: string }).text;
+  const numbers = '- Price: €59 per subscriber\n- Subscribers: 14\n- Paying subscribers: 14\n- Cash: €6,000\n- Burn: €1,900 a month\n';
+  await page.request.put('/api/docs/company-brief', { data: { text: company.replace(/## Numbers\n[\s\S]*?(?=\n## |$)/, `## Numbers\n\n${numbers}`) } });
+  const chat = async () => (await (await page.request.get(`/api/rooms/${sam.id}/chat`)).json()) as { role: string; text: string }[];
+  const said = async () => (await chat()).filter((one) => one.role === 'assistant').at(-1)?.text ?? '';
+  try {
+    await page.request.post(`/api/rooms/${sam.id}/chat`, { data: { text: 'Your verdict: keep going, pivot or stop?' } });
+    await expect.poll(said, { timeout: 30_000 }).toContain('My call: **keep going**.');
+    await page.request.post(`/api/rooms/${sam.id}/chat`, { data: { text: 'No, 14 subscribers is not 14 paying, 11 pay. And €59 is per week, not per month.' } });
+    await expect.poll(said, { timeout: 30_000 }).toContain('*Taken as the numbers: paying 11; price a week (your words).');
+    expect(await said()).toContain('so it is stale: I make it again on the next look.*');
+    // The next morning: the stale call is looked at again, unasked.
+    await advanceDay(page, 1);
+    await expect.poll(async () => (await chat()).some((one) => one.text.includes('I said keep going at 14 paying subscribers')), { timeout: 30_000 }).toBe(true);
+    const refresh = (await chat()).find((one) => one.text.includes('I said keep going at 14 paying subscribers'))!.text;
+    expect(refresh).toContain('now break-even is 8 paying subscribers and the company has 11, cash-positive: still keep going.');
+    expect(refresh).toContain('Since then: price €59 a month → €59 a week (founder: "And €59 is per week, not per month"); paying subscribers 14 → 11 (founder: "No, 14 subscribers is not 14 paying, 11 pay").');
+    expect(refresh).not.toMatch(/wind|\bstop\b/i);
+  } finally {
+    await resetClock(page);
   }
 });

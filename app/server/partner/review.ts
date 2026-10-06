@@ -9,7 +9,7 @@ import { calculate } from '../tools/calc.ts';
 import { markUnbacked, markUnworked, unbackedClaims } from '../tools/evidence.ts';
 import { unsourcedIn } from './call.ts';
 import { sectionText } from './company.ts';
-import { economicsOf, type Inputs } from './economics.ts';
+import { stateOf, type EconomicsState } from './economics.ts';
 
 // Journey 13: Tom wrote Unit Economics with a net burn of €1,380 (the brief's €2,100 burn less €720 of MRR, the €534 a
 // month the boxes cost left out), worked out with calc, so the guard let it stand; the partner never looked. A
@@ -35,40 +35,54 @@ const clip = (text: string, most = 70) => { const flat = text.replace(/\s+/g, ' 
 
 // ------------------------------------------------------------ (b) sense: the derived figures, worked out again
 
-type Derived = { name: 'net burn' | 'runway' | 'margin' | 'margin %' | 'break-even'; right: number; working: string; shown: string; near: (claimed: number) => boolean; hint?: (claimed: number) => string };
-const within = (share: number, least: number) => (right: number) => (claimed: number) => Math.abs(claimed - right) <= Math.max(least, Math.abs(right) * share);
+type Derived = { name: 'net burn' | 'runway' | 'margin' | 'margin %' | 'break-even'; right: number; working: string; shown: string; near: (claimed: number, line: string) => boolean; hint?: (claimed: number) => string };
+// Journey 16: a colleague's figure is flagged only when the one state has the inputs for it and disagrees beyond
+// rounding: two in a hundred of the right figure (a runway of 3.16 against 3.2 is the same runway).
+export const SHARE = 0.02;
+const near = (right: number, least = 0) => (claimed: number) => Math.abs(claimed - right) <= Math.max(least, Math.abs(right) * SHARE);
+const sumOf = (state: EconomicsState, label: string) => state.economics()?.working.find((one) => one.label === label)?.result;
 
-// What the brief's Numbers give for each derived figure, each with its calc working.
-export function rightFigures(inputs: Inputs, unit = 'paying customers', currency = ''): Derived[] {
+// What the one state gives for each derived figure, each with its calc working, worked again now.
+export function rightFigures(state: EconomicsState): Derived[] {
   const out: Derived[] = [];
-  const { price, cost, fixed, cash, paying } = inputs;
-  let net = inputs.net;
+  const currency = state.currency ?? '';
+  const unit = state.unit;
+  const net = state.net();
+  const price = state.monthly('price');
+  const cost = state.monthly('cost');
+  const fixed = state.monthly('burn');
+  const paying = state.current();
   if (net !== undefined) {
-    out.push({ name: 'net burn', right: net, working: `the Company brief gives ${money(net, currency)} a month`, shown: `${money(net, currency)} a month`, near: within(0.02, 1)(net) });
-  } else if (fixed !== undefined && paying !== undefined && price !== undefined && cost !== undefined) {
-    const worked = calculate('fixed + paying * cost - paying * price', `fixed=${fixed}, paying=${paying}, cost=${cost}, price=${price}`);
-    if (worked.value > 0) {
-      net = worked.value;
-      const mrrOnly = fixed - paying * price;
-      out.push({
-        name: 'net burn', right: net, working: `${worked.worked} = ${worked.display} (calc)`, shown: `${money(net, currency)} a month`, near: within(0.02, 1)(net),
-        hint: (claimed) => (Math.abs(claimed - mrrOnly) <= Math.max(1, Math.abs(mrrOnly) * 0.02) ? `it leaves out what the ${paying} ${unit} cost (${money(paying * cost, currency)} a month)`
-          : Math.abs(claimed - fixed) <= Math.max(1, fixed * 0.02) ? 'it is the burn before anything the paying ones bring in' : ''),
-      });
+    const working = state.inputs.net ? `the Company brief gives ${money(net, currency)} a month` : `${calculate(state.inputs.cost ? 'fixed - paying * (price - cost)' : 'burn - paying * price', state.inputs.cost ? `fixed=${fixed}, paying=${paying}, price=${round(price!)}, cost=${round(cost!)}` : `burn=${fixed}, paying=${paying}, price=${round(price!)}`).worked} = ${money(net)} (calc)`;
+    const positive = state.cashPositive();
+    out.push({
+      name: 'net burn', right: net, working, shown: positive ? `${money(net, currency)} a month (cash-positive)` : `${money(net, currency)} a month`,
+      // Cash-positive, the surplus may be written as a plus: its size is what is checked.
+      near: (claimed) => near(net, 1)(claimed) || (positive && near(Math.abs(net), 1)(Math.abs(claimed))),
+      hint: (claimed) => (cost !== undefined && paying !== undefined && price !== undefined && fixed !== undefined && near(fixed - paying * price, 1)(claimed) ? `it leaves out what the ${paying} ${unit} cost (${money(paying * cost, currency)} a month)`
+        : fixed !== undefined && near(fixed, 1)(claimed) ? 'it is the burn before anything the paying ones bring in' : ''),
+    });
+  }
+  const runway = state.runway();
+  if (runway) {
+    const gross = runway.gross;
+    if (Number.isFinite(runway.value)) {
+      out.push({ name: 'runway', right: runway.value, working: `${sumOf(state, 'Runway')} (calc)`, shown: `${runway.display} months`,
+        near: (claimed, line) => near(runway.value, 0.05)(claimed) || (!!gross && /\bgross\b/i.test(line) && near(gross.value, 0.05)(claimed)) });
+    } else if (gross) {
+      // Cash-positive: the only months there are, are the gross burn's.
+      out.push({ name: 'runway', right: gross.value, working: `${sumOf(state, 'Net burn') ?? ''} a month, cash-positive; at the gross burn ${sumOf(state, 'Runway')} (calc)`.replace(/^ a month, /, ''), shown: `cash-positive (${gross.display} months at the gross burn alone)`, near: near(gross.value, 0.05) });
     }
   }
-  if (cash !== undefined && net !== undefined && net > 0) {
-    const worked = calculate('round(cash / net, 1)', `cash=${cash}, net=${net}`);
-    out.push({ name: 'runway', right: worked.value, working: `${worked.worked} = ${worked.display} (calc)`, shown: `${worked.display} months`, near: within(0.03, 0.15)(worked.value) });
-  }
   if (price !== undefined && cost !== undefined && price > 0) {
-    const each = calculate('price - cost', `price=${price}, cost=${cost}`);
-    out.push({ name: 'margin', right: each.value, working: `${each.worked} = ${each.display} (calc)`, shown: `${money(each.value, currency)} a month on each`, near: within(0.02, 1)(each.value) });
-    const share = calculate('round((price - cost) / price * 100, 1)', `price=${price}, cost=${cost}`);
-    out.push({ name: 'margin %', right: share.value, working: `${share.worked} = ${share.display} (calc)`, shown: `${share.display}%`, near: within(0, 1)(share.value) });
+    const each = calculate('price - cost', `price=${round(price)}, cost=${round(cost)}`);
+    out.push({ name: 'margin', right: each.value, working: `${each.worked} = ${each.display} (calc)`, shown: `${money(each.value, currency)} a month on each`, near: near(each.value, 1) });
+    const share = calculate('round((price - cost) / price * 100, 1)', `price=${round(price)}, cost=${round(cost)}`);
+    out.push({ name: 'margin %', right: share.value, working: `${share.worked} = ${share.display} (calc)`, shown: `${share.display}%`, near: near(share.value, 1) });
   }
   return out;
 }
+const round = (value: number) => Math.round(value * 100) / 100;
 
 const FIGURE = /(?<![\p{L}\d.,])([$€£]\s?)?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(\s?k\b)?(\s?%)?/gu;
 type Figure = { text: string; value: number; at: number; money: boolean; share: boolean; months: boolean };
@@ -91,17 +105,14 @@ function claimedOn(line: string, label: RegExpExecArray, pick: (one: Figure) => 
   return figuresIn(line, from).find(pick) ?? (from !== end ? figuresIn(line, end).find(pick) : undefined);
 }
 
-// Each derived figure the doc states that the brief's numbers do not give, with the right one and its working.
-export function senseFlags(text: string, numbers: string): { flags: ReviewFlag[]; lines: Set<number> } {
-  const economics = economicsOf(numbers);
+// Each derived figure the doc states that the one state does not give, with both workings: the state's and the doc's.
+export function senseFlags(text: string, given: string | EconomicsState): { flags: ReviewFlag[]; lines: Set<number> } {
+  const state = typeof given === 'string' ? stateOf(given) : given;
+  const economics = state.economics();
   const lines = new Set<number>();
   if (!economics?.inputs) return { flags: [], lines };
-  const derived = rightFigures(economics.inputs, economics.unit, economics.currency ?? '');
-  // The brief's own working where the sums above have nothing (no cost per unit, a price per job): runway at the burn.
+  const derived = rightFigures(state);
   const worked = (label: string) => economics.working.find((one) => one.label === label);
-  if (!derived.some((one) => one.name === 'runway') && economics.runway && worked('Runway')) {
-    derived.push({ name: 'runway', right: economics.runway.value, working: `${worked('Runway')!.result} (calc)`, shown: `${economics.runway.display} months`, near: within(0.03, 0.15)(economics.runway.value) });
-  }
   const by = (name: Derived['name']) => derived.find((one) => one.name === name);
   const flags: ReviewFlag[] = [];
   const said = new Set<string>();
@@ -109,7 +120,7 @@ export function senseFlags(text: string, numbers: string): { flags: ReviewFlag[]
     if (/^\s*#/.test(line) || /^\s*(?:>|```)/.test(line)) return;
     const runway = /\brunway\b/i.exec(line);
     const margin = /\b(?:gross\s+|unit\s+|contribution\s+)?margins?\b/i.exec(line);
-    const net = /\bnet\s+burn\b/i.exec(line);
+    const net = /\bnet\s+(?:burn|cash\s*flow|cashflow)\b/i.exec(line);
     let found: { derived: Derived; claimed: Figure } | undefined;
     const runwayRight = by('runway');
     if (runway && runwayRight) {
@@ -123,22 +134,23 @@ export function senseFlags(text: string, numbers: string): { flags: ReviewFlag[]
       else {
         const each = by('margin');
         // A margin in money is checked only when it is said per paying unit or per month, never per box or per order.
-        const perUnit = economics.unit ? new RegExp(`\\bper\\s+${economics.unit.split(' ').pop()!.replace(/s$/, '')}\\b|\\ba month\\b|\\bper month\\b|\\/\\s?mo`, 'i') : /\ba month\b|\bper month\b/i;
+        const perUnit = new RegExp(`\\bper\\s+${state.unit.split(' ').pop()!.replace(/s$/, '')}\\b|\\ba month\\b|\\bper month\\b|\\/\\s?mo`, 'i');
         const claimed = each && perUnit.test(line) ? claimedOn(line, margin, (one) => one.money) : undefined;
         if (each && claimed) found = { derived: each, claimed };
       }
     }
-    // Break-even in the brief's own count and unit: journey 15's "50 paying hosts" for 50 print jobs a month.
+    // Break-even in the state's own count and unit: journey 15's "50 paying hosts" for 50 print jobs a month.
     const even = /\bbreak[- ]?even(?:\s+point)?\b/i.exec(line);
-    if (!found && even && economics.breakEven !== undefined && Number.isFinite(economics.breakEven) && economics.unit && worked('Break-even')) {
+    const right = state.breakEven();
+    if (!found && even && right !== undefined && Number.isFinite(right) && worked('Break-even')) {
       const claimed = claimedOn(line, even, (one) => !one.money && !one.share && !one.months);
-      const noun = economics.unit.split(' ').find((word) => !/^(?:paying|a|per|month)$/.test(word))?.replace(/s$/, '') ?? '';
+      const noun = state.unit.split(' ').find((word) => !/^(?:paying|a|per|month)$/.test(word))?.replace(/s$/, '') ?? '';
       const after = claimed ? line.slice(claimed.at + claimed.text.length, claimed.at + claimed.text.length + 40) : '';
       const unitWrong = !!claimed && /^\s*[a-z]/i.test(after) && !new RegExp(`^\\s*(?:[a-z-]+\\s+){0,2}${noun}`, 'i').test(after);
-      if (claimed && (claimed.value !== economics.breakEven || unitWrong)) {
-        const shown = `${economics.breakEven} ${economics.unit}`;
+      if (claimed && (claimed.value !== right || unitWrong)) {
+        const shown = `${right} ${state.unit}`;
         const wrongAs = `${claimed.text}${unitWrong ? ` ${/^\s*((?:[a-z-]+\s?){1,3})/i.exec(after)?.[1].trim() ?? ''}` : ''}`;
-        found = { derived: { name: 'break-even', right: economics.breakEven, working: `${worked('Break-even')!.result} (calc)`, shown, near: () => false }, claimed: { ...claimed, text: wrongAs } };
+        found = { derived: { name: 'break-even', right, working: `${worked('Break-even')!.result} (calc)`, shown, near: () => false }, claimed: { ...claimed, text: wrongAs } };
       }
     }
     const netRight = by('net burn');
@@ -146,17 +158,18 @@ export function senseFlags(text: string, numbers: string): { flags: ReviewFlag[]
       const claimed = claimedOn(line, net, (one) => !one.share && !one.months);
       if (claimed) found = { derived: netRight, claimed };
     }
-    if (!found || found.derived.near(found.claimed.value)) return;
+    if (!found || found.derived.near(found.claimed.value, line)) return;
     lines.add(index);
-    const { derived: right, claimed } = found;
-    if (said.has(right.name)) return;
-    said.add(right.name);
-    const hint = right.hint?.(claimed.value);
-    const what = right.name === 'margin %' ? 'margin' : right.name;
+    const { derived: rightOne, claimed } = found;
+    if (said.has(rightOne.name)) return;
+    said.add(rightOne.name);
+    const hint = rightOne.hint?.(claimed.value);
+    const what = rightOne.name === 'margin %' ? 'margin' : rightOne.name;
+    const theirs = clip(line.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, ''), 90);
     flags.push({
       kind: 'sense',
-      said: `${what[0].toUpperCase()}${what.slice(1)} is ${right.shown}, not ${claimed.text}: ${right.working}${hint ? `; ${hint}` : ''}.`,
-      short: `${what} is ${right.shown}, not ${claimed.text}`, line: index,
+      said: `${what[0].toUpperCase()}${what.slice(1)} is ${rightOne.shown}, not ${claimed.text}: ${rightOne.working}${hint ? `; ${hint}` : ''}. The doc has "${theirs}".`,
+      short: `${what} is ${rightOne.shown}, not ${claimed.text}`, line: index,
     });
   });
   return { flags, lines };
@@ -176,8 +189,9 @@ const CLAIMISH = /\b(?:customers?|users?|clients?|managers?|offices?|staff|peopl
 // read without asking (the Company brief, their wired docs); `said` is what may back a claim of what someone said or did.
 // `twins`: how many other docs on the stage carry this doc's title (journey 15 had three "Runway" docs from one turn,
 // each called "Fit for the founder.").
-export function reviewDoc(input: { text: string; before?: string; numbers: string; read: string[]; said: string[]; title?: string; twins?: number }): DocReview {
+export function reviewDoc(input: { text: string; before?: string; numbers: string; read: string[]; said: string[]; title?: string; twins?: number; state?: EconomicsState | null }): DocReview {
   const before = input.before ?? '';
+  const state = input.state ?? stateOf(input.numbers);
   const added = addedLines(before, input.text);
   const twin: ReviewFlag[] = input.twins ? [{ kind: 'duplicate', said: `${input.twins + 1} documents on the stage are called "${input.title ?? 'this'}": keep one and take the other${input.twins > 1 ? 's' : ''} away, so nobody reads the wrong one.`, short: `${input.twins + 1} docs are called "${input.title ?? 'this'}"` }] : [];
   if (!added.length && twin.length) return { flags: twin, verdict: `Fix first: ${twin[0].short}.`, checked: true };
@@ -186,12 +200,12 @@ export function reviewDoc(input: { text: string; before?: string; numbers: strin
   if (!added.length) return { flags: [], verdict: FIT, checked: false };
   const flags: ReviewFlag[] = [...twin];
   // (b) first: a wrong derived figure is named once, with the right one, not again as unsourced.
-  const sense = senseFlags(input.text, input.numbers);
+  const sense = senseFlags(input.text, state);
   const addedAt = new Set(added.map((one) => one.index));
   flags.push(...sense.flags.filter((flag) => flag.line !== undefined && addedAt.has(flag.line)).map(({ line: _line, ...flag }) => flag));
   // (a) the guard's own checks, on the added lines only: a count nothing read gives, and a derived figure no calc
   // worked out. The working of the right figures is read too, so a figure that matches it stands.
-  const sums = rightFigures(economicsOf(input.numbers)?.inputs ?? {}).flatMap((one) => (/ = /.test(one.working) ? [one.working.replace(/ \(calc\)$/, '')] : []));
+  const sums = [...rightFigures(state).flatMap((one) => (/ = /.test(one.working) ? [one.working.replace(/ \(calc\)$/, '')] : [])), ...state.explain()];
   const read = [input.numbers, ...input.read, ...sums];
   const bare = input.text.split('\n').map((line, index) => (sense.lines.has(index) ? '' : line)).join('\n');
   const marks = [...markUnworked({ before, after: bare, read }).marked, ...markUnbacked({ before, after: bare, read }).marked];
@@ -199,7 +213,7 @@ export function reviewDoc(input: { text: string; before?: string; numbers: strin
   // A runway, break-even, net burn or margin is a sum: its figure comes from a calc this turn ran or the brief's own
   // working, never from the writer's head, even when it sits near the right one.
   const calcs = new Set([...read.join('\n').matchAll(/=\s*(-?\d[\d,]*(?:\.\d+)?)/g)].map((hit) => Number(hit[1].replace(/,/g, ''))));
-  for (const one of economicsOf(input.numbers)?.working ?? []) calcs.add(Number(one.result.split(' = ').at(-1)));
+  for (const one of state.economics()?.working ?? []) calcs.add(Number(one.result.split(' = ').at(-1)!.replace(/,/g, '')));
   const unworked: string[] = [];
   for (const { line, index } of added) {
     if (sense.lines.has(index)) continue;
@@ -271,7 +285,9 @@ export const granted = async (budget: UnaskedBudget, reason: string): Promise<{ 
 // ------------------------------------------------------------ the runtime
 
 type Pending = { docId: string; roomId: string; at: number; read: string[]; said: string[] };
-export type Flagged = { id: string; docId: string; roomId: string; who: string; title: string; flags: string[]; verdict: string; ask: string; at: number; by: string };
+// `basis`: the inputs the flag was worked on (economics.ts snapshot, as JSON); `kinds`: each flag's kind. A flag on the
+// figures whose inputs changed since is worked again, and withdrawn when the doc agrees with the numbers now.
+export type Flagged = { id: string; docId: string; roomId: string; who: string; title: string; flags: string[]; verdict: string; ask: string; at: number; by: string; basis?: string; kinds?: ReviewFlag['kind'][] };
 type ReviewState = { pending: Pending[]; seen: Record<string, string>; open: Flagged[] };
 
 export type ReviewDeps = {
@@ -283,6 +299,8 @@ export type ReviewDeps = {
   budget: UnaskedBudget;
   // The Company document as it is now.
   company: (stage: Stage) => Promise<{ id: string; text: string } | null>;
+  // The one picture of the numbers (economics.ts), with the founder's corrections and readings in it.
+  economics?: (stage: Stage) => Promise<EconomicsState | null>;
   // The partner's words for the line, on a small model: null when it could not.
   phrase?: (prompt: string) => Promise<string | null>;
   notify?: (title: string, body: string) => void;
@@ -338,7 +356,9 @@ export function createReviews(deps: ReviewDeps) {
     const others = await Promise.all(readableDocIds(stage, room.id).filter((id) => id !== doc.id).map((id) => deps.store.readDoc(id).catch(() => '')));
     const sources = [...job.read, ...others.map((one) => one.slice(0, MOST_SOURCE))];
     const twins = stage.docs.filter((one) => one.id !== doc.id && one.title.trim().toLowerCase() === doc.title.trim().toLowerCase()).length;
-    const review = reviewDoc({ text, before: seen[doc.id] ?? '', numbers: company ? sectionText(company.text, 'Numbers') : '', read: sources, said: sources, title: doc.title, twins });
+    const numbers = company ? sectionText(company.text, 'Numbers') : '';
+    const state = (await deps.economics?.(stage).catch(() => null)) ?? stateOf(numbers);
+    const review = reviewDoc({ text, before: seen[doc.id] ?? '', numbers, read: sources, said: sources, title: doc.title, twins, state });
     await change((state) => {
       state.seen[doc.id] = text.slice(0, MOST_SEEN);
       const keys = Object.keys(state.seen);
@@ -358,21 +378,48 @@ export function createReviews(deps: ReviewDeps) {
     const at = deps.now();
     await deps.store.appendChat(room.id, { id: newMessageId(), role: 'user', from: partner.name, text: line, at });
     if (!review.flags.length) return;
-    const flagged: Flagged = { id: `${doc.id}-${at.toString(36)}`, docId: doc.id, roomId: room.id, who: room.name, title: doc.title, flags: review.flags.map((flag) => flag.said), verdict: review.verdict, ask: fixAsk(doc.title, review), at, by: partner.name };
+    const flagged: Flagged = { id: `${doc.id}-${at.toString(36)}`, docId: doc.id, roomId: room.id, who: room.name, title: doc.title, flags: review.flags.map((flag) => flag.said), verdict: review.verdict, ask: fixAsk(doc.title, review), at, by: partner.name, basis: JSON.stringify(state.snapshot()), kinds: review.flags.map((flag) => flag.kind) };
     await change((state) => { state.open = [...state.open.filter((one) => one.docId !== doc.id), flagged].slice(-50); });
     await deps.attention.refresh().catch(() => {});
     deps.notify?.(`${partner.name} flagged ${doc.title}`, review.verdict);
+  }
+
+  // Journey 16: the first "Sam flagged" sat four days on a right doc after the founder put the inputs right. A flag on
+  // the figures is worked again whenever the inputs it was made on change: one that no longer stands is withdrawn, its
+  // row cleared and one line said in the colleague's room; one that still stands is said with the numbers now.
+  async function withdrawStale(stage: Stage, partner: { id: string; name: string }, company: { id: string; text: string } | null) {
+    const { open } = await read();
+    const numbers = company ? sectionText(company.text, 'Numbers') : '';
+    const state = (await deps.economics?.(stage).catch(() => null)) ?? stateOf(numbers);
+    const now = JSON.stringify(state.snapshot());
+    let cleared = false;
+    for (const one of open.filter((each) => each.basis && each.basis !== now && each.kinds?.includes('sense'))) {
+      const text = await deps.store.readDoc(one.docId).catch(() => null);
+      const sense = text === null ? [] : senseFlags(text, state).flags;
+      const rest = one.flags.filter((_flag, index) => one.kinds![index] !== 'sense');
+      const restKinds = one.kinds!.filter((kind) => kind !== 'sense');
+      if (sense.length || rest.length) {
+        const flags = [...sense.map((flag) => flag.said), ...rest];
+        await change((state2) => { const held2 = state2.open.find((each) => each.id === one.id); if (held2) Object.assign(held2, { flags, kinds: [...sense.map(() => 'sense' as const), ...restKinds], basis: now, verdict: `Fix first: ${[...sense.map((flag) => flag.short), ...(rest.length ? [one.verdict.replace(/^Fix first: |\.$/g, '').split('; ').slice(-rest.length).join('; ')] : [])].join('; ')}.` }); });
+        continue;
+      }
+      await change((state2) => { state2.open = state2.open.filter((each) => each.id !== one.id); });
+      await deps.store.appendChat(one.roomId, { id: newMessageId(), role: 'user', from: partner.name, text: `I take back my flag on "${one.title}": the numbers changed since, and the doc agrees with them now. Fit for the founder.`, at: deps.now() }).catch(() => {});
+      cleared = true;
+    }
+    if (cleared) await deps.attention.refresh().catch(() => {});
   }
 
   return {
     heard,
     // ---- the review tick: each doc written since, reviewed once; one whose writer is mid-turn waits.
     async tick(partner: { id: string; name: string } | undefined) {
-      const { pending } = await read();
-      if (!pending.length) return;
+      const { pending, open } = await read();
+      if (!pending.length && !open.some((one) => one.basis)) return;
       if (!partner) { await change((state) => { state.pending = []; }); return; }
       const stage = await deps.store.loadStage();
       const company = await deps.company(stage).catch(() => null);
+      await withdrawStale(stage, partner, company).catch((error: Error) => console.error(`partner review: ${error.message}`));
       for (const job of [...pending]) {
         if (deps.busy.has(job.roomId)) continue;
         await change((state) => { state.pending = state.pending.filter((one) => one !== job && !(one.docId === job.docId && one.at === job.at)); });
