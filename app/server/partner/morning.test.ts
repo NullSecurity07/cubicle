@@ -281,7 +281,7 @@ describe('one morning turn', () => {
 describe('the day-2 note leads with what changed since yesterday', () => {
   const prompt = async (): Promise<ModelMessage[]> => [{ role: 'system', content: 'You are Sam, Partner.' }];
   const reply = 'Three moves for today:\n1. Call the five beta users before noon.\n2. b\n3. c\nRisk: Maya priced it at $9\nQuestion: q?';
-  const promise = (extra: Partial<FounderPromise>): FounderPromise => ({ id: 'promise-1', what: 'call 5 beta users', due: '2026-09-26', said: '2026-09-26', at: at('2026-09-26T10:00'), status: 'open', ...extra });
+  const promise = (extra: Partial<FounderPromise>): FounderPromise => ({ id: 'promise-1', what: 'call 5 beta users', due: '2026-09-26', said: '2026-09-26', at: at('2026-09-24T10:00'), status: 'open', ...extra });
 
   it('puts a slipped promise first, in the note, its message and the facts the model reads', async () => {
     let heard: ModelMessage[] = [];

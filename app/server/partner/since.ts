@@ -1,5 +1,6 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { Lead, ThreadEvent } from '../../shared/leads.ts';
 import { formatValue, type Metric } from '../../shared/metrics.ts';
 import type { Stage, Task } from '../../shared/model.ts';
 import { localDay } from '../clock.ts';
@@ -28,6 +29,22 @@ export type SinceInput = {
   tasks: Task[];
   // Every metric on every Metrics card, with the card's points.
   metrics: Pick<Metric, 'label' | 'unit' | 'better' | 'points'>[];
+  // Journey 15's day-2 note said "Nothing changed since yesterday" the morning after a lead was written to, five docs,
+  // a deck and a film were made and a kill signal was set. What happened counts as well as what slipped: every lead's
+  // thread, and the documents with the moment each was last written.
+  leads?: Pick<Lead, 'person' | 'thread'>[];
+  docs?: { title: string; at: number }[];
+};
+
+// What a thread event says, by its kind.
+const THREAD: Record<ThreadEvent['kind'], (name: string, event: ThreadEvent) => string> = {
+  drafted: (name, event) => `an email to ${name} was drafted${event.subject ? ` ("${event.subject.slice(0, 60)}")` : ''}`,
+  sent: (name) => `the email to ${name} went out`,
+  opened: (name) => `the email to ${name} was opened in Gmail`,
+  replied: (name, event) => `${name} replied${event.text ? `: "${event.text.replace(/\s+/g, ' ').trim().slice(0, 80)}${event.text.length > 80 ? '…' : ''}"` : ''}`,
+  meeting: (name, event) => `a meeting with ${name} was set${event.day ? ` for ${event.day}` : ''}`,
+  notes: (name) => `notes from the meeting with ${name} were written`,
+  closed: (name) => `an ask about ${name} was closed`,
 };
 
 // The lines, most pressing first; empty when nothing changed.
@@ -54,7 +71,29 @@ export function sinceYesterday(input: SinceInput): string[] {
       const ahead = daysFrom(today, one.due);
       return ahead < 0 ? `Kill-signal check overdue: ${one.what} (was due ${one.due}).` : `Kill-signal check ${inDays(ahead)}: ${one.what} (on ${one.due}).`;
     });
-  return [...slips.slice(0, EACH), ...tasks.slice(0, EACH), ...moved.slice(0, EACH), ...checks.slice(0, EACH)];
+  // Since the start of yesterday: what was done, said or logged, newest first.
+  const from = noon(yesterday) - DAY / 2;
+  const fresh = (when: number) => when >= from && when <= input.now;
+  const leads = (input.leads ?? []).flatMap((lead) => (lead.thread ?? []).filter((event) => fresh(event.at)).map((event) => ({ at: event.at, line: `Lead: ${THREAD[event.kind]?.(lead.person.name, event) ?? `${lead.person.name}: ${event.kind}`}.` })))
+    .sort((one, other) => other.at - one.at).map((one) => one.line);
+  const logged: string[] = [];
+  for (const metric of input.metrics) {
+    const points = [...metric.points].sort((one, other) => one.at.localeCompare(other.at));
+    const last = points.at(-1);
+    if (!last || last.at < yesterday) continue;
+    const before = points.slice(0, -1).reverse().find((one) => one.at < last.at);
+    if (before && before.value !== last.value) continue;
+    logged.push(`Logged: ${metric.label} ${formatValue(last.value, metric.unit)} on ${last.at}${before ? ', the same as before' : ''}.`);
+  }
+  // A promise already said as slipped is not said again as made.
+  const promised = input.promises.filter((one) => (fresh(one.at) || (one.closed && one.closed >= yesterday)) && !(one.status === 'open' && !one.check && one.due < today)).sort((one, other) => other.at - one.at).map((one) => {
+    if (one.status !== 'open') return one.check ? `Kill-signal check ${one.status === 'done' ? 'closed' : 'replaced'}: ${one.what}.` : `Promise ${one.status === 'done' ? 'kept' : 'dropped'}: ${one.what}.`;
+    return one.check ? `Kill-signal check set: ${one.what} (on ${one.due}).` : `Promised: you said you would ${one.what} by ${one.due}.`;
+  });
+  const docs = (input.docs ?? []).filter((one) => fresh(one.at)).sort((one, other) => other.at - one.at);
+  const written = docs.length ? [`Written: ${docs.slice(0, 4).map((one) => `"${one.title}"`).join(', ')}${docs.length > 4 ? ` and ${docs.length - 4} more` : ''}.`] : [];
+  return [...slips.slice(0, EACH), ...tasks.slice(0, EACH), ...moved.slice(0, EACH), ...checks.slice(0, EACH),
+    ...leads.slice(0, EACH), ...logged.slice(0, EACH), ...promised.slice(0, EACH), ...written];
 }
 
 // Everything the lines are read from, out of the stores, never failing the note: a store that cannot be read says
@@ -64,6 +103,8 @@ export async function gatherSince(from: {
   promises?: () => Promise<FounderPromise[]>;
   boards: (boardId: string) => Promise<Task[]>;
   metrics?: (cardId: string) => Promise<SinceInput['metrics']>;
+  leads?: (cardId: string) => Promise<Lead[]>;
+  workspace?: string;
 }): Promise<string[]> {
   const cards = from.stage.cards ?? [];
   const tasks: Task[] = [];
@@ -71,13 +112,24 @@ export async function gatherSince(from: {
   const metrics: SinceInput['metrics'] = [];
   if (from.metrics) for (const card of cards.filter((one) => one.kind === 'metrics')) metrics.push(...await from.metrics(card.id).catch(() => []));
   const promises = from.promises ? await from.promises().catch(() => [] as FounderPromise[]) : [];
-  return sinceYesterday({ now: from.now, promises, tasks, metrics });
+  const leads: Lead[] = [];
+  if (from.leads) for (const card of cards.filter((one) => one.kind === 'leads')) leads.push(...await from.leads(card.id).catch(() => [] as Lead[]));
+  const docs = from.workspace ? await docsWritten(from.workspace, from.stage) : [];
+  return sinceYesterday({ now: from.now, promises, tasks, metrics, leads, docs });
+}
+
+// Each document on the stage with the moment its file was last written.
+export async function docsWritten(workspace: string, stage: Stage): Promise<{ title: string; at: number }[]> {
+  // A pinned company document is kept current by the partner on every turn: its own lines say what moved in it.
+  const found = await Promise.all(stage.docs.filter((doc) => !doc.pinned && /^[a-z0-9][a-z0-9-]{0,63}$/i.test(doc.id))
+    .map(async (doc) => ({ title: doc.title, at: await stat(join(workspace, 'docs', `${doc.id}.md`)).then((info) => info.mtimeMs, () => 0) })));
+  return found.filter((one) => one.at > 0);
 }
 
 // How the head of the note reads, in the app and on the phone alike: the first line is the same in both.
 export const sinceText = (since: string[]) => (since.length ? ['**Since yesterday**', ...since.map((line) => `- ${line}`)].join('\n') : NOTHING_CHANGED);
 // The one line a notice or a Needs you row leads with.
-export const sinceHeadline = (since: string[] | undefined) => (since?.length ? since[0] : undefined);
+export { sinceHeadline } from '../../shared/partner.ts';
 
 // A Metrics card's numbers as its sidecar file has them, read fresh: the card's own store keeps its copy in memory.
 export async function metricsOnDisk(workspace: string, cardId: string): Promise<SinceInput['metrics']> {

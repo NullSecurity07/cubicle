@@ -2,7 +2,7 @@ import { useReactFlow } from '@xyflow/react';
 import { useEffect, useSyncExternalStore } from 'react';
 import type { UiSlice } from '..';
 import { DOC_SIZE } from '../../../shared/frameworks';
-import { COMPANY_TITLE, findCompanyDoc, PARTNER_BRIEF, PARTNER_CHANNEL, PARTNER_ROLE, type PartnerEvent } from '../../../shared/partner';
+import { COMPANY_TITLE, findCompanyDoc, PARTNER_BRIEF, PARTNER_CHANNEL, PARTNER_ROLE, sinceHeadline, type PartnerEvent } from '../../../shared/partner';
 import { NEW_SIZE, useAddCard } from '../../addCard';
 import { request, send } from '../../api';
 import { emit } from '../../bus';
@@ -33,7 +33,7 @@ const useWanted = () => useSyncExternalStore(subscribe, () => wanted);
 const morning = () => {
   say({ text: 'Asking your partner for the morning note…' });
   askMorning()
-    .then((note) => say({ text: note.unchanged ? `Nothing changed since ${new Date(note.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}. ${note.who}'s note stands: ${note.things[0]}` : `${note.who}'s morning note: ${note.since?.[0] ?? note.things[0]}`, roomId: note.roomId }))
+    .then((note) => say({ text: note.unchanged ? `Nothing changed since ${new Date(note.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}. ${note.who}'s note stands: ${note.things[0]}` : `${note.who}'s morning note: ${sinceHeadline(note.since) ?? note.things[0]}`, roomId: note.roomId }))
     .catch((error: Error) => say({ text: error.message, problem: true }));
 };
 const frame = () => new Promise<void>((done) => { requestAnimationFrame(() => done()); });

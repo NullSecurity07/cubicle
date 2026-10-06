@@ -69,7 +69,7 @@ test('on day 2 the partner leaves the morning note unasked, leading with the pro
     return note;
   }, { timeout: 30_000 }).toContain('Slipped: you said you would call 5 beta users');
   // The slip leads: above the day's three moves.
-  expect(note.split('\n\n')[1]).toMatch(/^\*\*Since yesterday\*\*\n- Slipped: you said you would call 5 beta users today \(due \d{4}-\d{2}-\d{2}\), now 1 day late\.$/);
+  expect(note.split('\n\n')[1]).toMatch(/^\*\*Since yesterday\*\*\n- Slipped: you said you would call 5 beta users today \(due \d{4}-\d{2}-\d{2}\), now 1 day late\.(?:\n|$)/);
   expect(note.indexOf('Slipped')).toBeLessThan(note.indexOf('Three moves for today'));
 
   // Needs you has the note, headed by the same line.
