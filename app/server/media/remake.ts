@@ -388,7 +388,7 @@ export async function remakeFilm(film: { path: string; record: FilmRecord }, ops
     Object.assign(next, { version: version.version, root: record.root ?? film.path, from: film.path, notes: opsWords(edited.done), credits });
     if (handEdit) await carryExtras(handEdit, at, [...cut.flatMap((one) => (one.plies ? [one.plies.back, one.plies.mid, one.plies.fore] : [])), ...(voiceFile ? [voiceFile.file] : []), ...(bedSource ? [bedSource] : [])]);
     const omni = engine === OMNI_ENGINE;
-    const photos = photoCredits(cut.flatMap((one) => [one.image, one.bg]).map((file) => (file ? pictures[file]?.credit : undefined)));
+    const photos = photoCredits(cut.flatMap((one) => [one.image, one.bg, one.video]).map((file) => (file ? pictures[file]?.credit : undefined)));
     const terms = [credits, ...(omni ? ['', `The narration was made with OmniVoice. This film is ${NONCOMMERCIAL}.`] : []),
       ...(credit && music ? ['', `Music: ${credit.title} by ${credit.by} · ${credit.licence} · ${credit.source}`] : []), ...(photos ? ['', photos] : []), ''].join('\n');
     report(`saved as ${version.stem.split('/').pop()}.mp4 — ${credits}`);

@@ -1,6 +1,7 @@
 // Live check, needs real keys and this machine: one picture, one spoken line, one two-scene film and, when there is a
 // Hugging Face token, one moving shot and one talking head from the free Spaces, and one search each from Freesound
-// and Pexels when their keys are set. Nothing is written into the workspace. Run with `pnpm check:media`.
+// and Pexels when their keys are set, and one search each from Openverse and Wikimedia Commons (photographs and
+// footage), which need no key. Nothing is written into the workspace. Run with `pnpm check:media`.
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -122,6 +123,33 @@ try {
       console.log('Pexels OK', `${found.length} found · a ${photo.ext} · ${(photo.bytes.length / 1024).toFixed(0)} KB · ${((Date.now() - started) / 1000).toFixed(1)}s`);
       console.log(`  ${creditOf(found[0])}`);
     } catch (error) { console.log('Pexels ERROR', trouble(error).say || String((error as Error).message).slice(0, 200)); }
+  }
+
+  // The free libraries a film uses with no key: one Openverse search (counted in the app's own daily tally, since it
+  // spends one of the two hundred), one Commons photograph search and one Commons footage search. The first of each is
+  // fetched into the throwaway folder to prove the file comes back, and its credit line is printed.
+  {
+    const { openverse, commons, allowance } = await import('../server/media/free-stock.ts');
+    const tally = resolve(import.meta.dirname, '../.cache/stock');
+    const probes: [string, () => ReturnType<ReturnType<typeof commons>['find']>, ReturnType<typeof commons>][] = [];
+    const ov = openverse(fetch, tally);
+    const wm = commons(fetch, join(dir, 'stock'));
+    probes.push(['Openverse', () => ov.find({ query: 'a bakery with bread on the shelves', shape: 'wide', many: 20 }), ov]);
+    probes.push(['Commons photos', () => wm.find({ query: 'a bakery with bread on the shelves', shape: 'wide', many: 20 }), wm]);
+    probes.push(['Commons video', () => wm.find({ query: 'a bakery with bread on the shelves', kind: 'video', shape: 'wide', many: 20 }), wm]);
+    for (const [name, find, library] of probes) {
+      const started = Date.now();
+      try {
+        const found = await find();
+        if (!found.length) { console.log(name, 'OK', `0 found that pass the licence and size rules · ${((Date.now() - started) / 1000).toFixed(1)}s`); continue; }
+        const sizes = found.map((one) => `${one.width}x${one.height}`).slice(0, 3).join(', ');
+        const got = await library.get(found[0]);
+        console.log(name, 'OK', `${found.length} found (${sizes}) · a ${got.ext} · ${(got.bytes.length / 1024).toFixed(0)} KB · ${((Date.now() - started) / 1000).toFixed(1)}s`);
+        console.log(`  ${found[0].credit}`);
+      } catch (error) { console.log(name, 'ERROR', String((error as Error).message).slice(0, 200)); }
+    }
+    const day = await allowance(join(tally, 'openverse-count.json')).used();
+    console.log(`  Openverse today: ${day.used} searches counted here, ${day.left} left of 200`);
   }
 
   // The borrowed voice. It is set up by switching it on in a card, never by a check, and it says one word only when

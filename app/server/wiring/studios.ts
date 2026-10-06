@@ -9,7 +9,7 @@ import { createMedia } from '../media/jobs.ts';
 import { createMusic, fakeMusic } from '../media/music.ts';
 import { fakeVideosOf, hyperframesVideos } from '../media/video.ts';
 import { createSight, sightDir } from '../media/sight.ts';
-import { pexels } from '../media/stock.ts';
+import { photoLibrary } from '../media/free-stock.ts';
 import { fakeVoices, voiceMakers } from '../media/voice.ts';
 import { complete, promptSize, type ModelClient } from '../providers.ts';
 import { route } from '../router.ts';
@@ -66,9 +66,9 @@ export function wireStudios(deps: { root: string; workspace: string; fake: boole
       voicegen: voices,
       videogen: fake ? [fakeVideosOf({ stage: () => store.loadStage() })] : [hyperframesVideos({
         dir: workspace, images: filmPictures, voices: voices[0], think: storyboard, clips, local, lipsync: online, music,
-        // Real photographs somebody took, when the founder has put a free Pexels key in .env. Without one the
-        // studio draws every picture, which is what it did before and still does for anything nobody has photographed.
-        stock: pexels(process.env, fetch, resolve(root, 'app/.cache/stock')),
+        // Real photographs and footage somebody took: Pexels when the founder has put a free key in .env, then
+        // Openverse and Wikimedia Commons, which need no key. Anything nobody has photographed is drawn.
+        stock: photoLibrary(process.env, fetch, resolve(root, 'app/.cache/stock')),
         cacheDir: resolve(root, 'app/.cache'),
         // The studio's eyes: a drawn picture is looked at before it is used, and the long-form look's stills are cut
         // into planes by depth. Two small models, fetched once, run on the processor; nothing breaks without them.

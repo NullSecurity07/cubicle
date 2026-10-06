@@ -197,7 +197,16 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
 
         const able = mayUseAi && !clips.ready();
         if (wantsAi && !able) report(`AI clips are switched on but not ready: ${clips.ready()}`);
-        const { spec: capped, notes } = withinCaps(spec, { ai: able, assets: [...files.keys()], most: here ? MAX_LOCAL_AI : MAX_AI });
+        // Real photographs and real footage, where the look can hold them and while a library will answer. A refused
+        // key or a spent day is said once and every scene after goes to the next library, or to drawing; no key at
+        // all is said once, further down.
+        const photoLibrary = filmStock(deps.stock, pack, report);
+        // A moving shot the film was going to have can still be real footage somebody filmed when no AI clip can be
+        // made, which costs nothing and needs no key (Wikimedia Commons).
+        const realClips = mayUseAi && photoLibrary.clips;
+        // Who filmed each real clip, for the credits beside the film.
+        const clipCredits = new Map<string, string>();
+        const { spec: capped, notes } = withinCaps(spec, { ai: able || realClips, assets: [...files.keys()], most: here ? MAX_LOCAL_AI : MAX_AI });
         spec = capped;
         for (const note of notes) report(note);
         // Only now is it settled whether there is really a person in this film: a clip scene that was written and
@@ -333,16 +342,40 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
             await (noFf ? Promise.reject(new Error(noFf)) : normalise({ from: source, to: join(at, 'assets', cut), width, height, start: scene.start, seconds: scene.seconds, mute: scene.mute, signal }))
               .then(() => { shot.video = cut; }, (error: Error) => { said(index, `that clip could not be used (${error.message}), so the scene is its words instead`); shot.scene = fallbackOf(scene); });
           }
-          if (scene.layout === 'clip' && able) {
-            try {
-              said(index, 'making a few seconds of moving picture…');
-              // A still first, so the clip looks like the rest of the film rather than like a different film.
-              const still = drawing ? await drawing.make({ prompt: [`${bible}. ${scene.clip_prompt!}`, lensPhrase(scene.lens)].filter(Boolean).join(', '), shape }, { report: () => {}, signal }).then((one) => one.bytes, () => undefined) : undefined;
-              const made = await clips.broll({ prompt: scene.clip_prompt!, image: still, seconds: scene.seconds ?? 4, shape, move: scene.move }, { report: (line) => said(index, line), signal });
-              shot.video = `clip-${index}.mp4`;
-              await writeFile(join(at, 'assets', shot.video), made.bytes);
-            } catch (error) {
-              said(index, `the clip could not be made (${(error as Error).message}), so the scene is a picture instead`);
+          if (scene.layout === 'clip' && (able || realClips)) {
+            let why = '';
+            if (able) {
+              try {
+                said(index, 'making a few seconds of moving picture…');
+                // A still first, so the clip looks like the rest of the film rather than like a different film.
+                const still = drawing ? await drawing.make({ prompt: [`${bible}. ${scene.clip_prompt!}`, lensPhrase(scene.lens)].filter(Boolean).join(', '), shape }, { report: () => {}, signal }).then((one) => one.bytes, () => undefined) : undefined;
+                const made = await clips.broll({ prompt: scene.clip_prompt!, image: still, seconds: scene.seconds ?? 4, shape, move: scene.move }, { report: (line) => said(index, line), signal });
+                shot.video = `clip-${index}.mp4`;
+                await writeFile(join(at, 'assets', shot.video), made.bytes);
+              } catch (error) {
+                why = (error as Error).message;
+              }
+            }
+            // Real footage of the scene's own things, filmed by somebody and credited, cut to the film's frame.
+            if (!shot.video && realClips && !noFf && !signal?.aborted) {
+              const real = await photoLibrary.clip({
+                query: scene.clip_prompt ?? scene.text ?? '', shape, seconds: scene.seconds ?? 4,
+                speaker: !!scene.person, names: [material.brand?.name ?? ''].filter(Boolean),
+              }, signal);
+              if (real) {
+                const raw = `stock-clip-${index}-raw.${real.ext}`;
+                const cut = `stock-clip-${index}.mp4`;
+                await writeFile(join(at, 'assets', raw), real.bytes);
+                await normalise({ from: join(at, 'assets', raw), to: join(at, 'assets', cut), width, height, seconds: scene.seconds ?? 4, mute: true, signal })
+                  .then(() => {
+                    shot.video = cut;
+                    clipCredits.set(cut, creditOf(real.found));
+                    said(index, `real footage instead${why ? ' of an AI clip' : ''}: ${creditOf(real.found)}`);
+                  }, (error: Error) => { why ||= `the real footage could not be cut (${error.message})`; });
+              }
+            }
+            if (!shot.video) {
+              said(index, why ? `the clip could not be made (${why}), so the scene is a picture instead` : 'no real footage of it was found, so the scene is a picture instead');
               shot.scene = fallbackOf(scene);
             }
           }
@@ -505,9 +538,6 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         const inHand = hands(3);
         const paint = paintOf(pack, brand);
         let spent = false;
-        // Real photographs, where the look can hold one and while the library will answer. A refused key or a spent
-        // hour is said once and every scene after goes straight to drawing; no key at all is said once, here.
-        const photoLibrary = filmStock(deps.stock, pack, report);
         if (photoLibrary.missing && drawing && !draft) report(NO_PHOTOS_LINE);
         let kept = 0;
         // The one thing a picture maker says that a founder needs to hear: that a free service has run dry and the
@@ -872,7 +902,9 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         ].join('\n') : '';
         // Who took the photographs on screen. Pexels does not ask for a credit, but a film that carries somebody's
         // photograph should be able to say whose it is wherever the file goes.
-        const photos = photoCredits(cut.flatMap((one) => [one.image, one.bg]).map((file) => (file ? madeFrom.get(file)?.credit : undefined)));
+        // Real footage is credited the same way, and CC BY footage must be.
+        const photos = photoCredits(cut.flatMap((one) => [one.image, one.bg, one.video])
+          .map((file) => (file ? madeFrom.get(file)?.credit ?? clipCredits.get(file) : undefined)));
         const terms = nc || photos ? [nc.trimEnd(), photos].filter(Boolean).join('\n\n') + '\n' : '';
         // A finished film goes out with the same film laid out as tracks, for a founder who wants to move one cut by
         // hand. A draft does not: it is a film to look at, not one to finish.
@@ -883,7 +915,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         if (handEdit) {
           for (const [index, shot] of shots.entries()) {
             if (shot.image && !madeFrom.has(shot.image)) madeFrom.set(shot.image, { kind: 'given', hash: `given:${shot.image}` });
-            if (shot.video) madeFrom.set(shot.video, { kind: 'video', hash: `video:${index}:${shot.video}` });
+            if (shot.video) madeFrom.set(shot.video, { kind: 'video', hash: `video:${index}:${shot.video}`, ...(clipCredits.has(shot.video) ? { credit: clipCredits.get(shot.video) } : {}) });
           }
           const bedSource = bedFile ? `bed-source${extname(bedFile).toLowerCase() || '.wav'}` : '';
           record = recordOf({

@@ -81,7 +81,13 @@ export function cloudflareImages(env: NodeJS.ProcessEnv = process.env, http: typ
 // went, rather than answering with something wrong.
 const SLOTS = ['prompt', 'width', 'height', 'resolution', 'seed'] as const;
 type Slot = (typeof SLOTS)[number];
-export type Picture = { name: string; space: string; endpoint: string; params: Record<string, unknown> };
+// `look: "photo"` marks a Space that draws like a camera (FLUX.1 Krea). It is asked first when the prompt asks for a
+// photograph, and in its listed place otherwise.
+export type Picture = { name: string; space: string; endpoint: string; look?: string; params: Record<string, unknown> };
+const PHOTOGRAPHIC = /\b(photo|photos|photograph|photographs|photographic|photoreal|photorealistic|realistic|35mm|dslr|documentary|film still|shot on)\b/i;
+// The Spaces in the order a prompt should try them: the camera-like ones first for a prompt that wants a photograph.
+export const spacesFor = (prompt: string, spaces: Picture[] = pictureSpaces): Picture[] =>
+  PHOTOGRAPHIC.test(prompt) ? [...spaces.filter((one) => one.look === 'photo'), ...spaces.filter((one) => one.look !== 'photo')] : spaces;
 export const pictureSpaces = (listed as { pictures: Picture[] }).pictures;
 // How a Space is reached, kept as its own seam so a test can stand in for one. It differs from the clips backend's in
 // the one way that matters here: the token is optional, because drawing works without an account.
@@ -199,7 +205,7 @@ export function huggingFaceImages(
         seed: Math.floor(Math.random() * 1_000_000),
       };
       const failures: string[] = [];
-      for (const spot of pictureSpaces) {
+      for (const spot of spacesFor(String(ask.prompt ?? ''))) {
         try {
           return await once(spot, have, help);
         } catch (error) {

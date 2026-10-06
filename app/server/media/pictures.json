@@ -14,6 +14,21 @@
       }
     },
     {
+      "name": "FLUX.1 Krea",
+      "space": "black-forest-labs/FLUX.1-Krea-dev",
+      "endpoint": "/infer",
+      "look": "photo",
+      "params": {
+        "prompt": "$prompt",
+        "seed": "$seed",
+        "randomize_seed": false,
+        "width": "$width",
+        "height": "$height",
+        "guidance_scale": 4.5,
+        "num_inference_steps": 28
+      }
+    },
+    {
       "name": "FLUX.1 schnell",
       "space": "black-forest-labs/FLUX.1-schnell",
       "endpoint": "/infer",

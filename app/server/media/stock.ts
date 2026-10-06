@@ -41,6 +41,9 @@ export type Found = {
   // Whether there is an identifiable person in it. A picture with one is b-roll and never the film's speaker.
   people: boolean;
   seconds?: number;
+  // The credit line itself, for a library whose licence asks for one in its own words (CC BY on Openverse and
+  // Wikimedia Commons). A Pexels picture leaves it out and is credited the Pexels way.
+  credit?: string;
 };
 
 export type Stock = {
@@ -51,16 +54,28 @@ export type Stock = {
   get(one: Found, signal?: AbortSignal): Promise<{ ext: string; bytes: Buffer }>;
   // Everything this film has used, for the card: the photographer and the page, in order.
   used(): Found[];
+  // What the library has to say since it was last asked: a day's free searches spent, a source that did not answer
+  // and the next one tried. A film says each of these once.
+  heard?(): string[];
+  // Whether it has moving footage as well as photographs.
+  moving?: boolean;
 };
 
 // A photographer's name and the page their picture lives on, said the way a credit is said.
-export const creditOf = (one: Found): string => `${one.what || 'photograph'} by ${one.by} on Pexels — ${one.page}`;
+export const creditOf = (one: Found): string => one.credit ?? `${one.what || 'photograph'} by ${one.by} on Pexels — ${one.page}`;
 
 // The photographs a film shows, one line each, said once however many shots share one. It goes in the credits file
 // beside the film and beside every version remade from it.
+// A picture or clip from Openverse or Wikimedia Commons names its own licence in its line, because CC BY asks for
+// exactly that: the work, who made it, the licence and where it lives.
 export const photoCredits = (credits: (string | undefined)[]): string => {
   const each = [...new Set(credits.filter((one): one is string => !!one))];
-  return each.length ? [`Photographs (Pexels, free to use: ${LICENCE}):`, ...each.map((one) => `- ${one}`)].join('\n') : '';
+  const pexels = each.filter((one) => / on Pexels — /.test(one));
+  const open = each.filter((one) => !/ on Pexels — /.test(one));
+  return [
+    ...(pexels.length ? [[`Photographs (Pexels, free to use: ${LICENCE}):`, ...pexels.map((one) => `- ${one}`)].join('\n')] : []),
+    ...(open.length ? [['Photographs and footage (Openverse and Wikimedia Commons, each under the licence its line names):', ...open.map((one) => `- ${one}`)].join('\n')] : []),
+  ].join('\n\n');
 };
 
 // What a failed search or fetch means for the rest of the film. A spent hour stops the asking for this film and is
@@ -68,6 +83,7 @@ export const photoCredits = (credits: (string | undefined)[]): string => {
 // said once, loudly, because otherwise every film draws every picture and nobody knows why. An ordinary miss — a
 // 404, a network blip — is just this one picture, and the next scene may land.
 export const PEXELS_REFUSED = 'PEXELS_API_KEY in .env was not accepted by Pexels, so the film is drawing every picture instead of photographing them.';
+export const NONE_ANSWERED = 'no free photograph library answered';
 export function trouble(error: unknown): { say: string; stop: boolean } {
   const message = error instanceof Error ? error.message : String(error);
   if (message === PEXELS_HINT) return { say: '', stop: true };
@@ -75,6 +91,9 @@ export function trouble(error: unknown): { say: string; stop: boolean } {
   // Only the search itself carries the key. A 403 on fetching one photograph is the picture's CDN saying no to that
   // one file, not Pexels refusing the founder's key.
   if (/stock library answered (401|403)\b/.test(message)) return { say: PEXELS_REFUSED, stop: true };
+  // Every free library tried and none answered: said once, and the picture is drawn. The next scene asks again,
+  // because a library that blinked for one search is usually back for the next.
+  if (message.startsWith(NONE_ANSWERED)) return { say: message, stop: false };
   return { say: '', stop: false };
 }
 
@@ -88,30 +107,45 @@ export const photographable = (pack: string): boolean => pack !== 'sketch';
 export type FilmStock = {
   // True when this film would have used photographs and cannot, because no key is set. The film says so once.
   missing: boolean;
+  // True when the library can be asked for real moving footage too (Wikimedia Commons, or Pexels with a key).
+  clips: boolean;
   take(ask: { query: string; shape?: string; speaker?: boolean; names?: string[]; fits?: (one: Found) => boolean }, signal?: AbortSignal):
+    Promise<{ found: Found; ext: string; bytes: Buffer } | null>;
+  // A few seconds of real footage of the scene's own things, or null. Same rules as a photograph: never the speaker,
+  // never beside a named product's claim.
+  clip(ask: { query: string; shape?: string; speaker?: boolean; names?: string[]; seconds?: number }, signal?: AbortSignal):
     Promise<{ found: Found; ext: string; bytes: Buffer } | null>;
 };
 export function filmStock(stock: Stock | undefined, pack: string, report: (line: string) => void): FilmStock {
   const on = !!stock && photographable(pack);
   let troubled = false;
   const said = new Set<string>();
+  const say = (line: string) => { if (line && !said.has(line)) { said.add(line); report(line); } };
+  const hear = () => { for (const line of stock?.heard?.() ?? []) say(line); };
+  const one = async (kind: StockKind, ask: { query: string; shape?: string; speaker?: boolean; names?: string[]; fits?: (one: Found) => boolean; seconds?: number }, signal?: AbortSignal) => {
+    if (!on || stock!.ready() || troubled || signal?.aborted) return null;
+    try {
+      const found = broll(await stock!.find({ query: ask.query, kind, shape: ask.shape, many: 6 }, signal),
+        { speaker: ask.speaker, names: ask.names })
+        .filter((one) => !ask.fits || ask.fits(one))
+        .filter((one) => kind !== 'video' || !one.seconds || one.seconds >= Math.min(3, ask.seconds ?? 3));
+      hear();
+      if (!found.length) return null;
+      const piece = await stock!.get(found[0], signal);
+      return { found: found[0], ...piece };
+    } catch (error) {
+      hear();
+      const { say: line, stop } = trouble(error);
+      say(line);
+      if (stop) troubled = true;
+      return null;
+    }
+  };
   return {
     missing: on && !!stock!.ready(),
-    async take(ask, signal) {
-      if (!on || stock!.ready() || troubled || signal?.aborted) return null;
-      try {
-        const found = broll(await stock!.find({ query: ask.query, kind: 'photo', shape: ask.shape, many: 6 }, signal),
-          { speaker: ask.speaker, names: ask.names }).filter((one) => !ask.fits || ask.fits(one));
-        if (!found.length) return null;
-        const piece = await stock!.get(found[0], signal);
-        return { found: found[0], ...piece };
-      } catch (error) {
-        const { say, stop } = trouble(error);
-        if (say && !said.has(say)) { said.add(say); report(say); }
-        if (stop) troubled = true;
-        return null;
-      }
-    },
+    clips: on && !stock!.ready() && !!stock!.moving,
+    take: (ask, signal) => one('photo', ask, signal),
+    clip: (ask, signal) => one('video', ask, signal),
   };
 }
 
@@ -131,14 +165,14 @@ export function broll(found: Found[], about: { speaker?: boolean; names?: string
 // Which orientation a film's shape asks for. A reel wants portrait; anything else takes what it is given.
 const orientationOf = (shape?: string): string => (shape === 'tall' ? 'portrait' : shape === 'square' ? 'square' : 'landscape');
 
-type Index = Record<string, { by: string; byUrl: string; page: string; licence: string; what: string; kind: StockKind }>;
+type Index = Record<string, { by: string; byUrl: string; page: string; licence: string; what: string; kind: StockKind; credit?: string }>;
 
 // The one thing worth remembering between films: which picture came from whom. It is a plain JSON file beside the
 // cached pictures, so a founder can read it, and so a licence question years from now has an answer.
-async function remember(dir: string, one: Found): Promise<void> {
+export async function remember(dir: string, one: Found): Promise<void> {
   const file = join(dir, 'index.json');
   const held: Index = await readFile(file, 'utf8').then((raw) => JSON.parse(raw) as Index).catch(() => ({}));
-  held[one.id] = { by: one.by, byUrl: one.byUrl, page: one.page, licence: one.licence, what: one.what, kind: one.kind };
+  held[one.id] = { by: one.by, byUrl: one.byUrl, page: one.page, licence: one.licence, what: one.what, kind: one.kind, ...(one.credit ? { credit: one.credit } : {}) };
   await writeFile(file, `${JSON.stringify(held, null, 2)}\n`).catch(() => {});
 }
 
@@ -153,6 +187,7 @@ export function pexels(env: NodeJS.ProcessEnv = process.env, http: typeof fetch 
   };
   return {
     name: 'pexels',
+    moving: true,
     ready: () => (key ? null : PEXELS_HINT),
     async find(want, signal) {
       if (!key) throw new Error(PEXELS_HINT);
@@ -214,6 +249,7 @@ export const fakeStock = (found: Found[] = []): Stock => {
   ];
   return {
     name: 'fake stock',
+    moving: library.some((one) => one.kind === 'video'),
     ready: () => null,
     async find(want) { return library.filter((one) => !want.kind || one.kind === want.kind).slice(0, want.many ?? 8); },
     async get(one) { taken.push(one); return { ext: one.kind === 'video' ? 'mp4' : 'jpg', bytes: Buffer.from('a photograph') }; },
