@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { holdDraftClaims, notDone, NO_DRAFT } from './draftclaim.ts';
+import { holdDocClaims, holdDraftClaims, notDone, NO_DRAFT } from './draftclaim.ts';
 
 const refused = { name: 'draft_email', ok: false, result: notDone('draft_email', 'Already declined: the founder said no to "Intro" on 7 Oct and again when it was put to them once more, so it was not raised. Do not propose it again.') };
 
@@ -62,5 +62,20 @@ describe('any tool that makes or sends something, refused or failed', () => {
   it('holds a failed create the same way', () => {
     const failed = { name: 'create_doc', ok: false, result: 'not written: "12 users" is not in any founder message.' };
     expect(holdDraftClaims('I created the doc "Runway".', [failed])).toBe('The doc was not created: not written: "12 users" is not in any founder message.');
+  });
+});
+
+// Journey 16: "I updated the Company document with the corrected paying subscriber count of 11" with no write.
+describe('a claim to have written a document', () => {
+  const said = 'Break-even is 8.\n\nI updated the Company document with the corrected count of 11. Updated the Numbers section too.';
+  it('is put right when nothing was written this turn, once', () => {
+    expect(holdDocClaims(said, [{ name: 'calc', ok: true }], { title: 'Company brief' })).toBe('Break-even is 8.\n\nNothing was written to the Company brief this turn.');
+  });
+  it('stands beside a write that worked, or one the app made for the turn', () => {
+    expect(holdDocClaims(said, [{ name: 'replace_section', ok: true }], { title: 'Company brief' })).toBe(said);
+    expect(holdDocClaims(said, [], { title: 'Company brief', wrote: true })).toBe(said);
+    // A failed write backs nothing; a colleague's write said in the third person is not this turn's claim.
+    expect(holdDocClaims(said, [{ name: 'write_doc', ok: false }], { title: 'Company brief' })).toContain('Nothing was written');
+    expect(holdDocClaims('Otto updated the Runway doc yesterday.', [], { title: 'Company brief' })).toBe('Otto updated the Runway doc yesterday.');
   });
 });

@@ -85,3 +85,22 @@ function holdMadeClaims(reply: string, receipts: Receipt[]): string {
     return `${lead}The ${made.what} was not ${made.done}: ${refusalWords(tool.result ?? 'it was refused')}.`;
   }).replace(/[ \t]{2,}/g, ' ');
 }
+
+// Journey 16: "I updated the Company document with the corrected paying subscriber count of 11", with no write this
+// turn. A claim to have written a document stands only beside a write that worked this turn (write_doc,
+// replace_section, append_doc, create_doc) or one the app made for the turn (`wrote`): else the first such sentence says
+// nothing was written, and any later one goes.
+const DOC_WRITES = /^(?:write_doc|replace_section|append_doc|create_doc|edit_doc)$/;
+const FIRST_PERSON_WRITE = /^\s*(?:[-*]\s+)?(?:(?:I|we)(?:'ve| have)?\s+(?:just\s+|now\s+|also\s+|already\s+)?|(?:I|we)\s+)?(?:updated|wrote|written|added|changed|edited|corrected|recorded|saved|put|amended)\b/i;
+const DOC_WORDS = /\b(?:document|doc|brief|numbers section|section)\b/i;
+export function holdDocClaims(reply: string, receipts: Receipt[], given: { title: string; wrote?: boolean }): string {
+  if (given.wrote || receipts.some((one) => DOC_WRITES.test(one.name) && one.ok !== false)) return reply;
+  let said = false;
+  return reply.replace(/[^.!?\n]+[.!?]*/g, (sentence) => {
+    if (!FIRST_PERSON_WRITE.test(sentence) || !DOC_WORDS.test(sentence) || DENIED.test(sentence)) return sentence;
+    const lead = /^\s*/.exec(sentence)![0];
+    if (said) return '';
+    said = true;
+    return `${lead}Nothing was written to the ${given.title} this turn.`;
+  }).replace(/[ \t]{2,}/g, ' ');
+}
