@@ -19,7 +19,7 @@ type Settle = (list: Attention[]) => Promise<Set<string>>;
 // What the founder may wave away. A proposal or an approval is answered where it lives, never dismissed here.
 const DISMISSABLE = new Set<AttentionKind>(['run-failed', 'missed', 'review-due', 'page-changed']);
 // What is raised here only to tell the founder something, with no answer to wait for: they may wave it away once read.
-const SAID = new Set<AttentionKind>(['key-rejected', 'file-damaged', 'backup-failed']);
+const SAID = new Set<AttentionKind>(['key-rejected', 'file-damaged', 'backup-failed', 'mail-draft']);
 const A_DAY = 86_400_000;
 // Argument names whose value is nobody's to keep, not even for a line the founder reads.
 const PRIVATE = /key|token|secret|password/i;
@@ -54,9 +54,10 @@ export function createAttention(dir: string, now: () => number = Date.now) {
     // it was for stays, so the app can say what the founder was asked and know it when the same thing is done again.
     // (A task run that was waiting is reported by its board as cut off; keeping it here too would show it twice. A
     // refused key goes too: keys are read on a start, so this start has not yet been refused by anyone.)
-    // A damaged file is no turn's: it stays as it was until the founder dismisses it.
+    // A damaged file is no turn's: it stays as it was until the founder dismisses it. So is a drafted email, which
+    // waits in Gmail whatever the app does, until the founder opens it or waves it away.
     // A failed backup goes too: the next start tries again within the minute and says so again if it fails.
-    state = { open: (saved.open ?? []).filter((entry) => entry.kind !== 'run-approval' && entry.kind !== 'key-rejected' && entry.kind !== 'backup-failed').map(({ event, ...entry }) => (entry.kind === 'file-damaged' ? entry : { ...entry, ...(event ? { tool: event.name, about: about(event) } : {}), lapsed: true })), dismissed: saved.dismissed ?? [] };
+    state = { open: (saved.open ?? []).filter((entry) => entry.kind !== 'run-approval' && entry.kind !== 'key-rejected' && entry.kind !== 'backup-failed').map(({ event, ...entry }) => (entry.kind === 'file-damaged' || entry.kind === 'mail-draft' ? entry : { ...entry, ...(event ? { tool: event.name, about: about(event) } : {}), lapsed: true })), dismissed: saved.dismissed ?? [] };
     return state;
   }
   async function list(): Promise<Attention[]> {

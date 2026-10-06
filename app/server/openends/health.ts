@@ -133,7 +133,7 @@ export function keyChecks(env: NodeJS.ProcessEnv, root: string): Check[] {
     detail: agentmail && gmail ? 'each person has a mailbox, and mail can go out from your own address'
       : agentmail ? 'each person has a mailbox; sending as you needs GMAIL_USER and GMAIL_APP_PASSWORD'
       : gmail ? 'mail goes out from your own address; nobody can read an inbox without AGENTMAIL_API_KEY'
-      : 'no mail key is set, so people write mail only through a browser card signed in to webmail',
+      : 'no mail key is set, so people draft mail that opens in your Gmail for you to send, or write it in a browser card signed in to webmail',
     fix: 'Add AGENTMAIL_API_KEY (free at agentmail.to) to .env for a mailbox per person, or GMAIL_USER and GMAIL_APP_PASSWORD to send from your own address, then start the app again.',
   });
   const cloudflare = has('CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID');

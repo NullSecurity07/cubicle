@@ -1,6 +1,7 @@
 import type { ChatMessage, ToolEvent } from '../../shared/model';
+import { draftId, draftOf, gmailLink, mailtoLink } from '../../shared/maildraft';
 import { safeHost } from '../../shared/sources';
-import { fileUrl } from '../api';
+import { dismissAttention, fileUrl } from '../api';
 import { compact } from '../numbers';
 import { SLICES } from '../slices';
 import { Approval } from './Approval';
@@ -10,7 +11,7 @@ const VERBS: Record<string, [doing: string, done: string]> = {
   read_doc: ['Reading', 'Read'], write_doc: ['Rewriting', 'Rewrote'], append_doc: ['Adding to', 'Added to'], replace_section: ['Rewriting a section of', 'Rewrote a section of'], create_doc: ['Creating', 'Created'],
   remember: ['Remembering', 'Remembered'], propose_task: ['Proposing', 'Proposed'], list_tasks: ['Reading', 'Read'],
   ask_person: ['Asking', 'Asked'], code_task: ['Coding:', 'Coded:'], code_reply: ['Telling the coder:', 'Told the coder:'], code_stop: ['Stopping the coder', 'Stopped the coder'], code_status: ['Checking the coder', 'Checked the coder'],
-  send_email: ['Sending email to', 'Emailed'], read_inbox: ['Checking', 'Checked'], run_code: ['Running', 'Ran'],
+  send_email: ['Sending email to', 'Emailed'], draft_email: ['Drafting email to', 'Drafted email to'], read_inbox: ['Checking', 'Checked'], run_code: ['Running', 'Ran'],
   web_search: ['Searching', 'Searched'], web_fetch: ['Reading', 'Read'], browse: ['Browsing', 'Browsed'],
   recall: ['Looking up', 'Looked up'], reflect: ['Looking back at', 'Looked back at'], propose_decision: ['Proposing', 'Proposed'], read_decision: ['Reading', 'Read'],
   list_files: ['Looking at', 'Looked at'], read_file: ['Reading', 'Read'], write_file: ['Saving', 'Saved'],
@@ -80,9 +81,28 @@ export function receiptOf(tool: Pick<ToolEvent, 'name' | 'args' | 'question' | '
   return { doing, done, subject };
 }
 
+// A drafted email, one press from the founder's Gmail with every field filled. Opening it is what the founder came
+// for, so it also takes the draft off Needs you; the mailto: link is for anyone whose mail is not Gmail.
+function DraftOpen({ tool }: { tool: ToolEvent }) {
+  const draft = draftOf(tool.args);
+  if (!draft) return null;
+  const opened = () => { void dismissAttention(draftId(draft)).catch(() => { /* already gone from Needs you */ }); };
+  return (
+    <div className="draft-open nodrag">
+      <a className="playbook__act primary" href={gmailLink(draft)} target="_blank" rel="noreferrer" onClick={opened}>Open in Gmail</a>
+      <a className="draft-open__other" href={mailtoLink(draft)} onClick={opened}>Other mail app</a>
+    </div>
+  );
+}
+
 // One tool call: what the person did, in a line. Opens to show exactly what was sent and what came back.
 function Chip({ tool }: { tool: ToolEvent }) {
   if (tool.waiting) return <Approval tool={tool} />;
+  if (tool.name === 'draft_email' && tool.ok) return <><ChipLine tool={tool} /><DraftOpen tool={tool} /></>;
+  return <ChipLine tool={tool} />;
+}
+
+function ChipLine({ tool }: { tool: ToolEvent }) {
   const state = tool.ok === undefined ? 'run' : tool.ok ? 'ok' : 'fail';
   const { doing, done, subject } = receiptOf(tool);
   return (
