@@ -1,5 +1,6 @@
 import { isShape, SHAPE_NAMES, type Slide } from '../../shared/deck.ts';
 import { unbackedClaims, unbackedEnds } from '../tools/evidence.ts';
+import { hitsOutsideCodes, replaceOutsideCodes } from '../figures.ts';
 
 // What a deck may be made of: the founder's brief, the documents, notes and project wired to the card, and where
 // traction is read from: a wired Metrics card's block, else the Company brief's Numbers (`metrics`, named for which it
@@ -29,8 +30,8 @@ const claim = (token: string) => {
   if (/^\d+$/.test(clean) && Number(clean) <= 10) return false;
   return true;
 };
-export const numbersIn = (text: string): string[] => [...text.matchAll(NUMBER)].map((hit) => hit[0].trim()).filter(claim);
-export const moneyIn = (text: string): string[] => [...text.matchAll(MONEY)].map((hit) => hit[0].trim()).filter(claim);
+export const numbersIn = (text: string): string[] => hitsOutsideCodes(text, NUMBER).map((hit) => hit[0].trim()).filter(claim);
+export const moneyIn = (text: string): string[] => hitsOutsideCodes(text, MONEY).map((hit) => hit[0].trim()).filter(claim);
 
 // Where a number came from, or nothing: the first piece of material that says the same number.
 export function sourceOf(token: string, material: Material, only?: 'metrics' | 'brief'): string | null {
@@ -158,7 +159,7 @@ export function mend(slides: Slide[], material: Material): { slides: Slide[]; sa
       && (slide.shape !== 'ask' || moneyIn(text).every((amount) => !!sourceOf(amount, material, 'brief')));
 
     if (!sourced(slide.headline)) {
-      const kept = words(slide.headline.replace(NUMBER, (hit) => (claim(hit) ? ' ' : hit))).join(' ').replace(/^[^\p{L}\d]+|[\s,;:–-]+$/gu, '');
+      const kept = words(replaceOutsideCodes(slide.headline, NUMBER, (hit) => (claim(hit) ? ' ' : hit))).join(' ').replace(/^[^\p{L}\d]+|[\s,;:–-]+$/gu, '');
       aside.push(`Headline had a number with no source: "${slide.headline}"`);
       slide.headline = words(kept).length >= 2 ? kept : SHAPE_NAMES[slide.shape];
       said.push(`${at}: took a number with no source out of the headline`);

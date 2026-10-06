@@ -1,5 +1,6 @@
 import type { Material } from './director.ts';
 import { countWords, type Scene } from './spec.ts';
+import { codeSpans, inCode } from '../figures.ts';
 
 // Whether a film is telling the truth.
 //
@@ -138,7 +139,9 @@ function saidIn(said: string, body: string): boolean {
 // "1,200" are measurements, and a measurement nobody measured is a lie with a decimal point in it.
 const FIGURE = /([$£€]\s?\d[\d,.]*\s*(?:%|x\b|k\b|m\b|bn\b)?|\d[\d,.]*\s*(?:%|x\b|k\b|m\b|bn\b)|\d{1,3}(?:,\d{3})+|\b\d+(?:\.\d+)?\b)/gi;
 export function preciseFigures(text?: string): string[] {
-  const found = [...(text ?? '').matchAll(FIGURE)].map((hit) => hit[1].trim());
+  // A date, a time, a version or a phone number is no measurement, and none of its digits is one either.
+  const spans = codeSpans(text ?? '');
+  const found = [...(text ?? '').matchAll(FIGURE)].filter((hit) => !inCode(spans, hit.index!, hit.index! + hit[0].length)).map((hit) => hit[1].trim());
   return found.filter((one) => {
     if (/[%$£€]|\b\d+\s*[xkm]\b|bn/i.test(one)) return true;
     const plain = Number(one.replace(/,/g, ''));

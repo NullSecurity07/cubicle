@@ -12,6 +12,7 @@ import { criticiseVisuals, repairVisuals, visualsOf, visualsPrompt, worldRule, t
 import { LENSES, motionMoves, SIZES, stillMoves } from './moves.ts';
 import { briefWants, closeLineOf, endOnOf } from './close.ts';
 import { lengthFit, rateOf, readingOf } from './length.ts';
+import { withoutFigures } from '../figures.ts';
 
 // The director. Not a form to fill in — a person who reads the brief, works out what is being asked for, decides on
 // an angle and a look, writes the beats, and only then writes the storyboard. Every one of those is a separate pass,
@@ -366,7 +367,7 @@ export function specFromPlan(plan: Plan, understanding: Understanding, layouts: 
     if (index === 0 && reel && can('hook')) return { layout: 'hook', text: trimTo(plan.hook || beat.say, HEADING_WORDS), say: beat.say, bg_prompt: about, source: beat.source };
     if (last && reel && can('cta')) return { layout: 'cta', text: trimTo(beat.say, HEADING_WORDS) || 'Follow for more', say: beat.say, bg_prompt: about, source: beat.source };
     const figure = figureIn(beat.on_screen) ?? figureIn(beat.say);
-    if (figure && can('stat')) return { layout: 'stat', heading: figure, text: headlineOf(beat.say.replace(figure, ' '), 6), say: beat.say, bg_prompt: about, source: beat.source };
+    if (figure && can('stat')) return { layout: 'stat', heading: figure, text: headlineOf(withoutFigures(beat.say, [figure], ' '), 6), say: beat.say, bg_prompt: about, source: beat.source };
     if (contrasty(beat.say) && can('compare')) {
       const halves = beat.say.split(/\s+(?:but|instead of|rather than|versus|vs\.?)\s+/i);
       if (halves.length >= 2) return { layout: 'compare', bullets: [trimTo(halves[0], 6), trimTo(halves[1], 6)], say: beat.say, bg_prompt: about, source: beat.source };
