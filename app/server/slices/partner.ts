@@ -21,7 +21,7 @@ import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import { createReviews, granted } from '../partner/review.ts';
 import { readRefresh, refreshAsk, refreshDue, refreshOpening, refreshText } from '../partner/refresh.ts';
 import { markClaims } from '../tools/evidence.ts';
-import { createWatch, dailyBudget, fakeWatchReply, type Budget } from '../partner/watch.ts';
+import { createWatch, fakeWatchReply, watchBudget, type Budget } from '../partner/watch.ts';
 import { draftId, gmailLink } from '../../shared/maildraft.ts';
 import { leadAddresses, noAddress } from '../tools/outward.ts';
 import { saidNoFor } from '../partner/saidno.ts';
@@ -265,8 +265,8 @@ export function createPartner(options: PartnerOptions = {}) {
 
     // One quiet turn of the partner's: nothing is shown while it is written, so a stream that breaks part way goes
     // straight to the next model. `reserved`: the partner-only model may answer it.
-    const quietTurn = (reserved: boolean) => async (messages: ModelMessage[]): Promise<Asked> => {
-      const { order } = partnerRoute(deps.clients, deps.usage, { promptChars: promptSize(messages), tools: false, reserved });
+    const quietTurn = (reserved: boolean, unasked = false) => async (messages: ModelMessage[]): Promise<Asked> => {
+      const { order } = partnerRoute(deps.clients, deps.usage, { promptChars: promptSize(messages), tools: false, reserved, unasked });
       const reply = await complete(messages, { onToken: () => {}, onRestart: () => {} }, order, ({ client, error }) => deps.usage.failed(client.name, error), (client) => deps.usage.admit(client.name));
       if (!reply.reported) deps.usage.record(reply.client.name, reply.usage, reply.quota);
       return { text: reply.text, provider: reply.client.name, model: reply.client.model };
@@ -276,14 +276,14 @@ export function createPartner(options: PartnerOptions = {}) {
 
     // The watch (server/partner/watch.ts): a number trending to the kill line, a lead who replied, a watched page that
     // changed and a promise two days late each wake the partner for one unasked turn that ends in something ready to
-    // run. Never on the partner-only model, and three a day. A fake run (the browser checks) looks only when asked
+    // run. Never on the partner-only model, and three a day out of the day's shared budget for unasked work. A fake run (the browser checks) looks only when asked
     // (POST /api/partner/watch) or with STAGE_PARTNER_WATCH=1.
     const watchOnTick = !deps.fake || process.env.STAGE_PARTNER_WATCH === '1';
     const watch = createWatch({
-      workspace: deps.workspace, now, busy: deps.busy, budget: options.budget ?? dailyBudget(deps.workspace, now),
+      workspace: deps.workspace, now, busy: deps.busy, budget: options.budget ?? watchBudget(deps.unasked),
       stage: () => deps.store.loadStage(), attention: () => deps.attention.list(), promises: () => promises.list(), bets: () => book.list(),
       leads: (id) => leadsFor(deps.workspace).list(id), promptFor: (on, roomId) => deps.promptFor(on, roomId, [], true),
-      ask: options.watchAsk ?? (deps.fake ? async (messages) => ({ text: fakeWatchReply(messages), provider: fakeClient.name, model: fakeClient.model }) : quietTurn(false)),
+      ask: options.watchAsk ?? (deps.fake ? async (messages) => ({ text: fakeWatchReply(messages), provider: fakeClient.name, model: fakeClient.model }) : quietTurn(false, true)),
       changed: () => deps.attention.refresh(), notify: deps.notify,
       acts: {
         // Drafted the way draft_email drafts, and only to an address still on a Leads card.

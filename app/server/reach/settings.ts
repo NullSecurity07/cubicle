@@ -2,6 +2,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { UPDATES, type ReachChat, type ReachGroup, type ReachHook, type ReachPairing, type ReachUpdates } from '../../shared/reach.ts';
+import { now as clockNow } from '../clock.ts';
 
 // A hook's secret lives here beside the bot token, because verifying a signature needs the secret itself. Nothing
 // in this file is ever answered to a GET.
@@ -21,7 +22,7 @@ export const newCode = (random = randomBytes) => [...random(8)].map((byte) => LE
 
 // `reach.json`: the founder's switch, the bot token they pasted in, who is paired, and the hooks they made. The file
 // is written for this user alone (0600), because everything in it is a key to something.
-export function createReach(dir: string, env: NodeJS.ProcessEnv = process.env, now: () => number = Date.now) {
+export function createReach(dir: string, env: NodeJS.ProcessEnv = process.env, now: () => number = clockNow) {
   const path = join(dir, 'reach.json');
   let kept: Kept | null = null;
   let queue: Promise<unknown> = Promise.resolve();

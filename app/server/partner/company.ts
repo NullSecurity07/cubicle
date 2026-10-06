@@ -1,7 +1,7 @@
 import type { Box, Decision, Doc, Stage } from '../../shared/model.ts';
 import { bare, COMPANY_SECTIONS, companyTemplate, COMPANY_TITLE, findCompanyDoc, VERDICT_WORDS, type Bet } from '../../shared/partner.ts';
 import { DOC_SIZE } from '../../shared/frameworks.ts';
-import { localDay } from '../clock.ts';
+import { localDay, now as clockNow } from '../clock.ts';
 import type { Store } from '../store.ts';
 import { cardOf } from './bets.ts';
 import { headingKey, headings, replaceSection } from '../tools/sections.ts';
@@ -98,7 +98,7 @@ export function hasLine(text: string, decision: Pick<Decision, 'title'>): boolea
 
 // Each decided decision gets one dated line under Decisions, oldest first, once. A line the app wrote goes back in
 // only while it is fresh (a window saved over it); after that the founder's edits stand.
-export async function syncDecisions(store: CompanyStore, docId: string, all: Decision[], held: DecisionsWritten, changed: Changed = () => {}, now = Date.now()): Promise<DecisionsWritten> {
+export async function syncDecisions(store: CompanyStore, docId: string, all: Decision[], held: DecisionsWritten, changed: Changed = () => {}, now = clockNow()): Promise<DecisionsWritten> {
   const known = new Set(held.decided);
   const writtenAt = Object.fromEntries(Object.entries(held.writtenAt ?? {}).filter(([, at]) => now - at < RESTORE_FOR));
   const decided = all.filter((one) => one.status === 'decided').sort((a, b) => (a.decidedAt ?? a.at) - (b.decidedAt ?? b.at));

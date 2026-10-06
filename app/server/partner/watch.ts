@@ -5,11 +5,13 @@ import { STAGE_NAMES } from '../../shared/leads.ts';
 import { formatValue, isDay, type Metric, type MetricPoint, type Metrics } from '../../shared/metrics.ts';
 import type { Attention, Stage } from '../../shared/model.ts';
 import { bare, type Bet } from '../../shared/partner.ts';
-import { localDay } from '../clock.ts';
+import { localDay, now as clockNow } from '../clock.ts';
 import { writeAtomic } from '../fsx.ts';
 import type { ModelMessage } from '../prompt.ts';
+import type { Unasked } from '../usage.ts';
 import { plusDays } from './call.ts';
 import type { FounderPromise } from './promises.ts';
+import { saidNoFor, type Proposal as SaidNoProposal } from './saidno.ts';
 
 // The partner watch (gap audit 2026-10-06, A. Initiative). The partner wrote one morning note a day and nothing else
 // woke them: a number sliding toward the kill line, a lead who replied, a competitor's page that changed and a promise
@@ -22,35 +24,28 @@ const DAY = 86_400_000;
 
 // ---------------------------------------------------------------- the daily budget for unasked turns
 
-// What the budget answers: whether this turn may be taken, and in words why not.
-export type Taken = { ok: boolean; why?: string; left?: number };
-// BUDGET SEAM: the shared unasked budget in usage.ts (`unasked.take(reason) → { ok, left, why }`) replaces this counter
-// when it lands on main. Anything with `take` fits.
+// What the budget answers: whether this turn may be taken, and in words why not. `release`: the turn found nothing to
+// say, so it does not count.
+export type Taken = { ok: boolean; why?: string; left?: number; release?: () => void };
+// Anything with `take` fits; the slice hands in `watchBudget` over the shared unasked budget (usage.ts).
 export type Budget = { take(reason: string): Taken | Promise<Taken> };
 export const UNASKED_A_DAY = 3;
 export const budgetUsed = (used: number, cap: number) => `budget used today: ${used} of ${cap} unasked turns`;
+export const WATCH_REASON = 'watch: ';
 
-// Three unasked turns a day, counted in `workspace/partner-watch-budget.json` so a restart does not hand out three more.
-export function dailyBudget(workspace: string, now: () => number = Date.now, cap = UNASKED_A_DAY): Budget & { used(): Promise<number> } {
-  const path = join(workspace, 'partner-watch-budget.json');
-  let queue: Promise<unknown> = Promise.resolve();
-  const read = async () => {
-    try {
-      const saved = JSON.parse(await readFile(path, 'utf8')) as { day?: string; used?: number };
-      return saved.day === localDay(now()) && typeof saved.used === 'number' ? saved.used : 0;
-    } catch { return 0; }
-  };
+// The watch's turns come out of the day's shared budget for unasked work (twelve, kept in `unasked.json`, never on a
+// partner-only model), and the watch takes at most three of them: both limits hold. The three are counted from the
+// shared book's own reasons, so a restart does not hand them back and a released turn is free again.
+export function watchBudget(unasked: Pick<Unasked, 'take' | 'used'>, cap = UNASKED_A_DAY): Budget & { used(): number } {
+  const used = () => unasked.used().filter((one) => one.reason.startsWith(WATCH_REASON)).length;
   return {
-    used: read,
-    take(reason: string) {
-      const job = queue.then(async (): Promise<Taken> => {
-        const used = await read();
-        if (used >= cap) return { ok: false, left: 0, why: budgetUsed(used, cap) };
-        await writeAtomic(path, JSON.stringify({ day: localDay(now()), used: used + 1, last: reason.slice(0, 200) }, null, 2), { mkdir: true });
-        return { ok: true, left: cap - used - 1 };
-      });
-      queue = job.catch(() => {});
-      return job;
+    used,
+    take(reason: string): Taken {
+      const mine = used();
+      if (mine >= cap) return { ok: false, left: 0, why: budgetUsed(mine, cap) };
+      const taken = unasked.take(`${WATCH_REASON}${reason}`);
+      if (!taken.ok) return { ok: false, left: 0, why: taken.why };
+      return { ok: true, left: Math.min(taken.left, cap - mine - 1), release: taken.release };
     },
   };
 }
@@ -202,6 +197,8 @@ export type Proposal = {
   id: string; key: string; trigger: string; at: number; who: string; roomId: string; sparkKind: Spark['kind'];
   move: string; why: string; number?: string; read?: string; draft: Draft; cardId?: string;
   status: 'open' | 'run' | 'declined'; answered?: number; provider?: string; model?: string;
+  // The founder said no to this before: their own words, put first on the Needs you row.
+  saidNo?: string;
 };
 
 // What the partner is asked, after their own system prompt: the facts in code's words, then the lines to answer in.
@@ -270,7 +267,7 @@ export function draftLine(draft: Draft): string {
 export const proposalRow = (one: Proposal): Attention => ({
   id: `partner-proposal:${one.id}`, kind: 'partner-proposal', at: one.at, who: one.who, roomId: one.roomId, ...(one.cardId ? { cardId: one.cardId } : {}),
   title: `${one.who} proposes: ${one.move}`,
-  detail: [`Unasked · ${one.why}.`, one.number, one.read, draftLine(one.draft)].filter(Boolean).join('\n'),
+  detail: [one.saidNo, `Unasked · ${one.why}.`, one.number, one.read, draftLine(one.draft)].filter(Boolean).join('\n'),
 });
 
 // ---------------------------------------------------------------- the watch itself
@@ -285,7 +282,7 @@ export type Acts = {
   drop(draft: Extract<Draft, { kind: 'drop' }>, proposal: Proposal): Promise<unknown>;
 };
 export type WatchDeps = {
-  workspace: string; now: () => number; budget: Budget; busy: Set<string>;
+  workspace: string; now?: () => number; budget: Budget; busy: Set<string>;
   stage(): Promise<Stage>;
   attention(): Promise<Attention[]>;
   promises(): Promise<FounderPromise[]>;
@@ -297,15 +294,39 @@ export type WatchDeps = {
   acts: Acts;
   changed(): Promise<void>;
   notify?(title: string, body: string): void;
-  // SAID-NO SEAM: the founder-said-no helper (`saidNo.check`) goes here when it lands on main. Given the proposal
-  // before it is raised, it answers with the proposal (relabelled if it must name what changed) or null to hold it back.
+  // Given the proposal before it is raised, the proposal (with the founder's earlier no quoted) or null to hold it back.
+  // By default the founder's said-no log decides (`vetBySaidNo`).
   vet?(proposal: Proposal): Promise<Proposal | null>;
 };
+
+// A watch proposal in the words the said-no log keeps: an email is about its lead, a task or a decision is its title,
+// letting a promise go is about that promise.
+export function saidNoProposal(one: Pick<Proposal, 'draft' | 'move'>): SaidNoProposal {
+  const { draft } = one;
+  if (draft.kind === 'email') return { tool: 'draft_email', subject: draft.subject, to: draft.to.toLowerCase(), key: `lead:${draft.to.toLowerCase()}` };
+  if (draft.kind === 'task') return { tool: 'propose_task', subject: draft.title };
+  if (draft.kind === 'decision') return { tool: 'propose_decision', subject: draft.title };
+  return { tool: 'drop_promise', subject: `Let go: ${draft.what}`, key: `promise:${draft.promiseId}` };
+}
+
+// The founder's no stands: a first match goes up once more with their words quoted, a second is not raised at all.
+export function vetBySaidNo(workspace: string, now: () => number = clockNow) {
+  return async (proposal: Proposal): Promise<Proposal | null> => {
+    const book = saidNoFor(workspace, now);
+    const checked = await book.check(saidNoProposal(proposal)).catch(() => ({ verdict: 'fresh' as const }));
+    if (checked.verdict === 'fresh') return proposal;
+    if (checked.verdict === 'declined') { console.log(`partner watch: not raised. ${checked.line.trim()}`); return null; }
+    await book.asked(checked.entry.id).catch(() => {});
+    return { ...proposal, saidNo: checked.line };
+  };
+}
 const MOST_FIRED = 400;
 const MOST_KEPT = 60;
 const readJson = async <T>(path: string, fallback: T): Promise<T> => { try { return JSON.parse(await readFile(path, 'utf8')) as T; } catch { return fallback; } };
 
-export function createWatch(deps: WatchDeps) {
+export function createWatch(given: WatchDeps) {
+  const deps = { ...given, now: given.now ?? clockNow };
+  const vet = given.vet ?? vetBySaidNo(deps.workspace, deps.now);
   const path = join(deps.workspace, 'partner-watch.json');
   let held: WatchState | null = null;
   let queue: Promise<unknown> = Promise.resolve();
@@ -355,17 +376,19 @@ export function createWatch(deps: WatchDeps) {
       const held = new Set<string>();
       for (const spark of sparks) {
         if (open.has(spark.trigger) || fired.has(spark.key)) continue;
-        const taken = await deps.budget.take(spark.why);
+        const taken = await deps.budget.take(spark.trigger);
         if (!taken.ok) { waiting.push({ key: spark.key, what: spark.why, why: taken.why ?? 'no unasked turns left today', at }); held.add(spark.key); continue; }
         const messages: ModelMessage[] = [...await deps.promptFor(stage, partner.id), { role: 'user', content: watchAsk(spark, today) }];
         const reply = await deps.ask(messages).catch((error: Error) => { console.error(`partner watch: ${error.message}`); return null; });
+        // No answer: the turn said nothing, so it goes back to the day's budget.
+        if (!reply?.text.trim()) taken.release?.();
         const shaped = proposalOf(spark, reply?.text ?? '', today);
         let proposal: Proposal | null = {
           id: `${spark.kind}-${at.toString(36)}-${made.length}`, key: spark.key, trigger: spark.trigger, at, who: partner.name, roomId: partner.id, sparkKind: spark.kind,
           why: spark.why, ...(spark.number ? { number: spark.number } : {}), ...(spark.cardId ? { cardId: spark.cardId } : {}), ...shaped, status: 'open',
           ...(reply?.provider ? { provider: reply.provider } : {}), ...(reply?.model ? { model: reply.model } : {}),
         };
-        if (deps.vet) proposal = await deps.vet(proposal);
+        proposal = await vet(proposal);
         fired.add(spark.key);
         open.add(spark.trigger);
         if (proposal) made.push(proposal);
@@ -404,6 +427,8 @@ export function createWatch(deps: WatchDeps) {
         else if (draft.kind === 'decision') await deps.acts.decision(draft, proposal);
         else await deps.acts.drop(draft, proposal);
       }
+      // Don't is the founder's no: kept, so the same move is not put to them again unasked.
+      if (!run) await saidNoFor(deps.workspace, deps.now).record({ ...saidNoProposal(proposal), who: proposal.who }).catch(() => {});
       const done = await change((draft) => {
         const one = draft.proposals.find((each) => each.id === id)!;
         one.status = run ? 'run' : 'declined';

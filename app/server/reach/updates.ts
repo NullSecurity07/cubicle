@@ -1,6 +1,6 @@
 import type { Stage, Task } from '../../shared/model.ts';
 import type { Boards } from '../boards.ts';
-import { timeOrDay } from '../clock.ts';
+import { timeOrDay, now as clockNow } from '../clock.ts';
 import type { Book } from './state.ts';
 
 // Something worth telling the founder about, and whether it is worth a sound. Finished work is silent — it is good
@@ -45,7 +45,7 @@ export function notesFor(task: Task, who: string, quiet: boolean, now: number): 
 // The founder hears about work finishing or falling over without asking. The board is the truth of it, and the board
 // says when it has changed, so this listens for that rather than asking it over and over.
 export function createUpdates(deps: { boards: Boards; stage: () => Promise<Stage>; book: Book; tell: (note: Note) => Promise<void>; on: () => Promise<{ finished: boolean; stuck: boolean }>; now?: () => number }) {
-  const now = deps.now ?? Date.now;
+  const now = deps.now ?? clockNow;
   // Whatever was already over the first time this looks is history: the founder saw it happen, or was not there to.
   let caught = false;
   let running: Promise<void> | null = null;

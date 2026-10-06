@@ -6,7 +6,11 @@ import type { Lead } from '../../shared/leads.ts';
 import type { Metric } from '../../shared/metrics.ts';
 import type { Attention, Stage } from '../../shared/model.ts';
 import type { FounderPromise } from './promises.ts';
-import { budgetUsed, createWatch, dailyBudget, fakeWatchReply, killLineOf, metricSparks, proposalOf, towardLine, trending, type Acts, type Budget, type Proposal, type WatchDeps } from './watch.ts';
+import { unaskedRow } from '../openends/health.ts';
+import type { ModelClient } from '../providers.ts';
+import { createUnasked } from '../usage.ts';
+import { saidNoFor } from './saidno.ts';
+import { budgetUsed, createWatch, fakeWatchReply, killLineOf, metricSparks, proposalOf, towardLine, trending, type Acts, type Budget, type Proposal, type WatchDeps, watchBudget } from './watch.ts';
 
 const NOON = new Date('2026-10-06T12:00:00').getTime();
 const DAY = 86_400_000;
@@ -61,9 +65,15 @@ describe('the partner\'s answer, read into something ready to run', () => {
 
 // ---------------------------------------------------------------- the watch end to end, on fixtures
 
-async function rig(over: { budget?: Budget; reply?: (asked: string) => string; vet?: WatchDeps['vet'] } = {}) {
+// The day's shared budget for unasked work, as usage.ts keeps it, over one model that may take unasked turns.
+const sharedBudget = (workspace: string, now: () => number, cap?: number) => createUnasked({
+  path: join(workspace, 'unasked.json'), usage: { left: () => 1, spent: () => false, blocked: () => false }, clients: () => [{ name: 'cheap' } as ModelClient], now, ...(cap === undefined ? {} : { cap }),
+});
+
+async function rig(over: { budget?: Budget; reply?: (asked: string) => string; vet?: WatchDeps['vet']; cap?: number } = {}) {
   const workspace = await mkdtemp(join(tmpdir(), 'watch-'));
   let clock = NOON;
+  const unasked = sharedBudget(workspace, () => clock, over.cap);
   const stage: Stage = { rooms: [{ id: 'sam', name: 'Sam', role: 'partner', accent: '#fff', brief: '', x: 0, y: 0, w: 1, h: 1, partner: true }], docs: [], wires: [], cards: [{ id: 'm1', kind: 'metrics', x: 0, y: 0, w: 1, h: 1 }, { id: 'l1', kind: 'leads', x: 0, y: 0, w: 1, h: 1 }] } as unknown as Stage;
   const world = { metrics: [signups(['2026-09-30', 6])], leads: [] as Lead[], promises: [killCheck()] as FounderPromise[], rows: [] as Attention[] };
   const writeMetrics = async () => { await mkdir(join(workspace, 'metrics'), { recursive: true }); await writeFile(join(workspace, 'metrics', 'm1.json'), JSON.stringify({ metrics: world.metrics, updatedAt: 0 })); };
@@ -77,13 +87,13 @@ async function rig(over: { budget?: Budget; reply?: (asked: string) => string; v
     async drop(draft) { ran.push(`drop ${draft.promiseId}`); },
   };
   const watch = createWatch({
-    workspace, now: () => clock, busy: new Set(), budget: over.budget ?? dailyBudget(workspace, () => clock),
+    workspace, now: () => clock, busy: new Set(), budget: over.budget ?? watchBudget(unasked),
     stage: async () => stage, attention: async () => world.rows, promises: async () => world.promises, bets: async () => [], leads: async () => world.leads,
     promptFor: async () => [{ role: 'system', content: 'You are Sam, the partner.' }],
     ask: async (messages) => { const text = messages.at(-1)!.content; asked.push(text); return { text: over.reply ? over.reply(text) : fakeWatchReply(messages), provider: 'cheap' }; },
     acts, changed: async () => {}, ...(over.vet ? { vet: over.vet } : {}),
   });
-  return { watch, world, writeMetrics, asked, ran, workspace, at: (time: number) => { clock = time; } };
+  return { watch, world, writeMetrics, asked, ran, workspace, unasked, now: () => clock, at: (time: number) => { clock = time; } };
 }
 const lead = (stage: Lead['stage'], email?: string): Lead => ({ id: 'lead-ana', person: { name: 'Ana Ruiz', title: 'Office manager', ...(email ? { email } : {}) }, company: { name: 'Kontor' }, stage, notes: [], source: 'founder', addedAt: 0, updatedAt: stage === 'replied' ? 2 : 1 });
 
@@ -186,7 +196,7 @@ describe('the partner watch', () => {
   });
 
   it('caps unasked turns at three a day, most money at risk first; the rest wait with the budget\'s words, kept across a restart', async () => {
-    const { watch, world, writeMetrics, asked, workspace, at } = await rig();
+    const { watch, world, writeMetrics, asked, workspace, unasked, at } = await rig();
     world.metrics = [signups(['2026-09-30', 6], ['2026-10-06', 4])];
     await writeMetrics();
     world.promises = [killCheck(), { id: 'promise-a', what: 'send the deck', due: '2026-10-01', said: '2026-09-28', at: 0, status: 'open' }];
@@ -197,8 +207,14 @@ describe('the partner watch', () => {
     expect(waiting).toHaveLength(2);
     expect(waiting[0].why).toBe(budgetUsed(3, 3));
     expect(waiting[0].why).toBe('budget used today: 3 of 3 unasked turns');
-    // A restart keeps the count.
-    expect(await dailyBudget(workspace, () => NOON).take('again')).toEqual({ ok: false, left: 0, why: 'budget used today: 3 of 3 unasked turns' });
+    // The turns are the shared budget's, each under the watch's reason, as Health's "Unasked work today" row says them.
+    expect(unasked.left()).toBe(9);
+    expect(unaskedRow({ cap: unasked.cap, used: unasked.used() }).detail).toBe('3 of 12 used: watch: kill:signups, watch: promise:promise-a, watch: page:w1');
+    // A restart keeps the count: the shared book is on disk.
+    await unasked.settled();
+    const again = sharedBudget(workspace, () => NOON);
+    await again.load();
+    expect(watchBudget(again).take('page:w2')).toEqual({ ok: false, left: 0, why: 'budget used today: 3 of 3 unasked turns' });
     // The next day the two that waited are taken.
     at(NOON + DAY);
     expect((await watch.look()).made).toHaveLength(2);
@@ -219,5 +235,52 @@ describe('the partner watch', () => {
     await held.watch.look();
     expect(vetted).toHaveLength(1);
     expect(await held.watch.rows()).toHaveLength(0);
+  });
+
+  it('never goes past the day\'s shared budget, and a turn that said nothing goes back to it', async () => {
+    const { watch, world, writeMetrics, asked, unasked } = await rig({ cap: 1, reply: () => '' });
+    world.metrics = [signups(['2026-09-30', 6], ['2026-10-06', 4])];
+    world.promises = [killCheck(), { id: 'promise-a', what: 'send the deck', due: '2026-10-01', said: '2026-09-28', at: 0, status: 'open' }];
+    await writeMetrics();
+    // An empty answer is released at once, so the one shared turn is there for the next trigger too.
+    const { made, waiting } = await watch.look();
+    expect(asked).toHaveLength(2);
+    expect(made).toHaveLength(2);
+    expect(waiting).toHaveLength(0);
+    expect(unasked.used()).toEqual([]);
+    // With the shared day used up by other work, the watch waits with the shared budget's words.
+    const busy = await rig({ cap: 1 });
+    expect(busy.unasked.take('morning digest').ok).toBe(true);
+    busy.world.metrics = world.metrics;
+    await busy.writeMetrics();
+    expect((await busy.watch.look()).waiting).toEqual([expect.objectContaining({ why: 'budget used today: 1 of 1 unasked turns' })]);
+    expect(busy.asked).toHaveLength(0);
+  });
+
+  it('puts a move the founder said no to once more with their words quoted, then not at all', async () => {
+    const { watch, world, writeMetrics, workspace, now, at } = await rig();
+    // The founder turned the same task down in chat two days ago.
+    at(NOON - 2 * DAY);
+    await saidNoFor(workspace, now).record({ tool: 'propose_task', subject: 'Call five lapsed signups this week and ask what stopped them', reason: 'we called them in September' });
+    at(NOON);
+    world.metrics = [signups(['2026-09-30', 6], ['2026-10-06', 4])];
+    await writeMetrics();
+    const { made } = await watch.look();
+    expect(made).toHaveLength(1);
+    expect(made[0].saidNo).toMatch(/^You said no to this on 4 Oct: 'we called them in September'\. Ask again\?$/);
+    const [row] = await watch.rows();
+    expect(row.detail?.split('\n')[0]).toBe(made[0].saidNo);
+    // Don't again: the no is kept, and the next time the number moves the same move is not raised.
+    await watch.answer(made[0].id, false);
+    world.metrics = [signups(['2026-09-30', 6], ['2026-10-06', 4], ['2026-10-07', 3])];
+    world.promises = [{ ...killCheck(), id: 'promise-kill-2' }];
+    await writeMetrics();
+    at(NOON + DAY);
+    const logged: string[] = [];
+    const log = console.log;
+    console.log = (line: string) => { logged.push(line); };
+    try { expect((await watch.look()).made).toHaveLength(0); } finally { console.log = log; }
+    expect(logged.some((line) => line.startsWith('partner watch: not raised. Already declined'))).toBe(true);
+    expect(await watch.rows()).toHaveLength(0);
   });
 });

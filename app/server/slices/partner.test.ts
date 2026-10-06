@@ -13,6 +13,7 @@ import { decisionAttention } from '../decisions.ts';
 import { hub } from '../events.ts';
 import { todayFive } from '../today/rank.ts';
 import partner, { createPartner, type PartnerOptions } from './partner.ts';
+import { createUnasked, createUsage } from '../usage.ts';
 
 const ROOT = resolve(import.meta.dirname, '../../..');
 const room = (id: string, name: string, extra: Partial<Room> = {}): Room => ({ id, name, role: 'x', accent: '#fff', brief: '', x: 0, y: 0, w: 1, h: 1, ...extra });
@@ -932,7 +933,10 @@ describe('the partner slice: the watch', () => {
       async step(_messages: unknown, { onToken }: { onToken: (token: string) => void }) { called.push(name); onToken('Move: Call five lapsed signups.\nTask: Call five lapsed signups\nDue: 2026-10-07'); return { text: '', calls: [] }; } });
     const NOW = new Date('2026-10-06T12:00:00').getTime();
     let answered: unknown;
-    const { deps, part, workspace } = await installed({ clients: [client('gemini-flash', { partnerOnly: true }), client('cheap')] as unknown as Deps['clients'], json: (_res, _status, body) => { answered = body; }, body: async () => ({ run: true }) }, { now: () => NOW });
+    const clients = [client('gemini-flash', { partnerOnly: true }), client('cheap')] as unknown as Deps['clients'];
+    // The day's shared budget for unasked work, over the same two models: the watch's turn is one of its twelve.
+    const unasked = createUnasked({ path: null, usage: createUsage(null), clients: () => clients, now: () => NOW });
+    const { deps, part, workspace } = await installed({ clients, unasked, json: (_res, _status, body) => { answered = body; }, body: async () => ({ run: true }) }, { now: () => NOW });
     await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
     await deps.store.patchStage((stage) => { stage.cards = [...(stage.cards ?? []), { id: 'm1', kind: 'metrics', x: 0, y: 0, w: 1, h: 1 }]; });
     await mkdir(join(workspace, 'metrics'), { recursive: true });
@@ -940,6 +944,7 @@ describe('the partner slice: the watch', () => {
     await promisesBook(workspace, () => NOW - 6 * 86_400_000).add({ what: 'weekly signups below 5', due: '2026-10-30', roomId: 'p1', check: true });
     await part.route!({ method: 'POST' } as never, {} as never, '/api/partner/watch');
     expect(called).toEqual(['cheap']);
+    expect(unasked.used()).toEqual([{ reason: 'watch: kill:signups', at: NOW }]);
     const row = (await deps.attention.list()).find((one) => one.kind === 'partner-proposal')!;
     expect(row.title).toBe('Sam proposes: Call five lapsed signups.');
     expect(row.detail).toContain('Unasked · Signups crossed the kill line.');
