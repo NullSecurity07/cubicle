@@ -871,7 +871,7 @@ describe('the partner slice: pushback on the verdict', () => {
       again: async (_first, nudge) => { nudges.push(nudge); return { ...base, text: 'My call: keep going.\nWhy: 2 paying practices out of 40 contacted.\nKill signal: paying practices < 10 by 2026-11-03.\nThis week: convert the 3 pilots.' }; } })).reply.text;
     expect(nudges).toHaveLength(1);
     expect(out).toContain('Kill signal: paying practices < 10 by 2026-11-03.');
-    expect(out).toContain('*Kill signal moved: "paying practices < 10" by 2026-11-03 takes the place of "paying practices < 3" by 2026-11-03 as the check in Needs you.*');
+    expect(out).toContain('*Kill signal moved: "paying practices < 3" by 2026-11-03 → "paying practices < 10" by 2026-11-03.');
     expect((await partnerState(workspace).read()).call?.signal).toEqual({ what: 'paying practices < 10', by: '2026-11-03' });
     const open = (await promisesBook(workspace).list()).filter((one) => one.check && one.status === 'open');
     expect(open.map((one) => one.what)).toEqual(['paying practices < 10']);
@@ -910,7 +910,7 @@ describe('the partner slice: reviewing colleagues and refreshing the verdict', (
     await part.tick!();
     const said = (await deps.store.readChat('marketing')).at(-1)!;
     expect(said).toMatchObject({ role: 'user', from: 'Sam' });
-    expect(said.text).toContain('Net burn is €1,914 a month, not €1,380: 2100 + 3 * 178 - 3 * 240 = 1,914 (calc); it leaves out what the 3 paying offices cost (€534 a month).');
+    expect(said.text).toContain('Net burn is €1,914 a month, not €1,380: 2100 - 3 * (240 - 178) = 1,914 (calc); it leaves out what the 3 paying offices cost (€534 a month). The doc has');
     const row = (await deps.attention.list()).find((one) => one.kind === 'review-flag')!;
     expect(row).toMatchObject({ who: 'Sam', roomId: 'marketing', title: 'Sam flagged: Maya\'s "Unit Economics". Fix first: net burn is €1,914 a month, not €1,380.' });
     // Reviewed once: the next tick says nothing more.
@@ -954,11 +954,11 @@ describe('the partner slice: reviewing colleagues and refreshing the verdict', (
     const again = (await createPartner({ now: () => clock, ask, budget: { take: () => { taken += 1; return { ok: true }; } } })(deps)) as Installed;
     await again.tick!();
     const refresh = asks.find((one) => one.includes('Make the call again'))!;
-    expect(refresh).toContain('The numbers behind your verdict moved.');
-    expect(refresh).toContain('On 1 Oct I said keep going at 3 paying offices; now 34 needed to break even and 4 paying offices. Since then: paying offices 3 to 4.');
+    expect(refresh).toContain('The numbers behind your verdict changed since you made it.');
+    expect(refresh).toContain('On 1 Oct I said keep going at 3 paying offices; now break-even is 34 paying offices and the company has 4. Since then: paying offices 3 → 4.');
     const posted = (await deps.store.readChat('p1')).slice(before).at(-1)!;
-    expect(posted.text).toMatch(/^On 1 Oct I said keep going at 3 paying offices; now 34 needed to break even and 4 paying offices: now change course\. Since then: paying offices 3 to 4\.\n\nMy call: \*\*change course\*\*\./);
-    expect(posted.text).toContain('*Kill signal moved: it comes to Needs you on 2026-11-10.*');
+    expect(posted.text).toMatch(/^On 1 Oct I said keep going at 3 paying offices; now break-even is 34 paying offices and the company has 4: now change course\. Since then: paying offices 3 → 4\.\n\nMy call: \*\*change course\*\*\./);
+    expect(posted.text).toContain('*Kill signal moved: "paying offices below 5" by 2026-10-29 → "paying offices below 8" by 2026-11-10. Paying offices is 4 (Company brief): already past the new line, so the check is in Needs you now.*');
     expect(taken).toBe(1);
     // Said once: the next tick, and the next day with nothing moved, say nothing.
     await again.tick!();
@@ -1060,6 +1060,100 @@ describe('the partner slice: the watch', () => {
     const board = (await deps.store.loadStage()).cards!.find((card) => card.kind === 'board')!;
     expect((await deps.boards.list(board.id)).map((task) => [task.title, task.due, task.column])).toEqual([['Call five lapsed signups', '2026-10-07', 'todo']]);
     expect((await deps.attention.list()).some((one) => one.kind === 'partner-proposal')).toBe(false);
+    await part.close!();
+  });
+});
+
+// Journey 16: ShiftMeals. The founder put the paying count and the per-week price right; the stored call kept the old
+// figures, the next morning said "stop, assess winding down", the kill signal could not be replaced on ask, and the
+// first review flag ordered Otto to put the wrong numbers back.
+describe('the partner slice: one picture of the numbers (journey 16)', () => {
+  const BRIEF = (price = '€59 per subscriber', paying = 14) => `# Company\n\n## Numbers\n\n- Price: ${price}\n- Subscribers: 14\n- Paying subscribers: ${paying}\n- Cash: €6,000\n- Burn: €1,900 a month\n\n## Goal\n\n30 paying subscribers by 2026-10-17.\n`;
+  const turn = (text: string, tools: unknown[] = []) => ({ text, tools: tools as ToolEvent[], provider: 'p', model: 'm', usage: { input: 1, output: 1 }, stopped: false });
+  const DAY1 = 'My call: keep going\nWhy: 14 subscribers pay €59.\nKill signal: Paying subscribers below 8 by 2026-10-17\nThis week: contact 30 more night-shift nurses.';
+
+  it('takes the founder\'s correction into the standing facts, makes the call stale, and the refresh quotes it with no stop', async () => {
+    let clock = new Date('2026-10-06T10:00').getTime();
+    const asks: string[] = [];
+    let answer = 'My call: stop\nWhy: the gap cannot close.\nKill signal: Paying subscribers below 11 by 2026-10-17\nThis week: Pause operations and plan an orderly wind-down.';
+    const { deps, part } = await installed({}, { now: () => clock, ask: async (messages) => { asks.push(String(messages.at(-1)?.content)); return answer; }, budget: { take: () => ({ ok: true }) } });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    const company = companyDocOf(await deps.store.loadStage())!;
+    await deps.store.writeDoc(company.id, BRIEF());
+    await deps.seams.run('turn:reply', { roomId: 'p1', query: 'Your verdict: keep going, pivot or stop?', reply: turn(DAY1) });
+    const held = JSON.parse(await readFile(join(deps.workspace, 'partner.json'), 'utf8'));
+    expect(held.call.snapshot).toMatchObject({ paying: { value: 14 }, price: { value: 59 } });
+    expect(held.call.working).toBeUndefined();
+    // The correction, in a plain turn: kept before the turn, said under the reply, and in the standing facts.
+    const query = 'No, 14 subscribers is not 14 paying, 11 pay. And €59 is per week, not per month.';
+    const prompt = (await deps.seams.run('turn:before', { roomId: 'p1', source: 'chat', query, messages: [{ role: 'system', content: 'You are Sam.' }] })).messages[0].content as string;
+    expect(prompt).toContain('- Paying subscribers: 11 (founder, 2026-10-06: "No, 14 subscribers is not 14 paying, 11 pay")');
+    expect(prompt).toContain('That verdict is stale: made on numbers that changed since (price €59 a month → €59 a week');
+    const reply = (await deps.seams.run('turn:reply', { roomId: 'p1', query, reply: turn('You are right, break-even is 8.') })).reply.text;
+    expect(reply).toContain('*Taken as the numbers: paying 11; price a week (your words). Break-even, runway and the verdict are worked from these now. My verdict of 2026-10-06 was made on the numbers before, so it is stale: I make it again on the next look.*');
+    // Next morning: the stale call is refreshed, quoting the changed inputs, and may not reach stop.
+    clock = new Date('2026-10-07T06:30').getTime();
+    await part.tick!();
+    const ask = asks.find((one) => one.includes('Make the call again'))!;
+    expect(ask).toContain('Since then: price €59 a month → €59 a week (founder: "And €59 is per week, not per month"); paying subscribers 14 → 11 (founder: "No, 14 subscribers is not 14 paying, 11 pay").');
+    expect(ask).toContain('Break-even: ceil(1900 / (59 * 52 / 12)) = 8 paying subscribers');
+    const posted = (await deps.store.readChat('p1')).at(-1)!.text;
+    expect(posted).toMatch(/^On 6 Oct I said keep going at 14 paying subscribers; now break-even is 8 paying subscribers and the company has 11, cash-positive: still keep going\./);
+    expect(posted).toContain('*Not a stop: the company is cash-positive');
+    expect(posted).not.toContain('This week: Pause operations');
+    // The kill line moved to 11 with 11 paying: not past it, said old → new.
+    expect(posted).toContain('*Kill signal moved: "Paying subscribers below 8" by 2026-10-17 → "Paying subscribers below 11" by 2026-10-17.');
+    // Refreshed on the numbers now: not stale any more, so the next day says nothing.
+    answer = DAY1;
+    const before = asks.length;
+    clock = new Date('2026-10-08T06:30').getTime();
+    await part.tick!();
+    expect(asks.slice(before).filter((one) => one.includes('Make the call again'))).toHaveLength(0);
+    await part.close!();
+  });
+
+  it('moves the kill signal on the founder\'s word in code, in one line, and raises a number already past the new line', async () => {
+    const clock = new Date('2026-10-07T10:00').getTime();
+    const { deps, part } = await installed({}, { now: () => clock, ask: async () => SHAPED });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    const company = companyDocOf(await deps.store.loadStage())!;
+    await deps.store.writeDoc(company.id, BRIEF('€59 per week per subscriber', 11));
+    await deps.seams.run('turn:reply', { roomId: 'p1', query: 'Your verdict: keep going, pivot or stop?', reply: turn(DAY1) });
+    const asked = await deps.seams.run('turn:answer', { roomId: 'p1', query: 'Sam, tighten the kill signal: fewer than 9 paying subscribers by 2026-10-17. Replace the old one.' });
+    expect(asked.answer).toBe('Kill signal moved: "Paying subscribers below 8" by 2026-10-17 → "Paying subscribers below 9" by 2026-10-17. It is the check in Needs you on 2026-10-17.');
+    expect(JSON.parse(await readFile(join(deps.workspace, 'partner.json'), 'utf8')).call.signal).toEqual({ what: 'Paying subscribers below 9', by: '2026-10-17' });
+    // Past the line already: 11 paying against "below 12" raises the check now.
+    const past = await deps.seams.run('turn:answer', { roomId: 'p1', query: 'replace the kill with <12 paying' });
+    expect(past.answer).toContain('Paying subscribers is 11 (Company brief): already past the new line, so the check is in Needs you now.');
+    expect((await deps.attention.list()).some((one) => one.title === 'Check now: Paying subscribers below 12 by 2026-10-17?')).toBe(true);
+    // Not a kill ask, and not the partner's room: the turn goes on to a model.
+    expect((await deps.seams.run('turn:answer', { roomId: 'p1', query: 'What should we post this week?' })).answer).toBeUndefined();
+    expect((await deps.seams.run('turn:answer', { roomId: 'marketing', query: 'replace the kill with <9 paying' })).answer).toBeUndefined();
+    await part.close!();
+  });
+
+  it('withdraws a review flag once the founder\'s correction makes the doc right', async () => {
+    const clock = new Date('2026-10-06T10:00').getTime();
+    const { deps, part } = await installed({}, { now: () => clock, ask: async () => SHAPED, budget: { take: () => ({ ok: false }) } });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    const company = companyDocOf(await deps.store.loadStage())!;
+    await deps.store.writeDoc(company.id, BRIEF());
+    const stage = await deps.store.loadStage();
+    await deps.store.saveStage({ ...stage, docs: [...stage.docs, { id: 'doc-rw', title: 'Runway', x: 0, y: 0, w: 1, h: 1 }] });
+    await deps.store.writeDoc('doc-rw', '# Runway\n\n- Break-even: 8 paying subscribers (calc: ceil(1900 / (59 * 52 / 12)) = 8)\n');
+    const wrote = { id: 'w', name: 'create_doc', args: {}, ok: true, result: 'Wrote "Runway".', effect: { kind: 'doc-created', id: 'doc-rw', title: 'Runway' } };
+    await deps.seams.run('turn:after', { roomId: 'marketing', source: 'chat', query: 'Work out the runway in a doc.', reply: turn('Done.', [{ id: 'c', name: 'calc', args: {}, ok: true, result: 'ceil(1900 / (59 * 52 / 12)) = 8' }, wrote]) as never });
+    await part.tick!();
+    // On the brief as written (a monthly €59), 8 is wrong: flagged.
+    expect((await deps.attention.list()).filter((one) => one.kind === 'review-flag')).toHaveLength(1);
+    // The founder says the price is per week: the flag no longer stands, and is taken back in one line.
+    await deps.seams.run('turn:before', { roomId: 'p1', source: 'chat', query: '€59 is per week, not per month.', messages: [{ role: 'system', content: 'You are Sam.' }] });
+    await part.tick!();
+    expect((await deps.attention.list()).filter((one) => one.kind === 'review-flag')).toHaveLength(0);
+    expect((await deps.store.readChat('marketing')).at(-1)!.text).toBe('I take back my flag on "Runway": the numbers changed since, and the doc agrees with them now. Fit for the founder.');
     await part.close!();
   });
 });

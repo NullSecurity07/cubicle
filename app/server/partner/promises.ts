@@ -15,6 +15,8 @@ export type FounderPromise = {
   status: 'open' | 'done' | 'dropped'; closed?: string; chased?: string;
   // The kill signal of the partner's verdict, to be checked on its day: not the founder's word, so never chased as one.
   check?: true;
+  // A kill line moved past where the number already stands (journey 16): the check is raised at once, not on its day.
+  raised?: string;
 };
 export type Said = { what: string; due: string };
 
@@ -145,10 +147,11 @@ export function promisesBook(workspace: string, now: () => number = clockNow) {
     settled: () => queue,
     // A thing already promised and still open is not promised twice.
     // A new verdict's kill signal takes the place of the last one still open: one check stands at a time.
-    add: (said: Said & { roomId?: string; check?: true }) => change((all) => {
-      if (all.some((one) => one.status === 'open' && !!one.check === !!said.check && one.what.toLowerCase() === said.what.toLowerCase() && one.due === said.due)) return null;
+    add: (said: Said & { roomId?: string; check?: true; raised?: string }) => change((all) => {
+      const same = all.find((one) => one.status === 'open' && !!one.check === !!said.check && one.what.toLowerCase() === said.what.toLowerCase() && one.due === said.due);
+      if (same) { if (said.raised && !same.raised) { same.raised = said.raised; return same; } return null; }
       if (said.check) for (const one of all) if (one.check && one.status === 'open') { one.status = 'dropped'; one.closed = localDay(now()); }
-      const made: FounderPromise = { id: newId('promise-'), what: said.what, due: said.due, said: localDay(now()), at: now(), ...(said.roomId ? { roomId: said.roomId } : {}), status: 'open', ...(said.check ? { check: true as const } : {}) };
+      const made: FounderPromise = { id: newId('promise-'), what: said.what, due: said.due, said: localDay(now()), at: now(), ...(said.roomId ? { roomId: said.roomId } : {}), status: 'open', ...(said.check ? { check: true as const } : {}), ...(said.raised ? { raised: said.raised } : {}) };
       all.push(made);
       return made;
     }),
@@ -169,7 +172,8 @@ const daysBetween = (from: string, to: string) => Math.round((new Date(`${to}T12
 
 // Open promises whose day has come, for Needs you: due today, or how late.
 export function promisesAttention(all: FounderPromise[], today: string): Attention[] {
-  return all.filter((one) => one.status === 'open' && one.due <= today).map((one) => {
+  return all.filter((one) => one.status === 'open' && (one.due <= today || (one.check && one.raised))).map((one) => {
+    if (one.check && one.raised && one.due > today) return { id: `promise:${one.id}`, kind: 'promise' as const, title: `Check now: ${one.what} by ${one.due}?`, detail: `${one.raised} The kill signal of your partner's verdict: the number is already past its line, so the call may change now.`, at: one.at, ...(one.roomId ? { roomId: one.roomId } : {}) };
     const late = daysBetween(one.due, today);
     const when = late === 0 ? 'Due today.' : `Due ${one.due}, ${late === 1 ? '1 day' : `${late} days`} ago.`;
     if (one.check) return { id: `promise:${one.id}`, kind: 'promise' as const, title: `Check: ${one.what} by ${one.due}?`, detail: `${when} The kill signal of your partner's verdict on ${one.said}: if it is not met, the call changes.`, at: new Date(`${one.due}T00:00`).getTime(), ...(one.roomId ? { roomId: one.roomId } : {}) };

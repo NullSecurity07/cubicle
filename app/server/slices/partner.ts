@@ -13,15 +13,16 @@ import { saysSomething } from '../missions.ts';
 import { FAKE_MORNING, MOST_TRIES, morningDue, morningInputs, morningMessage, writeMorning, type MorningSources } from '../partner/morning.ts';
 import { addPlan, boardFor, boardForPlan, NO_BOARD, planAttention, stepsFrom } from '../partner/plans.ts';
 import { asksWhatNext, holdSynthesis, standingFacts } from '../partner/synthesis.ts';
-import { asksVerdict, callShape, holdCall, PUSHBACK_LINE, pushesBack } from '../partner/call.ts';
-import { economicsBlock, economicsOf, figuresFix, workingTools } from '../partner/economics.ts';
+import { asksVerdict, callShape, holdCall, PUSHBACK_LINE, pushesBack, thresholdOf, type KillSignal, type PartnerCall } from '../partner/call.ts';
+import { breakEvenFix, changedLine, economicsBlock, figuresFix, sameMetric, stateOf, workingTools, type EconomicsState, type Reading } from '../partner/economics.ts';
 import { chaseLine, keptPromiseLine, promiseLine, promisesAttention, promisesBook, promisesIn } from '../partner/promises.ts';
 import { gatherSince, metricsOnDisk, sinceHeadline } from '../partner/since.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import { createReviews, granted } from '../partner/review.ts';
-import { readRefresh, refreshAsk, refreshDue, refreshOpening, refreshText, slipOn } from '../partner/refresh.ts';
+import { FAKE_REFRESH, holdStop, readRefresh, refreshAsk, refreshDue, refreshOpening, refreshText, staleOf } from '../partner/refresh.ts';
+import { killAskIn, killMovedLine, pastLine } from '../partner/kill.ts';
 import { goalsIn } from '../partner/goal.ts';
-import { correctionLines, correctionsIn, inUnits, keepCorrections, unitFix, unitsFix } from '../partner/corrections.ts';
+import { correctionLines, correctionsIn, fixesLine, inputFixesIn, keepCorrections, keepFixes, unitFix, unitsFix } from '../partner/corrections.ts';
 import { markClaims } from '../tools/evidence.ts';
 import { createWatch, fakeWatchReply, watchBudget, type Budget } from '../partner/watch.ts';
 import { draftId, gmailLink } from '../../shared/maildraft.ts';
@@ -216,10 +217,48 @@ export function createPartner(options: PartnerOptions = {}) {
     // The brief's Numbers worked out with calc (server/partner/economics.ts), or nothing when they do not hold enough.
     // A unit the founder put right in chat ("50 print jobs a month, not 50 paying hosts") is the one it is said in.
     const fixesNow = async () => unitFix((await state.read().catch(() => null))?.corrections ?? []);
-    const economicsNow = async (stage?: Stage) => {
-      const doc = await companyNow(stage);
-      return doc ? inUnits(economicsOf(sectionText(await deps.store.readDoc(doc.id).catch(() => ''), 'Numbers')), await fixesNow()) : null;
+    // Journey 16: the one picture of the numbers (server/partner/economics.ts): the brief's inputs, the founder's
+    // corrections over them and the latest Metrics readings, every derived figure worked again on each read.
+    const readingsNow = async (stage: Stage): Promise<Reading[]> => (await Promise.all((stage.cards ?? []).filter((card) => card.kind === 'metrics').map(async (card) => (await metricsOnDisk(deps.workspace, card.id).catch(() => []))
+      .flatMap((metric) => { const last = [...metric.points].sort((a, b) => a.at.localeCompare(b.at)).at(-1); return last && Number.isFinite(last.value) ? [{ label: metric.label, value: last.value, day: last.at }] : []; })))).flat();
+    const stateFrom = async (stage: Stage, company: string): Promise<EconomicsState> => {
+      const held = await state.read().catch(() => null);
+      return stateOf(sectionText(company, 'Numbers'), { fixes: held?.fixes ?? [], readings: await readingsNow(stage).catch(() => []), unitFixes: unitFix(held?.corrections ?? []) });
     };
+    const stateNow = async (stage?: Stage): Promise<EconomicsState | null> => {
+      const on = stage ?? await deps.store.loadStage();
+      const doc = await companyNow(on);
+      return doc ? stateFrom(on, await deps.store.readDoc(doc.id).catch(() => '')) : null;
+    };
+    const economicsNow = async (stage?: Stage) => (await stateNow(stage))?.economics() ?? null;
+    // A kill signal's number as it stands now: the latest Metrics reading of its row, else the one state's paying count,
+    // else the brief's row.
+    const readingOf = async (stage: Stage, signal: KillSignal): Promise<{ value: number; said: string } | null> => {
+      const said = thresholdOf(signal.what);
+      if (!said) return null;
+      const reading = (await readingsNow(stage).catch(() => [])).filter((one) => sameMetric(one.label, said.metric)).sort((a, b) => a.day.localeCompare(b.day)).at(-1);
+      if (reading) return { value: reading.value, said: `${reading.label} is ${reading.value} (Metrics, ${reading.day})` };
+      const economics = await stateNow(stage).catch(() => null);
+      const paying = economics?.inputs.paying;
+      if (paying && sameMetric(paying.label, said.metric)) return { value: paying.value, said: `${paying.label} is ${paying.value} (${paying.source === 'founder' ? 'your word' : 'Company brief'})` };
+      return null;
+    };
+    // A kill signal set or moved: kept as the one check, raised at once when the number is already past its line.
+    const keepSignal = async (old: KillSignal | undefined, fresh: KillSignal, roomId: string, stage: Stage) => {
+      const reading = await readingOf(stage, fresh).catch(() => null);
+      const line = thresholdOf(fresh.what);
+      const crossed = !!reading && !!line && pastLine(reading.value, line.value, line.below);
+      await promises.add({ what: fresh.what, due: fresh.by, roomId, check: true, ...(crossed ? { raised: `${reading!.said}, already past the line.` } : {}) });
+      await deps.attention.refresh().catch(() => {});
+      return killMovedLine(old, fresh, reading);
+    };
+    // Only what was decided is kept, with the inputs it was made on: never a figure worked from them.
+    const keptCall = (call: PartnerCall, at: number, day: string, roomId: string, economics: EconomicsState | null) => {
+      const { working: _working, ...decided } = call;
+      return { ...decided, at, day, roomId, ...(economics ? { snapshot: economics.snapshot() } : {}) };
+    };
+    // What the founder said in the partner's room lately, their own words only.
+    const founderWords = async (roomId: string) => (await deps.store.readChat(roomId).catch(() => [])).slice(-30).filter((one) => one.role === 'user' && !one.from).map((one) => one.text ?? '');
     // The founder challenging the verdict standing in this room is held to the verdict's four lines too, so a kill
     // signal changed under pushback replaces the check (server/partner/call.ts).
     const pushedBack = async (roomId: string, query: string) => !asksVerdict(query) && pushesBack(query) && (await state.read()).call?.roomId === roomId;
@@ -279,7 +318,7 @@ export function createPartner(options: PartnerOptions = {}) {
       return { text: reply.text, provider: reply.client.name, model: reply.client.model };
     };
     // The morning note is one of the partner-only model's reserved turns.
-    const ask = options.ask ?? (deps.fake ? async () => ({ text: FAKE_MORNING, provider: fakeClient.name, model: fakeClient.model }) : quietTurn(true));
+    const ask = options.ask ?? (deps.fake ? async (messages: ModelMessage[]) => ({ text: /Make the call again/.test(String(messages.at(-1)?.content ?? '')) ? FAKE_REFRESH : FAKE_MORNING, provider: fakeClient.name, model: fakeClient.model }) : quietTurn(true));
 
     // The watch (server/partner/watch.ts): a number trending to the kill line, a lead who replied, a watched page that
     // changed and a promise two days late each wake the partner for one unasked turn that ends in something ready to
@@ -291,7 +330,7 @@ export function createPartner(options: PartnerOptions = {}) {
       stage: () => deps.store.loadStage(), attention: () => deps.attention.list(), promises: () => promises.list(), bets: () => book.list(),
       leads: (id) => leadsFor(deps.workspace).list(id), promptFor: (on, roomId) => deps.promptFor(on, roomId, [], true),
       ask: options.watchAsk ?? (deps.fake ? async (messages) => ({ text: fakeWatchReply(messages), provider: fakeClient.name, model: fakeClient.model }) : quietTurn(false, true)),
-      changed: () => deps.attention.refresh(), notify: deps.notify,
+      changed: () => deps.attention.refresh(), notify: deps.notify, economics: () => stateNow(),
       acts: {
         // Drafted the way draft_email drafts, and only to an address still on a Leads card.
         async email(draft, proposal) {
@@ -317,6 +356,7 @@ export function createPartner(options: PartnerOptions = {}) {
     const reviews = createReviews({
       workspace: deps.workspace, store: deps.store, attention: deps.attention, busy: deps.busy, now, budget, phrase, notify: deps.notify,
       company: async (stage) => { const doc = await companyNow(stage); return doc ? { id: doc.id, text: await deps.store.readDoc(doc.id).catch(() => '') } : null; },
+      economics: (stage) => stateNow(stage),
     });
     const offReviews = deps.seams.on('turn:after', reviews.heard);
 
@@ -325,7 +365,7 @@ export function createPartner(options: PartnerOptions = {}) {
     // Everything the partner reads across the rooms, as it stands now: the morning note and the standing facts both
     // read from this.
     const sourcesFor = (stage: Stage, partnerId: string, company: string): MorningSources => ({
-      workspace: deps.workspace, stage, partnerId, now: now(), bets, company,
+      workspace: deps.workspace, stage, partnerId, now: now(), bets, company, economics: () => stateFrom(stage, company),
       decisions: () => deps.decisions.list(), boards: (id) => deps.boards.list(id), leads: (id) => leadsFor(deps.workspace).list(id),
       chat: (roomId) => deps.store.readChat(roomId), doc: (id) => deps.store.readDoc(id),
       promises: () => promises.list(), metrics: (id) => metricsOnDisk(deps.workspace, id),
@@ -343,8 +383,11 @@ export function createPartner(options: PartnerOptions = {}) {
       // The founder's open promises are read fresh too: one closed a moment ago is gone from the next turn.
       // So is what the founder said no to: a no given a moment ago is in the very next turn.
       // So is the partner's own verdict: one refreshed or changed under pushback a moment ago is the one said.
-      const [parts, promised, declined, held] = await Promise.all([standing, promises.list().catch(() => []), saidNoFor(deps.workspace).lines().catch(() => []), state.read().catch(() => null)]);
-      return { ...parts, promised: promised.filter((one) => one.status === 'open').map(promiseLine), declined, call: verdictLines(held?.call), corrected: correctionLines(held?.corrections ?? []) };
+      const [parts, promised, declined, held, economics] = await Promise.all([standing, promises.list().catch(() => []), saidNoFor(deps.workspace).lines().catch(() => []), state.read().catch(() => null), stateNow(stage).catch(() => null)]);
+      // A verdict made on inputs that changed since is said to be stale, with what changed (journey 16).
+      const stale = staleOf(held?.call, economics);
+      const call = [...verdictLines(held?.call), ...(stale.length && held?.call?.decision ? [`That verdict is stale: made on numbers that changed since (${stale.map((one) => changedLine(one, economics?.currency ?? '')).join('; ')}). Work from the numbers now, never from the figures said then.`] : [])];
+      return { ...parts, promised: promised.filter((one) => one.status === 'open').map(promiseLine), declined, call, corrected: [...(economics?.founderLines() ?? []), ...correctionLines(held?.corrections ?? [])] };
     }
     async function standingFor(stage: Stage, partnerId: string) {
       // Bets are read from the ledger, never from Needs you rows: a row can outlive the take by a refresh.
@@ -432,6 +475,19 @@ export function createPartner(options: PartnerOptions = {}) {
     // found here by the id recorded for it), so the line saying it is the shared record is added here instead.
     // The partner's turn carries the standing facts at the end of the system prompt, where the morning note's facts
     // come from, so the verdict the note leads with is in every answer too.
+    // The inputs the founder put right in each room's last turn, for the line under its reply.
+    const fixedNow = new Map<string, { query: string; line: string }>();
+    async function takeFixes(stage: Stage, roomId: string, query: string) {
+      const doc = await companyNow(stage);
+      if (!doc) return;
+      const economics = await stateFrom(stage, await deps.store.readDoc(doc.id).catch(() => ''));
+      const fresh = inputFixesIn(query, economics, localDay(now()));
+      if (!fresh.length) { fixedNow.delete(roomId); return; }
+      const held = await state.change((draft) => { draft.fixes = keepFixes(draft.fixes ?? [], fresh); return draft.call; });
+      standing = null;
+      const stale = held?.decision ? ` My verdict of ${held.day} was made on the numbers before, so it is stale: ${asksVerdict(query) || pushesBack(query) ? 'it is made again here' : 'I make it again on the next look'}.` : '';
+      fixedNow.set(roomId, { query, line: `${fixesLine(fresh, economics.currency ?? '').replace(/\*$/, '')}${stale}*` });
+    }
     const beforeTurn: Handler<'turn:before'> = async (payload, next) => {
       const system = payload.messages[0];
       if (system?.role !== 'system') return next(payload);
@@ -443,6 +499,9 @@ export function createPartner(options: PartnerOptions = {}) {
         if (doc?.pinned) out = withSystem(out, companyLine(doc.title));
       }
       if (stage.rooms.some((one) => one.id === payload.roomId && one.partner)) {
+        // The founder's word on an input ("11 pay", "€59 is per week") is kept before the turn, so this very turn, its
+        // standing facts and its working already stand on it (journey 16).
+        await takeFixes(stage, payload.roomId, payload.query).catch((error: Error) => console.error(`partner numbers: ${error.message}`));
         const block = await standingFor(stage, payload.roomId).catch((error: Error) => { console.error(`partner standing facts: ${error.message}`); return ''; });
         out = withSystem(out, block);
         // Written for customers: said before it is written, and held to it after (the reply seam below).
@@ -498,24 +557,33 @@ export function createPartner(options: PartnerOptions = {}) {
           ]);
           const evidence = [company, block, payload.query, ...chat.slice(-30).map((one) => one.text ?? ''), ...payload.reply.tools.map((tool) => tool.result ?? '')].join('\n');
           const said = [company, payload.query, ...chat.slice(-30).filter((one) => one.role === 'user' && !one.from).map((one) => one.text ?? ''), ...payload.reply.tools.filter((tool) => tool.ok !== false).map((tool) => tool.result ?? '')];
-          const economics = company ? inUnits(economicsOf(sectionText(company, 'Numbers')), fixes) : null;
-          const { reply, call, askedAgain } = await holdCall(payload.query, payload.reply, payload.again, today, evidence, said, economics, company ? sectionText(company, 'Numbers') : '', pushed, goalsIn(company, today));
+          const numbersState = company ? await stateFrom(stage, company) : null;
+          const economics = numbersState?.economics() ?? null;
+          const { reply, call: made, askedAgain } = await holdCall(payload.query, payload.reply, payload.again, today, evidence, said, economics, company ? sectionText(company, 'Numbers') : '', pushed, goalsIn(company, today));
+          // No stop for a company that is not running out, unless the founder's own words asked for it (refresh.ts).
+          const stopHeld = made ? holdStop(made, numbersState, [payload.query, ...await founderWords(me.id)], before?.decision) : null;
+          const call = stopHeld?.call ?? made;
           if (call) {
+            let said = reply.text;
+            if (stopHeld?.note) {
+              said = said.replace(/^My call: \*\*stop\*\*\./m, `My call: **${call.decision}**.`);
+              if (!call.move) said = said.replace(/^This week: .*\n?/m, '');
+              said = `${said.replace(/\s+$/, '')}\n\n${stopHeld.note}`;
+            }
             // The working rides with the turn as the calc tool's own results, so the guard and the founder see where
             // each figure in the reason came from.
             const worked = economics ? workingTools(economics, (index) => `calc-brief-${now()}-${index}`) : [];
-            payload = { ...payload, reply: { ...reply, tools: [...worked, ...reply.tools] }, lookedAgain: payload.lookedAgain || askedAgain };
+            payload = { ...payload, reply: { ...reply, text: said, tools: [...worked, ...reply.tools] }, lookedAgain: payload.lookedAgain || askedAgain };
             const at = now();
-            await state.change((held) => { held.call = { ...call, at, day: today, roomId: me.id, ...(economics?.inputs ? { basis: economics.inputs } : {}) }; });
+            await state.change((held) => { held.call = keptCall(call, at, today, me.id, numbersState); });
             // The founder's pushback in the next hour is answered on the partner-only model too.
             markVerdict(me.id, at);
             if (call.signal) {
-              await promises.add({ what: call.signal.what, due: call.signal.by, roomId: me.id, check: true });
-              await deps.attention.refresh().catch(() => {});
-              // A new kill signal takes the old one's place as the one check, and the founder is told which went.
+              // A new kill signal takes the old one's place as the one check, and the founder is told which went, and
+              // whether the number already sits past the new line.
               const moved = before?.signal && (before.signal.what !== call.signal.what || before.signal.by !== call.signal.by);
-              checkLine = moved ? `*Kill signal moved: "${call.signal.what}" by ${call.signal.by} takes the place of "${before!.signal!.what}" by ${before!.signal!.by} as the check in Needs you.*`
-                : `*Kept as a check: it comes to Needs you on ${call.signal.by}.*`;
+              const line = await keepSignal(moved ? before!.signal : undefined, call.signal, me.id, stage);
+              checkLine = moved || /already past/.test(line) ? `*${line}*` : `*Kept as a check: it comes to Needs you on ${call.signal.by}.*`;
             }
           }
         } catch (error) { console.error(`partner verdict: ${(error as Error).message}`); }
@@ -542,7 +610,11 @@ export function createPartner(options: PartnerOptions = {}) {
         // What customers will read carries no source tags, placeholders or company money, and is not called ready while it does.
         if (forCustomers(payload.query)) text = customerReply(text, numbers);
         // Runway and break-even come from calc on the brief's numbers, never from the model (server/partner/economics.ts).
-        text = unitsFix(runwayFix(figuresFix(text, inUnits(economicsOf(sectionText(company, 'Numbers')), fixes)), numbers), fixes);
+        const numbersNow = await stateFrom(stage, company);
+        text = breakEvenFix(unitsFix(runwayFix(figuresFix(text, numbersNow.economics()), numbers), fixes), numbersNow);
+        // The inputs the founder put right this turn, said under the reply.
+        const fixed = fixedNow.get(me.id);
+        if (fixed?.query === payload.query) { receipt = receipt ? `${receipt}\n\n${fixed.line}` : fixed.line; fixedNow.delete(me.id); }
         // Sent to Needs you with nothing waiting there: said under the reply.
         const rows = await deps.attention.list().catch(() => []);
         const ledger = await book.list().catch(() => null);
@@ -623,19 +695,19 @@ export function createPartner(options: PartnerOptions = {}) {
       const stage = await deps.store.loadStage();
       const partner = partnerOf(stage);
       if (!partner || deps.busy.has(partner.id)) return;
-      const economics = await economicsNow(stage).catch(() => null);
       const doc = await companyNow(stage);
       const company = doc ? await deps.store.readDoc(doc.id).catch(() => '') : '';
-      // The brief's dated goal, and what changed since yesterday that slips on it, each said once (server/partner/goal.ts).
+      // The one picture of the numbers: the call is due a look only when an input it was made on changed (stale), the
+      // brief's goal day passed, or a week went by (server/partner/refresh.ts).
+      const numbers = doc ? await stateFrom(stage, company) : null;
+      const economics = numbers?.economics() ?? null;
       const goal = goalsIn(company, today)[0];
-      const slip = slipOn(goal, goal ? await gatherSince(sourcesFor(stage, partner.id, company)).catch(() => []) : []);
-      const slipKey = slip?.replace(/\d+ days? late/, '').trim();
-      const due = refreshDue(held.call, economics?.inputs, today, { goal, slip: slipKey && held.slipSeen !== slipKey ? slip : undefined });
+      const due = refreshDue(held.call, numbers, today, { goal });
       if (!due) return;
       const taken = await granted(budget, 'verdict refresh');
       if (!taken.ok) return;
-      await state.change((draft) => { draft.refreshTried = today; if (due.why === 'slip') draft.slipSeen = slipKey; });
-      const opening = refreshOpening(held.call, economics, due.moved);
+      await state.change((draft) => { draft.refreshTried = today; });
+      const opening = refreshOpening(held.call, numbers, due.changed);
       const messages: ModelMessage[] = [...await deps.promptFor(stage, partner.id, [], true), { role: 'user', content: refreshAsk(held.call, opening, economics, today, { ...due, goal }) }];
       // No model answered: the turn never ran, so it goes back to the day's budget, and tomorrow tries again.
       const answered = await ask(messages).catch((error: Error) => { taken.release(); throw error; });
@@ -645,21 +717,60 @@ export function createPartner(options: PartnerOptions = {}) {
       // A new call with no kill signal of its own keeps the one standing.
       const fresher = { ...fresh, ...(!fresh.signal && held.call.signal ? { signal: held.call.signal } : {}) };
       const marked = fresher.why ? { ...fresher, why: markClaims(fresher.why, [company, ...(fresher.working ?? [])]) } : fresher;
+      // No stop and no wind-down for a company that is cash-positive or has more than six months, unless the founder's
+      // own words asked for it (journey 16: "plan an orderly wind-down" at 11 paying against a break-even of 8).
+      const stopHeld = holdStop(marked, numbers, await founderWords(partner.id), held.call.decision);
       // The week's move is held to what the founder ruled out (journey 15: "Contact 40 more makers" minutes after "no
       // cold outreach"): one set against a standing no is dropped, and the refresh says which no it kept to.
-      const ruled = marked.move ? await saidNoFor(deps.workspace).ruledOut(marked.move).catch(() => undefined) : undefined;
-      const call = ruled ? { ...marked, move: undefined } : marked;
+      const ruled = stopHeld.call.move ? await saidNoFor(deps.workspace).ruledOut(stopHeld.call.move).catch(() => undefined) : undefined;
+      const call = ruled ? { ...stopHeld.call, move: undefined } : stopHeld.call;
       const at = now();
+      // A kill line that moves is never silent: old → new, and a number already past the new line raises the check now.
       const moves = call.signal && (call.signal.what !== held.call.signal?.what || call.signal.by !== held.call.signal?.by);
-      const kept = moves && call.signal && await promises.add({ what: call.signal.what, due: call.signal.by, roomId: partner.id, check: true });
-      const text = `${figuresFix(refreshText(opening, held.call.decision, call), economics)}${kept ? `\n\n*Kill signal moved: it comes to Needs you on ${call.signal!.by}.*` : ''}${ruled ? `\n\n*${ruledOutLine(ruled)}, so the move "${marked.move}" was dropped.*` : ''}`;
+      const killLine = moves && call.signal ? await keepSignal(held.call.signal, call.signal, partner.id, stage) : '';
+      const body = breakEvenFix(figuresFix(refreshText(opening, held.call.decision, call), economics), numbers);
+      const text = `${body}${stopHeld.note ? `\n\n${stopHeld.note}` : ''}${killLine ? `\n\n*${killLine}*` : ''}${ruled ? `\n\n*${ruledOutLine(ruled)}, so the move "${stopHeld.call.move}" was dropped.*` : ''}`;
       await deps.store.appendChat(partner.id, { id: newMessageId(), role: 'assistant', text, at, ...(reply.provider ? { provider: reply.provider } : {}), ...(reply.model ? { model: reply.model } : {}) });
-      await state.change((draft) => { draft.call = { ...call, at, day: today, roomId: partner.id, ...(economics?.inputs ? { basis: economics.inputs } : {}) }; });
+      await state.change((draft) => { draft.call = keptCall(call, at, today, partner.id, numbers); });
       markVerdict(partner.id, at);
       standing = null;
       await deps.attention.refresh().catch(() => {});
       deps.notify?.(`${partner.name} looked at the verdict again`, text.split('\n')[0]);
     }
+
+    // Journey 16: "replace the kill signal with fewer than 9 paying subscribers" is the founder's word, read in code and
+    // kept at once with one line (server/partner/kill.ts): no model, no bet, no card asked for.
+    const onAnswer: Handler<'turn:answer'> = async (payload, next) => {
+      try {
+        const stage = await deps.store.loadStage();
+        const me = stage.rooms.find((one) => one.id === payload.roomId && one.partner);
+        if (!me || payload.answer) return next(payload);
+        const held = await state.read();
+        const doc = await companyNow(stage);
+        const company = doc ? await deps.store.readDoc(doc.id).catch(() => '') : '';
+        const today = localDay(now());
+        const labels = [
+          ...sectionText(company, 'Numbers').split('\n').flatMap((line) => { const found = /^\s*[-*]\s+([^:]{1,40}):\s*[$€£]?\s?\d/.exec(line); return found ? [found[1].trim()] : []; }),
+          ...(await readingsNow(stage).catch(() => [])).map((one) => one.label),
+        ];
+        const chat = await deps.store.readChat(me.id).catch(() => []);
+        const lastSaid = [...chat].reverse().find((one) => one.role === 'assistant')?.text;
+        const goal = goalsIn(company, today)[0];
+        const asked = killAskIn(payload.query, { today, labels, signal: held.call?.signal, lastSaid, goalDay: goal?.by });
+        if (!asked) return next(payload);
+        const old = held.call?.signal;
+        if (old && old.what === asked.signal.what && old.by === asked.signal.by) return next({ ...payload, answer: `The kill signal is already "${old.what}" by ${old.by}: nothing to change.` });
+        const at = now();
+        await state.change((draft) => { draft.call = { ...(draft.call ?? { day: today, roomId: me.id, at }), signal: asked.signal }; });
+        const line = await keepSignal(old, asked.signal, me.id, stage);
+        standing = null;
+        return next({ ...payload, answer: line });
+      } catch (error) {
+        console.error(`partner kill signal: ${(error as Error).message}`);
+        return next(payload);
+      }
+    };
+    const offAnswer = deps.seams.on('turn:answer', onAnswer);
 
     return {
       tools: [...betTools(book, deps.workspace, betsChanged, now), ...planTools(state, async () => { await deps.attention.refresh().catch(() => {}); }, now)],
@@ -802,7 +913,7 @@ export function createPartner(options: PartnerOptions = {}) {
       async close() {
         offDecisions();
         offSeam();
-        offTurn();
+        offTurn(); offAnswer();
         offReply();
         offPromise();
         offReviews();

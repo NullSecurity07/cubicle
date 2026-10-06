@@ -1,3 +1,4 @@
+import { periodName, type EconomicsState, type Field, type InputFix, type Period } from './economics.ts';
 // Journey 15: the founder told the partner "break-even is 50 print jobs a month, not 50 paying hosts: one host is not
 // €12 a month of revenue". The app wrote "MRR: €12 a month (founder)" into the brief, and "50 paying hosts" came back in
 // the next verdict, the refresh and the notes kept on their own. A founder's correction in chat is read here, in code:
@@ -105,3 +106,64 @@ export function inUnits<T extends { unit?: string; working: { line: string }[] }
   const fix = fixes.find((one) => economics.unit && figurePattern(one.wrong).test(economics.unit));
   return { ...economics, ...(fix ? { unit: economics.unit!.replace(figurePattern(fix.wrong), fix.right) } : {}), working: economics.working.map((one) => ({ ...one, line: unitsFix(one.line, fixes) })) };
 }
+
+// ---------------------------------------------------------------- the founder's corrections of the inputs
+
+// Journey 16: "No, 14 subscribers is not 14 paying, 11 pay. And €59 is per week, not per month." The partner agreed in
+// chat, and the stored call, the refresh and the review went on with 14 paying and a monthly €59. What the founder says
+// about an input of the numbers (the paying count, a price, cost, burn or cash, or the period one is paid in) is read
+// here, in code, and kept as a correction of that input with their words: the one picture (economics.ts) puts it over
+// the brief's figure until the brief itself changes.
+const HYPOTHETICAL = /\b(?:if|would|could|might|suppose|imagine|goal|target|aim|want to|plan to|by 20\d\d|kill)\b/i;
+const PAYING = /(?<![\d.,])(\d[\d,]*(?:\.\d+)?)\s+(?:(?:of (?:them|those|the \w+)|subscribers|customers|users|clients|members|people|offices|practices)\s+)?(?:(?:are|actually|now|really|only|do)\s+)*(?:pay|paying|paid)\b(?!\s+(?:for|per)\b)/gi;
+const MONEY_FIELD = /\b(net burn|burn|cash|price|cost(?:\s+per\s+[a-z]+)?)\b((?:\s+(?:is|are|was|of|at|now|actually|really|only|in the bank|a month|per month))*\s*[:=]?\s*)(?:not\s+[$€£]?\s?\d[\d,.]*\s*k?(?:\s+(?:a|per)\s+\w+)?\s*,?\s*(?:but|it'?s|it is)?\s*)?([$€£])\s?(\d[\d,]*(?:\.\d+)?)(\s?k\b)?/gi;
+const PERIODS = /(not\s+)?(?:(?:per|a|an|each|every)\s+|\/\s*)(week|month|year|day)\b|(not\s+)?\b(weekly|monthly|yearly|annually)\b/gi;
+const periodWord = (word: string): Period => (/^week/i.test(word) ? 'week' : /^month/i.test(word) ? 'month' : /^(?:year|annual)/i.test(word) ? 'year' : 'day');
+const fieldOf = (word: string): Field => (/^net/i.test(word) ? 'net' : /^burn/i.test(word) ? 'burn' : /^cash/i.test(word) ? 'cash' : /^price/i.test(word) ? 'price' : 'cost');
+
+// Each input the founder put right in what they said, against the numbers as they stand now (only real changes).
+export function inputFixesIn(said: string, state: EconomicsState, day: string): InputFix[] {
+  const out: InputFix[] = [];
+  const over = (field: Field) => { const had = state.inputs[field]; return had ? { over: { value: had.value, ...(had.period ? { period: had.period } : {}) } } : {}; };
+  const add = (fix: InputFix) => {
+    const had = state.inputs[fix.field];
+    const same = had && (fix.value === undefined || Math.abs(had.value - fix.value) < 1e-9) && (!fix.period || (had.period ?? 'month') === fix.period);
+    if (same) return;
+    const at = out.findIndex((one) => one.field === fix.field);
+    if (at >= 0) out[at] = { ...out[at], ...fix }; else out.push(fix);
+  };
+  for (const sentence of said.split(/(?<=[.!?])\s+|\n+/)) {
+    const words = clean(sentence).slice(0, 200);
+    if (!words || HYPOTHETICAL.test(sentence) || /\?\s*$/.test(sentence)) continue;
+    // The paying count: "11 pay", "only 11 of them pay", never the "14 paying" said to be wrong.
+    for (const found of sentence.matchAll(PAYING)) {
+      if (/\bnot\s+$|\bisn'?t\s+$/i.test(sentence.slice(0, found.index))) continue;
+      add({ field: 'paying', value: Number(found[1].replace(/,/g, '')), said: words, day, ...over('paying') });
+    }
+    // A money input given or put right: "burn is €2,100 a month", "cash is not €6k but €5,200".
+    for (const found of sentence.matchAll(MONEY_FIELD)) {
+      const field = fieldOf(found[1]);
+      const rest = sentence.slice((found.index ?? 0) + found[0].length);
+      const period = field === 'cash' ? undefined : ((/^\s*(?:(?:per|a|an|each|every)\s+|\/\s*)(week|month|year|day)\b/i.exec(rest)?.[1]) as Period | undefined);
+      add({ field, value: Number(found[4].replace(/,/g, '')) * (found[5] ? 1000 : 1), ...(period ? { period } : {}), said: words, day, ...over(field) });
+    }
+    // The period an amount is paid in: "€59 is per week, not per month", "it's weekly, not monthly".
+    const periods = [...sentence.matchAll(PERIODS)];
+    const right = periods.find((one) => !one[1] && !one[3]);
+    const wrong = periods.find((one) => one[1] || one[3]);
+    if (right && wrong) {
+      const amount = /[$€£]\s?(\d[\d,]*(?:\.\d+)?)/.exec(sentence);
+      const value = amount ? Number(amount[1].replace(/,/g, '')) : undefined;
+      const field = (['price', 'cost', 'burn'] as Field[]).find((one) => value !== undefined && state.inputs[one]?.value === value)
+        ?? (/\bburn\b/i.test(sentence) ? 'burn' : /\bcost\b/i.test(sentence) ? 'cost' : 'price');
+      add({ field, period: periodWord(right[2] ?? right[4]), said: words, day, ...over(field) });
+    }
+  }
+  return out;
+}
+
+// What the partner keeps: the latest correction of each input, the newest last.
+export const MOST_FIXES = 12;
+export const keepFixes = (held: InputFix[], fresh: InputFix[]) => [...held.filter((old) => !fresh.some((one) => one.field === old.field)), ...fresh].slice(-MOST_FIXES);
+// The line under the reply that heard them.
+export const fixesLine = (fixes: InputFix[], currency = '') => `*Taken as the numbers: ${fixes.map((one) => `${one.field === 'paying' ? 'paying' : one.field} ${one.value !== undefined ? `${['price', 'cost', 'burn', 'net', 'cash'].includes(one.field) ? currency : ''}${one.value.toLocaleString('en-US')}` : ''}${one.period ? `${one.value !== undefined ? ' ' : ''}${periodName(one.period)}` : ''}`.trim()).join('; ')} (your words). Break-even, runway and the verdict are worked from these now.*`;

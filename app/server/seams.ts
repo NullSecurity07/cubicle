@@ -11,6 +11,9 @@ export type Payloads = {
   // `slim`: the prompt was cut down to fit the one model able to answer (see slim.ts); a block that would add
   // pages to it, the playbook's, is left out.
   'turn:before': { roomId: string; source: Source; query: string; messages: ModelMessage[]; slim?: boolean };
+  // The founder's chat turn before any model is asked: a slice that can answer it in code (journey 16: "replace the
+  // kill signal with below 9 paying") sets `answer`, and no model runs. Nobody setting it means the turn goes on.
+  'turn:answer': { roomId: string; query: string; answer?: string };
   'step:before': { roomId: string; step: number; messages: ModelMessage[] };
   'step:error': { roomId: string; step: number; messages: ModelMessage[]; error: string; retry?: boolean };
   // `approved`: the founder already said yes to calls that reach exactly this far, so this one is not put to them

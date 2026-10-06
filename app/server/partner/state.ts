@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { MorningNote, PlanProposal } from '../../shared/partner.ts';
 import type { PartnerCall } from './call.ts';
 import type { Correction } from './corrections.ts';
-import type { Inputs } from './economics.ts';
+import type { InputFix, Inputs, Snapshot } from './economics.ts';
 import { writeAtomic } from '../fsx.ts';
 import { readBook } from '../rescue.ts';
 
@@ -31,8 +31,11 @@ export type PartnerState = {
   betChecks?: string[];
   // The partner's last verdict on the company, as read from its reply: the call, the reason, the kill signal and the
   // first move. Its kill signal waits in the promises book as a check for its day.
-  // `basis`: the brief's figures the call was made on, so a move of more than a tenth refreshes it (refresh.ts).
-  call?: PartnerCall & { at: number; day: string; roomId: string; basis?: Inputs };
+  // Journey 16: only what was decided is kept (the call, its reason, the kill signal, the first move) with the INPUTS it
+  // was made on (`snapshot`, economics.ts); every figure derived from them is worked again on each read. Any input that
+  // changed since (a correction, a brief edit, a reading) makes the call stale (refresh.ts). `basis` is the older
+  // monthly figures, read only from a call kept before.
+  call?: PartnerCall & { at: number; day: string; roomId: string; snapshot?: Snapshot; basis?: Inputs };
   // The day the partner last tried to refresh its verdict unasked: one try a day.
   refreshTried?: string;
   // The last slip on the brief's goal a refresh answered, without its count of days: a slip is looked at once.
@@ -40,6 +43,8 @@ export type PartnerState = {
   // What the founder corrected in chat ("50 print jobs a month, not 50 paying hosts"), newest last: what they said is
   // wrong is never said again, and the unit they gave is the one break-even is counted in (corrections.ts).
   corrections?: Correction[];
+  // The founder's corrections of the numbers' inputs ("11 pay", "€59 is per week"), latest of each last (corrections.ts).
+  fixes?: InputFix[];
 };
 
 export function partnerState(workspace: string) {
