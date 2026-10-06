@@ -33,8 +33,9 @@ export type CoderAsk = { id: string; tool: string; what: string; always: string[
 export type CoderEvent = { lines?: CoderLine[]; line?: CoderLine; state?: CoderState; permission?: CoderAsk | null; waiting?: number; session?: string; model?: string; graph?: GraphMark | null; mapping?: boolean; live?: CoderLive | null };
 export const coderChannel = (cardId: string) => `coder:${cardId}`;
 
-// The model picker's groups, in the order the founder reads them. `id` is `provider/model`.
-export type CoderModel = { id: string; name: string };
+// The model picker's groups, in the order the founder reads them. `id` is `provider/model`. `provider` is said on a
+// model of the founder's own keys, where one model is often sold by several.
+export type CoderModel = { id: string; name: string; provider?: string };
 export type CoderModels = { groups: { name: string; models: CoderModel[] }[]; default: string | null };
 
 // One file the coder changed, with its patch, for the card opened large.

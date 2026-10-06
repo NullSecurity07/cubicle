@@ -4,12 +4,14 @@ import type { CallOptions, Engine } from './server.ts';
 // For journeys and unit tests: an opencode that lives in this process and answers the same paths the real one does.
 // One prompt takes a step, edits `src/example.ts`, asks before `bash pnpm test` when the brief mentions a test,
 // says what it did, reports a one-file diff and goes idle. A brief that says "both" makes it ask before the edit and
-// the command at once, `gap` apart, the way a real model asks when it calls two tools in one step. Nothing here reads
-// the network.
+// the command at once, `gap` apart, the way a real model asks when it calls two tools in one step. A model named in
+// `down` (its id without the provider) answers the way a Zen model with a dead endpoint does: opencode retries it with
+// the provider's message a few times, then gives up with a session error. Nothing here reads the network.
 type Session = { id: string; directory: string; created: number; busy: boolean; messages: { id: string; role: 'user' | 'assistant'; text: string }[]; run?: AbortController; reverted?: string };
 const PATCH = '--- a/src/example.ts\n+++ b/src/example.ts\n@@ -1,3 +1,12 @@\n-export const ok = false;\n+export const ok = true;\n';
 
-export function fakeEngine({ step = 120, gap = 0, now = Date.now }: { step?: number; gap?: number; now?: () => number } = {}): Engine & { sessions: Map<string, Session>; mcp: Map<string, Map<string, unknown>> } {
+export const DOWN_MESSAGE = 'Error from provider (Console): Upstream request failed: Endpoint is unavailable.';
+export function fakeEngine({ step = 120, gap = 0, now = Date.now, down = [] }: { step?: number; gap?: number; now?: () => number; down?: string[] } = {}): Engine & { sessions: Map<string, Session>; mcp: Map<string, Map<string, unknown>> } {
   const hearers = new Set<(event: RawEvent) => void>();
   const sessions = new Map<string, Session>();
   const waiting = new Map<string, { session: string; answer: (reply: string) => void }>();
@@ -21,11 +23,27 @@ export function fakeEngine({ step = 120, gap = 0, now = Date.now }: { step?: num
     signal.addEventListener('abort', () => { clearTimeout(timer); fail(new Error('aborted')); }, { once: true });
   });
 
-  async function work(session: Session, text: string) {
+  async function work(session: Session, text: string, model = '') {
     const run = new AbortController();
     session.run = run;
     session.busy = true;
     const sessionID = session.id;
+    if (down.includes(model)) {
+      tell('session.status', { sessionID, status: { type: 'busy' } }, session.directory);
+      try {
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          await pause(run.signal);
+          tell('session.status', { sessionID, status: { type: 'retry', attempt, message: DOWN_MESSAGE, next: now() + step } }, session.directory);
+        }
+        await pause(run.signal);
+        tell('session.error', { sessionID, error: { name: 'APIError', data: { message: DOWN_MESSAGE, statusCode: 400, isRetryable: false } } }, session.directory);
+      } catch { /* aborted */ }
+      session.busy = false;
+      session.run = undefined;
+      tell('session.status', { sessionID, status: { type: 'idle' } }, session.directory);
+      tell('session.idle', { sessionID }, session.directory);
+      return;
+    }
     const messageID = id('msg');
     const part = (part: Record<string, unknown>) => tell('message.part.updated', { sessionID, part: { sessionID, messageID, id: id('prt'), ...part } }, session.directory);
     // A part the way the real one says it as it grows: announced, then word by word, then whole with its end time.
@@ -121,7 +139,7 @@ export function fakeEngine({ step = 120, gap = 0, now = Date.now }: { step?: num
           const text = String(asked.parts?.[0]?.text ?? '');
           if (session.reverted) { session.messages = session.messages.slice(0, session.messages.findIndex((one) => one.id === session.reverted)); session.reverted = undefined; }
           session.messages.push({ id: id('msg'), role: 'user', text });
-          void work(session, text);
+          void work(session, text, String(asked.model?.modelID ?? ''));
           return null;
         }
         if (method === 'POST' && action === 'abort') { session.run?.abort(); return true; }

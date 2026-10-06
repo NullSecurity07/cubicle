@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readStream, translate } from './events.ts';
+import { modelDown, plainError, readStream, translate } from './events.ts';
 
 const DIR = '/home/me/code/shop';
 const part = (part: Record<string, unknown>) => ({ type: 'message.part.updated', properties: { sessionID: 'ses_1', part: { sessionID: 'ses_1', ...part } } });
@@ -101,5 +101,17 @@ describe('the event stream', () => {
     read('erties":{"sessionID":"ses_1"}}}\n\n: comment\n');
     read('data: not json\n\ndata: {"payload":{"type":"server.connected","properties":{}}}\n\n');
     expect(heard).toEqual([{ directory: '/a', type: 'session.idle', properties: { sessionID: 'ses_1' } }, { directory: undefined, type: 'server.connected', properties: {} }]);
+  });
+
+  it('hears opencode retrying a refused request, in the provider\'s reason without its wrapping', () => {
+    const said = 'Error from provider (Console): Upstream request failed: Endpoint is unavailable.';
+    expect(translate({ type: 'session.status', properties: { sessionID: 'ses_1', status: { type: 'retry', attempt: 1, message: said, next: 1 } } })).toEqual({ session: 'ses_1', retry: 'Endpoint is unavailable.' });
+    expect(translate({ type: 'session.error', properties: { sessionID: 'ses_1', error: { name: 'APIError', data: { message: said } } } })?.error).toBe('Endpoint is unavailable.');
+    expect(plainError(said)).not.toMatch(/Error from provider|Upstream/);
+  });
+
+  it('tells a model that is down from a key or a quota the founder has to see to', () => {
+    for (const down of ['Endpoint is unavailable.', 'The model is overloaded. Try again later.', 'No endpoints found for nvidia/x.', '503 Service Unavailable']) expect(modelDown(down)).toBe(true);
+    for (const theirs of ['Invalid API key', 'Rate limit reached for model', 'You exceeded your current quota', '429 Too Many Requests: service unavailable', 'Insufficient credits']) expect(modelDown(theirs)).toBe(false);
   });
 });
