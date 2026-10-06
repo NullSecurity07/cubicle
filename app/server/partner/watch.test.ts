@@ -10,7 +10,7 @@ import { unaskedRow } from '../openends/health.ts';
 import type { ModelClient } from '../providers.ts';
 import { createUnasked } from '../usage.ts';
 import { saidNoFor } from './saidno.ts';
-import { budgetUsed, createWatch, emailBody, fakeWatchReply, guardProposal, killLineOf, killToward, leadSparks, metricSparks, proposalOf, towardLine, trending, watchAsk, type Acts, type Budget, type Proposal, type WatchDeps, watchBudget } from './watch.ts';
+import { budgetUsed, createWatch, emailBody, fakeWatchReply, guardProposal, leadTwins, killLineOf, killToward, leadSparks, metricSparks, proposalOf, towardLine, trending, watchAsk, type Acts, type Budget, type Proposal, type WatchDeps, watchBudget } from './watch.ts';
 
 const NOON = new Date('2026-10-06T12:00:00').getTime();
 const DAY = 86_400_000;
@@ -322,6 +322,25 @@ it('takes a count nothing on record gives out of the move, and the row says so',
   expect(held.move).toBe('Find out this week what is moving the number, before the check day.');
   expect(held.draft).toMatchObject({ kind: 'task', title: 'Find out this week what is moving the number, before the check day' });
   expect(held.left).toEqual(['3 nurses who']);
+});
+
+// Journey 16: two Needs you rows per lead reply, the plain ask and Sam's ready answer.
+it('settles the plain reply ask while the partner\'s answer to that lead waits, and only that lead\'s', () => {
+  const rows = [
+    { id: 'partner-proposal:lead-x-0', kind: 'partner-proposal', title: 'Sam proposes: answer Anna', at: 2, cardId: 'leads1', leadId: 'lead-anna' },
+    { id: 'lead-replied:leads1:lead-anna:5', kind: 'lead-replied', title: 'Anna replied. Draft an answer?', at: 1, cardId: 'leads1' },
+    { id: 'lead-replied:leads1:lead-ben:6', kind: 'lead-replied', title: 'Ben replied. Draft an answer?', at: 1, cardId: 'leads1' },
+  ] as Attention[];
+  expect([...leadTwins(rows)]).toEqual(['lead-replied:leads1:lead-anna:5']);
+  expect([...leadTwins(rows.slice(1))]).toEqual([]);
+});
+
+it('signs the ready reply with the founder\'s name from the brief, and never with a placeholder', () => {
+  const anna: Lead & { cardId: string } = { id: 'lead-anna', cardId: 'leads1', person: { name: 'Anna Kowalski', email: 'anna@marien.example' }, company: { name: 'St. Marien' }, stage: 'replied', notes: [], source: 'founder', addedAt: 0, updatedAt: 3, thread: [{ kind: 'replied', at: 2, text: 'Thanks, how does it work?' }] };
+  const [spark] = leadSparks([anna], { 'lead-anna': 'contacted' }, NOON);
+  const reply = 'Move: Answer Anna.\nSubject: How it works\nBody: Hi Anna,\n\nYou order by Friday.\n\nBest,\n[Founder Name]\n[Company]';
+  expect(guardProposal(spark, proposalOf(spark, reply, '2026-10-07'), ['# Company\n- Founder: Mara Lind']).draft).toMatchObject({ body: 'Hi Anna,\n\nYou order by Friday.\n\nBest,\nMara Lind' });
+  expect(guardProposal(spark, proposalOf(spark, reply, '2026-10-07'), ['# Company']).draft).toMatchObject({ body: 'Hi Anna,\n\nYou order by Friday.\n\nBest,' });
 });
 
 describe('the reply to a lead who wrote back', () => {

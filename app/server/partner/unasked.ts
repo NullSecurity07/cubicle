@@ -97,3 +97,18 @@ export function guardUnasked(text: string, sources: string[]): Guarded {
 
 // The line a row or a note carries for what was taken out.
 export const leftOutLine = (left: string[]) => (left.length ? `(left out: nothing on record about ${left.join(', ')})` : '');
+
+// A draft signed "[Founder Name]" (journey 16) goes out with the placeholder in it. A name placeholder is filled from
+// the brief's founder line when it has one; any line still holding a bracketed placeholder ("[Company]", "[Date]") is
+// dropped, so what the founder opens in Gmail has nothing left to fill in.
+const NAME_SLOT = /\[(?:(?:your|the|founder'?s?|my|sender'?s?)\s+)?(?:full\s+)?(?:name|founder)\]/gi;
+const SLOT = /\[[\p{L}][\p{L}' ]{0,30}\]/u;
+export function founderOf(brief: string): string | null {
+  const hit = /^\s*(?:[-*]\s*)?(?:\*\*)?(?:founder(?:'s name)?|founded by|founders?)(?:\*\*)?\s*:\s*(?:\*\*)?\s*(\p{Lu}[\p{L}'-]+(?:\s+\p{Lu}[\p{L}'-]+){0,2})/imu.exec(brief);
+  return hit ? hit[1] : null;
+}
+export function filledIn(body: string, brief: string): string {
+  const name = founderOf(brief);
+  const named = name ? body.replace(NAME_SLOT, name) : body;
+  return named.split('\n').filter((line) => !SLOT.test(line)).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}

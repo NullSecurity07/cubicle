@@ -175,6 +175,8 @@ export type Attention = {
   roomId?: string; cardId?: string; taskId?: string; decisionId?: string; event?: ToolEvent; lapsed?: boolean;
   // A proposed source: which proposal, the site and the line on what it holds, for the founder to add as it is.
   sourceId?: string; url?: string; about?: string;
+  // A row about one lead on a Leads card (with `cardId`): a reply waiting, the partner's ready answer to it.
+  leadId?: string;
   // A coder's question: what it wants to do, for the founder to allow once, for good, or not at all.
   coder?: CoderAsk;
 };
@@ -253,6 +255,8 @@ export type ChatMessage = {
   id: string; role: 'user' | 'assistant'; text: string; at: number;
   // Set when the words came from a colleague's consult, not from the founder: the colleague's name.
   from?: string; via?: ChatVia;
+  // A colleague's line that is the partner's review of their doc, not a question.
+  note?: 'review';
   provider?: string; model?: string; usage?: Usage; tools?: ToolEvent[]; stopped?: boolean; attachments?: Attachment[];
   // A turn that failed: kept so a reload shows why the question has no answer, and never shown to a model again.
   failed?: boolean;

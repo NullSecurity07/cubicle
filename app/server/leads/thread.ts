@@ -7,6 +7,9 @@ import type { Metric } from '../../shared/metrics.ts';
 import type { Attention, Stage } from '../../shared/model.ts';
 import type { Boards } from '../boards.ts';
 import { localDay } from '../clock.ts';
+
+// The time where the founder is, "HH:MM", for when a meeting today is over.
+const clockOf = (at: number) => { const time = new Date(at); return `${String(time.getHours()).padStart(2, '0')}:${String(time.getMinutes()).padStart(2, '0')}`; };
 import type { Mail } from '../mail.ts';
 import type { MetricsStore } from '../metrics/store.ts';
 import { wired } from '../prompt.ts';
@@ -89,8 +92,9 @@ export function createThread(deps: ThreadDeps) {
       return leads.thread(cardId, leadId, { kind: 'replied', text: words, ...(mail ? { mail } : {}) }, stageAfter(lead.stage, 'replied'));
     },
     // A meeting set for a day: the lead is at Meeting, and the day carries a task on the board so it is not missed.
-    async meeting(cardId: string, leadId: string, day: string): Promise<{ lead: Lead; board: string | null }> {
+    async meeting(cardId: string, leadId: string, day: string, time = ''): Promise<{ lead: Lead; board: string | null }> {
       if (!isDay(day)) throw new Error('a meeting day is written YYYY-MM-DD');
+      if (time && !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new Error('a meeting time is written HH:MM');
       const lead = await leadOf(cardId, leadId);
       const stage = await deps.loadStage();
       const boardId = deps.boards ? nearest(stage, cardId, boardsOn(stage)) ?? null : null;
@@ -98,7 +102,7 @@ export function createThread(deps: ThreadDeps) {
         title: `Meeting with ${leadName(lead)}`, due: day,
         detail: `Set from the Leads card${lead.person.email ? `; ${lead.person.email}` : ''}. Afterwards, write how it went on the lead.`,
       }) : null;
-      const moved = await leads.thread(cardId, leadId, { kind: 'meeting', day, ...(task && boardId ? { boardId, taskId: task.id } : {}) }, stageAfter(lead.stage, 'meeting'));
+      const moved = await leads.thread(cardId, leadId, { kind: 'meeting', day, ...(time ? { time } : {}), ...(task && boardId ? { boardId, taskId: task.id } : {}) }, stageAfter(lead.stage, 'meeting'));
       return { lead: moved, board: boardId };
     },
     // What the founder wrote after the meeting, kept as a note, with the reading it proposes: one conversation, and one
@@ -148,7 +152,7 @@ export function createThread(deps: ThreadDeps) {
         for (const lead of await leads.list(cardId)) {
           const reply = waitingReply(lead);
           if (reply) found.push({ id: askId('lead-replied', cardId, lead.id, reply.at), kind: 'lead-replied', cardId, at: reply.at, title: replyTitle(lead), detail: replyDetail(reply), ...room });
-          const meeting = notesOwed(lead, today);
+          const meeting = notesOwed(lead, today, clockOf(now));
           if (meeting) found.push({ id: askId('lead-notes', cardId, lead.id, meeting.at), kind: 'lead-notes', cardId, at: Math.min(now, Date.parse(`${meeting.day}T23:59:59`) + 1000), title: notesTitle(lead), detail: notesDetail(meeting) });
           const notes = metrics ? readingOwed(lead) : null;
           if (notes) found.push({ id: askId('lead-reading', cardId, lead.id, notes.at), kind: 'lead-reading', cardId, at: notes.at, title: readingTitle(lead, notes.reading!), detail: readingDetail(notes) });

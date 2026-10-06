@@ -90,7 +90,7 @@ export function threadSlice(make: { mail?: () => Pick<Mail, 'received' | 'ways'>
           try {
             if (part === 'replied') deps.json(res, 200, await thread.replied(cardId, leadId, String(sent?.text ?? '')));
             else if (part === 'meeting') {
-              const { lead, board } = await thread.meeting(cardId, leadId, String(sent?.day ?? ''));
+              const { lead, board } = await thread.meeting(cardId, leadId, String(sent?.day ?? ''), typeof sent?.time === 'string' ? sent.time : '');
               deps.json(res, 200, { lead, board });
             } else if (part === 'meeting-notes') deps.json(res, 200, await thread.notes(cardId, leadId, String(sent?.text ?? '')));
             else {

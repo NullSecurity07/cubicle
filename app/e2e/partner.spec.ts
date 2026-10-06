@@ -181,6 +181,8 @@ test('the partner reviews a colleague\'s doc unasked, and Fix sends the colleagu
   const chat = async () => (await (await page.request.get('/api/rooms/marketing/chat')).json()) as { role: string; text: string; from?: string }[];
   await expect.poll(async () => (await chat()).find((one) => one.from === 'Sam')?.text ?? '', { timeout: 45_000 })
     .toContain('Net burn is €1,914 a month, not €1,380: 2100 + 3 * 178 - 3 * 240 = 1,914 (calc)');
+  // The line in Maya's room is Sam's review of her doc, not a question Sam asked (journey 16: "SAM ASKED").
+  await expect(page.locator('.react-flow__node[data-id="marketing"] .msg--colleague').filter({ hasText: 'Unit Economics' }).last()).toContainText('Sam reviewed your doc');
 
   await bar(page, 'needs', 'Needs you');
   const row = page.getByRole('dialog', { name: 'Needs you' }).locator('.needs__item--review-flag');
@@ -258,6 +260,8 @@ test('a lead\'s reply wakes the partner, and the ready answer promises nothing t
     await expect(row).toHaveCount(1);
     await expect(row).toContainText('Ready: an email to anna@marien.example');
     await expect(row).toContainText('(left out: nothing on record about delivery on Thursday, nut-free)');
+    // One row for the reply: Sam's ready answer settles the plain "Draft an answer?" ask for Anna.
+    await expect(page.getByRole('dialog', { name: 'Needs you' }).locator('.needs__item--lead-replied')).toHaveCount(0);
     await expect(row).not.toContainText('we can deliver on Thursday');
     await expect(row).not.toContainText('are nut-free');
   } finally {

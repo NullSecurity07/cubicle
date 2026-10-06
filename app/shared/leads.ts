@@ -31,7 +31,8 @@ export type ThreadKind = 'drafted' | 'sent' | 'opened' | 'replied' | 'meeting' |
 export type ThreadReading = { conversations: number; paying: number; working?: string; answer?: 'logged' | 'declined' };
 export type ThreadEvent = {
   at: number; kind: ThreadKind; text?: string; subject?: string; draft?: string; room?: string; via?: 'agentmail' | 'gmail';
-  mail?: string; day?: string; boardId?: string; taskId?: string; reading?: ThreadReading; of?: 'replied' | 'notes';
+  // `time`: a meeting's start, "HH:MM" where the founder is, when they gave one.
+  mail?: string; day?: string; time?: string; boardId?: string; taskId?: string; reading?: ThreadReading; of?: 'replied' | 'notes';
 };
 // A note's key for the mirror: notes are only ever added, so where it sits and when it was written never change.
 export const noteKey = (note: LeadNote, index: number) => `${index}:${note.at}`;

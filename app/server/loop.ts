@@ -9,6 +9,7 @@ import type { Offered } from './playbook.ts';
 import type { Payloads, Seams, Source } from './seams.ts';
 import { runTool, type Tool, type ToolContext } from './tools/registry.ts';
 import { readsOf } from './tools/unread.ts';
+import { calcTagsHeld } from './calctag.ts';
 import { holdDraftClaims, notDone } from './draftclaim.ts';
 import { ANSWER_IN_WORDS, CALL_THE_TOOL, checkReply, HELD_BACK, proseToolCall, turnEvidence, turnSources } from './truth.ts';
 import type { UsageBook } from './usage.ts';
@@ -348,6 +349,10 @@ export async function runTurn(input: {
   let flags: string[] = [];
   // No "drafted" without a draft, and no "open it in Gmail" without one to open (server/draftclaim.ts).
   if (!signal?.aborted && !summarised && text.trim()) text = holdDraftClaims(text, done);
+  // "(calc)" only beside a figure a calc working this turn gave (server/calctag.ts).
+  if (!signal?.aborted && !summarised && text.trim()) {
+    text = calcTagsHeld(text, [...done.filter((one) => one.name === 'calc' && one.ok).map((one) => one.result ?? ''), ...messages.map((one) => (typeof one.content === 'string' ? one.content : ''))]);
+  }
   if (!signal?.aborted && !held && !summarised && text.trim()) {
     flags = checkReply({ reply: text, receipts: done, sources: [...turnSources(inputs), ...results, query] });
     const tail = [...(broke ? [`(reply cut short: ${broke})`] : []), ...(broke && done.length ? [receiptSummary(done, 'The reply broke off after these steps')] : []), ...flags];

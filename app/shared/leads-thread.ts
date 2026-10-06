@@ -32,13 +32,20 @@ export function waitingReply(lead: Pick<Lead, 'stage' | 'thread'>): ThreadEvent 
   return after.some((event) => ['drafted', 'sent', 'opened', 'meeting'].includes(event.kind) || (event.kind === 'closed' && event.of === 'replied')) ? null : thread[at];
 }
 
-// The meeting whose notes are owed: the newest one, once its day is over where the founder is, while the lead is still
-// at Meeting and no notes were written (or the ask waved away) since it was set.
-export function notesOwed(lead: Pick<Lead, 'stage' | 'thread'>, today: string): ThreadEvent | null {
+// The meeting whose notes are owed: the newest one, once it is over where the founder is, while the lead is still at
+// Meeting and no notes were written (or the ask waved away) since it was set. Over is a day before today, or today
+// from an hour after its time; a meeting with no time is over at 17:00. Journey 16: a meeting on the day was not asked
+// about at 18:00, only the next morning.
+export const MEETING_OVER = '17:00';
+const hourAfter = (time: string) => { const [hour, minute] = time.split(':').map(Number); return `${String(Math.min(hour + 1, 23)).padStart(2, '0')}:${String(minute).padStart(2, '0')}`; };
+export function notesOwed(lead: Pick<Lead, 'stage' | 'thread'>, today: string, clock = '00:00'): ThreadEvent | null {
   const thread = lead.thread ?? [];
   if (lead.stage !== 'meeting') return null;
   const at = lastIndex(thread, (event) => event.kind === 'meeting');
-  if (at < 0 || !thread[at].day || thread[at].day! >= today) return null;
+  if (at < 0 || !thread[at].day) return null;
+  const { day, time } = thread[at];
+  const over = day! < today || (day === today && clock >= (time && /^\d{2}:\d{2}$/.test(time) ? hourAfter(time) : MEETING_OVER));
+  if (!over) return null;
   return thread.slice(at + 1).some((event) => event.kind === 'notes' || (event.kind === 'closed' && event.of === 'notes')) ? null : thread[at];
 }
 
@@ -142,10 +149,13 @@ export function eventLine(event: ThreadEvent): string {
 }
 export const lastEvent = (lead: Pick<Lead, 'thread'>) => [...(lead.thread ?? [])].reverse().find((event) => event.kind !== 'closed') ?? null;
 
-// What pressing "Draft an answer" asks the wired person: answer the reply, aiming for a meeting.
+// What pressing "Draft an answer" asks the wired person: answer the reply's own words first, and a call only when they
+// asked for one. Journey 16: the ask demanded "a short meeting with two concrete times" of a lead who had asked about
+// delivery days and nuts.
 export const replyAsk = (lead: Pick<Lead, 'person' | 'company'>, reply: string) =>
-  `${leadName(lead)} replied: "${short(reply, 600)}". Draft my answer with draft_email to ${lead.person.name}: answer what they asked in their own words, `
-  + 'then propose a short meeting with two concrete times. I will send it myself.';
+  `${leadName(lead)} replied: "${short(reply, 600)}". Draft my answer with draft_email to ${lead.person.name}: first answer each thing they asked, in turn and in their own words. `
+  + 'Promise nothing that is not on record (a day, a delivery, an ingredient, safety, a price): where we do not know, say I will check and come back. '
+  + 'Propose a call or a meeting only if they asked for one. Sign it with my name if the brief has it, never a placeholder. I will send it myself.';
 export const replyTitle = (lead: Pick<Lead, 'person' | 'company'>) => `${leadName(lead)} replied. Draft an answer?`;
 export const replyDetail = (reply: ThreadEvent) => `"${short(reply.text ?? '', 200)}"`;
 export const notesTitle = (lead: Pick<Lead, 'person'>) => `How did the meeting with ${lead.person.name} go?`;
