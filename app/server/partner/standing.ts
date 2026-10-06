@@ -40,6 +40,7 @@ const WAITING: Partial<Record<AttentionKind, [one: string, many: string]>> = {
   'proposed-target': ['target to set', 'targets to set'],
   'proposed-runway': ['runway figure to confirm', 'runway figures to confirm'],
   'mail-draft': ['email to send', 'emails to send'],
+  'partner-proposal': ['unasked move to run or turn down', 'unasked moves to run or turn down'],
 };
 const quoted = (title: string) => `"${title.replace(/\s+/g, ' ').trim().slice(0, 60)}"`;
 

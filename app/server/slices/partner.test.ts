@@ -837,3 +837,34 @@ describe('the partner slice: a verdict that commits', () => {
     await part.close!();
   });
 });
+
+describe('the partner slice: the watch', () => {
+  it('takes its unasked turn off the partner-only model, raises Sam proposes in Needs you, and Run puts the task on a board', async () => {
+    const called: string[] = [];
+    const client = (name: string, extra: Record<string, unknown> = {}) => ({ name, model: `${name}-1`, maxPromptChars: Infinity, tools: true, limits: {}, ...extra,
+      async step(_messages: unknown, { onToken }: { onToken: (token: string) => void }) { called.push(name); onToken('Move: Call five lapsed signups.\nTask: Call five lapsed signups\nDue: 2026-10-07'); return { text: '', calls: [] }; } });
+    const NOW = new Date('2026-10-06T12:00:00').getTime();
+    let answered: unknown;
+    const { deps, part, workspace } = await installed({ clients: [client('gemini-flash', { partnerOnly: true }), client('cheap')] as unknown as Deps['clients'], json: (_res, _status, body) => { answered = body; }, body: async () => ({ run: true }) }, { now: () => NOW });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await deps.store.patchStage((stage) => { stage.cards = [...(stage.cards ?? []), { id: 'm1', kind: 'metrics', x: 0, y: 0, w: 1, h: 1 }]; });
+    await mkdir(join(workspace, 'metrics'), { recursive: true });
+    await writeFile(join(workspace, 'metrics', 'm1.json'), JSON.stringify({ updatedAt: 0, metrics: [{ key: 'signups', label: 'Signups', better: 'up', points: [{ at: '2026-09-30', value: 6, from: 'founder' }, { at: '2026-10-06', value: 4, from: 'founder' }] }] }));
+    await promisesBook(workspace, () => NOW - 6 * 86_400_000).add({ what: 'weekly signups below 5', due: '2026-10-30', roomId: 'p1', check: true });
+    await part.route!({ method: 'POST' } as never, {} as never, '/api/partner/watch');
+    expect(called).toEqual(['cheap']);
+    const row = (await deps.attention.list()).find((one) => one.kind === 'partner-proposal')!;
+    expect(row.title).toBe('Sam proposes: Call five lapsed signups.');
+    expect(row.detail).toContain('Unasked · Signups crossed the kill line.');
+    expect(row.detail).toContain('Signups: 4 on 2026-10-06');
+    // Ranked high in Today's five.
+    expect((await todayFive({ workspace, attention: deps.attention, boards: deps.boards, store: deps.store }, NOW))[0]).toMatchObject({ kind: 'partner-proposal', reason: expect.stringContaining('Your partner has a move ready') });
+    // Run: with no board on the stage, one is made beside Sam and the task goes on it, dated.
+    await part.route!({ method: 'POST' } as never, {} as never, `/api/partner/proposals/${row.id.split(':')[1]}`);
+    expect(answered).toMatchObject({ status: 'run' });
+    const board = (await deps.store.loadStage()).cards!.find((card) => card.kind === 'board')!;
+    expect((await deps.boards.list(board.id)).map((task) => [task.title, task.due, task.column])).toEqual([['Call five lapsed signups', '2026-10-07', 'todo']]);
+    expect((await deps.attention.list()).some((one) => one.kind === 'partner-proposal')).toBe(false);
+    await part.close!();
+  });
+});
