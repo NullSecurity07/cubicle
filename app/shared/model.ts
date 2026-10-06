@@ -152,6 +152,8 @@ export type BoardEvent = { tasks: Task[] } | { effect: ToolEffect; roomId: strin
 // One thing waiting for the founder. `lapsed`: the approval belonged to a turn that ended with the app; it can only be asked again.
 export type AttentionKind = 'approval' | 'run-approval' | 'proposed-task' | 'proposed-decision' | 'run-failed' | 'missed' | 'review-due' | 'proposed-source' | 'page-changed'
   | 'lead-stale'
+  // A lead's thread: a reply to answer, a meeting's notes to write, a reading those notes propose for the Metrics card.
+  | 'lead-replied' | 'lead-notes' | 'lead-reading'
   | 'metric-alert' | 'proposed-target' | 'runway-low' | 'proposed-runway'
   | 'key-rejected'
   // A file the app could not read and put back or started again.

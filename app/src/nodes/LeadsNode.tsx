@@ -10,6 +10,7 @@ import { useFlushStage } from '../sync';
 import { CardActions, Frame } from './Frame';
 import './leads.css';
 import { LeadStaleMark } from './LeadNudge';
+import { LeadThreadLine, LeadThreadView } from './LeadThread';
 import { pressed } from '../keys';
 import { useAttempt } from '../attempt';
 import { csvIn, LeadsImport, readDropped } from './LeadsImport';
@@ -23,7 +24,7 @@ const SOURCE: Record<Lead['source'], string> = { founder: 'added by you', person
 export function LeadsNode({ id, selected }: NodeProps<LeadsNodeType>) {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
-  const [draft, setDraft] = useState({ name: '', company: '', line: '' });
+  const [draft, setDraft] = useState({ name: '', company: '', email: '', line: '' });
   const [note, setNote] = useState('');
   const { problem, setProblem, attempt: act } = useAttempt();
   const [copied, setCopied] = useState(false);
@@ -55,7 +56,7 @@ export function LeadsNode({ id, selected }: NodeProps<LeadsNodeType>) {
     const name = draft.name.trim();
     const company = draft.company.trim();
     if (!name || !company) { setProblem('A lead needs a name and a company.'); return; }
-    act(addLead(id, { name, company, line: draft.line }).then(() => setDraft({ name: '', company: '', line: '' })));
+    act(addLead(id, { name, company, line: draft.line, ...(draft.email.trim() ? { email: draft.email.trim() } : {}) }).then(() => setDraft({ name: '', company: '', email: '', line: '' })));
   }
   function copy() {
     act(navigator.clipboard.writeText(leadsCsv(leads)).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1600); }));
@@ -93,6 +94,7 @@ export function LeadsNode({ id, selected }: NodeProps<LeadsNodeType>) {
         <form className="leads__add" onSubmit={(event) => { event.preventDefault(); add(); }}>
           <input aria-label="Lead name" placeholder="Name" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
           <input aria-label="Company" placeholder="Company" value={draft.company} onChange={(event) => setDraft({ ...draft, company: event.target.value })} />
+          <input type="email" aria-label="Email" placeholder="Email (optional)" value={draft.email} onChange={(event) => setDraft({ ...draft, email: event.target.value })} />
           <input className="leads__line" aria-label="One line about them" placeholder="One line: why they might buy" value={draft.line} onChange={(event) => setDraft({ ...draft, line: event.target.value })} />
           <button type="submit" disabled={!draft.name.trim() || !draft.company.trim()}>Add</button>
         </form>
@@ -113,6 +115,7 @@ export function LeadsNode({ id, selected }: NodeProps<LeadsNodeType>) {
                       <span className="lead__name">{lead.person.name}</span>
                       <span className="lead__company">{lead.company.name}</span>
                       {lead.fit && <span className={`lead__fit${lead.fit.score >= 7 ? ' is-good' : ''}`} title={lead.fit.why}>{lead.fit.score}</span>}
+                      <LeadThreadLine lead={lead} />
                       <LeadStaleMark cardId={id} lead={lead} />
                     </button>
                   ))}
@@ -152,6 +155,7 @@ export function LeadsNode({ id, selected }: NodeProps<LeadsNodeType>) {
                 {LEAD_STAGES.map((stage) => <option key={stage} value={stage}>{STAGE_NAMES[stage]}</option>)}
               </select>
             </label>
+            <LeadThreadView cardId={id} lead={open} writer={writer} attempt={act} />
             {open.fit && <p className="leadview__fit"><b>{open.fit.score}/10</b> {open.fit.why}</p>}
             <div className="leadview__notes" aria-label="Notes">
               {open.notes.map((one, index) => (
