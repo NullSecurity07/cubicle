@@ -6,6 +6,7 @@ import type { Room, Stage, ToolEvent } from '../../shared/model.ts';
 import { COMPANY_LINE, companyLine } from '../../shared/partner.ts';
 import type { Deps, Installed } from '../install.ts';
 import { companyDocOf } from '../partner/company.ts';
+import { saidNoFor } from '../partner/saidno.ts';
 import { partnerState } from '../partner/state.ts';
 import { promisesAttention, promisesBook } from '../partner/promises.ts';
 import { stubDeps } from '../slice-stubs.ts';
@@ -969,6 +970,33 @@ describe('the partner slice: reviewing colleagues and refreshing the verdict', (
     await again.tick!();
     expect(asks.filter((one) => one.includes('A week has passed since your verdict.'))).toHaveLength(1);
     await again.close!();
+  });
+});
+
+// Journey 15: "no cold outreach" at day 3, and minutes later the refresh said "Contact 40 more local makers".
+describe('the partner slice: the refresh and the founder\'s no', () => {
+  it('drops a week\'s move the founder ruled out and says which no it kept to', async () => {
+    let clock = new Date('2026-10-01T10:00').getTime();
+    const NUMBERS = (paying: number) => `# Company\n\n## Numbers\n\n- Paying offices: ${paying}\n- Price: €240 a month per office\n- Produce + delivery cost: €41 per box, about €178 a month per office\n- MRR: €720\n- Cash: €12,000\n- Burn: €2,100 a month\n`;
+    const replies = ['My call: keep going\nWhy: three offices pay.\nKill signal: paying offices below 5 by 2026-10-29\nThis week: call the two pilot offices.',
+      'My call: keep going\nWhy: break-even is 34 paying offices and we have 4.\nKill signal: paying offices below 5 by 2026-10-29\nThis week: Contact 40 more local makers to secure the remaining jobs.'];
+    const { deps, part } = await installed({}, { now: () => clock, ask: async (messages) => (String(messages.at(-1)?.content).includes('Make the call again') ? replies[1] : SHAPED), budget: { take: () => ({ ok: true }) } });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    const company = companyDocOf(await deps.store.loadStage())!;
+    await deps.store.writeDoc(company.id, NUMBERS(3));
+    const base = { tools: [], provider: 'p', model: 'm', usage: { input: 1, output: 1 }, stopped: false };
+    await deps.seams.run('turn:reply', { roomId: 'p1', query: 'Your verdict: keep going, pivot or stop?', reply: { ...base, text: replies[0] } });
+    await saidNoFor(deps.workspace).record({ tool: 'chat', subject: 'cold outreach to more makers', reason: 'we are at 9 jobs' });
+    await deps.store.writeDoc(company.id, NUMBERS(4).replace('MRR: €720', 'MRR: €960'));
+    clock = new Date('2026-10-02T10:00').getTime();
+    const before = (await deps.store.readChat('p1')).length;
+    await part.tick!();
+    const posted = (await deps.store.readChat('p1')).slice(before).at(-1)!;
+    expect(posted.text).toMatch(/On 1 Oct I said keep going/);
+    expect(posted.text).not.toContain('This week: Contact 40');
+    expect(posted.text).toMatch(/\*You ruled out cold outreach to more makers on \d{1,2} \w{3,4} \('we are at 9 jobs'\), so the move "Contact 40 more local makers to secure the remaining jobs\.?" was dropped\.\*/);
+    await part.close!();
   });
 });
 

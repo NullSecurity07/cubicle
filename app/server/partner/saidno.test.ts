@@ -6,7 +6,7 @@ import { createApprovals, putToFounder } from '../approvals.ts';
 import { standingBlock } from './standing.ts';
 import { citedFacts, standingFacts } from './synthesis.ts';
 import { saidNoProposal } from './watch.ts';
-import { chatNo, checkAgainst, createSaidNo, overlap, proposalOf, promptLine, sameProposal, SAID_NO_MOST, suggestionIn, type SaidNoEntry } from './saidno.ts';
+import { againstNo, chatNo, checkAgainst, createSaidNo, ruledOutBy, ruledOutLine, standingNosIn, overlap, proposalOf, promptLine, sameProposal, SAID_NO_MOST, suggestionIn, type SaidNoEntry } from './saidno.ts';
 
 const DAY = 86_400_000;
 const OCT_3 = Date.UTC(2026, 9, 3, 12);
@@ -128,5 +128,47 @@ describe('said no in the standing facts', () => {
     expect(block).toContain(`The founder said no to (never put one to them again as new):\n${line}`);
     const facts = standingFacts({ verdicts: [], numbers: '', open: [], planned: [], flagCounts: [], decided: [], learned: [], declined: [line] });
     expect(citedFacts('You said no to the €29 cut last week, so keep the price and chase the three pilots.', facts).map((fact) => fact.kind)).toEqual(['declined']);
+  });
+});
+
+// Journey 15: "Don't propose cold outreach to more makers this week" kept nothing, and the refresh and the next
+// morning's note proposed contacting more makers.
+describe('a standing no said in chat', () => {
+  it('reads what the founder rules out and why, without the time it was said for', () => {
+    expect(standingNosIn('No to the task of contacting 10 more makers, because we are at 9 jobs and the last one comes from a host. Don\'t propose cold outreach to more makers this week.')).toEqual([
+      { subject: 'contacting 10 more makers', reason: 'we are at 9 jobs and the last one comes from a host' },
+      { subject: 'cold outreach to more makers', reason: 'we are at 9 jobs and the last one comes from a host' },
+    ]);
+    expect(standingNosIn('No more discounts.')).toEqual([{ subject: 'discounts' }]);
+    expect(standingNosIn('Sounds good, go ahead.')).toEqual([]);
+    expect(standingNosIn('No problem, do it.')).toEqual([]);
+  });
+
+  it('holds a move against it by the no\'s own words, and lets a move that keeps to it through', () => {
+    const no = 'cold outreach to more makers';
+    expect(againstNo(no, 'Contact 40 more local makers to secure the remaining 6 print jobs.')).toBe(true);
+    expect(againstNo(no, 'Reach out to 10 more makers today.')).toBe(true);
+    expect(againstNo(no, 'Close that final print job without cold outreach to makers.')).toBe(false);
+    expect(againstNo(no, 'Update the Company brief from 4 to 9 jobs.')).toBe(false);
+    expect(againstNo(no, 'Email Mira the pickup answer.')).toBe(false);
+  });
+
+  it('finds the no a move breaks inside the window and says it as the founder ruled it out', () => {
+    const entry = { id: 'n', tool: 'chat', subject: 'cold outreach to more makers', at: OCT_3, asked: 0, reason: 'we are at 9 jobs' } as SaidNoEntry;
+    expect(ruledOutBy([entry], 'Contact 40 more local makers', OCT_3 + DAY)).toBe(entry);
+    expect(ruledOutBy([entry], 'Contact 40 more local makers', OCT_3 + 15 * DAY)).toBeUndefined();
+    expect(ruledOutLine(entry)).toBe("You ruled out cold outreach to more makers on 3 Oct ('we are at 9 jobs')");
+  });
+
+  it('gives a reason said just after a Don\'t to the no that had none', async () => {
+    let clock = OCT_3;
+    const book = createSaidNo(await mkdtemp(join(tmpdir(), 'saidno-why-')), () => clock);
+    await book.record({ tool: 'propose_task', subject: 'Reply to Mira proposing a 20-minute call' });
+    clock += 60_000;
+    expect(await book.explain('she asked how pickup works')).toMatchObject({ reason: 'she asked how pickup works' });
+    clock += 60 * 60_000;
+    await book.record({ tool: 'propose_task', subject: 'Contact more makers' });
+    clock += 20 * 60_000;
+    expect(await book.explain('too late')).toBeNull();
   });
 });

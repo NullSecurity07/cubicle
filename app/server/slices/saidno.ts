@@ -1,6 +1,6 @@
 import type { Stage } from '../../shared/model.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
-import { chatNo, promptLine, proposalOf, saidNoFor, suggestionIn, type Proposal } from '../partner/saidno.ts';
+import { chatNo, promptLine, proposalOf, saidNoFor, standingNosIn, suggestionIn, type Proposal } from '../partner/saidno.ts';
 import { withSystem, type Handler } from '../seams.ts';
 import { leadAddresses } from '../tools/outward.ts';
 
@@ -76,7 +76,12 @@ export default {
           const words = last && !proposed.length ? suggestionIn(last.text) : '';
           if (words) proposed.push({ tool: 'chat', subject: words });
           for (const one of proposed) await book.record({ ...one, who: room.name, ...said });
+          // Nothing proposed to say no to, and a reason given: it is why the Don't just pressed was pressed.
+          if (!proposed.length && said.reason) await book.explain(said.reason);
         }
+        // "Don't propose cold outreach to more makers", said anywhere in a message, stands with its reason; the
+        // unasked refresh and the morning note are held to it (journey 15).
+        if (payload.source === 'chat') for (const one of standingNosIn(payload.query)) await book.record({ tool: 'chat', ...one, who: room.name });
         // The partner has the same list in their standing facts.
         if (!room.partner) {
           const line = promptLine(await book.list());

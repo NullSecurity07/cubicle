@@ -164,6 +164,15 @@ export function createSaidNo(workspace: string, now: () => number = clockNow) {
       });
     },
     check: async (proposal: Proposal) => checkAgainst(await read(), proposal, now()),
+    // A reason said in chat just after a Don't that gave none: journey 15's founder pressed Don't (no place for a
+    // reason) and said why in the next message, and the no kept nothing to quote.
+    explain: (reason: string, within = 15 * 60_000) => change((entries) => {
+      const held = entries.filter((one) => !one.reason && one.at >= now() - within).sort((a, b) => b.at - a.at)[0];
+      if (held) held.reason = short(reason, 300);
+      return held ? { ...held } : null;
+    }),
+    // Whether a move the partner would put to the founder unasked is one they ruled out, inside the window.
+    ruledOut: async (move: string) => ruledOutBy(await read(), move, now()),
     // The proposal went back to the founder once.
     asked: (id: string) => change((entries) => { const held = entries.find((one) => one.id === id); if (held) held.asked += 1; }),
     // The founder said yes to it after all: the no no longer stands.
@@ -194,3 +203,53 @@ export function chatNo(reply: string): { reason?: string } | null {
 // A proposal put in words, for a chat no to stand against: the sentence that suggests something.
 const SUGGESTS = /[^.!?\n]*\b(?:i (?:propose|suggest|recommend)|we should|you should|shall (?:i|we)|should (?:i|we)|want me to|how about|let'?s)\b[^.!?\n]*[.!?]?/i;
 export const suggestionIn = (text: string) => SUGGESTS.exec(text)?.[0]?.trim() ?? '';
+
+// A standing no said in so many words: "Don't propose cold outreach to more makers this week", "No to the task of
+// contacting 10 more makers, because…", "No more discounts." What it rules out, without the time it was said for.
+const RULES_OUT = [
+  /\b(?:don'?t|do not|never|stop)\s+(?:propose|proposing|suggest|suggesting|recommend|recommending|raise|raising|bring(?:ing)? up|push(?:ing)?|plan(?:ning)?)\s+(.+)/i,
+  /^\s*no\s+to\s+(.+)/i,
+  /^\s*no\s+more\s+(.+)/i,
+];
+const WHEN_SAID = /\s+(?:this|next)\s+(?:week|month)$|\s+(?:today|tomorrow|again|anymore|any more|for now|from now on|until further notice)$/i;
+export function standingNosIn(text: string): { subject: string; reason?: string }[] {
+  const because = /\b(?:because|since)\s+([^.!?\n]+)/i.exec(text)?.[1]?.trim();
+  const found: { subject: string; reason?: string }[] = [];
+  for (const sentence of text.split(/(?<=[.!?\n])\s*/)) {
+    for (const rule of RULES_OUT) {
+      const said = rule.exec(sentence)?.[1];
+      if (!said) continue;
+      let subject = said.split(/,|\s+because\b|\s+since\b|\s+as\s+(?:we|i|it|they)\b|[.!?\n]/i)[0].trim().replace(/^(?:the task of|the idea of|your|the|any)\s+/i, '');
+      for (let at = 0; at < 3; at += 1) subject = subject.replace(WHEN_SAID, '').trim();
+      if (subjectWords(subject).length) found.push({ subject: short(subject, 160), ...(because ? { reason: short(because, 300) } : {}) });
+      break;
+    }
+  }
+  return found;
+}
+
+// A move set against a standing no, by the no's own words: most of what the founder ruled out is in the move. Words
+// that say the same act count as one ("contact", "reach out", "outreach", "email"), and what a move says it will do
+// without ("close the job without cold outreach") is not part of it.
+const SAME_ACT: Record<string, string> = {
+  contact: 'reach', contacting: 'reach', contacted: 'reach', outreach: 'reach', reach: 'reach', reaching: 'reach', email: 'reach', emailing: 'reach',
+  message: 'reach', messaging: 'reach', ping: 'reach', dm: 'reach', call: 'call', calls: 'call', calling: 'call', meeting: 'call', meet: 'call',
+  discount: 'discount', discounts: 'discount', discounting: 'discount', cut: 'cut', cutting: 'cut', lower: 'cut', lowering: 'cut',
+};
+const NOT_THE_ACT = new Set(['propose', 'suggest', 'task', 'tasks', 'week', 'today', 'again', 'move', 'moves', 'idea', 'thing', 'things']);
+const canon = (word: string) => SAME_ACT[word] ?? SAME_ACT[word.replace(/s$/, '')] ?? (word.length > 4 ? word.replace(/(?:ing|s)$/, '') : word);
+const actWords = (text: string) => new Set(subjectWords(text).filter((word) => !NOT_THE_ACT.has(word) && !/^\d/.test(word)).map(canon));
+const WITHOUT = /\b(?:without|instead of|rather than|not|no|never|avoid(?:ing)?|skip(?:ping)?|stop(?:ping)?)\b[^.,;]*/gi;
+export function againstNo(no: string, move: string): boolean {
+  const ruled = actWords(no);
+  if (!ruled.size) return false;
+  const doing = actWords(move.replace(WITHOUT, ' '));
+  const shared = [...ruled].filter((word) => doing.has(word)).length;
+  return shared / ruled.size >= SAID_NO_OVERLAP && (ruled.size > 1 || shared === 1);
+}
+export function ruledOutBy(entries: SaidNoEntry[], move: string, now: number): SaidNoEntry | undefined {
+  const since = now - SAID_NO_WINDOW_DAYS * DAY;
+  return entries.filter((one) => one.at >= since && againstNo(one.subject, move)).sort((a, b) => b.at - a.at)[0];
+}
+// How the note says a move was dropped for it: "You ruled out cold outreach to more makers on 6 Oct."
+export const ruledOutLine = (entry: SaidNoEntry) => `You ruled out ${entry.tool === 'chat' ? short(entry.subject, 90) : `"${short(entry.subject, 90)}"`} on ${saidOn(entry.at)}${entry.reason ? ` ('${short(entry.reason, 100)}')` : ''}`;
