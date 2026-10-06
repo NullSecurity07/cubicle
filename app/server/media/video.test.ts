@@ -16,6 +16,7 @@ import { hands } from './turns.ts';
 import { makingWords as estimate } from '../../shared/film-time.ts';
 import { bibleFor, jsonIn, layoutsFor, planPrompt, specPrompt, understandingOf, type Material, type Plan } from './director.ts';
 import { budgetOf, WORDS_A_SECOND } from './spec.ts';
+import { holdTheLastPicture } from './video.ts';
 
 const film: Spec = {
   title: 'Week eleven',
@@ -880,5 +881,31 @@ describe('the film clock', () => {
     expect(starts).toEqual([0, 1.33]);
     expect(total).toBe(3.33);
     expect(quietOf(cut, starts)).toEqual([{ at: 0, seconds: 1.333 }]);
+  });
+});
+
+// Journey 13: the farmers market film's last four seconds were a plain gradient behind its closing line.
+describe('the close holds the last picture', () => {
+  const shot = (scene: Scene, over: Partial<Shot> = {}): Shot => ({ scene, seconds: 4, ...over }) as Shot;
+
+  it('carries the film\'s last picture on under the closing line, dimmed', () => {
+    const cut = [
+      shot({ layout: 'picture', image_prompt: 'stalls', say: 'Stalls.' }, { image: 'stock-1-0.jpg', scrim: 0.3 }),
+      shot({ layout: 'statement', text: 'Grown here', say: 'Grown here.' }, { bg: 'frame-2-0.png', scrim: 0.4 }),
+      shot({ layout: 'clip', clip_prompt: 'a market', say: 'A market.' }, { video: 'stock-clip-2.mp4' }),
+      shot({ layout: 'cta', text: 'Find fresh harvest this weekend', say: 'Find fresh harvest this weekend.' }),
+    ];
+    holdTheLastPicture(cut);
+    expect(cut.at(-1)!.bg).toBe('frame-2-0.png');
+    expect(cut.at(-1)!.scrim).toBeGreaterThanOrEqual(0.55);
+  });
+
+  it('leaves a close alone that has a picture already, or a film with no picture at all', () => {
+    const own = [shot({ layout: 'picture', image_prompt: 'x', say: 'X.' }, { image: 'stock-0.jpg' }), shot({ layout: 'cta', text: 'Go', say: 'Go.' }, { bg: 'mine.png' })];
+    holdTheLastPicture(own);
+    expect(own[1].bg).toBe('mine.png');
+    const bare = [shot({ layout: 'statement', text: 'A', say: 'A.' }), shot({ layout: 'cta', text: 'Go', say: 'Go.' })];
+    holdTheLastPicture(bare);
+    expect(bare[1].bg).toBeUndefined();
   });
 });

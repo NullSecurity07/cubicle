@@ -851,6 +851,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
               : {}),
           };
         });
+        holdTheLastPicture(cut);
         let total = edit.total;
 
         // The bed. The founder's own track first; failing that whatever the music maker can write for the mood.
@@ -967,3 +968,19 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
 // The studio's other halves, by the names the app has always imported them under.
 export { fakeVideos, fakeVideosOf } from './fake-video.ts';
 export type { VideoAsk, VideoDeps } from './gather.ts';
+
+// The close holds the film's last picture behind its line. Journey 13: a farmers market film ended on four seconds of
+// a plain gold gradient behind "Find fresh harvest this weekend", which reads as the film running out of pictures.
+// The close is still set on its own words and nothing new is drawn for it: the picture the film last showed carries
+// on under it, dimmed by its scrim, until the voice and the music end.
+export function holdTheLastPicture(cut: Shot[]): void {
+  const last = cut.at(-1);
+  if (!last || last.video || last.image || last.bg || !closesOnGround(last.scene.layout, cut.length - 1, cut.length)) return;
+  for (let index = cut.length - 2; index >= 0; index -= 1) {
+    const one = cut[index];
+    const file = one.bg ?? (one.scene.layout === 'picture' ? one.image : undefined);
+    if (!file) continue;
+    Object.assign(last, { bg: file, bgShared: true, scrim: Math.max(one.scrim ?? 0, 0.55), lift: one.lift, plies: one.plies });
+    return;
+  }
+}
