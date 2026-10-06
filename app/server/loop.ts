@@ -9,6 +9,7 @@ import type { Offered } from './playbook.ts';
 import type { Payloads, Seams, Source } from './seams.ts';
 import { runTool, type Tool, type ToolContext } from './tools/registry.ts';
 import { readsOf } from './tools/unread.ts';
+import { holdDraftClaims, notDone } from './draftclaim.ts';
 import { ANSWER_IN_WORDS, CALL_THE_TOOL, checkReply, HELD_BACK, proseToolCall, turnEvidence, turnSources } from './truth.ts';
 import type { UsageBook } from './usage.ts';
 import { needsSlim, slimNotice } from './slim.ts';
@@ -272,7 +273,7 @@ export async function runTurn(input: {
       context.report = (effect) => events.tool({ id: call.id, name: call.name, args, effect });
       // A tool that runs a turn of its own inside itself asks the founder on this turn's path, not on one of its own.
       context.approve = input.approve;
-      const ran = refusal ? { text: refusal, ok: false, args, effect: undefined } : await runTool(tools, call.name, rawArgs, context);
+      const ran = refusal ? { text: notDone(call.name, refusal), ok: false, args, effect: undefined } : await runTool(tools, call.name, rawArgs, context);
       // Whatever rewrites a result (the secrets taken out, the Undo line put on) sees all of it, and the model gets
       // all of what comes back; only the receipt the founder keeps is cut.
       let event: ToolEvent = { id: call.id, name: call.name, args: ran.args, ok: ran.ok, result: ran.text, effect: ran.effect };
@@ -324,6 +325,8 @@ export async function runTurn(input: {
   // words and gets a line under them saying so. A reply the stream broke off says it was cut, and, when tools ran, what
   // they did, since the words that would have said it never came.
   let flags: string[] = [];
+  // No "drafted" without a draft, and no "open it in Gmail" without one to open (server/draftclaim.ts).
+  if (!signal?.aborted && !summarised && text.trim()) text = holdDraftClaims(text, done);
   if (!signal?.aborted && !held && !summarised && text.trim()) {
     flags = checkReply({ reply: text, receipts: done, sources: [...turnSources(inputs), ...results, query] });
     const tail = [...(broke ? [`(reply cut short: ${broke})`] : []), ...(broke && done.length ? [receiptSummary(done, 'The reply broke off after these steps')] : []), ...flags];

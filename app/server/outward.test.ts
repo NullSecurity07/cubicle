@@ -73,7 +73,7 @@ describe('outward tools', () => {
     let asked = 0;
     const { result } = await turn(mailbox({}).mail, [letter], async () => { asked += 1; return { ok: true }; });
     expect(asked).toBe(0);
-    expect(result.tools[0].result).toBe(SETUP_HINT);
+    expect(result.tools[0].result).toBe(`NOT sent: ${SETUP_HINT}`);
   });
 
   it('sends as the founder through Gmail, replies in a thread, and refuses a bad address', async () => {

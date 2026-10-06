@@ -38,3 +38,34 @@ test('a no with a reason is quoted when the same proposal comes back, and a seco
   await expect(room.getByRole('group', { name: 'Send this email?' })).toHaveCount(0);
   expect(await waiting(page)).toEqual([]);
 });
+
+// Journey 15: after a refused draft the colleague said "Drafted the reply" and sent the founder to Gmail with nothing
+// to open. The refusal heads the result, and the reply says the refusal instead of the claim.
+// Maya's conversation is shared with every other journey, so this test's drafts are taken back out of it.
+test.afterEach(async ({ page }) => {
+  const chat = (await (await page.request.get('/api/rooms/marketing/chat')).json()) as { id: string; text: string }[];
+  const from = chat.findIndex((message) => message.text.includes('refused-draft@example.com'));
+  if (from >= 0) for (const message of chat.slice(from)) await page.request.delete(`/api/rooms/marketing/chat/${message.id}`);
+});
+
+test('a refused draft is never called drafted, and Gmail is named only beside a draft to open', async ({ page }) => {
+  await page.goto('/');
+  const room = node(page, 'marketing');
+  await expect(room).toBeVisible();
+  const draft = '/tool draft_email {"to":"refused-draft@example.com","subject":"Pickup options and one trial job","body":"Hi"}';
+  await send(page, 'marketing', draft);
+  await expect(room.locator('.chip--ok summary').last()).toHaveText('Drafted email to refused-draft@example.com');
+  const bell = page.getByRole('button', { name: /^Needs you/ });
+  await bell.click();
+  await page.getByRole('dialog', { name: 'Needs you' }).locator('.needs__item--mail-draft').filter({ hasText: 'refused-draft@example.com' }).getByRole('button', { name: 'Dismiss' }).click();
+  await page.keyboard.press('Escape');
+
+  await send(page, 'marketing', `${draft}\n/say Drafted the reply to Mira explaining pickup options. Send the draft directly in Gmail.`);
+  await expect(room.locator('.approval__title').last()).toHaveText(/^You said no to this on/);
+  await room.getByRole('button', { name: "Don't" }).last().click();
+  const said = room.locator('.msg--assistant').last();
+  await expect(said).toContainText('The email was not drafted: you said no to this.');
+  await expect(said).toContainText('(no draft was made)');
+  await expect(said).not.toContainText('Drafted the reply');
+  await expect(said.getByRole('link', { name: 'Open in Gmail' })).toHaveCount(0);
+});
