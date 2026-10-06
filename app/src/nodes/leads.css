@@ -24,12 +24,14 @@
 .leads__empty { flex: 1; align-self: center; margin: 0; padding: 0 16px; text-align: center; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
 .leads__twenty { margin: 0; padding: 4px 12px 8px; font-size: 11.5px; color: var(--muted); }
 
-.lead { display: grid; grid-template-columns: 1fr auto; grid-template-areas: 'name fit' 'company fit'; align-items: center; gap: 1px 8px; width: 100%; padding: 7px 9px; border: 1px solid var(--card-border); border-radius: 9px; background: rgba(255, 255, 255, 0.05); color: var(--text); font: inherit; text-align: left; cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+/* A column on a card of ordinary width is narrow: the name and the company each take the whole width, the company two
+   lines if it needs them, and the score sits in the corner under them, so no name is cut to a few letters. */
+.lead { display: grid; grid-template-columns: 1fr auto; grid-template-areas: 'name name' 'company company' '. fit'; align-items: start; gap: 2px 6px; width: 100%; padding: 7px 8px; border: 1px solid var(--card-border); border-radius: 9px; background: rgba(255, 255, 255, 0.05); color: var(--text); font: inherit; text-align: left; cursor: pointer; transition: background 0.15s, border-color 0.15s; }
 .lead:hover { background: rgba(255, 255, 255, 0.1); }
 .lead.is-open { border-color: rgba(78, 140, 255, 0.6); }
 .lead__name { grid-area: name; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; font-weight: 550; }
-.lead__company { grid-area: company; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--muted); }
-.lead__fit { grid-area: fit; min-width: 22px; padding: 2px 6px; border-radius: 7px; text-align: center; font-size: 11px; font-weight: 650; color: var(--muted); background: rgba(255, 255, 255, 0.08); }
+.lead__company { grid-area: company; min-width: 0; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; font-size: 11.5px; line-height: 1.3; color: var(--muted); }
+.lead__fit { grid-area: fit; justify-self: end; margin-top: 2px; min-width: 20px; padding: 1px 5px; border-radius: 7px; text-align: center; font-size: 11px; font-weight: 650; color: var(--muted); background: rgba(255, 255, 255, 0.08); }
 .lead__fit.is-good { color: #0b0c10; background: var(--ok); }
 
 .leadview { position: absolute; top: 0; right: 0; bottom: 0; z-index: 2; width: min(340px, 100%); display: flex; flex-direction: column; border-left: 1px solid var(--card-border); border-radius: 0 13px 13px 0; background: rgba(14, 15, 19, 0.985); box-shadow: -18px 0 40px rgba(0, 0, 0, 0.35); cursor: auto; animation: leadview-in 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
