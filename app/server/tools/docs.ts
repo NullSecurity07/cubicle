@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path';
 import type { Framework } from '../../shared/frameworks.ts';
 import type { Box, DocRules, Stage } from '../../shared/model.ts';
 import { readableDocIds, wiredDocIds } from '../prompt.ts';
-import { addedTwice, replaceSection, rewriteLoss } from './sections.ts';
+import { addedTwice, appendToSection, headings, replaceSection, rewriteLoss } from './sections.ts';
 import { text, type Tool, type ToolContext } from './registry.ts';
 import { shortDay } from '../clock.ts';
 import { dropFlagged, figureCheck, HELD_BACK, holdVerdict, verdictStanding, type Receipt } from '../truth.ts';
@@ -170,6 +170,15 @@ async function heldToEvidence(context: ToolContext, before: string, after: strin
   if (!read) return { text: after, note: '' };
   const { text, marked } = evidenceCheck({ before, after, counts: read.read, said: read.said });
   return { text, note: marked.length ? ` Marked as a view: ${marked.map((one) => `"${one}"`).join(', ')}, with "(assumption)" after it.` : '' };
+}
+
+// The lines a write added that carry an "(unsourced)" mark, quoted back as the doc now has them, so the reply says the
+// line with its mark: a partner reported a marked December estimate to the founder without it.
+function quoted(before: string, after: string): string {
+  const had = new Set(before.split('\n'));
+  const marked = after.split('\n').filter((line) => !had.has(line) && /\(unsourced\)/i.test(line)).map((line) => line.trim());
+  if (!marked.length) return '';
+  return ` It reads: ${marked.map((line) => `"${line}"`).join(', ')}. When you tell the founder, quote it with its "(unsourced)" mark.`;
 }
 
 // The Company brief's Numbers section, which a cap on no conversations reads for paying users.
@@ -438,13 +447,34 @@ export const docTools: Tool[] = [
   },
   {
     name: 'append_doc',
-    description: 'Add text to the end of a connected document.',
-    parameters: { type: 'object', properties: { doc, text: { type: 'string', description: 'Markdown to add at the end' } }, required: ['doc', 'text'] },
+    description: 'Add text to a connected document: at the end of one section when you give its heading as section, otherwise at the end of the document. The result says where it went; tell the founder that, not where you meant it to go.',
+    parameters: {
+      type: 'object',
+      properties: {
+        doc,
+        text: { type: 'string', description: 'Markdown to add' },
+        section: { type: 'string', description: 'The heading of the section to add to the end of, without the #, e.g. "Numbers". Leave it out to add at the end of the document.' },
+      },
+      required: ['doc', 'text'],
+    },
     async run(args, context) {
       const id = find(context, text(args, 'doc'));
       const before = await context.store.readDoc(id);
       const added = text(args, 'text');
-      return save(context, id, before, `${before.replace(/\s+$/, '')}${before.trim() ? '\n\n' : ''}${added}\n`, `Added ${added.length} characters.`);
+      const asked = typeof args.section === 'string' && args.section.trim() ? text(args, 'section', 200).replace(/^#+\s*/, '').trim() : '';
+      const atEnd = `${before.replace(/\s+$/, '')}${before.trim() ? '\n\n' : ''}${added}\n`;
+      const lines = added.trim().split('\n').filter((line) => line.trim()).length;
+      const count = `${lines} line${lines === 1 ? '' : 's'}`;
+      const placed = asked ? appendToSection(before, asked, added) : null;
+      if (placed && 'error' in placed) throw new Error(placed.error);
+      // Where it went is said first and plainly: a partner once told the founder a line was "added to the Numbers
+      // section" when append_doc had put it under Open questions at the bottom.
+      const last = headings(before).at(-1)?.title;
+      const where = !placed ? `Added ${count} at the end of the document${last ? `, after "${last}"` : ''}.`
+        : 'missing' in placed ? `There is no "${asked}" section in this document (its headings: ${placed.missing}), so this was added at the end${last ? `, after "${last}"` : ''}. Do not say it went into "${asked}".`
+        : `Added ${count} to the end of the "${placed.title}" section.`;
+      const out = await save(context, id, before, placed && 'text' in placed ? placed.text : atEnd, where);
+      return { ...out, text: `${out.text}${quoted(before, await context.store.readDoc(id))}` };
     },
   },
   {
