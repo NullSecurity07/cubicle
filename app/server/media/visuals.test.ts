@@ -5,6 +5,7 @@ import {
   closeHolds, settingOf, standInOf, worldOf, worldScore,
 } from './visuals.ts';
 import { productFacts } from './gather.ts';
+import { foreignIn } from './places.ts';
 import type { Scene } from './spec.ts';
 
 const BIBLE = 'bright high-contrast editorial photography, clean directional key light, shot on 35mm';
@@ -511,5 +512,64 @@ describe("the film's world", () => {
     expect(closeHolds([0, 1, 2], new Map([[0, 3], [1, 2], [2, -1]])).at(-1)).toBe(0);
     // Nothing better to hold: left alone.
     expect(closeHolds([0, 0], new Map([[0, 0]]))).toEqual([0, 0]);
+  });
+});
+
+// Journey 15: "20 s explainer about our marketplace" for PrintNear (idle 3D printers rented to local makers) came back
+// with the old market square of Poznań, a Waikiki shopping mall and drawn ceramic tiles. No 3D printer was shown.
+describe('a film about a marketplace is a film of its printers and makers', () => {
+  const ASK = '20 s explainer about our marketplace';
+  const BRIEF = [
+    '# Company brief', '',
+    'What the company does: PrintNear is a marketplace where people rent out their idle 3D printers to local makers who need parts printed.',
+    '', '## Idea', '', 'Makers send a print job, a nearby host prints it on their own printer with their own filament, and the maker collects the part from the workshop.',
+  ].join('\n');
+  const world = worldOf(ASK, productFacts(BRIEF));
+  const topic = topicOf(ASK);
+  const line = { line: 'PrintNear is a marketplace where people rent out their idle 3D printers.' };
+
+  it('never makes a kind of business a thing of the world', () => {
+    expect(topic).toEqual([]);
+    expect(world.words).not.toContain('marketplace');
+    expect(world.words).toEqual(expect.arrayContaining(['printers', 'makers', 'print', 'host']));
+    expect(world.words).not.toContain('people');
+    expect(thingsOf('our marketplace app is a platform and a service hub on a network')).toEqual([]);
+  });
+
+  it("refuses the journey's photographs and takes a printer", () => {
+    for (const title of ['Old marketplace and city hall in Poznań', 'International Marketplace - Waikiki', 'Nine small ceramic tiles'])
+      expect(photoOfTheLine(title, line, topic, ASK, world)).toBe(false);
+    expect(photoOfTheLine('A maker loading filament into a 3D printer in a home workshop', line, topic, ASK, world)).toBe(true);
+  });
+
+  it('refuses a town or a landmark the brief never names, by its capital as well as by the list', () => {
+    expect(foreignIn('Old marketplace and city hall in Poznań', ASK)).toEqual(expect.arrayContaining(['city hall', 'poznań']));
+    expect(foreignIn('International Marketplace - Waikiki', ASK)).toEqual(['waikiki']);
+    expect(foreignIn('3D printer workshop at Fab Lab Gdańsk', ASK)).toEqual(expect.arrayContaining(['fab', 'gdańsk']));
+    expect(foreignIn('3D Printer On A Workbench', ASK)).toEqual([]);
+    expect(foreignIn('A maker printing a bracket. The printer runs all night', ASK)).toEqual([]);
+    expect(foreignIn('Maker space in Berlin', `${ASK} with makers in Berlin`)).toEqual([]);
+  });
+
+  it('draws a film whose world has no things at all', () => {
+    const bare = worldOf('a 20 s explainer about our app');
+    expect(bare.words).toEqual([]);
+    expect(photoOfTheLine('A phone showing an app', { line: 'Our app does it for you.' }, [], 'a 20 s explainer about our app', bare)).toBe(false);
+  });
+
+  it('keeps the kind the founder wrote a thing with: a laser printer is not a 3D printer', () => {
+    expect(world.kinds).toEqual({ printer: '3D' });
+    const laser: Visual = { at: 0, scene: 0, take: 0, line: 'Idle printers sit unused.', subject: 'A desktop laser printer standing idle on a wooden desk in a home office', kind: 'object', room: 'foot' };
+    expect(criticiseVisuals([laser], world).map((one) => one.rule)).toContain('offworld');
+    expect(criticiseVisuals([{ ...laser, subject: 'A 3‑D printer standing idle on a wooden desk in a home office' }], world).map((one) => one.rule)).not.toContain('offworld');
+    expect(repairVisuals([laser], world).visuals[0].subject).toMatch(/^3D printers, /);
+  });
+
+  it('draws the ceramic tiles again as a thing of the world', () => {
+    const tiles: Visual = { at: 0, scene: 0, take: 0, line: 'Already nine printers are listed.', subject: 'Nine small ceramic tiles laid in a row on a stone table', metaphor: 'tiles stand for the printers listed', kind: 'object', room: 'foot' };
+    expect(criticiseVisuals([tiles], world).map((one) => one.rule)).toContain('offworld');
+    const { visuals } = repairVisuals([tiles], world);
+    expect(visuals[0].subject).toMatch(/3D printers/);
+    expect(criticiseVisuals(visuals, world).map((one) => one.rule)).not.toContain('offworld');
   });
 });

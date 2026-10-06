@@ -306,6 +306,24 @@ export function ungrounded(scene: Scene, sources: Sources): string | null {
 }
 
 
+// The words a scene puts on screen that neither the film's own narration nor the brief or material says. Journey 15's
+// film set "Same day local pickup available" over a script that never mentions pickup: the scene pointed at a real
+// sentence of the brief (`source`), and that was enough for `ungrounded` to let the whole scene through. A caption is
+// the script's own line, or a phrase of the brief's, and nothing else; a wordmark is the product's name and is exempt.
+// What a list or a card calls itself ("The checklist", "How it works") is a label rather than a claim.
+const LABELS = 'checklist steps step list recap summary overview agenda how work works before after today options follow more';
+export function unscripted(scene: Scene, script: string, sources: Sources): string[] {
+  if (scene.layout === 'logo') return [];
+  const heard: Sources = { ...sources, corpus: `${sources.corpus} ${flat(script ?? '')} ${LABELS}` };
+  return [scene.heading, scene.text, ...(scene.bullets ?? [])]
+    .filter((one): one is string => !!one?.trim())
+    .filter((line) => !line.trim().startsWith('@') && !fromBrief(line, sources) && (
+      ownWords(line, heard).some((word) => !heard.corpus.includes(root(word)) && !heard.brief.includes(root(word)))
+      // Everyday words are claims too when most of a caption is made of them: "printed next door in hours" is a
+      // promise about speed nobody made.
+      || meaningOf(line).filter((word) => heard.corpus.includes(word) || heard.brief.includes(word)).length < ENOUGH_OF_IT * meaningOf(line).length));
+}
+
 // --- the founder's own lines, and what may stand in for a line that was not ---------------------------------------
 //
 // The site's hero film was asked to "end on the promise". The director wrote the promise, with a word or two of its own

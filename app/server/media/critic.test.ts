@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { carriesVisual, criticise, criticiseShots, DATA, saidAgain, facesCamera, mendShots, noFace, opensADoor, plainClose, echoes, figureIn, headlineOf, inStyle, keywords, offStyle, repair, shorten, trimTo, worthAStat, type Want } from './critic.ts';
 import { stillMoves } from './moves.ts';
 import { barOf, countWords, LAYOUTS, parseSpec, saidWords, saysWhatItShows, type Layout, type Scene, type Spec } from './spec.ts';
+import { sourcesOf, unscripted } from './grounding.ts';
 
 // Every rule here is written the same way round: a lazy storyboard of the kind a free model really hands back goes
 // in, and what comes out is a film. The founder's own run is the case they all descend from — three identical
@@ -851,5 +852,44 @@ describe('a line said twice', () => {
 
   it('leaves two lines that only share a few words', () => {
     expect(saidAgain('Taste the difference real dirt and sunshine make.', 'Real dirt makes a difference you can taste in every bite of this.')).toBe(false);
+  });
+});
+
+// Journey 15: the PrintNear explainer set "Same day local pickup available" on screen. Neither the narration nor the
+// brief says anything about pickup; the scene pointed at a real sentence of the brief, and that let it through.
+describe('a caption is the script\'s own line', () => {
+  const BRIEF = 'What the company does: PrintNear is a marketplace where people rent out their idle 3D printers to local makers. Already nine printers are listed.';
+  const sources = sourcesOf({ lines: [BRIEF], assets: [], using: ['the brief'] } as unknown as Parameters<typeof sourcesOf>[0], '20 s explainer about our marketplace');
+  const want = (over: Partial<Want> = {}): Want => ({
+    seconds: 20, pace: 'calm', purpose: 'explainer', captions: false,
+    bible: 'quiet documentary photography, soft window light', layouts: [...LAYOUTS], reel: false, sources, ...over,
+  });
+  const film: Spec = {
+    title: 'PrintNear',
+    scenes: [
+      { layout: 'statement', text: 'Idle 3D printers, rented out', say: 'PrintNear is a marketplace where people rent out their idle 3D printers.', source: 'people rent out their idle 3D printers' },
+      { layout: 'statement', text: 'Same day local pickup available', say: 'Local makers get their parts printed nearby.', source: 'rent out their idle 3D printers to local makers' },
+      { layout: 'bullets', heading: 'How it works', bullets: ['Rent out idle printers', 'Same day local pickup'], say: 'Rent out idle printers to local makers.', source: 'rent out their idle 3D printers to local makers' },
+      { layout: 'cta', text: 'Already nine printers are listed', say: 'Already nine printers are listed.', source: 'Already nine printers are listed' },
+    ],
+  };
+
+  it('finds the invented caption, and only that one', () => {
+    expect(unscripted(film.scenes[1], film.scenes.map((one) => one.say).join(' '), sources)).toEqual(['Same day local pickup available']);
+    expect(unscripted(film.scenes[0], film.scenes.map((one) => one.say).join(' '), sources)).toEqual([]);
+    // A live storyboard for the same ask opened on a promise of speed made of everyday words.
+    expect(unscripted({ layout: 'hook', text: 'Your 3D print, printed next door in hours', say: 'Makers often wait days for prints.' }, 'Makers often wait days for prints.', sources)).toHaveLength(1);
+    const found = criticise(film, want()).filter((one) => one.rule === 'caption');
+    expect(found.map((one) => one.scene)).toEqual([2, 3]);
+    expect(found[0].says).toContain('Same day local pickup available');
+  });
+
+  it('puts the line said over the scene in its place', () => {
+    const { spec, notes } = repair(film, want());
+    const shown = spec.scenes.flatMap((one) => [one.heading, one.text, ...(one.bullets ?? [])]).join(' | ');
+    expect(shown).not.toMatch(/pickup/i);
+    expect(spec.scenes[1].text).toBe('Local makers get their parts printed nearby');
+    expect(notes.join(' ')).toContain("the script's own words");
+    expect(criticise(spec, want()).filter((one) => one.rule === 'caption')).toEqual([]);
   });
 });
