@@ -70,6 +70,8 @@ export async function sendChat(roomId: string, text: string, onEvent: (event: Ch
   }
 }
 
+// The founder's Stop. Closing the stream alone does not stop a turn that waits on the founder's answer.
+export const stopChat = (roomId: string) => fetch(`/api/rooms/${roomId}/stop`, { method: 'POST' }).then(() => {}, () => {});
 export const send = (method: string, body?: unknown): RequestInit => ({ method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
 export const addTask = (boardId: string, title: string) => request<Task>(`/api/boards/${boardId}/tasks`, send('POST', { title }));
 export const changeTask = (boardId: string, taskId: string, patch: Partial<Pick<Task, 'title' | 'detail' | 'column' | 'assignee'>> & { repeat?: Task['repeat'] | null }) => request<Task>(`/api/boards/${boardId}/tasks/${taskId}`, send('PATCH', patch));

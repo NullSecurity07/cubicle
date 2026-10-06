@@ -169,6 +169,64 @@ describe('an approval in a turn', () => {
     expect((await attention.list()).filter((one) => one.kind === 'approval')).toEqual([]);
     expect((await store.readChat('marketing')).at(-1)?.tools?.[0]).toMatchObject({ name: 'run_code', ok: true, result: 'ran' });
   });
+
+  async function waitingTurn() {
+    const dir = await mkdtemp(join(tmpdir(), 'chat-'));
+    const store = createStore(dir);
+    let step = 0;
+    const client: ModelClient = {
+      name: 'script', model: 'm', maxPromptChars: Infinity, tools: true, limits: { rpd: 1000 },
+      async step(_messages, options) {
+        step += 1;
+        if (step === 1) return { text: '', calls: [{ id: 'c1', name: 'run_code', args: JSON.stringify({ language: 'python', code: 'print(1)' }) }] };
+        options.onToken('Ran it.');
+        return { text: 'Ran it.', calls: [] };
+      },
+    };
+    const runCode: Tool = { name: 'run_code', approval: async () => '', description: 'Runs code.', parameters: { type: 'object', properties: {} }, run: async () => ({ text: 'ran' }) };
+    const attention = createAttention(dir);
+    const approvals = createApprovals();
+    const busy = new Set<string>();
+    const { chat, stopTurn } = createChat({
+      store, roomFeed: createRoomFeed(), busy, clients: [client], usage: createUsage(null), seams: createSeams(),
+      attention, approvals, memory: { fold: async () => false },
+      promptFor: async () => [{ role: 'system', content: 'You are marketing.' }, { role: 'user', content: 'q' }],
+      toolsFor: () => [runCode],
+    });
+    const res = Object.assign(new PassThrough(), { writeHead: () => res }) as unknown as ServerResponse & PassThrough;
+    const turn = chat('marketing', 'Run it', res);
+    let waiting: Awaited<ReturnType<typeof attention.list>> = [];
+    for (let tries = 0; tries < 200 && !waiting.length; tries += 1) {
+      waiting = (await attention.list()).filter((one) => one.kind === 'approval');
+      if (!waiting.length) await new Promise((wait) => setTimeout(wait, 5));
+    }
+    return { store, attention, approvals, busy, stopTurn, res, turn, id: waiting[0].event!.id };
+  }
+
+  it('outlives the window that asked: the question stays, and an answer given later finishes the turn', async () => {
+    const { store, attention, approvals, busy, res, turn, id } = await waitingTurn();
+    res.destroy();
+    await new Promise((wait) => setTimeout(wait, 30));
+    // Still waiting on the founder, still in Needs you, the person still busy.
+    expect(busy.has('marketing')).toBe(true);
+    expect((await attention.list()).filter((one) => one.kind === 'approval')).toHaveLength(1);
+    expect(approvals.answer(id, { ok: true })).toBe(true);
+    await turn;
+    const reply = (await store.readChat('marketing')).at(-1);
+    expect(reply).toMatchObject({ role: 'assistant', text: 'Ran it.' });
+    expect(reply?.tools?.[0]).toMatchObject({ name: 'run_code', ok: true, result: 'ran' });
+    expect(busy.has('marketing')).toBe(false);
+  });
+
+  it('is ended by the founder\'s Stop from any window while it waits, and says so', async () => {
+    const { store, attention, stopTurn, res, turn } = await waitingTurn();
+    res.destroy();
+    expect(stopTurn('marketing')).toBe(true);
+    await turn;
+    expect((await attention.list()).filter((one) => one.kind === 'approval')).toEqual([]);
+    expect((await store.readChat('marketing')).at(-1)?.tools?.[0]).toMatchObject({ name: 'run_code', ok: false, result: 'Stopped by the founder.' });
+    expect(stopTurn('marketing')).toBe(false);
+  });
 });
 
 describe('a partner\'s turn', () => {

@@ -156,7 +156,7 @@ seams.on('tool:before', guards.before);
 seams.on('tool:after', guards.after);
 seams.on('turn:before', createPlaybook({ skills, recall, tools: () => tools.map((tool) => tool.name) }).before);
 // The founder talking to one person, and one person asking another. A turn's tools are asked for only when it starts.
-const { chat, consult } = createChat({ store, roomFeed, busy, clients, usage, seams, attention, approvals, memory, promptFor, toolsFor: (stage, roomId) => toolsFor(stage, roomId) });
+const { chat, consult, stopTurn } = createChat({ store, roomFeed, busy, clients, usage, seams, attention, approvals, memory, promptFor, toolsFor: (stage, roomId) => toolsFor(stage, roomId) });
 const launchFor = (id: string, card: Card | undefined) => ({ profile: store.browserProfile(id), headed: isHeaded(card), ...(!fake && card?.kind === 'browser' && card.app ? { pace: [1500, 3000] as [number, number] } : {}) });
 const tools = [...docTools, ...fileTools, ...webTools(browser, launchFor), ...outwardTools(fake ? createMail({ AGENTMAIL_API_KEY: 'fake' }, fakeMailHttp) : createMail(), store.filesDir, { raise: attention.raise, open: openInGmailCard(browser, launchFor) }), ...teamTools(consult), ...taskTools(boards), ...decisionTools(decisions), ...sourceTools(browser, sources), ...memoryTools(memory), ...recallTools(recall), ...mediaTools(media, () => !local.ready()), ...skillTools(skills), ...founderTools(founder), ...calcTools()];
 // Anything dropped into `server/slices` is installed here, so a new feature is new files rather than one more edit to
@@ -215,7 +215,7 @@ const routes: Route[] = [
   boardRoutes({ store, boards, runs, learn }),
   studioRoutes({ store, media, filmPictures }),
   browserRoutes({ store, browser }),
-  roomRoutes({ store, busy, usage, clients, memory, chat }),
+  roomRoutes({ store, busy, usage, clients, memory, chat, stopTurn }),
   fileRoutes({ store }),
 ];
 

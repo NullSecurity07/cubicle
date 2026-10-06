@@ -7,14 +7,14 @@ import type { Store } from '../store.ts';
 import type { UsageBook } from '../usage.ts';
 
 // The documents, the models, and each person: their memory, their conversation, and a message to them.
-export function roomRoutes(deps: { store: Store; busy: Set<string>; usage: UsageBook; clients: ModelClient[]; memory: Pick<ReturnType<typeof createMemory>, 'read' | 'write'>; chat: ReturnType<typeof createChat>['chat'] }): Route {
-  const { store, busy, usage, clients, memory, chat } = deps;
+export function roomRoutes(deps: { store: Store; busy: Set<string>; usage: UsageBook; clients: ModelClient[]; memory: Pick<ReturnType<typeof createMemory>, 'read' | 'write'>; chat: ReturnType<typeof createChat>['chat']; stopTurn?: ReturnType<typeof createChat>['stopTurn'] }): Route {
+  const { store, busy, usage, clients, memory, chat, stopTurn } = deps;
   return async (req, res, path) => {
     const doc = /^\/api\/docs\/([^/]+)$/.exec(path)?.[1];
     const room = /^\/api\/rooms\/([^/]+)\/chat$/.exec(path)?.[1];
     if (doc && req.method === 'GET') return answer(res, 200, { text: await store.readDoc(doc) });
     if (doc && req.method === 'PUT') { await store.writeDoc(doc, String((await body(req)).text ?? '')); return answer(res, 200, { ok: true }); }
-    if (path === '/api/models' && req.method === 'GET') return answer(res, 200, usage.info(clients));
+    if (path === '/api/models' && req.method === 'GET') return answer(res, 200, usage.info(clients, false, true));
     const cut = /^\/api\/rooms\/([^/]+)\/chat\/([\w-]{1,80})$/.exec(path);
     if (cut && req.method === 'DELETE') {
       if (busy.has(cut[1])) return answer(res, 409, { error: 'this person is still replying' });
@@ -23,6 +23,9 @@ export function roomRoutes(deps: { store: Store; busy: Set<string>; usage: Usage
     const remembered = /^\/api\/rooms\/([^/]+)\/memory$/.exec(path)?.[1];
     if (remembered && req.method === 'GET') { const { notes, summary } = await memory.read(remembered); return answer(res, 200, { notes, summary }); }
     if (remembered && req.method === 'PUT') { await memory.write(remembered, await body(req)); return answer(res, 200, { ok: true }); }
+    // The founder's Stop, from any window: a closed window does not stop a turn that is waiting on the founder.
+    const stopping = /^\/api\/rooms\/([^/]+)\/stop$/.exec(path)?.[1];
+    if (stopping && req.method === 'POST') return answer(res, 200, { stopped: stopTurn?.(stopping) ?? false });
     if (room && req.method === 'GET') return answer(res, 200, await store.readChat(room));
     if (room && req.method === 'POST') {
       const sent = await body(req);

@@ -135,4 +135,12 @@ describe('a key check that did not pass', () => {
     usage.revive('groq');
     expect(usage.info([client('groq'), client('groq#2')])[0]).toMatchObject({ checked: true, check: { outcome: 'ok' } });
   });
+
+  it('lists a partner-only model for the rail, marked, and never for a picker', () => {
+    const usage = createUsage(null, () => 1);
+    const clients = [client('gemini'), { ...client('gemini-flash'), partnerOnly: true }, { ...client('nemotron-fast'), side: true }];
+    expect(usage.info(clients).map((one) => one.name)).toEqual(['gemini']);
+    const rail = usage.info(clients, false, true);
+    expect(rail.map((one) => [one.name, !!one.partnerOnly])).toEqual([['gemini', false], ['gemini-flash', true]]);
+  });
 });

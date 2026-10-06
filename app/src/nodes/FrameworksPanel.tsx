@@ -134,7 +134,7 @@ export function FrameworksPanel() {
   const [busy, setBusy] = useState('');
   // Which models are set up here right now. A scorecard turns amber when the model that made it has gone, so the
   // panel has to know what is configured, and it is one small question asked once.
-  const models = (useModels() ?? []).map((model) => model.name);
+  const models = (useModels() ?? []).filter((model) => !model.partnerOnly).map((model) => model.name);
   // Bumped when a rerun starts, so the runs list under that framework starts watching again.
   const [watch, setWatch] = useState(0);
   // Which framework is being asked "really?". Throwing a team away takes two presses, in the place the first one was.

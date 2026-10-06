@@ -4,6 +4,7 @@ import type { Framework } from '../../shared/frameworks.ts';
 import type { Box, DocRules, Stage } from '../../shared/model.ts';
 import { readableDocIds, wiredDocIds } from '../prompt.ts';
 import { addedTwice, appendToSection, headings, replaceSection, rewriteLoss } from './sections.ts';
+import { docTitle } from './doc-title.ts';
 import { text, type Tool, type ToolContext } from './registry.ts';
 import { shortDay } from '../clock.ts';
 import { dropFlagged, figureCheck, HELD_BACK, holdVerdict, verdictStanding, type Receipt } from '../truth.ts';
@@ -58,6 +59,12 @@ function find(context: ToolContext, wanted: string, reading = false) {
   const key = wanted.trim().toLowerCase();
   const hits = [...docs].filter(([id, title]) => id === key || title.trim().toLowerCase() === key);
   if (hits.length === 1) return hits[0][0];
+  // A doc made this turn is named short (docTitle): the person may still call it by the long title they gave it.
+  if (!hits.length) {
+    const short = docTitle(wanted).toLowerCase();
+    const made = [...context.granted].filter(([, title]) => title.trim().toLowerCase() === short);
+    if (made.length === 1) return made[0][0];
+  }
   const pinned = !reading && context.stage.docs.find((one) => one.pinned && (one.id === key || one.title.trim().toLowerCase() === key));
   if (!hits.length && pinned) throw new Error(`"${pinned.title}" is a pinned company document: you can read it, but writing to it needs a wire from the founder.`);
   const titles = [...docs.values()].map((title) => `"${title}"`).join(', ') || 'none';
@@ -485,7 +492,8 @@ export const docTools: Tool[] = [
     description: 'Create a new document card next to your room, already connected to you.',
     parameters: { type: 'object', properties: { title: { type: 'string' }, text: { type: 'string', description: 'The markdown text' } }, required: ['title', 'text'] },
     async run(args, context) {
-      const title = text(args, 'title', 80).trim();
+      // A short name, never the ask: the model often hands the whole request over as the title.
+      const title = docTitle(text(args, 'title', 200));
       const id = `doc-${Math.random().toString(36).slice(2, 8)}`;
       await context.store.writeDoc(id, text(args, 'text'));
       context.granted.set(id, title);

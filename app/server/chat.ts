@@ -32,8 +32,13 @@ type Deps = {
 };
 
 // The founder talking to one person, and one person asking another.
+const KEEPALIVE = 20_000;
+
 export function createChat(deps: Deps) {
   const { store, roomFeed, busy, clients, usage, seams, attention, approvals, memory, promptFor } = deps;
+  // Each running turn's own Stop, by room: the founder's Stop button reaches it from any window, and so a window
+  // that closes is never mistaken for one.
+  const stops = new Map<string, AbortController>();
 
   // A consult: the question lands in the colleague's room under the asker's name, they answer once without tools, and both are kept there.
   const consult: Consult = async ({ fromRoomId, toRoomId, question, signal }) => {
@@ -87,14 +92,23 @@ export function createChat(deps: Deps) {
     busy.add(roomId);
 
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
-    const send = (event: ChatEvent) => !res.writableEnded && res.write(`data: ${JSON.stringify(event)}\n\n`);
+    const send = (event: ChatEvent) => !res.writableEnded && !res.destroyed && res.write(`data: ${JSON.stringify(event)}\n\n`);
+    // A turn waiting on the founder can sit silent for many minutes, and a client or proxy with an idle timeout drops a
+    // stream that says nothing: a comment line every 20 seconds, which no reader takes for an event.
+    const beat = setInterval(() => { if (!res.writableEnded && !res.destroyed) res.write(': still here\n\n'); }, KEEPALIVE);
+    beat.unref();
     // One name for this turn, said on both roads out of here: whoever asked hears it on their own stream, every other
     // window hears it on the feed, and so nobody draws the same reply twice.
     const turn = newTurnId();
     send({ turn });
-    // The founder pressing Stop closes the request; the turn ends there and what was said is kept.
+    // The founder's Stop ends the turn and keeps what was said. A window that goes away (closed, reloaded, a client
+    // that timed out) ends it too, unless the turn is waiting on the founder: then the question stays in Needs you and
+    // on the phone, the answer may come from any window later, and the turn runs on to its end with nobody's stream
+    // open. Every window still sees it on the feed. Only Stop, from wherever, ends a waiting turn.
     const stop = new AbortController();
-    res.on('close', () => stop.abort());
+    stops.set(roomId, stop);
+    let waiting = 0;
+    res.on('close', () => { clearInterval(beat); if (!waiting) stop.abort(); });
     // The reply as it stands after every finished tool step; `id` is set once the founder's question is saved.
     const kept = { id: '', text: '', tools: [] as ToolEvent[], writes: Promise.resolve() };
     try {
@@ -131,7 +145,14 @@ export function createChat(deps: Deps) {
         // The short prompt with whatever this call added after the whole one (a second look's answer and nudge).
         slimmer: async () => [...await promptFor(stage, roomId, mine.map((tool) => tool.name), false, true), ...these.slice(messages.length)],
         // Listened for before it is shown, so an answer given while Needs you is still being written is heard.
-        approve: (event, signal) => askFounder(attention, approvals, { id: `approval:${event.id}`, kind: 'approval', title: event.question ?? event.name.replace(/_/g, ' '), at: Date.now(), roomId, who: room.name, event }, signal),
+        approve: async (event, signal) => {
+          waiting += 1;
+          try {
+            return await askFounder(attention, approvals, { id: `approval:${event.id}`, kind: 'approval', title: event.question ?? event.name.replace(/_/g, ' '), at: Date.now(), roomId, who: room.name, event }, signal);
+          } finally {
+            waiting -= 1;
+          }
+        },
         context: { stage, roomId, store, granted: new Map() },
         // Both roads at once: the window that asked, and every window that is only watching.
         events: {
@@ -215,11 +236,20 @@ export function createChat(deps: Deps) {
         await store.putMessage(roomId, failure).catch(() => {});
       }
     } finally {
+      clearInterval(beat);
+      if (stops.get(roomId) === stop) stops.delete(roomId);
       busy.delete(roomId);
       roomFeed.tell({ roomId, turn, ended: true });
       res.end();
     }
   }
 
-  return { chat, consult };
+  // The founder's Stop for whatever this person is saying now. False when nothing is running.
+  const stopTurn = (roomId: string) => {
+    const stop = stops.get(roomId);
+    stop?.abort();
+    return !!stop;
+  };
+
+  return { chat, consult, stopTurn };
 }

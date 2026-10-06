@@ -11,7 +11,8 @@ export type Person = { name: string; role: string; brief: string; model?: string
 // today; the gender is guessed from the name the moment it is typed, and the voice follows from it.
 export function PersonForm({ id, person, onSave, onCancel }: { id: string; person: Person; onSave: (next: Person) => void; onCancel?: () => void }) {
   const [form, setForm] = useState({ ...person, model: person.model ?? 'auto' });
-  const models = useModels() ?? [];
+  // A partner-only model answers nobody else, so it is never offered here.
+  const models = (useModels() ?? []).filter((model) => !model.partnerOnly);
   // A voice the founder chose by hand in this sitting is theirs: changing gender after that leaves it alone.
   const [picked, setPicked] = useState(false);
   const [allVoices, setAllVoices] = useState(false);

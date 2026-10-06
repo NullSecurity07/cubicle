@@ -46,6 +46,14 @@ describe('doc tools', () => {
     expect(await store.readDoc(made.effect!.id!)).toBe('Short.');
   });
 
+  it('names a doc made from the whole ask short, and still finds it by the long title', async () => {
+    const { store, call } = await setup();
+    const made = await call('create_doc', { title: 'Write me a doc about our pricing in 400 words', text: '# Pricing\n\nTBD' });
+    expect(made).toMatchObject({ ok: true, text: 'Created "Pricing".', effect: { kind: 'doc-created', title: 'Pricing' } });
+    expect((await call('write_doc', { doc: 'Write me a doc about our pricing in 400 words', text: '# Pricing\n\nTBD\n\nThree tiers.' })).ok).toBe(true);
+    expect(await store.readDoc(made.effect!.id!)).toContain('Three tiers.');
+  });
+
   it('replaces one section and leaves the others as they were', async () => {
     const { store, call } = await setup();
     const out = await call('replace_section', { doc: 'Brand doc', heading: 'Build', text: 'Ship the stage in October.' });
