@@ -133,3 +133,40 @@ describe('a blank picture', () => {
     expect(isBlank(await blankness('/nowhere/at-all.png'))).toBe(false);
   });
 });
+
+describe('a drawn picture that does not show its scene', () => {
+  const corridor = { ...visual, line: 'A dental front desk phone flashing red', subject: 'a dental front desk phone flashing red' };
+  const closer = { ...corridor, subject: 'phone, large and clear in the middle of the frame, a dental front desk phone flashing red' };
+  const eyes = (present: Record<string, number>): Sight => ({ ...sightOf({}), about: async (file) => present[file.split('/').pop()!] ?? null });
+
+  it('is drawn again closer once, and the closer one is kept when it shows more', async () => {
+    const lines: string[] = [];
+    const asked: Visual[] = [];
+    const done = await finishPicture({
+      dir: '/nowhere', file: 'one.png', visual: corridor, scene, pack: 'clean', paint, state: looking(), report: (line) => lines.push(line),
+      sight: eyes({ 'one.png': 0.06, 'one-b.png': 0.46 }), subject: { label: 'a photograph of a phone at a dental front desk', closer },
+      redraw: async (again) => { asked.push(again); return 'one-b.png'; },
+    });
+    expect(asked).toEqual([closer]);
+    expect(done.file).toBe('one-b.png');
+    expect(done.visual).toBe(closer);
+    expect(lines).toEqual(['scene 1: the picture did not show a phone at a dental front desk (0.06), so it was drawn again closer (0.46)']);
+  });
+
+  it('keeps a picture that shows its scene, and the first one when the second is no better', async () => {
+    let redraws = 0;
+    const redraw = async () => { redraws += 1; return 'one-b.png'; };
+    const shows = await finishPicture({ dir: '/nowhere', file: 'one.png', visual: corridor, scene, pack: 'clean', paint, state: looking(), report: () => {},
+      sight: eyes({ 'one.png': 0.7 }), subject: { label: 'a phone', closer }, redraw });
+    expect(shows.file).toBe('one.png');
+    expect(redraws).toBe(0);
+    const worse = await finishPicture({ dir: '/nowhere', file: 'one.png', visual: corridor, scene, pack: 'clean', paint, state: looking(), report: () => {},
+      sight: eyes({ 'one.png': 0.1, 'one-b.png': 0.05 }), subject: { label: 'a phone', closer }, redraw });
+    expect(worse.file).toBe('one.png');
+    expect(redraws).toBe(1);
+    const blind = await finishPicture({ dir: '/nowhere', file: 'one.png', visual: corridor, scene, pack: 'clean', paint, state: looking(), report: () => {},
+      sight: sightOf({}), subject: { label: 'a phone', closer }, redraw });
+    expect(blind.file).toBe('one.png');
+    expect(redraws).toBe(1);
+  });
+});

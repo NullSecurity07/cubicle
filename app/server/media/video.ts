@@ -32,6 +32,7 @@ import {
   afforded, closeHolds, drawnAs, heldUp, lineUnder, photoOfTheLine, sceneLine, shareOut, shotKey, slotsFor, standInOf, stockQueries, topicOf,
   ofTheWorld, worldOf, worldScore, type Slot, type Visual,
 } from './visuals.ts';
+import { choosePhoto, closerFor, groundedFor, picturePolicy, seenAs } from './picture-policy.ts';
 import { isDraft, makingWords, secondsEach } from '../../shared/film-time.ts';
 import { filmMemory, storyboardKey, subjectKey, type KeptSubject } from './remembered.ts';
 import { pictureHash, type FilmRecord, type RecordPicture } from './edits.ts';
@@ -207,6 +208,12 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // The film's world: the brief's own things and, for a film about the company, the product's. Every picture
         // and photograph is of the line and of this world, and nothing a museum would catalogue gets in unasked.
         const world = worldOf(asked.prompt, productFacts(material.lines.join('\n\n')));
+        // Where the pictures come from first: a film about the company is drawn from its world, and takes a
+        // photograph only when the photograph is plainly of the scene; a documentary or a call for real footage is
+        // photographed first. `picture-policy.ts` says why.
+        const policy = picturePolicy(asked.prompt);
+        // A photograph goes in a film once. Journey 16 held the same jar of meal prep under three scenes.
+        const photosUsed = new Set<string>();
         // A moving shot the film was going to have can still be real footage somebody filmed when no AI clip can be
         // made, which costs nothing and needs no key (Wikimedia Commons).
         const realClips = mayUseAi && photoLibrary.clips;
@@ -597,30 +604,35 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           // picture in a finished film came from is still worth a line beside the film.
           let credit: string | undefined;
           try {
-              // A real photograph of a real thing, from somebody who took one. People in stock are b-roll and
-              // nothing else: never the film's own speaker, and never beside a claim about a named product.
-            {
-              // A photograph whose own description has none of the line's things in it is of something else.
-              // Asked twice at most, the shot's own things beside the film's topic and then the topic alone; a
-              // photograph that shares no word with either is refused, and after two misses the picture is drawn.
-              let photo = null as Awaited<ReturnType<typeof photoLibrary.take>>;
-              for (const query of stockQueries(visual, topic, world)) {
-                photo = await photoLibrary.take({
+            // A real photograph of a real thing, from somebody who took one, taken only when it is plainly the
+            // scene's: by its title, and then by looking at it. People in stock are b-roll and nothing else: never
+            // the film's own speaker, and never beside a claim about a named product. Which, and why not, is said
+            // shot by shot.
+            const label = seenAs(visual, world);
+            const chosen = await choosePhoto({
+              policy, visual, world, topic, brief: asked.prompt, used: photosUsed, stopped: () => stop.aborted,
+              take: async (query, fits) => {
+                const photo = await photoLibrary.take({
                   query, shape,
                   speaker: !!scene.person || scene.layout === 'presenter', names: [material.brand?.name ?? ''].filter(Boolean),
-                  fits: (one) => photoOfTheLine(one.what, visual, topic, asked.prompt, world),
-                  rank: (one) => worldScore(one.what, world),
+                  fits: (one) => fits(one), rank: (one) => worldScore(one.what, world),
                 }, stop);
-                if (photo || stop.aborted) break;
-              }
-              if (photo) {
-                file = `stock-${name}.${photo.ext}`;
-                await writeFile(join(at, 'assets', file), photo.bytes);
-                credit = creditOf(photo.found);
-              }
+                if (!photo) return null;
+                const taken = `stock-${name}-${photo.found.id.replace(/[^\w-]+/g, '').slice(-12)}.${photo.ext}`;
+                await writeFile(join(at, 'assets', taken), photo.bytes);
+                return { ...photo, file: taken };
+              },
+              look: async (photo) => (deps.sight?.about ? deps.sight.about(join(at, 'assets', photo.file), label).catch(() => null) : null),
+            });
+            if (!stop.aborted) said(visual.scene, chosen.line);
+            if (chosen.photo) {
+              file = chosen.photo.file;
+              credit = creditOf(chosen.photo.found);
             }
+            // Drawn first, a picture is drawn from its scene's own things where the brief set them.
+            const drawnFrom = policy === 'drawn-first' ? groundedFor(visual, world) : visual;
             if (!file) {
-              const piece = await drawing.make({ prompt: drawnAs(visual, bible), shape, ...(draft ? { size: 'draft' } : {}) }, { report: fromMaker, signal: stop });
+              const piece = await drawing.make({ prompt: drawnAs(drawnFrom, bible), shape, ...(draft ? { size: 'draft' } : {}) }, { report: fromMaker, signal: stop });
               if (piece.by === DRAWN_BEFORE) kept += 1;
               file = `frame-${name}.${piece.ext}`;
               await writeFile(join(at, 'assets', file), piece.bytes);
@@ -628,7 +640,8 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
             // Looked at, drawn again once if it broke a rule, lifted, cut into planes and measured for its scrim:
             // the same steps a remade film's pictures go through, in `finish.ts`.
             const done = await finishPicture({
-              dir: join(at, 'assets'), file, visual, scene, pack, paint, sight: deps.sight, state: lookingAt, stop, report,
+              dir: join(at, 'assets'), file, visual: file.startsWith('stock-') ? visual : drawnFrom, scene, pack, paint, sight: deps.sight, state: lookingAt, stop, report,
+              ...(file.startsWith('stock-') ? {} : { subject: { label, closer: closerFor(drawnFrom, world) } }),
               redraw: async (again) => {
                 const piece = await drawing.make({ prompt: drawnAs(again, bible), shape, ...(draft ? { size: 'draft' } : {}) }, { report: fromMaker, signal: stop });
                 const second = `frame-${name}-b.${piece.ext}`;
