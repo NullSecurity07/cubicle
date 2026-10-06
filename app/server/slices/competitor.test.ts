@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { localDay, type CompetitorView } from '../../shared/competitor.ts';
 import type { Stage } from '../../shared/model.ts';
 import { createAttention } from '../attention.ts';
-import { buildView, changesOf, lastCrawl, noteChange, twoLines, type CompetitorCard } from '../competitor/view.ts';
+import { buildView, changesOf, lastCrawl, guardedNote, noteChange, twoLines, type CompetitorCard } from '../competitor/view.ts';
 import { hub } from '../events.ts';
 import type { Deps } from '../install.ts';
 import { createSeams } from '../seams.ts';
@@ -141,5 +141,13 @@ describe('the Competitor card', () => {
     expect(done.text).toMatch(/3 pages read/);
     expect(done.crawl).toMatchObject({ file: expect.stringMatching(/^crawls\/acme\.test-\d{4}-\d{2}-\d{2}\.md$/), pages: 3 });
     expect(((await call('/api/competitor/competitor-1')).body as CompetitorView).crawl?.pages).toBe(3);
+  });
+});
+
+describe('a note on a change', () => {
+  it('marks a count and a claim the change does not give', () => {
+    const diff = '- Pro plan €29 a month\n+ Pro plan €19 a month\n+ Now with 3 printers per account';
+    expect(guardedNote('They cut Pro to €19 and allow 3 printers per account.\nCustomers love it, 12 hosts already switched.', diff))
+      .toBe('They cut Pro to €19 and allow 3 printers per account.\nCustomers love it, 12 (unsourced) hosts already switched (assumption).');
   });
 });

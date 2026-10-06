@@ -106,7 +106,7 @@ export function inventedIn(text: string, material: Material): string[] {
   if (proof && !NOT_YET.test(text.slice(0, proof.index))) found.push(proof[0]);
   return [...new Set(found)];
 }
-const invented = (text: string, material: Material) => [...claimsIn(text, material), ...inventedIn(text, material)];
+export const invented = (text: string, material: Material): string[] => [...claimsIn(text, material), ...inventedIn(text, material)];
 
 // The mend's own lines in the notes, which quote what it took out: never read again as the model's words.
 const ASIDE = /^(?:Headline had a number with no source|Needs a source:|Cut for one idea a slide:|Name an amount|Asked:|Took out )/;
