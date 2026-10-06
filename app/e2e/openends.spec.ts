@@ -123,6 +123,34 @@ test('health says in plain words what is fine and what needs you, and a backup c
   await page.keyboard.press('Escape');
 });
 
+test('health turns the service on with one click, says what it came to, and counts the unasked work', async ({ page }) => {
+  await bar(page, 'health');
+  const health = panel(page, 'Health');
+  await shown(page, 'Health');
+  const rows = health.locator('.health__row');
+  // A check run's service lives in memory (STAGE_SERVICE_STUB): never installed by the app, off until the click.
+  const service = rows.filter({ hasText: 'Runs while closed' });
+  await expect(service).toContainText('no: ');
+  await expect(service).toContainText('Turn on writes the service and switches it on');
+  // The day's budget for work nobody asked for, and how much of it is used.
+  await expect(rows.filter({ hasText: 'Unasked work today' })).toContainText(/\d+ of 12 used/);
+
+  await service.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: '.shots/health-service-off.png' });
+  await service.getByRole('button', { name: 'Runs while closed: Turn on' }).click();
+  await expect(service).toContainText('yes: it runs as a service');
+  await expect(service.getByRole('status')).toHaveText('Switched on and running. It starts at every login and keeps going while the app is closed.');
+  await expect(service.getByRole('button')).toHaveCount(0);
+  await expect(service).toContainText('Fine');
+  await page.screenshot({ path: '.shots/health-service-on.png' });
+
+  // Asked again, the row stays as the click left it.
+  await page.keyboard.press('Escape');
+  await expect(health).toBeHidden();
+  await bar(page, 'health');
+  await expect(panel(page, 'Health').locator('.health__row').filter({ hasText: 'Runs while closed' })).toContainText('yes: it runs as a service');
+});
+
 test('Tab keeps to the Health view and never lands on a card behind it', async ({ page }) => {
   await bar(page, 'health');
   await shown(page, 'Health');

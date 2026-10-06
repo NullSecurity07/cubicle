@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { Attention } from '../../../shared/model';
 import { overlay } from '../../overlay/store';
 import { emit } from '../../bus';
-import { answerBet, answerPlan, answerReview, closeBet, closePromise, morningDone } from './api';
+import { answerBet, answerPlan, answerProposal, answerReview, closeBet, closePromise, morningDone } from './api';
 import { takeBetLabel } from './words';
 
 // What the founder can do from Needs you about the partner's things: read the morning note where it was written and
@@ -45,6 +45,12 @@ export function PartnerNeed({ entry, attempt }: { entry: Attention; attempt: (wo
       <button type="button" className="primary" onClick={fix}>Fix</button>
     </>;
   }
+  // A move the partner proposed unasked: Run does the ready thing (drafts the email, puts the task on the board, records
+  // the decision, drops the promise); Don't lets it go.
+  if (entry.kind === 'partner-proposal') return <>
+    <button type="button" onClick={() => attempt(answerProposal(item, false))}>Don't</button>
+    <button type="button" className="primary" onClick={() => attempt(answerProposal(item, true))}>Run</button>
+  </>;
   // Only the founder closes their own promise.
   if (entry.kind === 'promise') return <>
     <button type="button" onClick={() => attempt(closePromise(item, false))}>Drop it</button>

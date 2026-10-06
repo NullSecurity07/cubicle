@@ -1,7 +1,7 @@
 import { modelTitle } from '../shared/modelNames.ts';
 import { sideClient } from './cache.ts';
 import { providerOf, type ModelClient } from './providers.ts';
-import type { UsageBook } from './usage.ts';
+import { unaskedAllowed, type UsageBook } from './usage.ts';
 
 // Below this share of a day's free quota a provider is treated as spent: what is left would not survive a turn.
 export const FLOOR = 0.05;
@@ -51,7 +51,9 @@ export const tier = (client: ModelClient, partner = false) => {
 // note). Side calls go to the small side model first and may be answered from the cache; a turn never reaches either.
 type CallRoute = 'turn' | 'side';
 // `partner`: the partner's own turn, the only one a partner-only model may answer.
-type Want = { pinned?: string; promptChars: number; tools: boolean; vision?: boolean; kind?: CallRoute; partner?: boolean };
+// `unasked`: work nobody asked for (usage.ts, createUnasked). It never goes to a partner-only model or to one with under a
+// quarter of its day left, even when that leaves nobody: the work waits rather than spend the founder's day.
+type Want = { pinned?: string; promptChars: number; tools: boolean; vision?: boolean; kind?: CallRoute; partner?: boolean; unasked?: boolean };
 
 // One provider's keys take turns: within the places the order already gives that provider, the key that has carried
 // least goes first, the last minute counting before the day, so `groq` and `groq#2` share the load instead of the
@@ -82,6 +84,7 @@ export function route(all: ModelClient[], usage: UsageBook, want: Want) {
   // A partner-only model is not there for anyone else; one whose month is used (`rpmo`) is not there at all, even when it
   // is all there is: its credit is the founder's money.
   const clients = all.filter((client) => (want.partner || !client.partnerOnly) && !(client.limits.rpmo && usage.spent?.(client)));
+  if (want.unasked) return routeUnasked(clients.filter((client) => unaskedAllowed(client, usage)), usage, want);
   // A side call keeps the order it was given: summaries read the list backwards on purpose.
   // A side model only writes the short calls around a turn. Pinned to a person, it cannot answer their turn, and the
   // founder hears that, not that it is missing: its key is there.
@@ -96,6 +99,12 @@ export function route(all: ModelClient[], usage: UsageBook, want: Want) {
   const side = found.order.filter((client) => client.side && usage.left(client) > FLOOR && !usage.hot(client, want.promptChars));
   const order = [...side, ...found.order.filter((client) => !side.includes(client))];
   return { order: order.map((client) => sideClient(client, usage, usage.clock)), notice: found.notice };
+}
+
+function routeUnasked(clients: ModelClient[], usage: UsageBook, want: Want) {
+  const { unasked: _, partner: __, ...rest } = want;
+  if ((want.kind ?? 'turn') === 'turn') return rank([...clients.filter((client) => !client.side)].sort((a, b) => tier(a) - tier(b)), usage, rest);
+  return rank(clients, usage, rest);
 }
 
 function rank(clients: ModelClient[], usage: UsageBook, want: Want) {

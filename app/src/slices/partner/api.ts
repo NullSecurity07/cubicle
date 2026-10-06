@@ -12,5 +12,7 @@ export const closeBet = (id: string, verdict: BetVerdict) => request<Bet>(`/api/
 export const answerPlan = (id: string, accept: boolean, makeBoard = false) => request<{ ok: true; added?: number }>(`/api/partner/plans/${encodeURIComponent(id)}`, send('POST', { accept, ...(makeBoard ? { makeBoard } : {}) }));
 // A colleague's doc the partner flagged: Fix hands back the ask to send in their room, Ignore lets it go.
 export const answerReview = (id: string, fix: boolean) => request<{ ok: true; roomId?: string; ask?: string }>(`/api/partner/reviews/${encodeURIComponent(id)}`, send('POST', { fix }));
+// A move the partner proposed unasked: run its ready draft, or not.
+export const answerProposal = (id: string, run: boolean) => request<{ status: string }>(`/api/partner/proposals/${encodeURIComponent(id)}`, send('POST', { run }));
 // A promise the founder made: done, or dropped.
 export const closePromise = (id: string, done: boolean) => request<{ status: string }>(`/api/partner/promises/${encodeURIComponent(id)}`, send('POST', { done }));

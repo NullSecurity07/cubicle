@@ -152,6 +152,8 @@ export type BoardEvent = { tasks: Task[] } | { effect: ToolEffect; roomId: strin
 // One thing waiting for the founder. `lapsed`: the approval belonged to a turn that ended with the app; it can only be asked again.
 export type AttentionKind = 'approval' | 'run-approval' | 'proposed-task' | 'proposed-decision' | 'run-failed' | 'missed' | 'review-due' | 'proposed-source' | 'page-changed'
   | 'lead-stale'
+  // A lead's thread: a reply to answer, a meeting's notes to write, a reading those notes propose for the Metrics card.
+  | 'lead-replied' | 'lead-notes' | 'lead-reading'
   | 'metric-alert' | 'proposed-target' | 'runway-low' | 'proposed-runway'
   | 'key-rejected'
   // A file the app could not read and put back or started again.
@@ -160,6 +162,8 @@ export type AttentionKind = 'approval' | 'run-approval' | 'proposed-task' | 'pro
   | 'backup-failed'
   // The partner's: the morning note, a bet to check or to take on, and a plan's steps to put on the board.
   | 'morning-note' | 'bet-check' | 'proposed-bet' | 'proposed-plan'
+  // A move the partner proposes unasked, woken by a number, a lead, a page or a late promise, with its draft ready to run.
+  | 'partner-proposal'
   // Something the founder said they would do, on its day and after.
   | 'promise'
   // The partner read a colleague's doc and found something to fix before the founder acts on it.

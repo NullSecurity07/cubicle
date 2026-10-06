@@ -17,9 +17,12 @@ import { asksVerdict, callShape, holdCall } from '../partner/call.ts';
 import { economicsBlock, economicsOf, workingTools } from '../partner/economics.ts';
 import { chaseLine, keptPromiseLine, promiseLine, promisesAttention, promisesBook, promisesIn } from '../partner/promises.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
-import { createReviews, dailyBudget, granted, type UnaskedBudget } from '../partner/review.ts';
+import { createReviews, granted } from '../partner/review.ts';
 import { readRefresh, refreshAsk, refreshDue, refreshOpening, refreshText } from '../partner/refresh.ts';
 import { markClaims } from '../tools/evidence.ts';
+import { createWatch, dailyBudget, fakeWatchReply, type Budget } from '../partner/watch.ts';
+import { draftId, gmailLink } from '../../shared/maildraft.ts';
+import { leadAddresses, noAddress } from '../tools/outward.ts';
 import { staleNeeds, standingBlock, standingParts, stillWaiting, teamVerdict, type StandingParts } from '../partner/standing.ts';
 import { companyFacts, keepFacts, keptLine, runwayFix } from '../partner/keep.ts';
 import { CUSTOMER_LINE, customerReply, forCustomers } from '../partner/audience.ts';
@@ -176,12 +179,10 @@ export function planTools(state: PartnerStateBook, changed: () => Promise<void>,
 }
 
 // What a test hands in instead of the clock and the model.
-// `budget`: the day's allowance for model calls nobody asked for (the review's wording, the verdict refresh); two a
-// day unless the app hands in its own. `phrase`: the small model that words a review.
-export type PartnerOptions = {
-  now?: () => number; ask?: (messages: ModelMessage[]) => Promise<string | { text: string; provider?: string; model?: string }>;
-  budget?: UnaskedBudget; phrase?: (prompt: string) => Promise<string | null>;
-};
+// `watchAsk` stands in for the model on the watch's unasked turns; `budget` for the daily budget of them; `phrase` for
+// the small model that words a partner review. The watch, the review and the verdict refresh share the budget handed in.
+type Asked = { text: string; provider?: string; model?: string };
+export type PartnerOptions = { now?: () => number; ask?: (messages: ModelMessage[]) => Promise<string | Asked>; watchAsk?: (messages: ModelMessage[]) => Promise<Asked>; budget?: Budget; phrase?: (prompt: string) => Promise<string | null> };
 
 export function createPartner(options: PartnerOptions = {}) {
   const now = options.now ?? Date.now;
@@ -219,8 +220,8 @@ export function createPartner(options: PartnerOptions = {}) {
     const book = betsBook(deps.workspace, now);
     const bets = (): Promise<Bet[]> => book.list();
     const promises = promisesBook(deps.workspace, now);
-    // Unasked work spends from one daily budget (server/partner/review.ts).
-    const budget = options.budget ?? dailyBudget(2, now);
+    // The review and the verdict refresh spend from the app's one budget for unasked work (usage.ts).
+    const budget: Budget = options.budget ?? deps.unasked;
     // A bet changed: the Company document's Bets section is written again from the ledger, and Needs you is told.
     const betsChanged = async () => {
       standing = null;
@@ -259,23 +260,49 @@ export function createPartner(options: PartnerOptions = {}) {
 
     // ------------------------------------------------------------ the morning turn
 
-    const ask = options.ask ?? (deps.fake ? async () => ({ text: FAKE_MORNING, provider: fakeClient.name, model: fakeClient.model }) : async (messages: ModelMessage[]) => {
-      // The morning note is one of the partner-only model's reserved turns.
-      const { order } = partnerRoute(deps.clients, deps.usage, { promptChars: promptSize(messages), tools: false, reserved: true });
-      // Nothing is shown while the note is written, so a stream that breaks part way goes straight to the next model.
+    // One quiet turn of the partner's: nothing is shown while it is written, so a stream that breaks part way goes
+    // straight to the next model. `reserved`: the partner-only model may answer it.
+    const quietTurn = (reserved: boolean) => async (messages: ModelMessage[]): Promise<Asked> => {
+      const { order } = partnerRoute(deps.clients, deps.usage, { promptChars: promptSize(messages), tools: false, reserved });
       const reply = await complete(messages, { onToken: () => {}, onRestart: () => {} }, order, ({ client, error }) => deps.usage.failed(client.name, error), (client) => deps.usage.admit(client.name));
       if (!reply.reported) deps.usage.record(reply.client.name, reply.usage, reply.quota);
       return { text: reply.text, provider: reply.client.name, model: reply.client.model };
+    };
+    // The morning note is one of the partner-only model's reserved turns.
+    const ask = options.ask ?? (deps.fake ? async () => ({ text: FAKE_MORNING, provider: fakeClient.name, model: fakeClient.model }) : quietTurn(true));
+
+    // The watch (server/partner/watch.ts): a number trending to the kill line, a lead who replied, a watched page that
+    // changed and a promise two days late each wake the partner for one unasked turn that ends in something ready to
+    // run. Never on the partner-only model, and three a day. A fake run (the browser checks) looks only when asked
+    // (POST /api/partner/watch) or with STAGE_PARTNER_WATCH=1.
+    const watchOnTick = !deps.fake || process.env.STAGE_PARTNER_WATCH === '1';
+    const watch = createWatch({
+      workspace: deps.workspace, now, busy: deps.busy, budget: options.budget ?? dailyBudget(deps.workspace, now),
+      stage: () => deps.store.loadStage(), attention: () => deps.attention.list(), promises: () => promises.list(), bets: () => book.list(),
+      leads: (id) => leadsFor(deps.workspace).list(id), promptFor: (on, roomId) => deps.promptFor(on, roomId, [], true),
+      ask: options.watchAsk ?? (deps.fake ? async (messages) => ({ text: fakeWatchReply(messages), provider: fakeClient.name, model: fakeClient.model }) : quietTurn(false)),
+      changed: () => deps.attention.refresh(), notify: deps.notify,
+      acts: {
+        // Drafted the way draft_email drafts, and only to an address still on a Leads card.
+        async email(draft, proposal) {
+          const known = (await leadAddresses(deps.workspace)(await deps.store.loadStage())).map((one) => one.toLowerCase());
+          if (!known.includes(draft.to.toLowerCase())) throw new Error(`${noAddress(draft.to)}: it is no longer on a Leads card`);
+          await deps.attention.raise({ id: draftId(draft), kind: 'mail-draft', title: `Email to ${draft.to} ready to send`, detail: draft.subject, url: gmailLink(draft), at: now(), who: proposal.who, roomId: proposal.roomId });
+        },
+        async task(draft, proposal) {
+          const stage = await deps.store.loadStage();
+          const boardId = boardFor(stage, proposal.roomId) ?? await boardForPlan(deps.store, proposal.roomId);
+          await deps.boards.add(boardId, { title: draft.title, detail: `${proposal.who} proposed this unasked: ${proposal.why}.${proposal.number ? `\n${proposal.number}` : ''}`, column: 'todo', due: draft.due });
+        },
+        async decision(draft, proposal) {
+          await deps.decisions.record({ title: draft.title, chosen: draft.title, why: `${proposal.who} proposed it unasked: ${proposal.why}.${proposal.number ? ` ${proposal.number}` : ''}` });
+        },
+        async drop(draft) { await promises.close(draft.promiseId, false).catch((error: Error) => { if (!/already closed/.test(error.message)) throw error; }); standing = null; },
+      },
     });
 
     // A review is worded on the usual partner order, never the reserved model; a fake run keeps the worked-out line.
-    const phrase = options.phrase ?? (deps.fake ? undefined : async (prompt: string) => {
-      const messages: ModelMessage[] = [{ role: 'user', content: prompt }];
-      const { order } = partnerRoute(deps.clients, deps.usage, { promptChars: promptSize(messages), tools: false });
-      const reply = await complete(messages, { onToken: () => {}, onRestart: () => {} }, order, ({ client, error }) => deps.usage.failed(client.name, error), (client) => deps.usage.admit(client.name));
-      if (!reply.reported) deps.usage.record(reply.client.name, reply.usage, reply.quota);
-      return reply.text;
-    });
+    const phrase = options.phrase ?? (deps.fake ? undefined : async (prompt: string) => (await quietTurn(false)([{ role: 'user', content: prompt }])).text);
     // A colleague's finished doc write is reviewed by the partner on the next tick (server/partner/review.ts).
     const reviews = createReviews({
       workspace: deps.workspace, store: deps.store, attention: deps.attention, busy: deps.busy, now, budget, phrase, notify: deps.notify,
@@ -366,7 +393,7 @@ export function createPartner(options: PartnerOptions = {}) {
       }
       const stage = await deps.store.loadStage();
       const verdict = await teamVerdict(stage, (id) => deps.store.readDoc(id)).catch(() => null);
-      return [...found, ...await reviews.rows(), ...planAttention(held.plans), ...await betsAttention(await book.list(), stage, deps.workspace, localDay(now()), verdict), ...promisesAttention(await promises.list(), localDay(now()))];
+      return [...found, ...await watch.rows(), ...await reviews.rows(), ...planAttention(held.plans), ...await betsAttention(await book.list(), stage, deps.workspace, localDay(now()), verdict), ...promisesAttention(await promises.list(), localDay(now()))];
     });
     // A person wrote a doc that is a plan (by its title or its first heading): its day-by-day steps are offered as tasks.
     const afterTool: Handler<'tool:after'> = async (payload, next) => {
@@ -567,11 +594,14 @@ export function createPartner(options: PartnerOptions = {}) {
       if (!partner || deps.busy.has(partner.id)) return;
       const economics = await economicsNow(stage).catch(() => null);
       const due = refreshDue(held.call, economics?.inputs, today);
-      if (!due || !await granted(budget, 'verdict refresh')) return;
+      if (!due) return;
+      const taken = await granted(budget, 'verdict refresh');
+      if (!taken.ok) return;
       await state.change((draft) => { draft.refreshTried = today; });
       const opening = refreshOpening(held.call, economics, due.moved);
       const messages: ModelMessage[] = [...await deps.promptFor(stage, partner.id, [], true), { role: 'user', content: refreshAsk(held.call, opening, economics, today, due.why) }];
-      const answered = await ask(messages);
+      // No model answered: the turn never ran, so it goes back to the day's budget, and tomorrow tries again.
+      const answered = await ask(messages).catch((error: Error) => { taken.release(); throw error; });
       const reply = typeof answered === 'string' ? { text: answered } as { text: string; provider?: string; model?: string } : answered;
       const doc = await companyNow(stage);
       const company = doc ? await deps.store.readDoc(doc.id).catch(() => '') : '';
@@ -611,6 +641,7 @@ export function createPartner(options: PartnerOptions = {}) {
         await checkBets();
         await chasePromises();
         await morning(false);
+        if (watchOnTick) await watch.look();
         // ---- the partner's unasked judgement: colleagues' docs reviewed, the verdict refreshed (partner/review.ts,
         // partner/refresh.ts). Their own ticks, called here; nothing else of the watch's triggers lives here.
         await reviews.tick(partnerOf(await deps.store.loadStage())).catch((error: Error) => console.error(`partner review: ${error.message}`));
@@ -677,6 +708,16 @@ export function createPartner(options: PartnerOptions = {}) {
             deps.json(res, 200, sent?.fix === true ? { ok: true, roomId: found.roomId, ask: found.ask } : { ok: true });
             return true;
           }
+          // The watch, looked at now: what it raised and what waits for tomorrow's budget.
+          if (path === '/api/partner/watch' && method === 'POST') { deps.json(res, 200, await watch.look()); return true; }
+          if (path === '/api/partner/watch' && method === 'GET') { const held = await watch.read(); deps.json(res, 200, { proposals: held.proposals, waiting: held.waiting }); return true; }
+          // A move the partner proposed unasked: Run does its ready thing, Don't lets it go.
+          const proposed = /^\/api\/partner\/proposals\/([a-z]+-[a-z0-9]+-\d+)$/.exec(path);
+          if (proposed && method === 'POST') {
+            const sent = await deps.body(req);
+            deps.json(res, 200, await watch.answer(proposed[1], sent?.run === true));
+            return true;
+          }
           // The founder closes a promise from Needs you: done, or dropped.
           const promised = /^\/api\/partner\/promises\/(promise-[a-z0-9-]{1,40})$/.exec(path);
           if (promised && method === 'POST') {
@@ -727,6 +768,7 @@ export function createPartner(options: PartnerOptions = {}) {
         await state.settled();
         await book.settled();
         await promises.settled();
+        await watch.settled();
       },
     };
   };

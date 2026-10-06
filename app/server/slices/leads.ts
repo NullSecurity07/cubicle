@@ -6,6 +6,9 @@ import { hub } from '../events.ts';
 import type { Slice } from '../install.ts';
 import { createOutreach, fakeRunner, outreachEnv, uvxRunner } from '../leads/openoutreach.ts';
 import { EMAIL, isStage, leadsCardIds, leadsFor, type Leads } from '../leads/store.ts';
+import { createThread } from '../leads/thread.ts';
+import { metricsFor } from '../metrics/store.ts';
+import { draftId, draftOf } from '../../shared/maildraft.ts';
 import { wired } from '../prompt.ts';
 import { withSystem, type Handler } from '../seams.ts';
 import { offerWhenWired } from '../slice-kit.ts';
@@ -148,19 +151,18 @@ export default {
       if (!stage || !wired(stage, payload.roomId, cardsOf(stage)).length) return next(payload);
       return next(withSystem(payload, HINT));
     };
-    // An email the founder said yes to, to somebody on a wired Leads card, is the founder contacting them.
+    // An email the founder said yes to, to somebody on a wired Leads card, is the founder contacting them; one a
+    // person drafted is written on the thread of whoever it is to, so the founder opening it in Gmail can count too.
+    const thread = createThread({ leads, boards: deps.boards, metrics: () => metricsFor(deps.workspace), loadStage: () => deps.store.loadStage(), now: () => Date.now() });
     const after: Handler<'tool:after'> = async (payload, next) => {
       const { event, roomId } = payload;
-      if (event.name === 'send_email' && event.ok) {
-        const to = String(event.args.to ?? '').toLowerCase().split(',').map((one) => one.trim()).filter(Boolean);
+      if ((event.name === 'send_email' || event.name === 'draft_email') && event.ok) {
+        const to = String(event.args.to ?? '').toLowerCase().split(/[,;\s]+/).map((one) => one.trim()).filter(Boolean);
+        const subject = String(event.args.subject ?? '');
         const stage = await deps.store.loadStage().catch(() => null);
-        for (const id of stage ? wired(stage, roomId, cardsOf(stage)) : []) {
-          for (const lead of await leads.list(id)) {
-            if (!lead.person.email || !to.includes(lead.person.email.toLowerCase()) || !['new', 'fit'].includes(lead.stage)) continue;
-            await leads.move(id, lead.id, 'contacted');
-            await leads.note(id, lead.id, 'Founder', `Emailed: "${String(event.args.subject ?? '').slice(0, 120)}".`);
-          }
-        }
+        if (stage && event.name === 'send_email') await thread.sent(stage, wired(stage, roomId, cardsOf(stage)), { to, subject, room: roomId, via: event.args.from === 'founder' ? 'gmail' : 'agentmail' }).catch(() => {});
+        const draft = draftOf(event.args);
+        if (stage && draft && event.name === 'draft_email') await thread.drafted(stage, { to, subject, draft: draftId(draft), room: roomId }).catch(() => {});
       }
       return next(payload);
     };

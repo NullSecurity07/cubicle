@@ -21,6 +21,8 @@ export const WEIGHTS: Record<string, { weight: number; label: string }> = {
   approval: { weight: 100, label: 'Someone is stopped until you answer' },
   'run-approval': { weight: 95, label: 'A task is stopped until you answer' },
   'runway-low': { weight: 90, label: 'Cash is running short' },
+  // The partner woke up on a signal and has something ready to run.
+  'partner-proposal': { weight: 85, label: 'Your partner has a move ready' },
   'lead-stale': { weight: 75, label: 'A lead is waiting on you' },
   'metric-alert': { weight: 70, label: 'A number to look at' },
   'bet-check': { weight: 65, label: 'A bet is due for a check' },

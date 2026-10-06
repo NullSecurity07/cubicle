@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Backup, Backups, Check, Outside } from '../../../shared/openends';
 import { PanelShell } from '../../overlay/PanelShell';
 import type { BackupPlaces } from '../../../shared/keys-file';
-import { backUpTo, getBackupPlaces, getBackups, getHealth, getOutside, makeBackup, markSafe } from './api';
+import { actOn, backUpTo, getBackupPlaces, getBackups, getHealth, getOutside, makeBackup, markSafe } from './api';
 import { pressed } from '../../keys';
 
 // Is everything working? One line a thing, green or red, and when it is red, what you would do about it.
@@ -11,7 +11,20 @@ const whole = (count: number) => count.toLocaleString();
 const size = (bytes: number) => (bytes >= 1_000_000 ? `${(bytes / 1_000_000).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1000))} KB`);
 const when = (at: number) => new Date(at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-function Row({ check }: { check: Check }) {
+// A row may carry one button that fixes it here (Runs while closed: Turn on). Pressed, it says what it came to and
+// the row shows itself as it is now.
+function Row({ check: first }: { check: Check }) {
+  const [check, setCheck] = useState(first);
+  const [busy, setBusy] = useState(false);
+  const [said, setSaid] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => { setCheck(first); }, [first]);
+  async function act(path: string) {
+    setBusy(true);
+    setSaid(null);
+    try { const done = await actOn(path); setCheck(done.check); setSaid({ ok: done.ok, text: done.said }); }
+    catch (error) { setSaid({ ok: false, text: (error as Error).message }); }
+    finally { setBusy(false); }
+  }
   return (
     <li className={`health__row${check.ok ? (check.warn ? ' is-warn' : '') : ' is-bad'}`}>
       <span className={`quota__dot${check.ok ? (check.warn ? ' ring--low' : '') : ' ring--out'}`} aria-hidden="true" />
@@ -19,8 +32,11 @@ function Row({ check }: { check: Check }) {
         <b>{check.name}</b>
         <small>{check.detail}</small>
         {(!check.ok || check.warn) && check.fix && <p className="playbook__note">{check.fix}</p>}
+        {said && <p className={said.ok ? 'playbook__note' : 'msg--problem'} role="status">{said.text}</p>}
       </div>
-      <span className="health__verdict">{check.ok ? (check.warn ? 'Worth a look' : 'Fine') : 'Needs you'}</span>
+      {check.act
+        ? <button type="button" className="playbook__act primary" disabled={busy} aria-label={`${check.name}: ${check.act.label}`} onClick={() => void act(check.act!.path)}>{busy ? `${check.act.label}…` : check.act.label}</button>
+        : <span className="health__verdict">{check.ok ? (check.warn ? 'Worth a look' : 'Fine') : 'Needs you'}</span>}
     </li>
   );
 }

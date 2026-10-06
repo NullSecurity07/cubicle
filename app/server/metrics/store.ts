@@ -12,6 +12,14 @@ const line = (value: unknown, max: number) => (typeof value === 'string' ? value
 
 // One file per Metrics card, beside the stage, the way a leads card keeps its list. The server owns it: people and
 // the founder's window only ask for changes, and every change is said to whoever listens.
+// One store per workspace, whoever asks for it: the Metrics card and a reading logged from a lead's meeting notes
+// must write the same numbers, or one would save over the other from a stale copy.
+const shared = new Map<string, MetricsStore>();
+export function metricsFor(dir: string, tell?: (cardId: string, event: MetricsEvent) => void): MetricsStore {
+  let store = shared.get(dir);
+  if (!store) { store = createMetrics(dir, tell); shared.set(dir, store); }
+  return store;
+}
 export function createMetrics(dir: string, tell: (cardId: string, event: MetricsEvent) => void = () => {}, now: () => number = Date.now) {
   const path = (cardId: string) => join(dir, 'metrics', `${safe(cardId)}.json`);
   const cache = new Map<string, Metrics>();

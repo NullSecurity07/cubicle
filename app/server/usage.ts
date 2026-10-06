@@ -6,6 +6,7 @@ import { createBreaker, planless, refused, unpaid } from './breaker.ts';
 import { fromCache, onCache } from './cache.ts';
 import { neuronPoolOf, PICTURE_POOL, poolOf, providerOf, type ModelClient, type Quota } from './providers.ts';
 import { writeAtomic } from './fsx.ts';
+import { localDay } from './clock.ts';
 
 // What one key check with a model came to, from how its one word failed: a refusal says which kind, a 404 that the
 // model is gone, a 5xx that the provider is down, an abort at the cap that it is slow; anything else simply failed.
@@ -359,3 +360,79 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     },
   };
 }
+
+// Work nobody asked for (a watch that fired, a review of a team doc, a refresh) spends the same free day the founder's
+// own turns do. It gets a budget of its own, so the asked turns still have room by evening: so many model turns a day,
+// counted from the founder's midnight, kept in a file so a restart does not hand the day back.
+// It never runs on a partner-only model (Gemini Flash's 20 a day are the partner's), nor on a model with under a
+// quarter of its day left: what is left of a nearly spent model is the founder's.
+export const UNASKED_CAP = 12;
+export const UNASKED_FLOOR = 0.25;
+export type UnaskedTurn = { reason: string; at: number };
+// What `take` came to. `models`: the clients an unasked turn may use, best left first; route with `unasked: true` and it
+// is the same set. `release`: the turn never ran, so it does not count. Calling it twice, or after midnight, is harmless.
+export type UnaskedTake = { ok: boolean; left: number; why: string; models: string[]; release: () => void };
+type UnaskedDay = { day: string; used: (UnaskedTurn & { id: number })[] };
+
+// True when an unasked turn may go to this model at all.
+export const unaskedAllowed = (client: ModelClient, usage: Pick<UsageBook, 'left' | 'spent' | 'blocked'>) =>
+  !client.partnerOnly && !client.side && !usage.spent(client) && !usage.blocked(client.name) && usage.left(client) >= UNASKED_FLOOR;
+
+export function createUnasked(options: { path: string | null; usage: Pick<UsageBook, 'left' | 'spent' | 'blocked'>; clients: () => ModelClient[]; cap?: number; now?: () => number }) {
+  const now = options.now ?? Date.now;
+  const cap = Math.max(0, Math.floor(options.cap ?? UNASKED_CAP));
+  let book: UnaskedDay = { day: localDay(now()), used: [] };
+  let next = 1;
+  let saving: Promise<unknown> = Promise.resolve();
+  const roll = () => { if (book.day !== localDay(now())) book = { day: localDay(now()), used: [] }; };
+  const save = () => {
+    if (!options.path) return;
+    const text = JSON.stringify({ day: book.day, used: book.used.map(({ reason, at }) => ({ reason, at })) }, null, 2);
+    const path = options.path;
+    saving = saving.then(() => writeAtomic(path, text, { mkdir: true })).catch(() => {});
+  };
+  const left = () => { roll(); return Math.max(0, cap - book.used.length); };
+
+  return {
+    cap,
+    async load() {
+      if (!options.path) return;
+      try {
+        const saved = JSON.parse(await readFile(options.path, 'utf8')) as { day?: string; used?: UnaskedTurn[] };
+        if (saved.day === localDay(now()) && Array.isArray(saved.used)) {
+          book = { day: saved.day, used: saved.used.filter((one) => typeof one?.reason === 'string' && typeof one.at === 'number').map((one) => ({ reason: one.reason, at: one.at, id: next++ })) };
+        }
+      } catch { /* first run, or a damaged file: the day starts at zero */ }
+    },
+    settled: () => saving,
+    left,
+    // Today's unasked turns, the oldest first.
+    used(): UnaskedTurn[] { roll(); return book.used.map(({ reason, at }) => ({ reason, at })); },
+    // One unasked turn, counted the moment it is taken so a crash halfway still counts it. Refused once the day's cap
+    // is used, or when no model may take it.
+    take(reason: string): UnaskedTake {
+      roll();
+      const none = { models: [] as string[], release: () => {} };
+      if (book.used.length >= cap) return { ok: false, left: 0, why: `budget used today: ${book.used.length} of ${cap} unasked turns`, ...none };
+      const models = options.clients().filter((client) => unaskedAllowed(client, options.usage))
+        .sort((a, b) => options.usage.left(b) - options.usage.left(a)).map((client) => client.name);
+      if (!models.length) return { ok: false, left: left(), why: 'no model has a quarter of its day left, and the partner\'s own model is kept for the founder', ...none };
+      const id = next++;
+      const day = book.day;
+      book.used.push({ reason: reason.trim().slice(0, 120) || 'unasked work', at: now(), id });
+      save();
+      return {
+        ok: true, left: left(), why: '', models,
+        release: () => {
+          roll();
+          if (book.day !== day) return;
+          const at = book.used.findIndex((one) => one.id === id);
+          if (at < 0) return;
+          book.used.splice(at, 1);
+          save();
+        },
+      };
+    },
+  };
+}
+export type Unasked = ReturnType<typeof createUnasked>;

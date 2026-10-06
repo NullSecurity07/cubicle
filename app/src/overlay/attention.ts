@@ -21,12 +21,14 @@ export const WHAT: Record<Attention['kind'], string> = {
   'metric-alert': 'A number to look at', 'proposed-target': 'suggests a target',
   'runway-low': 'Runway is short', 'proposed-runway': 'suggests a change to the runway',
   'lead-stale': 'A lead to follow up',
+  'lead-replied': 'A lead wrote back', 'lead-notes': 'Notes from a meeting', 'lead-reading': 'A number from a meeting',
   'key-rejected': 'A model key was refused',
   'file-damaged': 'A file could not be read',
   'backup-failed': 'The daily backup failed',
   'morning-note': 'left you the morning note', 'bet-check': 'A bet to check', 'proposed-bet': 'suggests a bet', 'proposed-plan': 'suggests tasks from a plan',
   promise: 'Something you said you would do',
   'review-flag': 'reviewed a team doc',
+  'partner-proposal': 'proposes a move, unasked',
   'mail-draft': 'has an email ready for you to send',
 };
 export const ago = (at: number, now = Date.now()) => {

@@ -205,9 +205,11 @@ export const phrasingHolds = (phrased: string, line: string) => !!phrased.trim()
 
 // ------------------------------------------------------------ the budget for unasked work
 
-// The day's budget for model calls nobody asked for. Written against `take(reason)` so the app-wide one (in usage.ts)
-// drops in; its answer may be a yes/no or a `{ ok }`. The default is two a day.
-export type UnaskedBudget = { take(reason: string): boolean | { ok: boolean } | Promise<boolean | { ok: boolean }> };
+// The day's budget for model calls nobody asked for: the app's one (`unasked` in usage.ts) in the app, anything with
+// `take(reason)` in a check. Its answer may be a yes/no or a `{ ok, release }`; `release` hands the turn back when the
+// model never answered. `dailyBudget` is a plain two-a-day counter for checks.
+type Take = boolean | { ok: boolean; release?: () => void };
+export type UnaskedBudget = { take(reason: string): Take | Promise<Take> };
 export function dailyBudget(cap = 2, now: () => number = Date.now): UnaskedBudget {
   let day = '';
   let used = 0;
@@ -221,9 +223,9 @@ export function dailyBudget(cap = 2, now: () => number = Date.now): UnaskedBudge
     },
   };
 }
-export const granted = async (budget: UnaskedBudget, reason: string) => {
-  const answer = await Promise.resolve(budget.take(reason)).catch(() => false);
-  return typeof answer === 'boolean' ? answer : !!answer?.ok;
+export const granted = async (budget: UnaskedBudget, reason: string): Promise<{ ok: boolean; release: () => void }> => {
+  const answer = await Promise.resolve(budget.take(reason)).catch(() => false as Take);
+  return typeof answer === 'boolean' ? { ok: answer, release: () => {} } : { ok: !!answer?.ok, release: answer?.release ?? (() => {}) };
 };
 
 // ------------------------------------------------------------ the runtime
@@ -305,8 +307,11 @@ export function createReviews(deps: ReviewDeps) {
     const full = reviewLine(doc.title, review);
     let line = full;
     // The model only puts it in the partner's words, within the day's budget, and only for a review that found something.
-    if (review.flags.length && deps.phrase && await granted(deps.budget, 'partner review')) {
-      const phrased = await deps.phrase(`You are ${partner.name}, the founder's partner. You reviewed "${doc.title}", written by ${room.name}. Say to ${room.name}, in one or two short plain sentences, what must be fixed and why it matters to the founder. Use only these facts and numbers, nothing else:\n${full}`).catch(() => null);
+    const taken = review.flags.length && deps.phrase ? await granted(deps.budget, 'partner review') : null;
+    if (taken?.ok && deps.phrase) {
+      const phrased = await deps.phrase(`You are ${partner.name}, the founder's partner. You reviewed "${doc.title}", written by ${room.name}. Say to ${room.name}, in one or two short plain sentences, what must be fixed and why it matters to the founder. Use only these facts and numbers, nothing else:\n${full}`).catch(() => undefined);
+      // No model answered: the turn never ran, so it goes back to the day's budget.
+      if (phrased === undefined) taken.release();
       if (phrased && phrasingHolds(phrased, full)) line = `${phrased.trim()}\n${review.flags.map((flag) => `- ${flag.said}`).join('\n')}\n${review.verdict}`;
     }
     const at = deps.now();

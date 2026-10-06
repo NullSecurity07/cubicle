@@ -89,10 +89,18 @@ export const watchBoard = (boardId: string, onEvent: (event: BoardEvent) => void
 
 // A Leads card: its list, and the founder's own changes to it. What people change arrives on the feed.
 export const getLeads = (cardId: string) => request<LeadsEvent>(`/api/leads/${cardId}`);
-export const addLead = (cardId: string, lead: { name: string; company: string; line?: string }) => request<Lead>(`/api/leads/${cardId}`, send('POST', lead));
+export const addLead = (cardId: string, lead: { name: string; company: string; line?: string; email?: string }) => request<Lead>(`/api/leads/${cardId}`, send('POST', lead));
 export const moveLead = (cardId: string, leadId: string, stage: LeadStage) => request<Lead>(`/api/leads/${cardId}/${leadId}`, send('PATCH', { stage }));
 export const noteLead = (cardId: string, leadId: string, text: string) => request<Lead>(`/api/leads/${cardId}/${leadId}/notes`, send('POST', { text }));
 export const removeLead = (cardId: string, leadId: string) => request(`/api/leads/${cardId}/${leadId}`, send('DELETE'));
+// A lead's thread, moved by the founder: what they wrote back, the day a meeting is set, the notes after it.
+export const leadReplied = (cardId: string, leadId: string, text: string) => request<Lead>(`/api/leads/${cardId}/${leadId}/replied`, send('POST', { text }));
+export const leadMeeting = (cardId: string, leadId: string, day: string) => request<{ lead: Lead; board: string | null }>(`/api/leads/${cardId}/${leadId}/meeting`, send('POST', { day }));
+export const leadMeetingNotes = (cardId: string, leadId: string, text: string) => request<Lead>(`/api/leads/${cardId}/${leadId}/meeting-notes`, send('POST', { text }));
+export const leadReplyAsk = (cardId: string, leadId: string) => request<{ roomId: string; text: string }>(`/api/leads/${cardId}/${leadId}/reply-ask`, send('POST', {}));
+export const answerLeadAsk = (id: string, what: { do: 'dismiss' | 'log' | 'notes'; text?: string }) => request(`/api/leads-thread/answer`, send('POST', { id, ...what }));
+// The founder opened a drafted email in Gmail: whoever on a Leads card it is to counts as contacted.
+export const draftOpenedFor = (id: string, to: string) => request(`/api/leads-thread/opened`, send('POST', { id, to }));
 // It reads its list once as well, whatever the feed opened with: a person may have added a lead between the window's
 // connection opening and this card starting to listen, and news the card was not there for is not kept for it.
 export const watchLeads = (cardId: string, onEvent: (event: LeadsEvent) => void) => {

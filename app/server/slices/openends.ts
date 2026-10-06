@@ -3,7 +3,9 @@ import { join } from 'node:path';
 import type { Slice } from '../install.ts';
 import { backupAttention } from '../attention.ts';
 import { autoBackup, backupDirOf, listBackups, makeBackup } from '../openends/backup.ts';
-import { checkAll, outsideHealth, refusals } from '../openends/health.ts';
+import { checkAll, healthRows, outsideHealth, refusals, serviceNow, unaskedRow } from '../openends/health.ts';
+import { serviceInput, serviceRow, serviceRunner, startDetached, stubRunner } from '../service.ts';
+import type { ActResult } from '../../shared/openends.ts';
 import { coderHealth } from '../opencode/server.ts';
 import { createInsights } from '../openends/insights.ts';
 import { connectAll, createSafeBook, FILE, loadEntries, outsideTools, outsideView, type Connected } from '../openends/mcp.ts';
@@ -41,7 +43,16 @@ export default {
       counts: () => deps.usage.today(),
     });
     const outside = () => connections.map((one) => ({ name: one.entry.name, ok: one.ok, detail: one.detail }));
+    // How much of the day's budget for unasked work is used, and on what.
+    healthRows.set('unasked', () => unaskedRow({ cap: deps.unasked.cap, used: deps.unasked.used() }));
     const outsideBefore = outsideHealth.now;
+    // Runs while closed, and its one Turn on button. A check run gets a service that lives in memory
+    // (STAGE_SERVICE_STUB=1, or =nosession for a machine without a systemd user session), and a fake run without one
+    // never writes a unit on the machine it runs on.
+    const stub = process.env.STAGE_SERVICE_STUB;
+    const service = stub ? stubRunner(stub) : serviceRunner({ input: () => serviceInput({ from: deps.root, workspace: deps.workspace }), ownPort: Number(process.env.STAGE_API_PORT ?? 7421) });
+    const serviceBefore = serviceNow.state;
+    serviceNow.state = () => service.state();
     outsideHealth.now = outside;
     const health = () => checkAll({
       workspace: deps.workspace, root: deps.root, backupDir: dirOf(),
@@ -56,6 +67,14 @@ export default {
       tools: outsideTools(connections, safe),
       async route(req, res, path) {
         if (path === '/api/health' && req.method === 'GET') { deps.json(res, 200, { checks: await health() }); return true; }
+        // Only ever the founder's own click: nothing else in the app calls this.
+        if (path === '/api/service/on' && req.method === 'POST') {
+          if (deps.fake && !stub) { deps.json(res, 409, { error: 'a check run never installs the service on this machine' }); return true; }
+          const done = await service.turnOn().catch((error: Error) => ({ ok: false, said: `It could not be switched on: ${error.message}` }));
+          const result: ActResult = { ...done, check: serviceRow(await service.state()) };
+          deps.json(res, 200, result);
+          return true;
+        }
         if (path === '/api/insights' && req.method === 'GET') { deps.json(res, 200, await insights.read(days(req.url ?? '/'))); return true; }
         if (path === '/api/backups' && req.method === 'GET') { const dir = dirOf(); deps.json(res, 200, { dir, kept: 5, backups: await listBackups(dir) }); return true; }
         if (path === '/api/backups' && req.method === 'POST') {
@@ -103,6 +122,10 @@ export default {
       async tick() { await told((await daily?.tick()) ?? null).catch(() => {}); },
       async close() {
         outsideHealth.now = outsideBefore;
+        serviceNow.state = serviceBefore;
+        // Switched on while this app held its port: it starts now, as the app leaves.
+        if (!deps.fake && await service.handover().catch(() => false)) startDetached();
+        healthRows.delete('unasked');
         for (const one of connections) await one.rpc?.close().catch(() => {});
       },
     };

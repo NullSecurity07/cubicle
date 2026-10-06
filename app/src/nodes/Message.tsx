@@ -1,7 +1,7 @@
 import type { ChatMessage, ToolEvent } from '../../shared/model';
 import { draftId, draftOf, gmailLink, mailtoLink } from '../../shared/maildraft';
 import { safeHost } from '../../shared/sources';
-import { dismissAttention, fileUrl } from '../api';
+import { dismissAttention, draftOpenedFor, fileUrl } from '../api';
 import { compact } from '../numbers';
 import { SLICES } from '../slices';
 import { Approval } from './Approval';
@@ -94,7 +94,7 @@ function DraftOpen({ tool }: { tool: ToolEvent }) {
 function DraftLinks({ draft }: { draft: NonNullable<ReturnType<typeof draftOf>> }) {
   const id = draftId(draft);
   const seen = useDraftOpened(id);
-  const opened = () => { markDraftOpened(id); void dismissAttention(id).catch(() => { /* already gone from Needs you */ }); };
+  const opened = () => { markDraftOpened(id); void dismissAttention(id).catch(() => { /* already gone from Needs you */ }); void draftOpenedFor(id, draft.to).catch(() => { /* no lead to move */ }); };
   return (
     <div className="draft-open nodrag">
       <span className="draft-open__said">{seen ? 'Opened in Gmail' : 'Email drafted for you'}</span>

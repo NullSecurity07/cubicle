@@ -56,9 +56,13 @@ describe('the partner reviews a colleague\'s doc', () => {
     expect(phrasingHolds('Tom, the net burn is €2,000.', line)).toBe(false);
     let at = new Date('2026-10-06T09:00').getTime();
     const budget = dailyBudget(2, () => at);
-    expect([await granted(budget, 'a'), await granted(budget, 'b'), await granted(budget, 'c')]).toEqual([true, true, false]);
+    expect([(await granted(budget, 'a')).ok, (await granted(budget, 'b')).ok, (await granted(budget, 'c')).ok]).toEqual([true, true, false]);
     at += 86_400_000;
-    expect(await granted(budget, 'd')).toBe(true);
-    expect(await granted({ take: () => ({ ok: false }) }, 'e')).toBe(false);
+    expect((await granted(budget, 'd')).ok).toBe(true);
+    expect((await granted({ take: () => ({ ok: false }) }, 'e')).ok).toBe(false);
+    // The app's budget hands back a release: a turn no model answered goes back.
+    let released = 0;
+    (await granted({ take: () => ({ ok: true, release: () => { released += 1; } }) }, 'f')).release();
+    expect(released).toBe(1);
   });
 });
