@@ -24,6 +24,10 @@ let brief = '';
 // after it, so a later journey that counts a room's chips or conversations sees only its own.
 const ROOMS = ['marketing', 'build'];
 const before = new Map<string, Set<string>>();
+// The playbook as it stood before each check: a founder's correction teaches the fake playbook a skill, and a skill
+// left behind is said in every later person's reply, in every spec that runs after this one.
+let skills = new Set<string>();
+const skillIds = async (page: Page) => ((await (await page.request.get('/api/skills')).json()) as { id: string }[]).map((one) => one.id);
 const lines = async (page: Page, room: string) => (await (await page.request.get(`/api/rooms/${room}/chat`)).json()) as { id: string }[];
 test.beforeEach(async ({ page }) => {
   test.setTimeout(90_000);
@@ -35,6 +39,7 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator('.react-flow__node[data-id="marketing"]')).toBeVisible({ timeout: 30_000 });
   brief = ((await (await page.request.get('/api/docs/company-brief')).json()) as { text: string }).text;
   for (const room of ROOMS) before.set(room, new Set((await lines(page, room)).map((one) => one.id)));
+  skills = new Set(await skillIds(page));
 });
 
 test.afterEach(async ({ page }) => {
@@ -43,6 +48,7 @@ test.afterEach(async ({ page }) => {
   const gone = new Set([...stage.rooms.filter((room) => room.partner).map((room) => room.id), ...stage.docs.filter((doc) => doc.title === 'Company').map((doc) => doc.id)]);
   await page.request.put('/api/docs/company-brief', { data: { text: brief } });
   await page.request.put('/api/stage', { data: { ...stage, rooms: stage.rooms.filter((room) => !gone.has(room.id)), docs: stage.docs.filter((doc) => !gone.has(doc.id)), wires: stage.wires.filter((wire) => !gone.has(wire.from) && !gone.has(wire.to)) } });
+  for (const id of (await skillIds(page)).filter((one) => !skills.has(one))) await page.request.delete(`/api/skills/${id}`);
   for (const name of ['partner.json', 'bets.json', 'today.json', 'promises.json', 'reviews.json', 'partner-watch.json', 'unasked.json']) await rm(join(WORKSPACE, name), { force: true });
   for (const room of ROOMS) {
     const kept = before.get(room) ?? new Set();
@@ -266,6 +272,10 @@ test('a lead\'s reply wakes the partner, and the ready answer promises nothing t
     await expect(row).not.toContainText('we can deliver on Thursday');
     await expect(row).not.toContainText('are nut-free');
   } finally {
+    // The ready answer is let go: the watch keeps its proposals in memory, so an open one would wait in every later
+    // spec's Needs you.
+    const held = ((await (await page.request.get('/api/partner/watch')).json()) as { proposals: { id: string; cardId?: string; status: string }[] }).proposals;
+    for (const one of held.filter((each) => each.cardId === LEADS && each.status === 'open')) await page.request.post(`/api/partner/proposals/${one.id}`, { data: { run: false } });
     for (const one of ((await (await page.request.get(`/api/leads/${LEADS}`)).json()) as { leads: { id: string }[] }).leads ?? []) await page.request.delete(`/api/leads/${LEADS}/${one.id}`);
     const now = await (await page.request.get('/api/stage')).json();
     await page.request.put('/api/stage', { data: { ...now, cards: (now.cards ?? []).filter((card: { id: string }) => card.id !== LEADS) } });
