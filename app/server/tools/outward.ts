@@ -56,7 +56,7 @@ export function outwardTools(mail: Mail, filesDir: string, drafting?: Drafting, 
         }).catch(() => {});
         const where = cardId
           ? 'Draft opened in the founder\'s Gmail card. Nothing was sent: the founder reads it there and presses Send.'
-          : 'Draft ready: an "Open in Gmail" button under this step opens it in the founder\'s Gmail. Nothing was sent: the founder presses Send there.';
+          : 'Draft ready: an "Open in Gmail" button under this step opens it in the founder\'s Gmail. It is not in their Gmail until they press it, so say the email is drafted for them to open, never that it is in their Gmail. Nothing was sent: the founder presses Send there.';
         const cut = draftBody(draft.body).cut ? ` The body was longer than ${DRAFT_BODY_MOST} characters, so the draft holds only the first ${DRAFT_BODY_MOST}; tell the founder the rest has to be pasted in.` : '';
         const keyed = mail.ready() ? ' send_email can also send it for you, with the founder\'s yes.' : '';
         return { text: `${where} It is in Needs you as well. Say it is drafted, never that it was sent.${cut}${keyed}`, ...(cardId ? { effect: { kind: 'browser-moved' as const, id: cardId } } : {}) };

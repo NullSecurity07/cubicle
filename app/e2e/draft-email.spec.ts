@@ -34,6 +34,9 @@ test('a drafted email opens in Gmail from the chat or from Needs you, and openin
   const room = node(page, 'marketing');
   await expect(room.locator('.chip--ok summary').last()).toHaveText('Drafted email to lead@example.com');
   await expect(room.locator('.msg--assistant').last()).toContainText('Nothing was sent');
+  // Until the founder opens it, the draft is only a filled-in link: it never says it is in their Gmail.
+  const said = room.locator('.draft-open__said').last();
+  await expect(said).toHaveText('Email drafted for you');
   const open = room.getByRole('link', { name: 'Open in Gmail' });
   await expect(open).toHaveAttribute('href', 'https://mail.google.com/mail/?view=cm&fs=1&to=lead%40example.com&su=Hello%20%26%20welcome&body=Hi%20there');
   await expect(open).toHaveAttribute('target', '_blank');
@@ -52,6 +55,8 @@ test('a drafted email opens in Gmail from the chat or from Needs you, and openin
   await expect(tab).toHaveURL(/mail\.google\.com\/mail\/\?view=cm/);
   await tab.close();
   await expect(bell).toHaveAccessibleName('Needs you: nothing waiting');
+  await expect(said).toHaveText('Opened in Gmail');
+  await expect(room.getByRole('link', { name: 'Open again' })).toBeVisible();
 
   // A second draft, opened from Needs you instead.
   await send(page, 'marketing', '/tool draft_email {"to":"other@example.com","subject":"Second","body":"Again"}');
@@ -62,4 +67,6 @@ test('a drafted email opens in Gmail from the chat or from Needs you, and openin
   await expect(second).toHaveURL(/to=other%40example\.com/);
   await second.close();
   await expect(bell).toHaveAccessibleName('Needs you: nothing waiting');
+  // Opened from Needs you, the chat says so too.
+  await expect(room.locator('.draft-open__said').last()).toHaveText('Opened in Gmail');
 });

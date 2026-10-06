@@ -1106,5 +1106,6 @@ button.msg--learned:hover { color: var(--text); background: rgba(255, 255, 255, 
 /* A drafted email's way out: the founder's Gmail, filled in, or whatever else they mail with. */
 .draft-open { display: flex; align-items: center; gap: 10px; align-self: flex-start; }
 .draft-open .playbook__act { text-decoration: none; }
+.draft-open__said { font-size: 12px; color: var(--muted); }
 .draft-open__other { font-size: 12px; color: var(--muted); }
 .draft-open__other:hover { color: var(--text); }
