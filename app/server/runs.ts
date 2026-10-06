@@ -102,6 +102,7 @@ export function createRuns(deps: {
         const { order } = turnRoute(room, clients, usage, { promptChars: promptSize(messages), tools: true });
         const reply = await runTurn({
           messages, tools: mine, clients: order, usage, signal: stop.signal, seams, source: 'run', query: asked, slim,
+          ...(room.model && room.model !== 'auto' ? { pinned: room.model } : {}),
           slimmer: async () => [...await promptFor(stage, room.id, mine.map((tool) => tool.name), true, true), work],
           context: { stage, roomId: room.id, store, granted: new Map() },
           events: {
