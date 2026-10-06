@@ -314,6 +314,16 @@ describe('the partner watch', () => {
 
 // Journey 15: Mira asked how pickup works and whether one trial job was possible; the unasked draft proposed a call
 // and ended "My call: Send the reply to Mira today ...".
+// Journey 16: 11 paying went to 9.5 and the watch proposed "Call the three nurses who cancelled this week".
+it('takes a count nothing on record gives out of the move, and the row says so', () => {
+  const metric: Metric = { key: 'paying', label: 'Paying subscribers', better: 'up', points: [{ at: '2026-10-01', value: 11, from: 'founder' }, { at: '2026-10-06', value: 9.5, from: 'founder' }] };
+  const [spark] = metricSparks([{ cardId: 'm1', metrics: [metric] }], killCheck('Paying subscribers drop below 8'), [], NOON);
+  const held = guardProposal(spark, proposalOf(spark, 'Move: Call the three nurses who cancelled this week.\nTask: Call the three nurses who cancelled', '2026-10-06'), ['- Paying subscribers: 11']);
+  expect(held.move).toBe('Find out this week what is moving the number, before the check day.');
+  expect(held.draft).toMatchObject({ kind: 'task', title: 'Find out this week what is moving the number, before the check day' });
+  expect(held.left).toEqual(['3 nurses who']);
+});
+
 describe('the reply to a lead who wrote back', () => {
   const MIRA = 'Hi, thanks for reaching out. A few of our members need small brackets printed next week. How does pickup work and could we try one job first? Mira';
   const mira: Lead & { cardId: string } = {

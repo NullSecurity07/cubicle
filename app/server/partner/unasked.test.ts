@@ -33,3 +33,23 @@ describe('an output nobody asked for, held to the record', () => {
     expect(held.left).toHaveLength(1);
   });
 });
+
+// Journey 16: paying subscribers went from 11 to 9.5 and the watch proposed "Call the three nurses who cancelled this
+// week"; no cancellation was on record.
+describe('a count nothing on record gives, in an unasked output', () => {
+  const FACTS = 'The number is trending to the kill line.\nPaying subscribers: 9.5 on 2026-10-07, from 11 on 2026-10-06; the kill line is 8 (Paying subscribers drop below 8, checked on 2026-10-17).';
+  const BRIEF = '## Numbers\n- Price: €59 per week per subscriber\n- Subscribers: 14\n- Paying subscribers: 11\n- Nurses contacted: 120';
+
+  it('is taken out, said in words or in digits, and named in the left-out line', () => {
+    const held = guardUnasked('Call the three nurses who cancelled this week. Ask what made them stop.', [FACTS, BRIEF]);
+    expect(held.text).toBe('Ask what made them stop.');
+    expect(held.left).toEqual(['3 nurses who']);
+    expect(guardUnasked('Call the 3 nurses who cancelled.', [FACTS, BRIEF]).left).toHaveLength(1);
+  });
+
+  it('stands when the record gives it, or when it is a plan', () => {
+    expect(guardUnasked('Call all 11 paying subscribers.', [FACTS, BRIEF]).left).toEqual([]);
+    expect(guardUnasked('Contact 30 more night-shift nurses this week.', [FACTS, BRIEF]).left).toEqual([]);
+    expect(guardUnasked('Call five lapsed signups this week and ask what stopped them.', [FACTS]).left).toEqual([]);
+  });
+});

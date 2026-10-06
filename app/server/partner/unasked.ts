@@ -1,4 +1,4 @@
-import { unaskedFeedback } from '../tools/evidence.ts';
+import { unaskedCounts, unaskedFeedback } from '../tools/evidence.ts';
 
 // What the partner writes when nobody asked: a watch proposal and its ready email to a lead, the morning note, a
 // review line. Journey 16: a lead asked "Can you deliver on Thursday instead of Sunday? And are the meals nut-free?"
@@ -74,7 +74,9 @@ export function unbackedPromises(sentence: string, sources: string[]): string[] 
 
 // What one sentence says that nothing on record backs: a promise, a count, a customer's words.
 export function unbackedIn(sentence: string, sources: string[]): string[] {
-  return [...unbackedPromises(sentence, sources), ...unaskedFeedback(sentence, sources)];
+  // A count with no source is taken out too, not marked: "call the three nurses who cancelled" with no cancellation
+  // on record. A plan's count stands ("contact 30 more nurses"); one said of people already there does not.
+  return [...unbackedPromises(sentence, sources), ...unaskedCounts(sentence, sources), ...unaskedFeedback(sentence, sources)];
 }
 
 // The text with every sentence that says what nothing on record backs taken out, and what each was about. A line

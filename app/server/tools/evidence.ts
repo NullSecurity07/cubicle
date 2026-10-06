@@ -271,7 +271,9 @@ const inDigits = (sentence: string) => sentence.replace(/[\p{L}][\p{L}'-]*/gu, (
 export function unaskedCounts(line: string, read: string[]): string[] {
   const said = inDigits(line);
   return unbackedCounts(said, sourceTokens(read), flat(read.join('\n')), false, true)
-    .map((miss) => `${miss.label}${(/^((?:\s+[\p{L}][\p{L}'-]*){0,2})/u.exec(said.slice(miss.end))?.[1] ?? '')}`.trim());
+    .map((miss) => `${miss.label}${(/^((?:\s+[\p{L}][\p{L}'-]*){0,2})/u.exec(said.slice(miss.end))?.[1] ?? '')}`.trim())
+    // A span of time is the figure check's and calc's ("4 months of runway"), not a count of people or things.
+    .filter((label) => !/^\S+\s+(?:months?|weeks?|days?|hours?|years?|minutes?)\b/i.test(label));
 }
 // The claims of customer feedback in one sentence that nothing read backs, each as written.
 export const unaskedFeedback = (sentence: string, read: string[]): string[] => unbackedFeedback(sentence, records(read));
