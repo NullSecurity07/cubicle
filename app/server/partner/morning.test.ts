@@ -321,9 +321,10 @@ describe('the morning note\'s numbers', () => {
     });
     expect(heard).toContain('Worked with calc from the Company Numbers (the only runway and break-even to use; a figure said in a room is not one):\n- Break-even: ceil(900 / 49) = 19');
     expect(heard).toContain('- Runway: round(4000 / (900 - 2 * 49), 1) = 5 months at the net burn');
-    expect(note!.things[1]).toBe('Update the Company document to reflect the confirmed 5-month runway calculated by Ops.');
-    expect(note!.things[2]).toBe('Rosa said 12 demos booked; follow up.');
+    expect(note!.things).toEqual(['Update the Company document to reflect the confirmed 5-month runway calculated by Ops.']);
     expect(note!.risk).toBe('runway is 5 months at the gross burn of €900');
+    // Nobody asked for the note: the 3 pilots and the 12 demos nothing read gives are left out, and it says so.
+    expect(note!.flags).toContain('(left out: nothing on record about 3 pilots, 12 demos booked)');
   });
 
   it('drops "confirmed" with no figure a read gives', () => {
@@ -340,11 +341,11 @@ describe('the morning note and the founder\'s no', () => {
     const from = await sources();
     await saidNoFor(from.workspace, () => NINE - 3_600_000).record({ tool: 'chat', subject: 'cold outreach to more makers', reason: 'we are at 9 jobs' });
     const asked: ModelMessage[][] = [];
-    const note = 'Three moves for today:\n1. Reach out to 10 more makers.\n2. Close the last print job without cold outreach.\n3. Update the Company brief from 4 to 9 jobs.\nRisk: Maya priced it at $9\nQuestion: q?';
+    const note = 'Three moves for today:\n1. Reach out to 10 more makers.\n2. Close the last print job without cold outreach.\n3. Update the Company brief with the jobs done.\nRisk: Maya priced it at $9\nQuestion: q?';
     const made = await writeMorning({ sources: from, name: 'Sam', promptFor: prompt, ask: async (messages) => { asked.push(messages); return note; } });
     expect(asked).toHaveLength(2);
     expect(String(asked[1].at(-1)!.content)).toMatch(/^You ruled out cold outreach to more makers on \d{1,2} \w{3,4} \('we are at 9 jobs'\), and a move proposes it/);
-    expect(made!.things).toEqual(['Close the last print job without cold outreach.', 'Update the Company brief from 4 to 9 jobs.']);
+    expect(made!.things).toEqual(['Close the last print job without cold outreach.', 'Update the Company brief with the jobs done.']);
     expect(made!.flags).toContainEqual(expect.stringMatching(/^You ruled out cold outreach to more makers on \d{1,2} \w{3,4} \('we are at 9 jobs'\), so a move that proposed it was dropped\.$/));
   });
 });

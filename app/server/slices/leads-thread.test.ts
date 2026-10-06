@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Lead } from '../../shared/leads.ts';
-import { readingOf, saysPaying, stageAfter } from '../../shared/leads-thread.ts';
+import { payingPeople, readingOf, saysPaying, stageAfter } from '../../shared/leads-thread.ts';
 import { draftId } from '../../shared/maildraft.ts';
 import { createAttention } from '../attention.ts';
 import { createBoards } from '../boards.ts';
@@ -96,6 +96,20 @@ describe('the stage rules', () => {
     expect(saysPaying('They did not sign anything.')).toBe(false);
     expect(readingOf('Liked it, will think.')).toEqual({ conversations: 1, paying: 0 });
   });
+
+  // Journey 16: "Anna and two ward colleagues signed up and paid" logged one paying customer for three.
+  it('counts every person the notes say pays, and says the working', () => {
+    expect(readingOf('Anna + two colleagues paid.')).toEqual({ conversations: 1, paying: 3, working: 'Anna + two colleagues = 3' });
+    expect(payingPeople('Anna and two ward colleagues signed up and paid.')).toEqual({ count: 3, working: 'Anna + two ward colleagues = 3' });
+    expect(payingPeople('Great call. Three of us paid on the spot.')).toEqual({ count: 3, working: 'Three of us = 3' });
+    expect(payingPeople('She and 4 night nurses subscribed.')).toEqual({ count: 5, working: 'She + 4 night nurses = 5' });
+    expect(payingPeople('Ben and Clara both paid.')).toEqual({ count: 2, working: 'Ben + Clara = 2' });
+    // One person, however they are named; an organisation or someone whose people are meant is nobody.
+    expect(payingPeople('Anna Kowalski from St. Marien paid.')).toEqual({ count: 1 });
+    expect(payingPeople("Anna's two colleagues paid.")).toEqual({ count: 2, working: 'two colleagues = 2' });
+    expect(payingPeople('Good meeting. Anna paid for two weeks.')).toEqual({ count: 1 });
+    expect(payingPeople('They might pay later.')).toBeNull();
+  });
 });
 
 describe('a lead\'s thread', () => {
@@ -141,7 +155,7 @@ describe('a lead\'s thread', () => {
     expect(ask).toMatchObject({ title: 'Ada at Ada Co replied. Draft an answer?', roomId: 'marketing', cardId: 'leads-1' });
     const words = (await call(`/api/leads/leads-1/${ada.id}/reply-ask`)).body;
     expect(words.roomId).toBe('marketing');
-    expect(words.text).toMatch(/What does it cost for 20 people\?.*draft_email.*propose a short meeting/s);
+    expect(words.text).toMatch(/What does it cost for 20 people\?.*draft_email.*first answer each thing they asked/s);
 
     await seams.run('tool:after', { roomId: 'marketing', event: { id: 'd', name: 'draft_email', args: { to: 'ada@engines.example', subject: 'Re: pricing', body: 'Hi' }, ok: true } });
     expect((await needs()).filter((entry) => entry.kind === 'lead-replied')).toEqual([]);
@@ -172,13 +186,15 @@ describe('a lead\'s thread', () => {
     expect((await call(`/api/leads/leads-1/${ada.id}/meeting`, { day: 'Thursday' })).status).toBe(400);
   });
 
-  it('asks how the meeting went from the day after it, never on the day, and the notes propose a reading', async () => {
+  it('asks how the meeting went once it is over, the same day from 17:00, and the notes propose a reading', async () => {
     const { call, add, lead, needs, clock, close } = await setup();
     closing = close;
     const ada = await add('Ada', 'ada@engines.example');
     await call(`/api/leads/leads-1/${ada.id}/meeting`, { day: localDay(MONDAY) });
-    clock.at = MONDAY + 10 * 3_600_000;
+    clock.at = MONDAY + 3 * 3_600_000;
     expect((await needs()).filter((entry) => entry.kind === 'lead-notes')).toEqual([]);
+    clock.at = MONDAY + 9 * 3_600_000;
+    expect((await needs()).filter((entry) => entry.kind === 'lead-notes')).toHaveLength(1);
     clock.at = MONDAY + DAY;
     const [ask] = (await needs()).filter((entry) => entry.kind === 'lead-notes');
     expect(ask).toMatchObject({ title: 'How did the meeting with Ada go?', cardId: 'leads-1' });
@@ -207,6 +223,32 @@ describe('a lead\'s thread', () => {
     expect((await lead(ada.id)).stage).toBe('customer');
     expect((await needs()).filter((entry) => entry.kind === 'lead-reading')).toEqual([]);
     expect((await call('/api/leads-thread/answer', { id: reading.id, do: 'log' })).status).toBe(400);
+  });
+
+  // Journey 16: a meeting on the day was asked about only the next morning.
+  it('asks an hour after a meeting with a time, on its own day', async () => {
+    const { call, add, needs, clock, close } = await setup();
+    closing = close;
+    const ben = await add('Ben', 'ben@city.example');
+    await call(`/api/leads/leads-1/${ben.id}/meeting`, { day: localDay(MONDAY), time: '09:30' });
+    clock.at = MONDAY + 1 * 3_600_000;
+    expect((await needs()).filter((entry) => entry.kind === 'lead-notes')).toEqual([]);
+    clock.at = MONDAY + 1.5 * 3_600_000;
+    expect((await needs()).filter((entry) => entry.kind === 'lead-notes')).toHaveLength(1);
+    expect((await call(`/api/leads/leads-1/${ben.id}/meeting`, { day: localDay(MONDAY), time: '9am' })).status).toBe(400);
+  });
+
+  it('a reading of three paying logs three, and the ask says how they were counted', async () => {
+    const { call, add, needs, workspace, close } = await setup();
+    closing = close;
+    const anna = await add('Anna', 'anna@marien.example');
+    await call(`/api/leads/leads-1/${anna.id}/meeting`, { day: '2026-10-01' });
+    await call(`/api/leads/leads-1/${anna.id}/meeting-notes`, { text: 'Anna and two ward colleagues signed up and paid.' });
+    const [reading] = (await needs()).filter((entry) => entry.kind === 'lead-reading');
+    expect(reading.title).toBe('Log conversations +1 and paying customers +3 from the meeting with Anna?');
+    expect(reading.detail).toContain('Paying counted: Anna + two ward colleagues = 3');
+    expect((await call('/api/leads-thread/answer', { id: reading.id, do: 'log' })).status).toBe(200);
+    expect((await metricsFor(workspace).load('metrics-1')).metrics.find((one) => one.label === 'Paying customers')!.points.at(-1)).toMatchObject({ value: 3 });
   });
 
   it('a reading declined logs nothing, and none is offered without a Metrics card', async () => {
@@ -267,5 +309,17 @@ describe('the inbox poll', () => {
     await part.tick!();
     expect(inbox.asked).toEqual([]);
     expect(await healthRows.get('replies')!()).toMatchObject({ name: 'Replies', detail: expect.stringContaining(BY_HAND) });
+  });
+});
+
+// Journey 16: "Draft an answer" demanded a meeting with two times of a lead who asked about delivery days and nuts.
+describe('the ask behind "Draft an answer"', () => {
+  it('answers the lead\'s own words first, promises nothing off the record, and offers a call only if they asked', async () => {
+    const { replyAsk } = await import('../../shared/leads-thread.ts');
+    const asked = replyAsk({ person: { name: 'Anna Kowalski' }, company: { name: 'St. Marien' } }, 'Can you deliver on Thursday? Are the meals nut-free?');
+    expect(asked).toContain('first answer each thing they asked, in turn and in their own words');
+    expect(asked).toContain('Propose a call or a meeting only if they asked for one');
+    expect(asked).toContain('Promise nothing that is not on record');
+    expect(asked).not.toContain('two concrete times');
   });
 });

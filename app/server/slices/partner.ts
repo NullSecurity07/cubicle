@@ -23,7 +23,8 @@ import { readRefresh, refreshAsk, refreshDue, refreshOpening, refreshText, slipO
 import { goalsIn } from '../partner/goal.ts';
 import { correctionLines, correctionsIn, inUnits, keepCorrections, unitFix, unitsFix } from '../partner/corrections.ts';
 import { markClaims } from '../tools/evidence.ts';
-import { createWatch, fakeWatchReply, watchBudget, type Budget } from '../partner/watch.ts';
+import { createWatch, fakeWatchReply, leadTwins, watchBudget, type Budget } from '../partner/watch.ts';
+import { guardUnasked } from '../partner/unasked.ts';
 import { draftId, gmailLink } from '../../shared/maildraft.ts';
 import { leadAddresses, noAddress } from '../tools/outward.ts';
 import { ruledOutLine, saidNoFor } from '../partner/saidno.ts';
@@ -290,6 +291,7 @@ export function createPartner(options: PartnerOptions = {}) {
       workspace: deps.workspace, now, busy: deps.busy, budget: options.budget ?? watchBudget(deps.unasked),
       stage: () => deps.store.loadStage(), attention: () => deps.attention.list(), promises: () => promises.list(), bets: () => book.list(),
       leads: (id) => leadsFor(deps.workspace).list(id), promptFor: (on, roomId) => deps.promptFor(on, roomId, [], true),
+      sources: async (on) => { const doc = await companyNow(on); return doc ? [await deps.store.readDoc(doc.id).catch(() => '')] : []; },
       ask: options.watchAsk ?? (deps.fake ? async (messages) => ({ text: fakeWatchReply(messages), provider: fakeClient.name, model: fakeClient.model }) : quietTurn(false, true)),
       changed: () => deps.attention.refresh(), notify: deps.notify,
       acts: {
@@ -312,10 +314,14 @@ export function createPartner(options: PartnerOptions = {}) {
     });
 
     // A review is worded on the usual partner order, never the reserved model; a fake run keeps the worked-out line.
-    const phrase = options.phrase ?? (deps.fake ? undefined : async (prompt: string) => (await quietTurn(false)([{ role: 'user', content: prompt }])).text);
+    // Held to the facts it was given like every unasked output: a sentence that promises, counts or quotes what they do not
+    // say is taken out, and with nothing left the worked-out line stands (server/partner/unasked.ts).
+    const phrase = options.phrase ?? (deps.fake ? undefined : async (prompt: string) => guardUnasked((await quietTurn(false)([{ role: 'user', content: prompt }])).text, [prompt]).text || null);
     // A colleague's finished doc write is reviewed by the partner on the next tick (server/partner/review.ts).
     const reviews = createReviews({
-      workspace: deps.workspace, store: deps.store, attention: deps.attention, busy: deps.busy, now, budget, phrase, notify: deps.notify,
+      workspace: deps.workspace, attention: deps.attention, busy: deps.busy, now, budget, phrase, notify: deps.notify,
+      // A review line in a colleague's room is the partner's review, not an ask: the window labels it so.
+      store: { loadStage: () => deps.store.loadStage(), readDoc: (id) => deps.store.readDoc(id), appendChat: (roomId, message) => deps.store.appendChat(roomId, { ...message, note: 'review' }) },
       company: async (stage) => { const doc = await companyNow(stage); return doc ? { id: doc.id, text: await deps.store.readDoc(doc.id).catch(() => '') } : null; },
     });
     const offReviews = deps.seams.on('turn:after', reviews.heard);
@@ -393,6 +399,9 @@ export function createPartner(options: PartnerOptions = {}) {
         return note;
       } finally { writing = null; }
     })());
+
+    // A lead's reply the partner already answered unasked is one row, not two.
+    deps.attention.settle(async (rows) => leadTwins(rows));
 
     // What waits for the founder: today's note until they say they have read it.
     deps.attention.source(async (): Promise<Attention[]> => {

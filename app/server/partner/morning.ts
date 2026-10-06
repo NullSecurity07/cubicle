@@ -15,6 +15,7 @@ import type { FounderPromise } from './promises.ts';
 import { ruledOutBy, ruledOutLine, saidNoFor, type SaidNoEntry } from './saidno.ts';
 import { gatherSince, sinceText, type SinceInput } from './since.ts';
 import type { PartnerState } from './state.ts';
+import { guardUnasked, leftOutLine } from './unasked.ts';
 
 // The partner's morning: once a day, unasked, they read the Company document (it is in their prompt), what changed
 // since yesterday and the bets on record, and write three things that matter today, one risk and one question.
@@ -252,7 +253,14 @@ export async function writeMorning(input: {
   // A move still set against a no after the second ask is dropped, and the note says which no it kept to.
   const dropped = [...new Set(reply.read.things.map(against).filter((one): one is SaidNoEntry => !!one))];
   const things = reply.read.things.filter((thing) => !against(thing));
-  const read: Morning = { things: things.map(fix), risk: fix(reply.read.risk), question: fix(reply.read.question) };
+  // Nobody asked for the note, so a line that promises, counts or quotes what the facts and the brief do not say is
+  // taken out, and the note says what was left out (server/partner/unasked.ts).
+  const record = [withoutFlagged(facts), sources.company ?? ''];
+  const left: string[] = [];
+  const hold = (line: string) => { const held = guardUnasked(line, record); left.push(...held.left); return held.text; };
+  const kept = things.map(fix).map(hold).filter(Boolean);
+  const risk = hold(fix(reply.read.risk)) || 'Nothing on record backs the risk the note named.';
+  const read: Morning = { things: kept, risk, question: hold(fix(reply.read.question)) || fix(reply.read.question) };
   // The truth net, as every turn has it: a figure in the note that nothing it was given holds is flagged under it,
   // and the note is posted all the same, so the founder sees both.
   // Checked as posted: the reshaped note, not the raw reply, so the flags name only what the founder reads.
@@ -264,6 +272,7 @@ export async function writeMorning(input: {
   const flags = checkReply({ reply: morningText(read), receipts: [], sources: turnSources(checked) });
   if (fault) flags.push(`Note check: ${fault.split(':')[0].replace(/^The /, 'the ')}, even when asked again.`);
   for (const one of dropped) flags.push(`${ruledOutLine(one)}, so a move that proposed it was dropped.`);
+  if (left.length) flags.push(leftOutLine([...new Set(left)]));
   return { ...read, since, day: localDay(sources.now), at: sources.now, roomId: sources.partnerId, who: input.name, ...(flags.length ? { flags } : {}), ...(provider ? { provider } : {}), ...(model ? { model } : {}) };
 }
 

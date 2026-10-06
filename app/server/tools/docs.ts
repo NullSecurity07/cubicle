@@ -73,6 +73,33 @@ function find(context: ToolContext, wanted: string, reading = false) {
   throw new Error(hits.length ? `more than one connected document is called "${wanted}"` : `no connected document is called "${wanted}". Connected: ${titles}. Ask the founder to draw a wire to it.`);
 }
 
+// The doc the founder's ask names, when it names one: "a runway doc", "a doc called Runway", "in a doc". Journey 16:
+// "Otto, work out our runway in a doc" went into the Company brief's Numbers as six lines, and only "put the runway in
+// a doc called Runway, not in the Company brief" made the doc. The brief is written to only when the ask names it.
+const CALLED = /\b(?:doc|document)\s+(?:called|named|titled)\s+["“']?([^"”'.,;:!?\n]{1,60})/i;
+const ASKED = /\b(?:a|an|the|new|own|separate|its own)\s+(?:new\s+|separate\s+)?((?:[\p{L}][\p{L}-]*\s+){0,3})(?:doc|document)\b/iu;
+const NOT_A_NAME = /^(?:new|separate|short|quick|small|own|google|word|this|that|same|company|brief|its)$/i;
+export function docAsked(query: string): { name?: string; brief: boolean } | null {
+  // "Not in the Company brief" names it only to keep the work out of it.
+  const kept = query.replace(/\b(?:not|never|nor|instead of|rather than|outside)\s+(?:in\s+|into\s+|to\s+|on\s+)?(?:the\s+|our\s+)?(?:company\s+)?(?:brief|doc(?:ument)?)\b/gi, ' ');
+  const brief = /\b(?:company\s+(?:brief|doc(?:ument)?)|the\s+brief|brief)\b/i.test(kept);
+  const called = CALLED.exec(query);
+  if (called) return { name: called[1].trim(), brief };
+  const asked = ASKED.exec(query);
+  if (!asked) return null;
+  const words = asked[1].trim().split(/\s+/).filter((word) => word && !NOT_A_NAME.test(word));
+  const name = words.join(' ');
+  return { ...(name ? { name: name[0].toUpperCase() + name.slice(1) } : {}), brief };
+}
+function briefNotAsked(context: ToolContext, id: string) {
+  const company = findCompanyDoc(context.stage.docs);
+  if (!company || company.id !== id || !context.query) return;
+  const asked = docAsked(context.query);
+  if (!asked || asked.brief || (asked.name && asked.name.toLowerCase() === company.title.trim().toLowerCase())) return;
+  throw new Error(`not written: the founder asked for ${asked.name ? `a doc called "${asked.name}"` : 'a doc of its own'}, not the ${company.title}. `
+    + `Make it with create_doc${asked.name ? ` (title "${asked.name}")` : ''}, or write to that doc when it is already on the stage; the ${company.title} changes only when the founder names it.`);
+}
+
 // A team placed before its doc carried rules still has people who say which team they came from. The rules are
 // taken from that team as it ships, by the doc's title, each time and never saved: a miss is a doc with no rules, as
 // before. Read once per team.
@@ -462,6 +489,7 @@ export const docTools: Tool[] = [
     },
     async run(args, context) {
       const id = find(context, text(args, 'doc'));
+      briefNotAsked(context, id);
       const body = text(args, 'text');
       const before = await context.store.readDoc(id);
       // A rewrite that would lose most of what is there is refused, because a person asked to change one section
@@ -487,6 +515,7 @@ export const docTools: Tool[] = [
     },
     async run(args, context) {
       const id = find(context, text(args, 'doc'));
+      briefNotAsked(context, id);
       const heading = text(args, 'heading', 200);
       const before = await context.store.readDoc(id);
       const swapped = replaceSection(before, heading, text(args, 'text'));
@@ -508,6 +537,7 @@ export const docTools: Tool[] = [
     },
     async run(args, context) {
       const id = find(context, text(args, 'doc'));
+      briefNotAsked(context, id);
       const before = await context.store.readDoc(id);
       const added = text(args, 'text');
       const asked = typeof args.section === 'string' && args.section.trim() ? text(args, 'section', 200).replace(/^#+\s*/, '').trim() : '';

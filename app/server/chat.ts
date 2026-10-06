@@ -140,6 +140,7 @@ export function createChat(deps: Deps) {
       };
       const turnOn = (these: typeof messages, offered = mine) => runTurn({
         messages: these, tools: offered, clients: order, usage, signal: stop.signal, seams, source: 'chat', query: text, slim,
+        ...(room.model && room.model !== 'auto' ? { pinned: room.model } : {}),
         // The short prompt with whatever this call added after the whole one (a second look's answer and nudge).
         slimmer: async () => [...await promptFor(stage, roomId, mine.map((tool) => tool.name), false, true), ...these.slice(messages.length)],
         // Listened for before it is shown, so an answer given while Needs you is still being written is heard.

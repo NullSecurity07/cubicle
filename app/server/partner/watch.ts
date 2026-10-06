@@ -12,6 +12,7 @@ import type { Unasked } from '../usage.ts';
 import { plusDays, thresholdOf } from './call.ts';
 import type { FounderPromise } from './promises.ts';
 import { saidNoFor, type Proposal as SaidNoProposal } from './saidno.ts';
+import { filledIn, guardUnasked, leftOutLine } from './unasked.ts';
 
 // The partner watch (gap audit 2026-10-06, A. Initiative). The partner wrote one morning note a day and nothing else
 // woke them: a number sliding toward the kill line, a lead who replied, a competitor's page that changed and a promise
@@ -121,7 +122,7 @@ export type Output = { kind: 'email'; to: string; name: string; said?: string } 
 // One trigger. `key` is the event, never raised twice; `trigger` is what it is about, which has one open row at most
 // (a lead that replies again while the last reply's row waits is not a second row). `money` orders the day when the
 // budget cannot cover all of them (a number going to the kill line first). `number` is the figure, read in code.
-export type Spark = { key: string; trigger: string; kind: 'metric' | 'lead' | 'page' | 'promise'; at: number; money: number; why: string; facts: string; number?: string; out: Output; roomId?: string; cardId?: string };
+export type Spark = { key: string; trigger: string; kind: 'metric' | 'lead' | 'page' | 'promise'; at: number; money: number; why: string; facts: string; number?: string; out: Output; roomId?: string; cardId?: string; leadId?: string };
 
 export type MetricsCard = { cardId: string; metrics: Metric[] };
 
@@ -175,7 +176,7 @@ export function leadSparks(leads: (Lead & { cardId: string })[], seen: Record<st
     // trial job was possible proposed a call instead, because the turn never saw what she wrote.
     const said = lead.thread?.filter((one) => one.kind === 'replied' && one.text?.trim()).at(-1)?.text?.replace(/\s+/g, ' ').trim().slice(0, 1200);
     return {
-      key: `lead:${lead.id}:replied:${lead.updatedAt}`, trigger: `lead:${lead.id}`, kind: 'lead' as const, at, money: 80, cardId: lead.cardId,
+      key: `lead:${lead.id}:replied:${lead.updatedAt}`, trigger: `lead:${lead.id}`, kind: 'lead' as const, at, money: 80, cardId: lead.cardId, leadId: lead.id,
       why: `${lead.person.name} moved to ${STAGE_NAMES.replied}`,
       number: `${lead.person.name} (${lead.company.name}) moved from ${STAGE_NAMES[(seen[lead.id] ?? 'new') as Lead['stage']] ?? 'New'} to ${STAGE_NAMES.replied}.`,
       facts: `A lead replied: ${who}.${lead.person.email ? ` Address on record: ${lead.person.email}.` : ' No email address is on record for them.'}${said ? `\nWhat ${lead.person.name} wrote, word for word:\n"${said}"` : ''}${notes ? `\nNotes on the lead:\n${notes}` : ''}`,
@@ -216,10 +217,12 @@ export type Draft = { kind: 'email'; to: string; subject: string; body: string }
   | { kind: 'decision'; title: string } | { kind: 'drop'; promiseId: string; what: string };
 export type Proposal = {
   id: string; key: string; trigger: string; at: number; who: string; roomId: string; sparkKind: Spark['kind'];
-  move: string; why: string; number?: string; read?: string; draft: Draft; cardId?: string;
+  move: string; why: string; number?: string; read?: string; draft: Draft; cardId?: string; leadId?: string;
   status: 'open' | 'run' | 'declined'; answered?: number; provider?: string; model?: string;
   // The founder said no to this before: their own words, put first on the Needs you row.
   saidNo?: string;
+  // What the partner wrote that nothing on record backs, taken out (server/partner/unasked.ts).
+  left?: string[];
 };
 
 // What the partner is asked, after their own system prompt: the facts in code's words, then the lines to answer in.
@@ -273,6 +276,15 @@ const fallbackMove = (spark: Spark) => spark.kind === 'metric' ? 'Find out this 
   : spark.kind === 'promise' ? 'Put it on a day this week, or let it go.'
   : 'Look at what changed and decide whether it changes our plan.';
 
+// "Can you deliver on Thursday?" → "Yes, we can deliver on Thursday."; "Are the meals nut-free?" → "Yes, the meals are nut-free."
+const yesTo = (said: string) => said.split(/(?<=[.!?])\s+/).filter((one) => one.trim().endsWith('?')).map((question) => {
+  const plain = question.trim().replace(/^(?:and|also|so)\s+/i, '').replace(/\?$/, '');
+  const can = /^(?:can|could|will|would) you (.+)$/i.exec(plain);
+  if (can) return `Yes, we can ${can[1]}.`;
+  const be = /^(are|is) (the [\p{L}\s]+?|they|it) ([\p{L}-]+)$/iu.exec(plain);
+  return be ? `Yes, ${be[2]} ${be[1].toLowerCase()} ${be[3]}.` : '';
+}).filter(Boolean).join(' ') || 'Thanks for your questions.';
+
 // What a fake run's partner says, so a browser check sees the whole road without a key.
 export function fakeWatchReply(messages: ModelMessage[]): string {
   const asked = messages.at(-1)?.content ?? '';
@@ -280,9 +292,29 @@ export function fakeWatchReply(messages: ModelMessage[]): string {
     : /promise/.test(asked) ? 'Put it on Thursday, or drop it.' : 'Check whether their change undercuts our price.';
   const lines = [`Move: ${move}`];
   if (/^Read:/m.test(asked)) lines.unshift('Read: The page changed its offer; it matters if it now competes with our price.');
-  if (/^Subject:/m.test(asked)) lines.push('Subject: Thanks for your reply', 'Body: Hi,\n\nThanks for getting back to me. Would a 20-minute call on Thursday work?\n\nBest,');
+  // A lead's own questions are answered yes, as a careless model would: the guard then shows what it takes out.
+  const said = /word for word:\n"([^"]*)"/.exec(asked)?.[1];
+  if (/^Subject:/m.test(asked)) lines.push('Subject: Thanks for your reply', `Body: Hi,\n\nThanks for getting back to me. ${said ? yesTo(said) : 'Would a 20-minute call on Thursday work?'}\n\nBest,`);
   else lines.push(`Task: ${move.replace(/[.]$/, '')}`);
   return lines.join('\n');
+}
+
+// The proposal held to the record: a sentence of the move, the read or the ready thing that promises, counts or quotes
+// what no source gives is taken out, and the row says what was left out. The sources are the brief and the facts the
+// turn was given, the lead's own words among them. A part left empty falls back to the plain one.
+export function guardProposal(spark: Spark, shaped: Pick<Proposal, 'move' | 'read' | 'draft'>, sources: string[]): Pick<Proposal, 'move' | 'read' | 'draft' | 'left'> {
+  const read = [...sources, spark.facts, spark.number ?? ''].filter(Boolean);
+  const left: string[] = [];
+  const hold = (text: string) => { const held = guardUnasked(text, read); left.push(...held.left); return held.text; };
+  const move = hold(shaped.move) || fallbackMove(spark);
+  const seen = shaped.read ? hold(shaped.read) : '';
+  let draft = shaped.draft;
+  if (draft.kind === 'email') {
+    const name = spark.out.kind === 'email' ? spark.out.name.split(' ')[0] : '';
+    draft = { ...draft, subject: hold(draft.subject) || 'Thanks for getting back to me', body: filledIn(hold(draft.body), sources.join('\n')) || `Hi ${name},\n\nThanks for your reply.\n\nBest,` };
+  } else if (draft.kind === 'task') draft = { ...draft, title: hold(draft.title) || move.replace(/[.]+$/, '').slice(0, 140) };
+  else if (draft.kind === 'decision') draft = { ...draft, title: hold(draft.title) || move.replace(/[.]+$/, '').slice(0, 160) };
+  return { move, ...(seen ? { read: seen } : {}), draft, ...(left.length ? { left: [...new Set(left)] } : {}) };
 }
 
 // What a row says: who proposes what, then that nobody asked and why the partner spoke, the number, the read, and
@@ -294,10 +326,18 @@ export function draftLine(draft: Draft): string {
   return `Ready: drop the promise "${draft.what}"`;
 }
 export const proposalRow = (one: Proposal): Attention => ({
-  id: `partner-proposal:${one.id}`, kind: 'partner-proposal', at: one.at, who: one.who, roomId: one.roomId, ...(one.cardId ? { cardId: one.cardId } : {}),
+  id: `partner-proposal:${one.id}`, kind: 'partner-proposal', at: one.at, who: one.who, roomId: one.roomId, ...(one.cardId ? { cardId: one.cardId } : {}), ...(one.leadId ? { leadId: one.leadId } : {}),
   title: `${one.who} proposes: ${one.move}`,
-  detail: [one.saidNo, `Unasked · ${one.why}.`, one.number, one.read, draftLine(one.draft)].filter(Boolean).join('\n'),
+  detail: [one.saidNo, `Unasked · ${one.why}.`, one.number, one.read, leftOutLine(one.left ?? []), draftLine(one.draft)].filter(Boolean).join('\n'),
 });
+
+// One row per lead reply. Journey 16: Needs you showed "Anna replied. Draft an answer?" and Sam's ready answer to the
+// same reply as two rows. While the partner's answer waits, the plain ask for that lead is settled by it; Don't on the
+// answer brings the ask back.
+export function leadTwins(rows: Attention[]): Set<string> {
+  const answered = new Set(rows.filter((row) => row.kind === 'partner-proposal' && row.cardId && row.leadId).map((row) => `${row.cardId}:${row.leadId}`));
+  return new Set(rows.filter((row) => row.kind === 'lead-replied' && answered.has(row.id.split(':').slice(1, 3).join(':'))).map((row) => row.id));
+}
 
 // ---------------------------------------------------------------- the watch itself
 
@@ -318,6 +358,8 @@ export type WatchDeps = {
   bets(): Promise<Bet[]>;
   leads(cardId: string): Promise<Lead[]>;
   promptFor(stage: Stage, roomId: string): Promise<ModelMessage[]>;
+  // What an unasked output may rest on besides the turn's facts: the Company brief's text.
+  sources?(stage: Stage): Promise<string[]>;
   // The partner's unasked turn: routed with `reserved: false`, so never on the partner-only model.
   ask(messages: ModelMessage[]): Promise<{ text: string; provider?: string; model?: string }>;
   acts: Acts;
@@ -411,10 +453,10 @@ export function createWatch(given: WatchDeps) {
         const reply = await deps.ask(messages).catch((error: Error) => { console.error(`partner watch: ${error.message}`); return null; });
         // No answer: the turn said nothing, so it goes back to the day's budget.
         if (!reply?.text.trim()) taken.release?.();
-        const shaped = proposalOf(spark, reply?.text ?? '', today);
+        const shaped = guardProposal(spark, proposalOf(spark, reply?.text ?? '', today), await deps.sources?.(stage).catch(() => []) ?? []);
         let proposal: Proposal | null = {
           id: `${spark.kind}-${at.toString(36)}-${made.length}`, key: spark.key, trigger: spark.trigger, at, who: partner.name, roomId: partner.id, sparkKind: spark.kind,
-          why: spark.why, ...(spark.number ? { number: spark.number } : {}), ...(spark.cardId ? { cardId: spark.cardId } : {}), ...shaped, status: 'open',
+          why: spark.why, ...(spark.number ? { number: spark.number } : {}), ...(spark.cardId ? { cardId: spark.cardId } : {}), ...(spark.leadId ? { leadId: spark.leadId } : {}), ...shaped, status: 'open',
           ...(reply?.provider ? { provider: reply.provider } : {}), ...(reply?.model ? { model: reply.model } : {}),
         };
         proposal = await vet(proposal);

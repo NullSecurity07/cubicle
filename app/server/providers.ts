@@ -61,7 +61,8 @@ export type ModelClient = {
 // `reported`: a broken reply handed back after its model's failure was already told to `onFailure`; whoever records
 // usage must not count it as a good answer, which would close the breaker the failure just moved.
 // `oversize`: models passed over before this one because the prompt would not fit them, for a line to the founder.
-export type Completion = ModelTurn & { client: ModelClient; reported?: boolean; oversize?: string[] };
+// `passed`: each model passed over before the one that answered, and why, as "name: why".
+export type Completion = ModelTurn & { client: ModelClient; reported?: boolean; oversize?: string[]; passed?: string[] };
 export type Failure = { client: ModelClient; error: Error };
 
 // A name for one tool call that no other call anywhere shares. Some providers send none, and numbering them from
@@ -231,7 +232,7 @@ export async function complete(
         // With nobody behind it, a slow model is the answer: its first word is waited for, not cut off at the clock.
         const patient = !clients.slice(index + 1).some((other) => able(other) && !blocked(other));
         const turn = await client.step(sent, { ...options, onToken, patient, behind: !patient });
-        if (text.trim() || turn.calls.length) return { ...turn, text, client, ...(oversize.length ? { oversize } : {}) };
+        if (text.trim() || turn.calls.length) return { ...turn, text, client, ...(oversize.length ? { oversize } : {}), ...(failures.length ? { passed: [...failures] } : {}) };
         failures.push(`${client.name}: empty reply`);
       } catch (error) {
         if (options.signal?.aborted) return { text, calls: [], client };

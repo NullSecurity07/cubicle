@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { ToolEvent } from '../shared/model.ts';
-import { FALLBACK_REFUSAL, runTurn, SAY_SOMETHING } from './loop.ts';
+import { FALLBACK_REFUSAL, pinWhy, runTurn, SAY_SOMETHING } from './loop.ts';
 import { CALL_THE_TOOL, HELD_BACK } from './truth.ts';
 import type { ModelMessage } from './prompt.ts';
 import type { ModelClient, ModelTurn } from './providers.ts';
@@ -138,6 +138,28 @@ describe('runTurn', () => {
     expect(notices).toEqual(['Gemini Flash-Lite could not answer (busy for now), so Script answers.']);
     expect(usage.hot(broken, 10)).toBe(true);
     void run;
+  });
+
+  // Journey 16: a person pinned to Nemotron Ultra answered on Gemini Flash-Lite after 30 s, with no word of it.
+  it('says so when the pinned model was passed over without failing, and says nothing when it answers', async () => {
+    const store = createStore(await mkdtemp(join(tmpdir(), 'loop-')));
+    const empty: ModelClient = { ...scripted([]), name: 'nvidia-ultra', async step() { return { text: '', calls: [], usage: { input: 1, output: 0 } }; } };
+    const turn = async (clients: ModelClient[]) => {
+      const notices: string[] = [];
+      await runTurn({
+        messages: [{ role: 'user', content: 'go' }], tools: [], clients, usage: createUsage(null), pinned: 'nvidia-ultra',
+        context: { stage: await store.loadStage(), roomId: 'build', store, granted: new Map() },
+        events: { token: () => {}, tool: () => {}, notice: (text) => notices.push(text) },
+      });
+      return notices;
+    };
+    expect(await turn([empty, { ...scripted(['hello']), name: 'gemini' }])).toEqual(['Nemotron Ultra gave an empty reply; Gemini Flash-Lite answered.']);
+    expect(await turn([{ ...scripted(['hello']), name: 'nvidia-ultra' }, { ...scripted(['hi']), name: 'gemini' }])).toEqual([]);
+    // A failure already said who answered: not said twice.
+    const down: ModelClient = { ...scripted([]), name: 'nvidia-ultra', async step() { throw Object.assign(new Error('overloaded'), { status: 503 }); } };
+    expect(await turn([down, { ...scripted(['hello']), name: 'gemini' }])).toHaveLength(1);
+    expect(pinWhy(['nvidia-ultra: resting after failing several times in a row'], 'nvidia-ultra')).toBe('was resting after failing several times in a row');
+    expect(pinWhy(['nvidia-ultra: 503 overloaded'], 'nvidia-ultra')).toBe('was overloaded');
   });
 
   it('drops a reply that broke part way, keeps the words of earlier steps, and answers from the next model', async () => {

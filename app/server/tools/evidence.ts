@@ -130,7 +130,10 @@ const RATIO = /(?<![\p{L}\d.,:/$€£#+\-])(\d+)\/(\d+)(?![\d/\p{L}]|[.,]\d)/gu;
 type Unbacked = { label: string; end: number };
 // The counts on a line nothing read gives for what they count, with where each number ends on the line. `strict` holds
 // plans and orders too, for a colleague's answer, where every count is a claim about what was read.
-function unbackedCounts(line: string, sources: Token[][], quoted = '', strict = false): Unbacked[] {
+// `definite`: a count said of people or things already there ("call the 3 nurses who cancelled") is a claim even in
+// an order or a plan, since "the" says they exist; for outputs nobody asked for (server/partner/unasked.ts).
+const DEFINITE = /\b(?:the|those|these|our|your|all|both|its|their)\s+$/i;
+function unbackedCounts(line: string, sources: Token[][], quoted = '', strict = false, definite = false): Unbacked[] {
   const found: Unbacked[] = [];
   // A quote of something read is left as it is: "the founder said “we have 12 users”" quotes, it does not claim.
   const quotes = [...line.matchAll(/["“]([^"”]{3,})["”]/g)].filter((match) => quoted.includes(flat(match[1])))
@@ -158,7 +161,8 @@ function unbackedCounts(line: string, sources: Token[][], quoted = '', strict = 
       if (quotes.some(([from, to]) => start + at >= from && start + at < to)) continue;
       // Marked by the writer or the figure check a few words on: "200 users (unsourced)".
       if (/^\s*(?:[\p{L}'-]+\s+){0,3}\(unsourced\)/u.test(rest)) continue;
-      if (!strict && (AHEAD.test(before) || /^\s+more\b/i.test(rest) || ORDER.test(before.slice(before.lastIndexOf(':') + 1)))) continue;
+      const said = definite && DEFINITE.test(before);
+      if (!strict && !said && (AHEAD.test(before) || /^\s+more\b/i.test(rest) || ORDER.test(before.slice(before.lastIndexOf(':') + 1)))) continue;
       if (backed(value, countedBy(body, at, match[0].length), sources)) { shown.push(value); continue; }
       misses.push({ label: `${match[1]}${match[2]}`, end: start + at + match[1].length + match[2].length, value });
     }
@@ -253,13 +257,26 @@ const sourceTokens = (sources: string[]): Token[][] => {
 // part of it that may back a count in the asker's write. What they said from their own head backs nothing.
 export function heardFrom(answer: string, read: string[]): string[] {
   const sources = sourceTokens(read);
-  // A count said in words is a count too: "twelve beta users" is held as "12 beta users".
-  const digits = (sentence: string) => sentence.replace(/[\p{L}][\p{L}'-]*/gu, (word) => {
-    const value = /^(?:zero|one)$/i.test(word) ? null : spelled(word);
-    return value === null ? word : String(value);
-  });
-  return sentencesOf([answer]).filter((sentence) => !unbackedCounts(digits(sentence), sources, '', true).length);
+  return sentencesOf([answer]).filter((sentence) => !unbackedCounts(inDigits(sentence), sources, '', true).length);
 }
+
+// A count said in words is a count too: "twelve beta users" is held as "12 beta users". "One" is left a word.
+const inDigits = (sentence: string) => sentence.replace(/[\p{L}][\p{L}'-]*/gu, (word) => {
+  const value = /^(?:zero|one)$/i.test(word) ? null : spelled(word);
+  return value === null ? word : String(value);
+});
+
+// The counts in one line of an output nobody asked for (a watch proposal, a lead's reply draft, the morning note, a
+// review) that nothing read gives, each with the word or two after it: "3 nurses". Said in words or in digits.
+export function unaskedCounts(line: string, read: string[]): string[] {
+  const said = inDigits(line);
+  return unbackedCounts(said, sourceTokens(read), flat(read.join('\n')), false, true)
+    .map((miss) => `${miss.label}${(/^((?:\s+[\p{L}][\p{L}'-]*){0,2})/u.exec(said.slice(miss.end))?.[1] ?? '')}`.trim())
+    // A span of time is the figure check's and calc's ("4 months of runway"), not a count of people or things.
+    .filter((label) => !/^\S+\s+(?:months?|weeks?|days?|hours?|years?|minutes?)\b/i.test(label));
+}
+// The claims of customer feedback in one sentence that nothing read backs, each as written.
+export const unaskedFeedback = (sentence: string, read: string[]): string[] => unbackedFeedback(sentence, records(read));
 
 // Where in one line the counts nothing read backs end: for telling a true "(unsourced)" from a stray one.
 export function unbackedEnds(line: string, read: string[]): number[] {

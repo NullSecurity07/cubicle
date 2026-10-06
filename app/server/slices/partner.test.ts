@@ -158,7 +158,7 @@ describe('the partner slice: the Company document', () => {
 });
 
 const NINE = new Date('2026-09-27T09:00').getTime();
-const SHAPED = 'Three things that matter today:\n1. Ship the landing page.\n2. Email the five replied leads.\n3. Log the signups.\nRisk: pre-orders are 3 of 17.\nQuestion: Keep $9?';
+const SHAPED = 'Three things that matter today:\n1. Ship the landing page.\n2. Email the replied leads.\n3. Log the signups.\nRisk: pre-orders lag the Company document.\nQuestion: Keep $9?';
 
 describe('the partner slice: the morning note', () => {
   it('writes the note once a day on the tick, into the partner\'s chat, Needs you and first in Today\'s five', async () => {
@@ -180,7 +180,7 @@ describe('the partner slice: the morning note', () => {
     const needs = (await deps.attention.list()).find((one) => one.kind === 'morning-note')!;
     expect(needs).toMatchObject({ id: 'morning-note:2026-09-27', who: 'Sam', roomId: 'p1', title: 'Morning note: Ship the landing page.' });
     // All three moves in the row, not the first one only.
-    expect(needs.detail).toBe('2. Email the five replied leads. 3. Log the signups. Risk: pre-orders are 3 of 17. Question: Keep $9?');
+    expect(needs.detail).toBe('2. Email the replied leads. 3. Log the signups. Risk: pre-orders lag the Company document. Question: Keep $9?');
     const five = await todayFive(deps, clock);
     expect(five[0]).toMatchObject({ kind: 'morning-note', reason: expect.stringContaining('From your partner') });
     expect(five.some((one) => one.kind === 'proposed-decision')).toBe(true);
@@ -273,7 +273,7 @@ describe('the partner slice: the morning note', () => {
     expect(asked).toBe(0);
     await part.route!({ method: 'POST' } as never, {} as never, '/api/partner/morning');
     expect(asked).toBe(1);
-    expect(answers.at(-1)).toEqual([200, expect.objectContaining({ day: '2026-09-27', things: ['Ship the landing page.', 'Email the five replied leads.', 'Log the signups.'] })]);
+    expect(answers.at(-1)).toEqual([200, expect.objectContaining({ day: '2026-09-27', things: ['Ship the landing page.', 'Email the replied leads.', 'Log the signups.'] })]);
     await part.close!();
   });
 

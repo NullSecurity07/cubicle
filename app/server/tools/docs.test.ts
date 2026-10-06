@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createStore } from '../store.ts';
-import { docTools } from './docs.ts';
+import { docAsked, docTools } from './docs.ts';
 import { runTool } from './registry.ts';
 
 const PLAN = '# Launch plan\n\n## Research\n\nNils found three rivals, with sources.\n\n## Review\n\nFaye: the numbers are unsourced.\n\n## Build\n\nTBD\n';
@@ -341,5 +341,39 @@ describe('a write to the Company brief', () => {
     expect(out.ok).toBe(false);
     expect(out.text).toContain('the goal "10 paying practices" moves from this quarter to 3 November 2026');
     expect((await write('- Goal: 10 paying practices by 3 November 2026 (was this quarter; moved because the founder asked for an earlier check).')).ok).toBe(true);
+  });
+});
+
+// Journey 16: "Otto, work out our runway in a doc" went into the Company brief's Numbers.
+describe('the doc an ask names', () => {
+  const brief = '# Company brief\n\n## Numbers\n\n- Price: €59 per week\n';
+  async function wiredTo(query: string) {
+    const { store, context } = await setup();
+    await store.replaceDoc('company-brief', brief);
+    const wired = { ...context, query, stage: { ...context.stage, wires: [...context.stage.wires, { id: 'w-brief', from: 'marketing', fromHandle: 'r', to: 'company-brief', toHandle: 'l' }] }, sources: () => [brief] };
+    return { store, call: (name: string, args: Record<string, unknown>) => runTool(docTools, name, JSON.stringify(args), wired as never) };
+  }
+
+  it('reads the doc named in the ask, and the brief only when the ask names it', () => {
+    expect(docAsked('Otto, work out our runway in a doc')).toEqual({ brief: false });
+    expect(docAsked('Otto, write a runway doc')).toEqual({ name: 'Runway', brief: false });
+    expect(docAsked('Put the runway in a doc called Runway, not in the Company brief')).toEqual({ name: 'Runway', brief: false });
+    expect(docAsked('Add the runway to the Company brief and a runway doc')).toEqual({ name: 'Runway', brief: true });
+    expect(docAsked('What is our runway?')).toBeNull();
+  });
+
+  it('refuses a write into the Company brief when the ask names another doc, and says to make that doc', async () => {
+    const { store, call } = await wiredTo('Otto, work out our runway in a runway doc');
+    const out = await call('append_doc', { doc: 'Company brief', section: 'Numbers', text: '- Runway: 3 months' });
+    expect(out.ok).toBe(false);
+    expect(out.text).toContain('the founder asked for a doc called "Runway", not the Company brief. Make it with create_doc (title "Runway")');
+    expect(await store.readDoc('company-brief')).toBe(brief);
+    expect((await call('create_doc', { title: 'Runway', text: '# Runway\n\nWorked from the brief.' })).ok).toBe(true);
+    expect((await call('replace_section', { doc: 'Company brief', heading: 'Numbers', text: '- Price: €59' })).ok).toBe(false);
+  });
+
+  it('writes the brief when the ask names it, or names no doc', async () => {
+    expect((await (await wiredTo('Update the Numbers in the Company brief')).call('append_doc', { doc: 'Company brief', section: 'Numbers', text: '- Paying: 11' })).ok).toBe(true);
+    expect((await (await wiredTo('We have 11 paying now')).call('append_doc', { doc: 'Company brief', section: 'Numbers', text: '- Paying: 11' })).ok).toBe(true);
   });
 });

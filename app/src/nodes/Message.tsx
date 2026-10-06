@@ -163,7 +163,7 @@ type Shown = Omit<ChatMessage, 'id' | 'at'> & Partial<Pick<ChatMessage, 'id' | '
 
 export function Message({ message, live = false, roomId, ...actions }: { message: Shown; live?: boolean; roomId?: string } & Actions) {
   if (message.role === 'user') return message.from
-    ? <div className="msg msg--colleague"><span>{message.from} asked</span>{message.text}</div>
+    ? <div className="msg msg--colleague"><span>{message.from} {message.note === 'review' ? 'reviewed your doc' : 'asked'}</span>{message.text}</div>
     // The founder is not always at the stage: when they said this somewhere else, the bubble says quietly where.
     : <div className="msg msg--user">{message.via && <span className="msg__via">{VIA[message.via]}</span>}<Attachments message={message} />{message.text}<Tools {...actions} /></div>;
   const tokens = message.usage ? message.usage.input + message.usage.output : 0;

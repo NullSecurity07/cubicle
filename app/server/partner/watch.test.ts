@@ -10,7 +10,7 @@ import { unaskedRow } from '../openends/health.ts';
 import type { ModelClient } from '../providers.ts';
 import { createUnasked } from '../usage.ts';
 import { saidNoFor } from './saidno.ts';
-import { budgetUsed, createWatch, emailBody, fakeWatchReply, killLineOf, killToward, leadSparks, metricSparks, proposalOf, towardLine, trending, watchAsk, type Acts, type Budget, type Proposal, type WatchDeps, watchBudget } from './watch.ts';
+import { budgetUsed, createWatch, emailBody, fakeWatchReply, guardProposal, leadTwins, killLineOf, killToward, leadSparks, metricSparks, proposalOf, towardLine, trending, watchAsk, type Acts, type Budget, type Proposal, type WatchDeps, watchBudget } from './watch.ts';
 
 const NOON = new Date('2026-10-06T12:00:00').getTime();
 const DAY = 86_400_000;
@@ -314,6 +314,35 @@ describe('the partner watch', () => {
 
 // Journey 15: Mira asked how pickup works and whether one trial job was possible; the unasked draft proposed a call
 // and ended "My call: Send the reply to Mira today ...".
+// Journey 16: 11 paying went to 9.5 and the watch proposed "Call the three nurses who cancelled this week".
+it('takes a count nothing on record gives out of the move, and the row says so', () => {
+  const metric: Metric = { key: 'paying', label: 'Paying subscribers', better: 'up', points: [{ at: '2026-10-01', value: 11, from: 'founder' }, { at: '2026-10-06', value: 9.5, from: 'founder' }] };
+  const [spark] = metricSparks([{ cardId: 'm1', metrics: [metric] }], killCheck('Paying subscribers drop below 8'), [], NOON);
+  const held = guardProposal(spark, proposalOf(spark, 'Move: Call the three nurses who cancelled this week.\nTask: Call the three nurses who cancelled', '2026-10-06'), ['- Paying subscribers: 11']);
+  expect(held.move).toBe('Find out this week what is moving the number, before the check day.');
+  expect(held.draft).toMatchObject({ kind: 'task', title: 'Find out this week what is moving the number, before the check day' });
+  expect(held.left).toEqual(['3 nurses who']);
+});
+
+// Journey 16: two Needs you rows per lead reply, the plain ask and Sam's ready answer.
+it('settles the plain reply ask while the partner\'s answer to that lead waits, and only that lead\'s', () => {
+  const rows = [
+    { id: 'partner-proposal:lead-x-0', kind: 'partner-proposal', title: 'Sam proposes: answer Anna', at: 2, cardId: 'leads1', leadId: 'lead-anna' },
+    { id: 'lead-replied:leads1:lead-anna:5', kind: 'lead-replied', title: 'Anna replied. Draft an answer?', at: 1, cardId: 'leads1' },
+    { id: 'lead-replied:leads1:lead-ben:6', kind: 'lead-replied', title: 'Ben replied. Draft an answer?', at: 1, cardId: 'leads1' },
+  ] as Attention[];
+  expect([...leadTwins(rows)]).toEqual(['lead-replied:leads1:lead-anna:5']);
+  expect([...leadTwins(rows.slice(1))]).toEqual([]);
+});
+
+it('signs the ready reply with the founder\'s name from the brief, and never with a placeholder', () => {
+  const anna: Lead & { cardId: string } = { id: 'lead-anna', cardId: 'leads1', person: { name: 'Anna Kowalski', email: 'anna@marien.example' }, company: { name: 'St. Marien' }, stage: 'replied', notes: [], source: 'founder', addedAt: 0, updatedAt: 3, thread: [{ kind: 'replied', at: 2, text: 'Thanks, how does it work?' }] };
+  const [spark] = leadSparks([anna], { 'lead-anna': 'contacted' }, NOON);
+  const reply = 'Move: Answer Anna.\nSubject: How it works\nBody: Hi Anna,\n\nYou order by Friday.\n\nBest,\n[Founder Name]\n[Company]';
+  expect(guardProposal(spark, proposalOf(spark, reply, '2026-10-07'), ['# Company\n- Founder: Mara Lind']).draft).toMatchObject({ body: 'Hi Anna,\n\nYou order by Friday.\n\nBest,\nMara Lind' });
+  expect(guardProposal(spark, proposalOf(spark, reply, '2026-10-07'), ['# Company']).draft).toMatchObject({ body: 'Hi Anna,\n\nYou order by Friday.\n\nBest,' });
+});
+
 describe('the reply to a lead who wrote back', () => {
   const MIRA = 'Hi, thanks for reaching out. A few of our members need small brackets printed next week. How does pickup work and could we try one job first? Mira';
   const mira: Lead & { cardId: string } = {
@@ -328,6 +357,27 @@ describe('the reply to a lead who wrote back', () => {
     expect(asked).toContain('proposes a call only if they asked for one');
     expect(asked).toContain('no "My call", "Why", "Kill signal" or "This week" lines');
     expect(asked).not.toContain('proposing a 20-minute call');
+  });
+
+  // Journey 16: the ready reply promised Thursday delivery and nut-free meals; nobody had said either.
+  it('takes out of the ready reply what nothing on record says, and the row says what was left out', async () => {
+    const anna: Lead & { cardId: string } = { ...mira, id: 'lead-anna', person: { name: 'Anna Kowalski', email: 'anna@marien.example' }, company: { name: 'St. Marien Hospital' }, thread: [{ kind: 'replied', at: 2, text: 'Three of us on the night ward would try it. Can you deliver on Thursday instead of Sunday? And are the meals nut-free? Anna' }] };
+    const [spark] = leadSparks([anna], { 'lead-anna': 'contacted' }, NOON);
+    const reply = 'Move: Answer Anna today.\nSubject: Thursday and nut-free\nBody: Hi Anna,\n\nYes, we can definitely deliver on Thursday instead of Sunday, and all our meals are completely nut-free, so you can eat safely.\n\nBest,';
+    const held = guardProposal(spark, proposalOf(spark, reply, '2026-10-07'), ['Meals are delivered on Sunday.']);
+    expect(held.draft).toMatchObject({ kind: 'email', body: 'Hi Anna,\n\nBest,' });
+    expect([...held.left!].sort()).toEqual(['allergen safety', 'delivery on Thursday', 'nut-free']);
+
+    // On the row: the fake partner says yes to both questions, and Needs you shows neither, with the left-out line.
+    const { watch, world } = await rig();
+    world.promises = [];
+    world.leads = [{ ...anna, stage: 'contacted' }];
+    await watch.look();
+    world.leads = [anna];
+    await watch.look();
+    const [row] = await watch.rows();
+    expect(row.detail).toContain('(left out: nothing on record about delivery on Thursday, nut-free)');
+    expect(row.detail).not.toMatch(/deliver on Thursday|are nut-free/);
   });
 
   it('keeps the partner\'s own lines out of the email', () => {

@@ -9,6 +9,7 @@ import type { Offered } from './playbook.ts';
 import type { Payloads, Seams, Source } from './seams.ts';
 import { runTool, type Tool, type ToolContext } from './tools/registry.ts';
 import { readsOf } from './tools/unread.ts';
+import { calcTagsHeld } from './calctag.ts';
 import { holdDraftClaims, notDone } from './draftclaim.ts';
 import { ANSWER_IN_WORDS, CALL_THE_TOOL, checkReply, HELD_BACK, proseToolCall, turnEvidence, turnSources } from './truth.ts';
 import type { UsageBook } from './usage.ts';
@@ -65,6 +66,15 @@ export function receiptSummary(done: ToolEvent[], why?: string): string {
 // The same line on every card of every turn was noise: once a day in a room is enough to know.
 const sizeTold = new Map<string, string>();
 
+// Why the pinned model did not answer, from what the model order said as it passed it over.
+export function pinWhy(passed: string[], pinned: string): string {
+  const said = passed.find((line) => providerOf(line.split(':')[0]) === pinned)?.split(': ').slice(1).join(': ') ?? '';
+  return /empty reply/.test(said) ? 'gave an empty reply' : /resting/.test(said) ? 'was resting after failing several times in a row'
+    : /already answering/.test(said) ? 'was busy with another request' : /too large/.test(said) ? 'could not hold this prompt'
+    : /no tool support/.test(said) ? 'cannot use tools' : /kept off/.test(said) ? 'is kept off turns with tools'
+    : /overload|503|529|unavailable/i.test(said) ? 'was overloaded' : said ? 'could not answer' : 'was not free to answer';
+}
+
 type TurnEvents = { token(token: string): void; tool(event: ToolEvent): void; notice?(text: string): void; restart?(): void };
 // `flags`: the truth net's lines under this reply, the same ones appended to its text, for whoever wants them apart.
 export type TurnResult = { text: string; tools: ToolEvent[]; provider: string; model: string; usage: Usage; stopped: boolean; flags?: string[] };
@@ -82,6 +92,8 @@ export async function runTurn(input: {
   slim?: boolean;
   // Builds this turn's short prompt, for when the prompt fit before the extras at turn:before and no longer does.
   slimmer?: () => Promise<ModelMessage[]>;
+  // The provider the founder pinned this person to: when another model answers, the reply says which and why.
+  pinned?: string;
 }): Promise<TurnResult> {
   const { tools, context, usage, events, signal, seams } = input;
   const { roomId } = context;
@@ -121,6 +133,9 @@ export async function runTurn(input: {
     return name;
   };
   const primary = input.clients[0];
+  const pinnedClient = input.pinned && input.pinned !== 'auto' ? input.clients.find((client) => providerOf(client.name) === input.pinned) : undefined;
+  const pinnedTitle = pinnedClient ? modelTitle(pinnedClient.name) : '';
+  let pinTold = false;
   let standInCalls = 0;
   let sizeSaid = false;
 
@@ -191,7 +206,14 @@ export async function runTurn(input: {
         events.notice?.(`${modelTitle(primary.name)} cannot hold this room's prompt; ${modelTitle(turn.client.name)} answers.`);
       }
     }
+    if (pinnedTitle && failed.some((line) => line.startsWith(pinnedTitle))) pinTold = true;
     if (failed.length) events.notice?.(turn.broke ? `${failed.splice(0).join('; ')}, so no model could finish this reply.` : `${failed.splice(0).join('; ')}, so ${modelTitle(turn.client.name)} answers.`);
+    // A pinned model passed over without a failure (an empty reply, resting, busy, no tools) is said once too.
+    // Journey 16: a person pinned to Nemotron Ultra answered on Gemini Flash-Lite with no word of it.
+    if (pinnedTitle && !pinTold && !sizeSaid && providerOf(turn.client.name) !== input.pinned) {
+      pinTold = true;
+      events.notice?.(`${pinnedTitle} ${pinWhy(turn.passed ?? [], input.pinned!)}; ${modelTitle(turn.client.name)} answered.`);
+    }
     // Words already shown stay; the founder is told they stop short. (A cut reply with no words moved to the next model already.)
     if (turn.cut && !turn.broke) events.notice?.(`${modelTitle(turn.client.name)} hit its length limit, so this reply is cut short. Ask for the rest, or for a shorter answer.`);
     // A broken reply every model failed on was counted as a failure already, not a good answer.
@@ -327,6 +349,10 @@ export async function runTurn(input: {
   let flags: string[] = [];
   // No "drafted" without a draft, and no "open it in Gmail" without one to open (server/draftclaim.ts).
   if (!signal?.aborted && !summarised && text.trim()) text = holdDraftClaims(text, done);
+  // "(calc)" only beside a figure a calc working this turn gave (server/calctag.ts).
+  if (!signal?.aborted && !summarised && text.trim()) {
+    text = calcTagsHeld(text, [...done.filter((one) => one.name === 'calc' && one.ok).map((one) => one.result ?? ''), ...messages.map((one) => (typeof one.content === 'string' ? one.content : ''))]);
+  }
   if (!signal?.aborted && !held && !summarised && text.trim()) {
     flags = checkReply({ reply: text, receipts: done, sources: [...turnSources(inputs), ...results, query] });
     const tail = [...(broke ? [`(reply cut short: ${broke})`] : []), ...(broke && done.length ? [receiptSummary(done, 'The reply broke off after these steps')] : []), ...flags];
