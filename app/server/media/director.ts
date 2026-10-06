@@ -8,7 +8,7 @@ import {
 import { isPack, PACES, PACKS, type Brand, type Pace, type Pack } from './templates/looks.ts';
 import { FILLER, sourcesOf } from './grounding.ts';
 import type { Wanted } from './voice.ts';
-import { criticiseVisuals, repairVisuals, visualsOf, visualsPrompt, type Visual } from './visuals.ts';
+import { criticiseVisuals, repairVisuals, visualsOf, visualsPrompt, worldRule, type Visual, type World } from './visuals.ts';
 import { LENSES, motionMoves, SIZES, stillMoves } from './moves.ts';
 import { briefWants, closeLineOf, endOnOf } from './close.ts';
 import { lengthFit, rateOf, readingOf } from './length.ts';
@@ -212,6 +212,9 @@ export function planPrompt(understanding: Understanding, asked: Asked, material:
     material.lines.length
       ? 'Everything specific this film says — every feature, every number, every name — must come out of the material below, and every beat must carry the words it came from in "source", quoted exactly. Say it in your own words; the quotation is what proves it, not what you read out. A beat whose claim you cannot quote is a beat you must not write.'
       : 'There is no material behind this film, so it may say only what is generally true. No brand name, no product name, no customer, and no statistics at all — not a percentage, not a multiple, not a sum of money. A number nobody measured is a lie with a decimal point in it. Leave "source" out.',
+    material.lines.length
+      ? 'The product works exactly the way the material says it does. Where the material says the product does something itself, no beat has a person — staff, the front desk, the viewer — do it by hand, tap a button for it or reply instead.'
+      : '',
     'A number belongs in this film only if it changes something for the person watching — money, time, how many people, how much better. How many kinds of something the product has is an inventory, not a number worth a scene.',
     understanding.pack === 'sketch'
       ? 'This film is drawn by hand from end to end, so the style bible describes one drawing and every picture in the film is that same drawing.'
@@ -735,35 +738,35 @@ export function fixPrompt(spec: Spec, found: { says: string }[], understanding: 
 // work, because a model's own repair is better writing than ours, and then the rules do it and the film is made
 // either way.
 export async function photograph(slots: Visual[], bible: string, angle: string, think: Think,
-  help: { report: (line: string) => void; signal?: AbortSignal }): Promise<Visual[]> {
+  help: { report: (line: string) => void; signal?: AbortSignal }, world?: World): Promise<Visual[]> {
   const halt = () => { if (help.signal?.aborted) throw new Error('stopped'); };
   halt();
   let visuals = slots;
   try {
-    visuals = visualsOf(await askJson(think, visualsPrompt(slots, bible, angle), 1), slots);
+    visuals = visualsOf(await askJson(think, visualsPrompt(slots, bible, angle, world), 1), slots);
   } catch { help.report('nothing came back about what is on screen, so the pictures are built from the lines themselves'); }
 
   for (let round = 0; round < 2; round += 1) {
-    const found = criticiseVisuals(visuals);
+    const found = criticiseVisuals(visuals, world);
     if (!found.length) break;
     halt();
     help.report(round === 0
       ? `the pictures did not hold up (${found[0].says}), so they are being written again`
       : 'the pictures are still repeating themselves, one more pass');
     try {
-      const again = visualsOf(await askJson(think, fixPictures(visuals, found, bible), 1), visuals);
-      if (criticiseVisuals(again).length < found.length) visuals = again;
+      const again = visualsOf(await askJson(think, fixPictures(visuals, found, bible, world), 1), visuals);
+      if (criticiseVisuals(again, world).length < found.length) visuals = again;
       else break;
     } catch { break; }
   }
-  const { visuals: mended, notes } = repairVisuals(visuals);
+  const { visuals: mended, notes } = repairVisuals(visuals, world);
   for (const line of notes.slice(0, 3)) help.report(line);
   return mended;
 }
 
 // The pictures, sent back with what is wrong with each one named. A model told "picture four is generic" fixes
 // picture four; a model told "try again" writes the same six pictures.
-export function fixPictures(visuals: Visual[], found: { at: number; says: string }[], bible: string): string {
+export function fixPictures(visuals: Visual[], found: { at: number; says: string }[], bible: string, world?: World): string {
   return [
     'These pictures were read by the film\'s editor and sent back. Fix exactly these and change nothing else.',
     'Answer with the whole corrected JSON object and nothing else.',
@@ -774,6 +777,7 @@ export function fixPictures(visuals: Visual[], found: { at: number; says: string
     'A picture names a subject, what it is doing and where. No two pictures in the film may be of the same thing.',
     'At most one picture in the film may have a person in it; the rest are places, objects and details.',
     'Nothing in a picture may carry writing — no screen, no chart, no sign, no document, no logo.',
+    ...(world ? [worldRule(world)] : []),
     '',
     JSON.stringify({ pictures: visuals.map((one) => ({ at: one.at + 1, subject: one.subject, metaphor: one.metaphor })) }),
   ].join('\n');

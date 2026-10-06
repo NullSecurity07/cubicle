@@ -4,6 +4,7 @@ import {
 } from './spec.ts';
 import type { Pace } from './templates/looks.ts';
 import type { Pack } from './templates/packs.ts';
+import { contradictions, factLine, factsIn, factSteps } from './against-brief.ts';
 import { claimsOf, figureSaid, fillerIn, flat, fromBrief, madeUpNames, preciseFigures, realLine, saysMostOf, unfill, ungrounded, type Sources } from './grounding.ts';
 import { inStyle, offStyle, photographic } from './style.ts';
 import { closeScene, firstHeadline, namesTheBrief, type Close } from './close.ts';
@@ -190,6 +191,12 @@ export function criticise(spec: Spec, want: Want): Finding[] {
       // exactly where one goes, so this is asked of every scene, whatever it is.
       const named = madeUpNames(scene, want.sources!);
       if (named.length) say('invented', `scene ${at} names "${named[0]}", which is in neither your brief nor your material`, at);
+      // A line that hands to a person what the brief has the product do itself ("staff reply by hand" over a product
+      // that texts the caller back on its own) is the product working the wrong way, however well it reads.
+      if (want.sources!.has) {
+        const wrong = contradictions(scene, factsIn(want.sources!))[0];
+        if (wrong) say('contradicts', `scene ${at} says "${trimTo(wrong.line, 10)}", but the brief says: "${trimTo(wrong.fact, 24)}"`, at);
+      }
       // Everything else a scene states has to be in the material, or to point at the words it came from.
       if (want.sources!.has) {
         const made = ungrounded(scene, want.sources!);
@@ -332,6 +339,24 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
     let dropped = 0;
     for (const scene of scenes) {
       let made = { ...scene };
+      // A line that says the product works the way the brief says it does not is put right with the brief's own fact:
+      // the line said becomes the fact, a headline that says it goes, and a list keeps only its true steps or becomes
+      // the fact's own steps.
+      const wrong = sources.has ? contradictions(made, factsIn(sources)) : [];
+      if (wrong.length) {
+        const bad = new Set(wrong.map((one) => one.line));
+        const fact = wrong[0].fact;
+        const kept = made.bullets?.filter((one) => !bad.has(one));
+        made = {
+          ...made,
+          say: made.say && bad.has(made.say) ? factLine(fact, factsIn(sources)) : made.say,
+          text: made.text && bad.has(made.text) ? undefined : made.text,
+          heading: made.heading && bad.has(made.heading) ? undefined : made.heading,
+          bullets: made.bullets && kept && kept.length < made.bullets.length ? (kept.length >= 2 ? kept : factSteps(fact, factsIn(sources))) : made.bullets,
+          source: made.say && bad.has(made.say) ? trimTo(fact, 12) : made.source,
+        };
+        note('a line said the product works the way the brief says it does not, so it says what the brief says');
+      }
       // Filler first: it is never true and it never has to be, so it simply goes.
       for (const key of ['heading', 'text', 'say'] as const) {
         const said = made[key];

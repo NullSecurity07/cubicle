@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   afforded, aboutTheLine, criticiseVisuals, drawnAs, fillerShot, kindFor, lineUnder, photoOfTheLine, repairVisuals, sceneLine, stockQueries, thingsOf, topicOf,
   shareOut, shares, slotsFor, somebodyIn, unlettered, visualFrom, visualsOf, visualsPrompt, type Visual, shotKey,
+  closeHolds, settingOf, standInOf, worldOf, worldScore,
 } from './visuals.ts';
+import { productFacts } from './gather.ts';
 import type { Scene } from './spec.ts';
 
 const BIBLE = 'bright high-contrast editorial photography, clean directional key light, shot on 35mm';
@@ -406,5 +408,108 @@ describe('photographs of the whole topic, and of nowhere the brief never went', 
     expect(photoOfTheLine('Kuay Makuach, farmer, Lankien, South Sudan, tomatoes', question, topic, brief)).toBe(false);
     expect(photoOfTheLine('CCTV video of pager explosion in a Beirut market', { line: 'Stalls at the farmers market' }, topic, brief)).toBe(false);
     expect(photoOfTheLine('Farmers market in Kenya', question, topic, 'A film about a farmers market in Kenya')).toBe(true);
+  });
+});
+
+// Journey 14: "A 30 second explainer about voicemail chaos at a dental practice front desk" for Callback came back with
+// a brass paperweight, a brass bell, a vintage rotary telephone and a bronze anchor, the anchor held for the last 8 s.
+describe("the film's world", () => {
+  const ASK = 'A 30 second explainer about voicemail chaos at a dental practice front desk: phones ringing, voicemails piling up, patients booking elsewhere. Use real footage clips.';
+  const BRIEF = [
+    '# Company brief', '', 'Everyone on the stage reads this.', '',
+    "What the company does: Callback turns a dental practice's voicemail into booked appointments. It transcribes each voicemail left after hours or while the front desk is busy, works out what the caller wants, and offers them a slot in the practice calendar by text message.",
+    '', '## Idea', '', 'Dentists miss calls; patients leave voicemails nobody returns for hours, and many book elsewhere. Callback answers every voicemail with a booking offer by text within minutes.',
+    '', '## Numbers', '', '- Cash in the bank: €4,000',
+  ].join('\n');
+  const world = worldOf(ASK, productFacts(BRIEF));
+  const DRAWN = [
+    'A heavy brass paperweight resting on top of a thick stack of unused patient intake folders on a wooden filing cabinet',
+    'A small brass bell sitting on a worn marble checkout counter near a ceramic jar of dental floss picks',
+    'A vintage rotary dial telephone sitting unplugged and dusty on a steel storage shelf in a supply closet',
+    'A weathered bronze sculpture of an anchor resting heavily on a burlap rug in the corner of an empty consultation room',
+  ];
+  const GOOD = [
+    'An empty, ring-lighted dental examination chair with tilted instruments resting on the tray in an otherwise deserted treatment room',
+    'A receptionist with her back turned, rapidly organizing overflowing paper folders behind a cluttered reception counter in a dimly lit dental clinic',
+  ];
+
+  it('is built from the ask and the product, without the abstract words or the money', () => {
+    expect(world.words).toEqual(expect.arrayContaining(['voicemail', 'dental', 'practice', 'desk', 'phones', 'patients', 'appointments', 'calendar']));
+    expect(world.words).not.toContain('chaos');
+    expect(world.words).not.toContain('explainer');
+    expect(world.words).not.toContain('cash');
+    expect(world.setting).toBe('at a dental practice front desk');
+    expect(topicOf(ASK)).not.toContain('chaos');
+    expect(settingOf('A 20 second documentary clip about a pottery class, with real photographs')).toBeUndefined();
+  });
+
+  it('takes the product facts out of a company brief', () => {
+    const facts = productFacts(BRIEF);
+    expect(facts).toContain('offers them a slot in the practice calendar by text message');
+    expect(facts).toContain('Callback answers every voicemail');
+    expect(facts).not.toContain('4,000');
+  });
+
+  it('refuses a museum piece or a stand-in object unless the founder named it', () => {
+    expect(DRAWN.map((one) => standInOf(one, world.named))).toEqual(['paperweight', 'bell', 'vintage', 'bronze']);
+    for (const one of GOOD) expect(standInOf(one, world.named)).toBeNull();
+    expect(standInOf('Rotary telephone, Science Museum Collection', world.named)).toBe('museum');
+    expect(standInOf('Telephone handset, object no. 1984.12.3', world.named)).toBe('a catalogue number');
+    expect(standInOf('A brass bell on the counter of a bicycle shop', 'a film about our bicycle bells')).toBeNull();
+  });
+
+  it('holds a photograph to the line and the world: a museum telephone and a phone alone are drawn instead', () => {
+    const line = { line: 'Front desk phone chaos costs your dental practice new patients every single day.' };
+    const topic = topicOf(ASK);
+    expect(photoOfTheLine('Rotary dial telephone, bronze, Museum of Communication collection', line, topic, ASK, world)).toBe(false);
+    expect(photoOfTheLine('Brass bell paperweight specimen', line, topic, ASK, world)).toBe(false);
+    expect(photoOfTheLine('Old phone', { line: 'The phone keeps ringing.' }, topic, ASK, world)).toBe(false);
+    expect(photoOfTheLine('Phone on the reception desk of a dental practice', { line: 'The phone keeps ringing.' }, topic, ASK, world)).toBe(true);
+    expect(worldScore('Phone on the reception desk of a dental practice', world)).toBeGreaterThan(worldScore('Old phone', world));
+    expect(worldScore('Bronze anchor', world)).toBeLessThan(0);
+  });
+
+  it('sends a stand-in back to the model and, failing that, draws the line where the film is set', () => {
+    const lines = ['Unanswered calls turn into endless voicemails piling up while patients book elsewhere.', 'Our platform captures every missed call.',
+      'Staff waste hours every week on callbacks.', 'Patients book with the practice down the street.'];
+    const visuals = DRAWN.map((subject, at) => one(at, subject, lines[at], { metaphor: 'the weight of the backlog', kind: (['wide', 'detail', 'object', 'environment'] as const)[at] }));
+    const found = criticiseVisuals(visuals, world);
+    expect(found.filter((one) => one.rule === 'standin').map((one) => one.at)).toEqual([0, 1, 2, 3]);
+    expect(found.find((one) => one.rule === 'standin')!.says).toContain("film's world");
+    expect(visualsPrompt(visuals, BIBLE, 'missed calls cost patients', world)).toMatch(/no paperweight, bell, anchor/);
+    const { visuals: mended, notes } = repairVisuals(visuals, world);
+    for (const picture of mended) {
+      expect(standInOf(picture.subject, world.named)).toBeNull();
+      expect(worldScore(picture.subject, world)).toBeGreaterThan(0);
+    }
+    expect(mended[0].subject).toContain('at a dental practice front desk');
+    // Rebuilt out of the world's things only: no product name, nothing a sentence merely does.
+    expect(world.words).not.toContain('callback');
+    for (const verb of ['transcribes', 'offers', 'turns', 'answers', 'works']) expect(world.words).not.toContain(verb);
+    expect(visualFrom('Patients book here instead of going elsewhere.', 4, new Set(), world)).not.toMatch(/instead|elsewhere|patients/);
+    expect(visualFrom('Callback returns every call within hours.', 2, new Set(), world)).not.toMatch(/returns|hours|callback/i);
+    expect(notes.join(' ')).toMatch(/stand-in/);
+    // A picture the model wrote well is kept beside a rebuilt one, though both are at the front desk.
+    const pair = [one(0, DRAWN[0], lines[0], { kind: 'wide' }), one(1, 'A cordless phone ringing beside an appointment calendar at a dental practice front desk', 'The phones never stop at the front desk.', { kind: 'detail' })];
+    expect(repairVisuals(pair, world).visuals[1].subject).toBe(pair[1].subject);
+    expect(world.words).not.toContain('after');
+    expect(world.words).not.toContain('miss');
+    // Without a world the old rules stand: a declared metaphor still passes.
+    expect(criticiseVisuals(visuals).some((one) => one.rule === 'standin')).toBe(false);
+  });
+
+  it('closes on the best picture of the world, never on the weakest or the shot before carried on', () => {
+    const scores = new Map([[0, worldScore(GOOD[1], world)], [1, worldScore(GOOD[0], world)], [3, worldScore(DRAWN[3], world)]]);
+    // The journey: the anchor (shot 3) carried on into the last shot.
+    expect([0, 1]).toContain(closeHolds([0, 1, 1, 3, 3], scores).at(-1));
+    // A close of its own, on the world, keeps it.
+    const fine = new Map([[0, 1], [1, 3], [2, 2]]);
+    expect(closeHolds([0, 1, 2], fine)).toEqual([0, 1, 2]);
+    // A close of its own that is the weakest of three takes the best.
+    expect(closeHolds([0, 1, 2], new Map([[0, 3], [1, 2], [2, 0]])).at(-1)).toBe(0);
+    // A stand-in of its own takes the best too.
+    expect(closeHolds([0, 1, 2], new Map([[0, 3], [1, 2], [2, -1]])).at(-1)).toBe(0);
+    // Nothing better to hold: left alone.
+    expect(closeHolds([0, 0], new Map([[0, 0]]))).toEqual([0, 0]);
   });
 });

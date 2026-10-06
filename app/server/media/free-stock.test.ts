@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  allowance, commons, creditLine, licenceOf, openverse, OPENVERSE_BUSY, OPENVERSE_SPENT, photoLibrary, plainText, queryOf, stockChain,
+  allowance, commons, creditLine, licenceOf, openverse, OPENVERSE_BUSY, OPENVERSE_FILM, OPENVERSE_PER_FILM, OPENVERSE_SPENT, photoLibrary, plainText, queryOf, stockChain,
 } from './free-stock.ts';
 import { filmStock, NONE_ANSWERED, photoCredits, trouble, type Stock } from './stock.ts';
 import { pictureSpaces, spacesFor } from './image.ts';
@@ -219,6 +219,69 @@ describe('a film using the free libraries', () => {
   function failing(name: string, message: string): Stock {
     return { name, ready: () => null, async find() { throw new Error(message); }, async get() { throw new Error('no'); }, used: () => [] };
   }
+});
+
+describe('one film asking Openverse', () => {
+  // A fake web that counts every search each library is asked, and answers Openverse with what `openverseSays` holds.
+  const counting = (openverseSays: () => { status: number; headers?: Record<string, string> } = () => ({ status: 200 })) => {
+    const calls = { openverse: 0, commons: 0 };
+    const http = (async (url: string | URL | Request) => {
+      const where = String(url);
+      if (where.includes('api.openverse.org')) {
+        calls.openverse += 1;
+        const { status, headers } = openverseSays();
+        return new Response(status === 200 ? JSON.stringify(OPENVERSE) : 'slow down', { status, headers });
+      }
+      if (where.includes('commons.wikimedia.org/w/api.php')) { calls.commons += 1; return new Response(JSON.stringify(COMMONS_PHOTOS), { status: 200 }); }
+      return new Response(new Uint8Array([0xff, 0xd8, 1, 2]), { status: 200 });
+    }) as typeof fetch;
+    return { calls, http };
+  };
+  // The journey's film: nine shots, each asking its own thing beside the topic and then the topic alone.
+  const shots = ['phone desk', 'voicemail desk', 'patients desk', 'calendar desk', 'reception desk', 'slot desk', 'text desk', 'chair desk', 'tray desk'];
+
+  it('asks Openverse at most eight times a film, answers a repeated query from memory, and says the switch to Commons once', async () => {
+    const { calls, http } = counting();
+    const lines: string[] = [];
+    const library = photoLibrary({}, http, dir);
+    const film = filmStock(library, 'documentary', (line) => lines.push(line));
+    for (const query of shots) {
+      await film.take({ query, shape: 'wide', fits: () => false });
+      await film.take({ query: 'dental voicemail', shape: 'wide', fits: () => false });
+    }
+    expect(calls.openverse).toBeLessThanOrEqual(OPENVERSE_PER_FILM);
+    expect(calls.commons).toBeGreaterThan(0);
+    expect(lines.filter((line) => line === OPENVERSE_FILM)).toHaveLength(1);
+    // The next film has eight of its own.
+    const next = filmStock(library, 'documentary', () => {});
+    await next.take({ query: 'phone desk', shape: 'wide' });
+    expect(calls.openverse).toBe(OPENVERSE_PER_FILM + 1);
+  });
+
+  it('waits for a slot in the minute when the wait is short, and sets Openverse aside when it is long', async () => {
+    let now = Date.parse('2026-10-06T10:00:00Z');
+    const waits: number[] = [];
+    const { calls, http } = counting(() => ({ status: 200, headers: { 'x-ratelimit-available-anon_burst': '0' } }));
+    const library = openverse(http, dir, () => now, async (ms) => { waits.push(ms); now += ms; });
+    await library.film!().find({ query: 'phone' });
+    now += 45_000;
+    await library.film!().find({ query: 'desk' });
+    expect(waits).toEqual([15_000]);
+    expect(calls.openverse).toBe(2);
+    now += 1_000;
+    await expect(library.film!().find({ query: 'chair' })).rejects.toThrow(OPENVERSE_BUSY);
+    expect(calls.openverse).toBe(2);
+  });
+
+  it('a 429 sends the rest of the film to Commons, said once, and Openverse is not asked again that film', async () => {
+    const { calls, http } = counting(() => ({ status: 429 }));
+    const lines: string[] = [];
+    const film = filmStock(photoLibrary({}, http, dir), 'documentary', (line) => lines.push(line));
+    for (const query of shots) expect(await film.take({ query, shape: 'wide' })).not.toBeNull();
+    expect(calls.openverse).toBe(1);
+    expect(calls.commons).toBe(shots.length);
+    expect(lines).toEqual([OPENVERSE_BUSY]);
+  });
 });
 
 describe('credits beside the film', () => {

@@ -63,6 +63,8 @@ export type Stock = {
   footageFrom?(): string[];
   // Counts one clip a film asked for and found nowhere, so Health can say so.
   noClip?(): Promise<void>;
+  // The library as one film uses it: its own allowance, and a library set aside for that film only.
+  film?(): Stock;
 };
 
 // A photographer's name and the page their picture lives on, said the way a credit is said.
@@ -91,13 +93,13 @@ export const NONE_ANSWERED = 'no free photograph library answered';
 export function trouble(error: unknown): { say: string; stop: boolean } {
   const message = error instanceof Error ? error.message : String(error);
   if (message === PEXELS_HINT) return { say: '', stop: true };
+  // Every free library tried and none answered: said once, and the picture is drawn. The next scene asks again,
+  // because a library that blinked for one search is usually back for the next, unless every one is set aside.
+  if (message.startsWith(NONE_ANSWERED)) return { say: message, stop: /the rest of the pictures are drawn/.test(message) };
   if (/used up/i.test(message) || /\b429\b/.test(message)) return { say: message, stop: true };
   // Only the search itself carries the key. A 403 on fetching one photograph is the picture's CDN saying no to that
   // one file, not Pexels refusing the founder's key.
   if (/stock library answered (401|403)\b/.test(message)) return { say: PEXELS_REFUSED, stop: true };
-  // Every free library tried and none answered: said once, and the picture is drawn. The next scene asks again,
-  // because a library that blinked for one search is usually back for the next.
-  if (message.startsWith(NONE_ANSWERED)) return { say: message, stop: false };
   return { say: '', stop: false };
 }
 
@@ -113,11 +115,12 @@ export type FilmStock = {
   missing: boolean;
   // True when the library can be asked for real moving footage too (Wikimedia Commons, or Pexels with a key).
   clips: boolean;
-  take(ask: { query: string; shape?: string; speaker?: boolean; names?: string[]; fits?: (one: Found) => boolean }, signal?: AbortSignal):
+  // `fits` refuses a photograph; `rank` orders the ones that fit, best first (the film's world, `worldScore`).
+  take(ask: { query: string; shape?: string; speaker?: boolean; names?: string[]; fits?: (one: Found) => boolean; rank?: (one: Found) => number }, signal?: AbortSignal):
     Promise<{ found: Found; ext: string; bytes: Buffer } | null>;
   // A few seconds of real footage of the scene's own things, or null. Same rules as a photograph: never the speaker,
   // never beside a named product's claim.
-  clip(ask: { query: string; shape?: string; speaker?: boolean; names?: string[]; seconds?: number; fits?: (one: Found) => boolean }, signal?: AbortSignal):
+  clip(ask: { query: string; shape?: string; speaker?: boolean; names?: string[]; seconds?: number; fits?: (one: Found) => boolean; rank?: (one: Found) => number }, signal?: AbortSignal):
     Promise<{ found: Found; ext: string; bytes: Buffer } | null>;
   // Why the clips asked for since the last call found nothing, in one line, or '' when one was found; the miss is
   // counted for Health.
@@ -134,20 +137,23 @@ export function clipMissLine(misses: ClipMiss[], from: string[]): string {
   const where = from.length ? from.join(' and ') : 'the free footage libraries';
   return `no free clip for '${misses[0].query}'; tried ${where}, ${seen ? `${fit} of ${seen} fit` : 'none came back with a free licence, a wide enough frame and three to ninety seconds'}`;
 }
-export function filmStock(stock: Stock | undefined, pack: string, report: (line: string) => void): FilmStock {
+export function filmStock(library: Stock | undefined, pack: string, report: (line: string) => void): FilmStock {
+  // This film's own use of the library: what it sets aside and what it spends is its own.
+  const stock = library?.film?.() ?? library;
   const on = !!stock && photographable(pack);
   let troubled = false;
   const said = new Set<string>();
   const say = (line: string) => { if (line && !said.has(line)) { said.add(line); report(line); } };
   const hear = () => { for (const line of stock?.heard?.() ?? []) say(line); };
   const misses: ClipMiss[] = [];
-  const one = async (kind: StockKind, ask: { query: string; shape?: string; speaker?: boolean; names?: string[]; fits?: (one: Found) => boolean; seconds?: number }, signal?: AbortSignal) => {
+  const one = async (kind: StockKind, ask: { query: string; shape?: string; speaker?: boolean; names?: string[]; fits?: (one: Found) => boolean; rank?: (one: Found) => number; seconds?: number }, signal?: AbortSignal) => {
     if (!on || stock!.ready() || troubled || signal?.aborted) return null;
     try {
       const all = await stock!.find({ query: ask.query, kind, shape: ask.shape, many: kind === 'video' ? 12 : 6 }, signal);
       const found = broll(all, { speaker: ask.speaker, names: ask.names })
         .filter((one) => !ask.fits || ask.fits(one))
         .filter((one) => kind !== 'video' || !one.seconds || one.seconds >= Math.min(3, ask.seconds ?? 3));
+      if (ask.rank) found.sort((a, b) => ask.rank!(b) - ask.rank!(a));
       hear();
       if (kind === 'video' && !found.length) misses.push({ query: ask.query, seen: all.length, fit: 0 });
       if (!found.length) return null;
