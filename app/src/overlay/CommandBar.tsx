@@ -52,8 +52,9 @@ export function CommandBar() {
   };
   const offered = useMemo(() => offerFor(input), [input, known, hits, notes]);
 
+  // Only the search waits on an effect. Nothing here sets state for a keystroke: a state set from an effect after
+  // each letter is a second render per letter, and typed fast those pile up until React gives up mid-word.
   useEffect(() => {
-    setAnswer('');
     const asked = input.trim();
     if (asked.length < 3) return;
     const stop = new AbortController();
@@ -109,10 +110,17 @@ export function CommandBar() {
     }
   }
 
+  // A letter typed is one render: the words, the first suggestion chosen again, and last question's answer gone.
+  function typed(event: React.ChangeEvent<HTMLInputElement>) {
+    setInput(event.target.value);
+    if (at !== 0) setAt(0);
+    if (answer) setAnswer('');
+  }
+
   let section = '';
   return (
     <section className="command" role="dialog" aria-modal="true" aria-label="Command bar">
-      <input autoFocus role="combobox" aria-expanded="true" aria-controls="command-list" aria-label="Command or search" placeholder={'Try "hire a designer", "ask Maya to…", or a few words you remember'} value={input} onChange={(event) => { setInput(event.target.value); setAt(0); }} onKeyDown={onKeyDown} />
+      <input autoFocus role="combobox" aria-expanded="true" aria-controls="command-list" aria-label="Command or search" placeholder={'Try "hire a designer", "ask Maya to…", or a few words you remember'} value={input} onChange={typed} onKeyDown={onKeyDown} />
       {answer && <p className="command__answer" role="status">{answer}</p>}
       <ul id="command-list" role="listbox" aria-label="Suggestions" ref={list}>
         {offered.map((one, index) => {
@@ -120,7 +128,7 @@ export function CommandBar() {
           return (
             <li key={`${one.section}-${one.label}-${index}`} role="presentation">
               {head && <h3>{head}</h3>}
-              <button type="button" role="option" aria-selected={index === at} onMouseMove={() => setAt(index)} onClick={() => run(one.action)}>
+              <button type="button" role="option" aria-selected={index === at} onMouseMove={() => { if (index !== at) setAt(index); }} onClick={() => run(one.action)}>
                 <b>{one.label}</b>{one.hint && <small>{one.hint}</small>}
               </button>
             </li>
