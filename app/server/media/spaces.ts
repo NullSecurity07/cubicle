@@ -53,6 +53,7 @@ type Job = AsyncIterable<Note> & { cancel: () => Promise<void> };
 export type App = {
   view_api(): Promise<{ named_endpoints: Record<string, { parameters: { parameter_name: string }[] }> }>;
   submit(endpoint: string, args: Record<string, unknown>): Job;
+  predict?(endpoint: string, args: Record<string, unknown>): Promise<{ data: unknown }>;
   close(): void;
 };
 export type Connect = (space: string, options: { token: `hf_${string}` }) => Promise<App>;
@@ -69,7 +70,12 @@ const fileOf = async (bytes: Buffer, name: string, type: string) => (await gradi
 export function plainly(message: unknown): string {
   const text = typeof message === 'string' ? message
     : Array.isArray(message) ? message.map((part) => (part as { message?: string })?.message ?? String(part)).join('; ')
-    : message instanceof Error ? message.message : String(message ?? '');
+    : message instanceof Error ? message.message
+    // Gradio rejects with its own status note rather than an Error: `{ stage: 'error', title, message }`. Read as a
+    // string that was "[object Object]", and the one reason that matters, a spent quota, never reached the founder.
+    : message && typeof message === 'object' && typeof (message as { message?: unknown }).message === 'string'
+      ? [(message as { title?: unknown }).title, (message as { message: string }).message].filter((part) => typeof part === 'string' && part).join(': ')
+    : String(message ?? '');
   const tidy = text.replace(/\s+/g, ' ').trim();
   if (/quota|gpu.{0,40}(exceed|ran out|used up|limit)|exceed.{0,40}gpu|429|too many requests/i.test(tidy)) return QUOTA;
   return tidy.slice(0, 200) || 'the Space answered with nothing';
@@ -152,8 +158,10 @@ export function createClips(env: NodeJS.ProcessEnv = process.env, connect: Conne
       let said = '';
       let url: string | null = null;
       let problem: string | null = null;
+      let heard = false;
       try {
         for await (const note of job) {
+          heard = true;
           if (note.type === 'data') { url = clipUrlOf(note.data) ?? url; continue; }
           if (note.type !== 'status') continue;
           if (note.stage === 'error') { problem ??= plainly(note.message); continue; }
@@ -164,6 +172,13 @@ export function createClips(env: NodeJS.ProcessEnv = process.env, connect: Conne
         help.signal?.removeEventListener('abort', stop);
       }
       if (help.signal?.aborted) throw new Error('stopped');
+      // A ZeroGPU Space with nothing left today ends the stream without a single note, so the founder was told "the
+      // Space finished without a clip" by every Space in turn when what it meant was that the day's free minutes were
+      // spent. Asked once more in one go, it either answers with the clip or throws the reason in words.
+      if (!url && !problem && !heard && app.predict) {
+        try { url = clipUrlOf((await app.predict(spot.endpoint, args))?.data); } catch (error) { problem = plainly(error); }
+        if (help.signal?.aborted) throw new Error('stopped');
+      }
       if (problem) throw new Error(problem);
       if (!url) throw new Error('the Space finished without a clip');
       help.report('fetching the clip back…');

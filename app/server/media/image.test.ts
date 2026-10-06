@@ -8,7 +8,7 @@ import { createStore } from '../store.ts';
 import { mediaTools } from '../tools/media.ts';
 import {
   askedFor, cachedImages, pictureKey, cloudflareImages, DRAWN_BEFORE, firstOf, spentFile, fakeImages, HF_SPENT, huggingFaceImages, outOfPictures,
-  type Picture, type PictureConnect, pictureOf, pictureSpaces, pictureUrlOf, SETUP_HINT,
+  plainly, type Picture, type PictureConnect, pictureOf, pictureSpaces, pictureUrlOf, SETUP_HINT,
 } from './image.ts';
 import { createMedia } from './jobs.ts';
 import { onPictureNeurons } from '../usage.ts';
@@ -302,10 +302,19 @@ describe('Hugging Face pictures', () => {
     expect(outOfPictures(HF_SPENT)).toBe(true);
   });
 
+  it('reads Gradio\'s own status note as the spent quota, not "[object Object]"', () => {
+    // What `predict` really rejects with on a ZeroGPU Space whose day is over: a status note, not an Error.
+    expect(plainly({ type: 'status', stage: 'error', title: 'ZeroGPU quota exceeded', message: 'You have exceeded your free ZeroGPU quota (120s requested vs. -60s left).' })).toBe(HF_SPENT);
+    expect(plainly({ stage: 'error', message: 'prompt is required' })).toBe('prompt is required');
+  });
+
   it('finds the picture whether it comes on its own or inside a gallery', () => {
     expect(pictureUrlOf([{ url: 'a.png' }])).toBe('a.png');
     expect(pictureUrlOf([{ image: { url: 'b.png' } }, { image: { url: 'c.png' } }])).toBe('b.png');
     expect(pictureUrlOf({ image: { path: '/tmp/x', url: 'd.png' } })).toBe('d.png');
+    // Z-Image Turbo's real answer, a gallery as the first of three outputs.
+    expect(pictureUrlOf([[{ image: { path: '/tmp/x', url: 'e.png' }, caption: null }], '7', 7])).toBe('e.png');
+    expect(pictureUrlOf([[], '7', 7])).toBeNull();
     expect(pictureUrlOf([{ caption: null }])).toBeNull();
     expect(pictureUrlOf(null)).toBeNull();
   });

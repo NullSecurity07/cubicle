@@ -102,16 +102,28 @@ export const HF_SPENT = "today's free Hugging Face drawing quota is used up; it 
 export function plainly(message: unknown): string {
   const text = typeof message === 'string' ? message
     : Array.isArray(message) ? message.map((part) => (part as { message?: string })?.message ?? String(part)).join('; ')
-    : message instanceof Error ? message.message : String(message ?? '');
+    : message instanceof Error ? message.message
+    // Gradio rejects with its own status note rather than an Error: `{ stage: 'error', title, message }`. Read as a
+    // string that was "[object Object]", and the one reason that matters, a spent quota, never reached the founder.
+    : message && typeof message === 'object' && typeof (message as { message?: unknown }).message === 'string'
+      ? [(message as { title?: unknown }).title, (message as { message: string }).message].filter((part) => typeof part === 'string' && part).join(': ')
+    : String(message ?? '');
   const tidy = text.replace(/\s+/g, ' ').trim();
   if (/quota|exceed.{0,40}gpu|gpu.{0,40}(exceed|ran out|used up|limit)|\b429\b|too many requests/i.test(tidy)) return HF_SPENT;
   return tidy.slice(0, 200) || 'the Space answered with nothing';
 }
 
 // Gradio hands a picture back in a couple of shapes: the file on its own, or a gallery of files each in its own little
-// envelope. Whichever it is, what is wanted is the first link.
+// envelope. Whichever it is, what is wanted is the first link. A gallery that is one output among several arrives as
+// a list inside the list of outputs — Z-Image Turbo answers `[[{ image }], seed, seed]` — and was read as no picture
+// at all, so every drawing fell through to the next Space.
 export function pictureUrlOf(data: unknown): string | null {
   for (const item of Array.isArray(data) ? data : [data]) {
+    if (Array.isArray(item)) {
+      const inside = pictureUrlOf(item);
+      if (inside) return inside;
+      continue;
+    }
     if (!item || typeof item !== 'object') continue;
     const file = item as { url?: unknown; image?: unknown };
     if (typeof file.url === 'string' && file.url) return file.url;
