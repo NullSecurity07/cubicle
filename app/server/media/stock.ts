@@ -63,6 +63,58 @@ export const photoCredits = (credits: (string | undefined)[]): string => {
   return each.length ? [`Photographs (Pexels, free to use: ${LICENCE}):`, ...each.map((one) => `- ${one}`)].join('\n') : '';
 };
 
+// What a failed search or fetch means for the rest of the film. A spent hour stops the asking for this film and is
+// said, so the founder knows why the rest went back to drawing. A key Pexels refuses is the founder's to fix and is
+// said once, loudly, because otherwise every film draws every picture and nobody knows why. An ordinary miss — a
+// 404, a network blip — is just this one picture, and the next scene may land.
+export const PEXELS_REFUSED = 'PEXELS_API_KEY in .env was not accepted by Pexels, so the film is drawing every picture instead of photographing them.';
+export function trouble(error: unknown): { say: string; stop: boolean } {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message === PEXELS_HINT) return { say: '', stop: true };
+  if (/used up/i.test(message) || /\b429\b/.test(message)) return { say: message, stop: true };
+  // Only the search itself carries the key. A 403 on fetching one photograph is the picture's CDN saying no to that
+  // one file, not Pexels refusing the founder's key.
+  if (/stock library answered (401|403)\b/.test(message)) return { say: PEXELS_REFUSED, stop: true };
+  return { say: '', stop: false };
+}
+
+// Which looks a real photograph can sit inside. Every pack is photographic except `sketch`, which is line work.
+export const photographable = (pack: string): boolean => pack !== 'sketch';
+
+// One film's use of the library, kept out of the film's long loop so what a founder hears can be tested. It asks for
+// a photograph only where one can sit (`photographable`), only while there is a key, and only until the key is
+// refused or the hour is spent; each of those is said once, and every miss comes back as null so the film draws that
+// picture instead. It never throws: a library that is optional by design is never the reason a film fails.
+export type FilmStock = {
+  // True when this film would have used photographs and cannot, because no key is set. The film says so once.
+  missing: boolean;
+  take(ask: { query: string; shape?: string; speaker?: boolean; names?: string[]; fits?: (one: Found) => boolean }, signal?: AbortSignal):
+    Promise<{ found: Found; ext: string; bytes: Buffer } | null>;
+};
+export function filmStock(stock: Stock | undefined, pack: string, report: (line: string) => void): FilmStock {
+  const on = !!stock && photographable(pack);
+  let troubled = false;
+  const said = new Set<string>();
+  return {
+    missing: on && !!stock!.ready(),
+    async take(ask, signal) {
+      if (!on || stock!.ready() || troubled || signal?.aborted) return null;
+      try {
+        const found = broll(await stock!.find({ query: ask.query, kind: 'photo', shape: ask.shape, many: 6 }, signal),
+          { speaker: ask.speaker, names: ask.names }).filter((one) => !ask.fits || ask.fits(one));
+        if (!found.length) return null;
+        const piece = await stock!.get(found[0], signal);
+        return { found: found[0], ...piece };
+      } catch (error) {
+        const { say, stop } = trouble(error);
+        if (say && !said.has(say)) { said.add(say); report(say); }
+        if (stop) troubled = true;
+        return null;
+      }
+    },
+  };
+}
+
 // The words that mean there is somebody in the picture. Read off what the photographer wrote, because that is the
 // only description that exists without looking at the picture, and it is usually a fair one.
 const SOMEBODY = /\b(man|woman|men|women|person|people|boy|girl|child|children|guy|lady|couple|family|crowd|portrait|face|hands?|model|worker|student|teacher|doctor|nurse|chef|group|team|he|she|his|her)\b/i;

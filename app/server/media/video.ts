@@ -14,7 +14,7 @@ import { finishPicture, looking } from './finish.ts';
 import { hands } from './turns.ts';
 import type { Sight } from './sight.ts';
 import {
-  bibleFor, direct, faceIn, fitLength, layoutsFor, narratorWanted, onCamera, photograph, readBrief, tellOf, understandingOf,
+  bibleFor, direct, faceIn, fitLength, layoutsFor, NO_FACE_HINT, narratorWanted, onCamera, photograph, readBrief, tellOf, understandingOf,
   type Asked, type Understanding,
 } from './director.ts';
 import { checkCut, cuttingFor, editFilm, takesOf, type Edit, type Shot as Cut, type Take } from './editor.ts';
@@ -27,7 +27,7 @@ import {
   AI_LAYOUTS, content, countWords, MAX_AI, MAX_LOCAL_AI, PURPOSES,
   fallbackOf, withinCaps, type Spec,
 } from './spec.ts';
-import { broll, creditOf, photoCredits } from './stock.ts';
+import { creditOf, filmStock, photoCredits } from './stock.ts';
 import {
   afforded, drawnAs, heldUp, lineUnder, photoOfTheLine, shareOut, shotKey, slotsFor, type Slot, type Visual,
 } from './visuals.ts';
@@ -64,6 +64,18 @@ const chose = <T extends string>(value: unknown, allowed: readonly T[]): T | und
 // phrase being spoken under it. What used to be here — a subject cut out of a scene's headline, the nouns that
 // summon lettering struck out of it, and a texture wherever a frame was already full of type — is all in there,
 // with a critic over it that no single function could have.
+
+// Why nobody speaks on camera when the free lip-sync service is set up and answering, but this film was not allowed
+// to spend its minutes. Without it the founder heard NO_FACE_HINT telling them to add HF_TOKEN — which they had.
+// Those minutes are the founder's to spend, so a film on auto with nothing unlimited installed does not spend them
+// uninvited; it says what would.
+export const heldFaceLine = (draft: boolean): string => (draft
+  ? 'this is a draft, so nobody speaks on camera — the full film can use the free lip-sync service, which is set up'
+  : 'the free lip-sync service is set up and working, but AI clips are not on for this film, so nobody speaks on camera — turning AI clips on uses some of the free daily minutes');
+
+// What a film says, once, when it would have used real photographs and cannot. Health and the keys panel say it too;
+// this is the founder hearing it where the drawn pictures are.
+export const NO_PHOTOS_LINE = 'Real photographs needs a Pexels key (free at pexels.com/api, set in Keys), so every picture in this film is drawn';
 
 export function hyperframesVideos(deps: VideoDeps): Maker {
   const bin = resolve(import.meta.dirname, '../../node_modules/.bin/hyperframes');
@@ -230,7 +242,8 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         // narrator is a woman, nobody goes on camera at all rather than the two being put together.
         const shownAs = narratorWanted([face && material.assets.find((one) => one.name === face)?.prompt,
           spec.scenes.map((one) => one.portrait_prompt).filter(Boolean).join(' ')].filter(Boolean).join(' ')).gender;
-        spec = { ...spec, scenes: onCamera(spec.scenes, understanding, bible, report,
+        const held = !!deps.lipsync && !deps.lipsync.ready() && !lipsync;
+        spec = { ...spec, scenes: onCamera(spec.scenes, understanding, bible, (line) => report(held && line === NO_FACE_HINT ? heldFaceLine(draft) : line),
           { ready: lipsync, narratorGender, personGender: shownAs }, face) };
 
         // Every drawn picture is filed under what was asked for, so the same film rendered twice draws nothing the
@@ -492,6 +505,10 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         const inHand = hands(3);
         const paint = paintOf(pack, brand);
         let spent = false;
+        // Real photographs, where the look can hold one and while the library will answer. A refused key or a spent
+        // hour is said once and every scene after goes straight to drawing; no key at all is said once, here.
+        const photoLibrary = filmStock(deps.stock, pack, report);
+        if (photoLibrary.missing && drawing && !draft) report(NO_PHOTOS_LINE);
         let kept = 0;
         // The one thing a picture maker says that a founder needs to hear: that a free service has run dry and the
         // rest are being drawn here, which is the difference between seconds and minutes. It was swallowed with
@@ -529,20 +546,18 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           try {
               // A real photograph of a real thing, from somebody who took one. People in stock are b-roll and
               // nothing else: never the film's own speaker, and never beside a claim about a named product.
-            if (deps.stock && !deps.stock.ready()) {
-              try {
-                const looking = content(visual.subject).slice(0, 5).join(' ') || trimTo(visual.line, 4);
-                // A photograph whose own description has none of the line's things in it is of something else.
-                const found = broll(await deps.stock.find({ query: looking, kind: 'photo', shape, many: 6 }, stop),
-                  { speaker: !!scene.person || scene.layout === 'presenter', names: [material.brand?.name ?? ''].filter(Boolean) })
-                  .filter((one) => photoOfTheLine(one.what, visual));
-                if (found.length) {
-                  const piece = await deps.stock.get(found[0], stop);
-                  file = `stock-${name}.${piece.ext}`;
-                  await writeFile(join(at, 'assets', file), piece.bytes);
-                  credit = creditOf(found[0]);
-                }
-              } catch { file = ''; credit = undefined; }
+            {
+              // A photograph whose own description has none of the line's things in it is of something else.
+              const photo = await photoLibrary.take({
+                query: content(visual.subject).slice(0, 5).join(' ') || trimTo(visual.line, 4), shape,
+                speaker: !!scene.person || scene.layout === 'presenter', names: [material.brand?.name ?? ''].filter(Boolean),
+                fits: (one) => photoOfTheLine(one.what, visual),
+              }, stop);
+              if (photo) {
+                file = `stock-${name}.${photo.ext}`;
+                await writeFile(join(at, 'assets', file), photo.bytes);
+                credit = creditOf(photo.found);
+              }
             }
             if (!file) {
               const piece = await drawing.make({ prompt: drawnAs(visual, bible), shape, ...(draft ? { size: 'draft' } : {}) }, { report: fromMaker, signal: stop });

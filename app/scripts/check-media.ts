@@ -1,6 +1,6 @@
 // Live check, needs real keys and this machine: one picture, one spoken line, one two-scene film and, when there is a
-// Hugging Face token, one moving shot and one talking head from the free Spaces. Nothing is written into the
-// workspace. Run with `pnpm check:media`.
+// Hugging Face token, one moving shot and one talking head from the free Spaces, and one search each from Freesound
+// and Pexels when their keys are set. Nothing is written into the workspace. Run with `pnpm check:media`.
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -13,7 +13,8 @@ const { createClips } = await import('../server/media/spaces.ts');
 const { localClips, CLIP_SECONDS, MINUTES_EACH } = await import('../server/media/local-clips.ts');
 const { localImages, DOWNLOAD_GB, SECONDS_EACH } = await import('../server/media/local-image.ts');
 const { cardLine } = await import('../server/media/gpu-room.ts');
-const { createMusic } = await import('../server/media/music.ts');
+const { createMusic, freesoundSearch } = await import('../server/media/music.ts');
+const { pexels, creditOf, trouble } = await import('../server/media/stock.ts');
 import type { Ask, Maker, Piece } from '../server/media/jobs.ts';
 
 const dir = await mkdtemp(join(tmpdir(), 'stage-media-'));
@@ -91,6 +92,38 @@ try {
     } catch (error) { console.log(what, 'ERROR', String((error as Error).message).slice(0, 200)); }
   }
 
+  // The two keyed libraries, each asked once on its own so a key that is set but refused is not hidden behind the
+  // free library that answered first. Freesound: one search for CC0 music and one download of what it found.
+  const freesoundKey = process.env.FREESOUND_API_KEY?.trim();
+  if (!freesoundKey) console.log('Freesound NO KEY: films take music from the free library alone (FREESOUND_API_KEY, free at freesound.org/apiv2/apply)');
+  else {
+    const started = Date.now();
+    try {
+      const { found, refused } = await freesoundSearch(freesoundKey, 'calm piano', 20);
+      if (refused) throw new Error(refused);
+      if (!found.length) throw new Error('the key was accepted but no CC0 music came back for a plain query');
+      const answer = await fetch(found[0].url, { signal: AbortSignal.timeout(60_000) });
+      if (!answer.ok) throw new Error(`the track answered ${answer.status}`);
+      const bytes = Buffer.from(await answer.arrayBuffer());
+      console.log('Freesound OK', `${found.length} CC0 found · "${found[0].title}" by ${found[0].by} · ${found[0].seconds.toFixed(0)}s of music · ${(bytes.length / 1024).toFixed(0)} KB · ${found[0].licence}`,
+        `· ${((Date.now() - started) / 1000).toFixed(1)}s`);
+    } catch (error) { console.log('Freesound ERROR', String((error as Error).message).slice(0, 200)); }
+  }
+
+  // Real photographs from Pexels: one search and one photograph fetched, into a folder thrown away after.
+  const stock = pexels(process.env, fetch, join(dir, 'stock'));
+  if (stock.ready()) console.log('Pexels NO KEY: Real photographs needs a Pexels key, so films draw every picture (PEXELS_API_KEY, free at pexels.com/api)');
+  else {
+    const started = Date.now();
+    try {
+      const found = await stock.find({ query: 'an empty desk by a window', kind: 'photo', many: 3 });
+      if (!found.length) throw new Error('the key was accepted but nothing came back for a plain query');
+      const photo = await stock.get(found[0]);
+      console.log('Pexels OK', `${found.length} found · a ${photo.ext} · ${(photo.bytes.length / 1024).toFixed(0)} KB · ${((Date.now() - started) / 1000).toFixed(1)}s`);
+      console.log(`  ${creditOf(found[0])}`);
+    } catch (error) { console.log('Pexels ERROR', trouble(error).say || String((error as Error).message).slice(0, 200)); }
+  }
+
   // The borrowed voice. It is set up by switching it on in a card, never by a check, and it says one word only when
   // the founder passes --local, because loading it takes most of a minute and its weights are not for sale.
   const omniDir = resolve(import.meta.dirname, '../.cache/omnivoice');
@@ -142,7 +175,7 @@ try {
   // are made first by whichever picture and voice backends are already set up here.
   const clips = createClips();
   const hint = clips.ready();
-  if (hint) console.log('Hugging Face NOT SET UP:', hint);
+  if (hint) console.log('Hugging Face NO KEY:', hint);
   else {
     const say = (line: string) => console.log('  ·', line);
     const timed = async (what: string, make: () => Promise<Piece>) => {

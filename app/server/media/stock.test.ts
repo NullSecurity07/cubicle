@@ -2,7 +2,10 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { broll, creditOf, fakeStock, LICENCE, peopleIn, pexels, PEXELS_HINT, type Found } from './stock.ts';
+import {
+  broll, creditOf, fakeStock, filmStock, LICENCE, peopleIn, pexels, PEXELS_HINT, PEXELS_REFUSED, photographable, trouble, type Found,
+} from './stock.ts';
+import { heldFaceLine, NO_PHOTOS_LINE } from './video.ts';
 
 const PHOTOS = {
   photos: [{
@@ -120,5 +123,117 @@ describe('the library the tests get', () => {
     const found = await library.find({ query: 'anything' });
     await library.get(found[0]);
     expect(library.used()).toHaveLength(1);
+  });
+});
+
+describe('what a failed search means for the rest of the film', () => {
+  const failure = async (env: NodeJS.ProcessEnv, status: number) =>
+    pexels(env, answering({}, status)).find({ query: 'a bare table' }).then(() => null, (error: unknown) => error);
+
+  it('stops asking, and says so once, when Pexels refuses the key', async () => {
+    for (const status of [401, 403]) expect(trouble(await failure({ PEXELS_API_KEY: 'wrong' }, status))).toEqual({ say: PEXELS_REFUSED, stop: true });
+  });
+
+  it('stops asking, and says why, when the hour is spent', async () => {
+    const said = trouble(await failure({ PEXELS_API_KEY: 'k' }, 429));
+    expect(said.stop).toBe(true);
+    expect(said.say).toMatch(/used up/);
+  });
+
+  it('stops quietly with no key at all, since the film said that once already', async () => {
+    expect(trouble(await failure({}, 200))).toEqual({ say: '', stop: true });
+  });
+
+  it('treats a missing picture or a blip as this one picture only', async () => {
+    expect(trouble(await failure({ PEXELS_API_KEY: 'k' }, 404))).toEqual({ say: '', stop: false });
+    expect(trouble(new Error('fetch failed'))).toEqual({ say: '', stop: false });
+  });
+
+  it('keeps photographs out of the hand-drawn look alone', () => {
+    expect(photographable('sketch')).toBe(false);
+    expect(photographable('clean')).toBe(true);
+  });
+
+  it('tells the founder in the studio\'s words what a Pexels key would add, and where to get one', () => {
+    expect(NO_PHOTOS_LINE).toMatch(/^Real photographs needs a Pexels key/);
+    expect(NO_PHOTOS_LINE).toContain('pexels.com/api');
+  });
+});
+
+describe('a lip-sync service that is set up but not spent', () => {
+  it('says the service works and what would use it, never to add a token the founder already has', () => {
+    for (const draft of [true, false]) {
+      expect(heldFaceLine(draft)).not.toContain('HF_TOKEN');
+      expect(heldFaceLine(draft)).toMatch(/set up/);
+    }
+    expect(heldFaceLine(false)).toMatch(/AI clips/);
+    expect(heldFaceLine(true)).toMatch(/draft/);
+  });
+});
+
+describe('one film asking the library, as the founder hears it', () => {
+  const counting = (status: number) => {
+    let searches = 0;
+    const http = (async (url: string | URL) => {
+      if (String(url).startsWith('https://api.pexels.com')) searches += 1;
+      return answering(PHOTOS, status)(url);
+    }) as unknown as typeof fetch;
+    return { http, searches: () => searches };
+  };
+
+  it('with no key, says it once up front, asks nothing and hands every picture to drawing', async () => {
+    const { http, searches } = counting(200);
+    const lines: string[] = [];
+    const photos = filmStock(pexels({}, http), 'clean', (line) => lines.push(line));
+    expect(photos.missing).toBe(true);
+    for (let scene = 0; scene < 3; scene += 1) expect(await photos.take({ query: 'a bare table' })).toBeNull();
+    expect(searches()).toBe(0);
+    expect(lines).toEqual([]);
+  });
+
+  it('with a refused key, says PEXELS_API_KEY once and stops asking after the first scene', async () => {
+    const { http, searches } = counting(401);
+    const lines: string[] = [];
+    const photos = filmStock(pexels({ PEXELS_API_KEY: 'wrong' }, http), 'clean', (line) => lines.push(line));
+    expect(photos.missing).toBe(false);
+    for (let scene = 0; scene < 4; scene += 1) expect(await photos.take({ query: 'a bare table' })).toBeNull();
+    expect(searches()).toBe(1);
+    expect(lines).toEqual([PEXELS_REFUSED]);
+  });
+
+  it('with a spent hour, says so once and stops asking', async () => {
+    const { http, searches } = counting(429);
+    const lines: string[] = [];
+    const photos = filmStock(pexels({ PEXELS_API_KEY: 'k' }, http), 'clean', (line) => lines.push(line));
+    for (let scene = 0; scene < 3; scene += 1) await photos.take({ query: 'a bare table' });
+    expect(searches()).toBe(1);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/used up/);
+  });
+
+  it('with a working key, brings back a photograph with its credit, and keeps people off the speaker', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'film-stock-'));
+    try {
+      const photos = filmStock(pexels({ PEXELS_API_KEY: 'k' }, answering(PHOTOS), dir), 'clean', () => {});
+      const got = await photos.take({ query: 'a bare table' });
+      expect(got?.ext).toBe('jpg');
+      expect(got?.bytes.length).toBeGreaterThan(0);
+      expect(creditOf(got!.found)).toContain('on Pexels');
+      const asSpeaker = await photos.take({ query: 'a bare table', speaker: true, fits: (one) => one.people });
+      expect(asSpeaker).toBeNull();
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it('never photographs a hand-drawn film and never says a key is missing there', async () => {
+    const { http, searches } = counting(200);
+    const photos = filmStock(pexels({ PEXELS_API_KEY: 'k' }, http), 'sketch', () => {});
+    expect(await photos.take({ query: 'a bare table' })).toBeNull();
+    expect(searches()).toBe(0);
+    expect(filmStock(pexels({}, http), 'sketch', () => {}).missing).toBe(false);
+    expect(filmStock(undefined, 'clean', () => {}).missing).toBe(false);
+  });
+
+  it('reads a 403 on one photograph file as that picture only, not a refused key', () => {
+    expect(trouble(new Error('that photograph could not be fetched (403)'))).toEqual({ say: '', stop: false });
   });
 });
