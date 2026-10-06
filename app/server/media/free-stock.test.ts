@@ -73,6 +73,7 @@ describe('licences', () => {
     expect(creditLine({ title: 'Oven', by: 'Ermell', licence: 'CC BY 4.0', page: 'https://commons.wikimedia.org/wiki/File:Oven.jpg', source: 'Wikimedia Commons' }))
       .toBe('"Oven" by Ermell · CC BY 4.0 · Wikimedia Commons — https://commons.wikimedia.org/wiki/File:Oven.jpg');
     expect(plainText('<a href="x">Ana &amp; Bo</a>')).toBe('Ana & Bo');
+    expect(plainText('<div class="fn value">\nUnknown author<span style="display: none;">Unknown author</span> or not provided</div>')).toBe('Unknown author or not provided');
   });
 });
 

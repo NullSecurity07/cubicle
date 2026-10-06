@@ -302,6 +302,32 @@ describe('Hugging Face pictures', () => {
     expect(outOfPictures(HF_SPENT)).toBe(true);
   });
 
+  it('asks again without the token when the token\'s own minutes are spent, and stops when those are spent too', async () => {
+    const [first] = pictureSpaces;
+    const calls: (string | undefined)[] = [];
+    const quota = 'You have exceeded your ZeroGPU runs limit.';
+    const connect: PictureConnect = async (_space, options) => ({
+      async view_api() { return { named_endpoints: { [first.endpoint]: { parameters: asks(first).map((parameter_name) => ({ parameter_name })) } } }; },
+      async predict() {
+        calls.push(options.token);
+        if (options.token) throw new Error(quota);
+        return { data: [{ url: 'https://z.hf.space/file=out.png' }] };
+      },
+      close() {},
+    });
+    const said: string[] = [];
+    const maker = huggingFaceImages({ HF_TOKEN: 'hf_secret' }, connect, served(png));
+    expect((await maker.make({ prompt: 'a kite' }, { report: (line) => said.push(line) })).bytes).toEqual(png);
+    expect(calls).toEqual(['hf_secret', undefined]);
+    expect(said.join(' ')).toContain('without it');
+    // The rest of the day goes straight to the unsigned allowance rather than asking the spent token first.
+    await maker.make({ prompt: 'a boat' }, { report: () => {} });
+    expect(calls).toEqual(['hf_secret', undefined, undefined]);
+    // Both spent: the day is over, said in the words the film stops on.
+    const spent: PictureConnect = async () => ({ ...(await connect('', {})), async predict() { throw new Error(quota); } });
+    await expect(huggingFaceImages({ HF_TOKEN: 'hf_secret' }, spent, served(png)).make({ prompt: 'a kite' }, { report: () => {} })).rejects.toThrow(HF_SPENT);
+  });
+
   it('reads Gradio\'s own status note as the spent quota, not "[object Object]"', () => {
     // What `predict` really rejects with on a ZeroGPU Space whose day is over: a status note, not an Error.
     expect(plainly({ type: 'status', stage: 'error', title: 'ZeroGPU quota exceeded', message: 'You have exceeded your free ZeroGPU quota (120s requested vs. -60s left).' })).toBe(HF_SPENT);

@@ -29,7 +29,7 @@ import {
 } from './spec.ts';
 import { creditOf, filmStock, photoCredits } from './stock.ts';
 import {
-  afforded, drawnAs, heldUp, lineUnder, photoOfTheLine, shareOut, shotKey, slotsFor, type Slot, type Visual,
+  afforded, drawnAs, heldUp, lineUnder, photoOfTheLine, sceneLine, shareOut, shotKey, slotsFor, type Slot, type Visual,
 } from './visuals.ts';
 import { isDraft, makingWords, secondsEach } from '../../shared/film-time.ts';
 import { filmMemory, storyboardKey, subjectKey, type KeptSubject } from './remembered.ts';
@@ -642,7 +642,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           if (!fresh.length) return { needing, owners };
           const slots: Slot[] = cut.map((one) => ({
             scene: one.scene, take: one.take, layout: spec.scenes[one.scene].layout,
-            line: lineUnder(heard, one.at, one.at + one.seconds, spec.scenes[one.scene].say ?? ''),
+            line: lineUnder(heard, one.at, one.at + one.seconds, sceneLine(spec.scenes[one.scene])),
           }));
           // Whatever the storyboard already wrote for a scene is the first take's picture, so the director's own
           // work is the starting point rather than something thrown away.

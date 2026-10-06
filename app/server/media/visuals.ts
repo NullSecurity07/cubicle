@@ -571,6 +571,12 @@ export function shareOut(lengths: number[], many: number, have: ReadonlySet<numb
 // guessed cut and the measured one disagree by a few frames about *when*, and almost never about *which*.
 export const shotKey = (one: { scene: number; take: number }): string => `${one.scene}:${one.take}`;
 
+// The line a scene stands for when nothing is heard under it: what is said, or in a film nobody narrates, the words
+// written on the screen. A silent film's shots were handed an empty line, so their pictures were built from "a pair
+// of hands at rest" and any photograph at all passed as one of the line — a pottery class came back as hand washing.
+export const sceneLine = (scene: { say?: string; heading?: string; text?: string } | undefined): string =>
+  (scene?.say ?? '').trim() || [scene?.heading, scene?.text].map((one) => (one ?? '').trim()).filter(Boolean).join('. ');
+
 // The words really spoken under one shot, out of the film's measured word timings. A shot is given the words
 // whose middle falls inside it, so a picture is of the phrase on the screen rather than of the scene in general.
 export function lineUnder(words: { word: string; at: number; seconds: number }[], from: number, to: number, fallback: string): string {

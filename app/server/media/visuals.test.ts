@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  afforded, aboutTheLine, criticiseVisuals, drawnAs, fillerShot, kindFor, lineUnder, repairVisuals,
+  afforded, aboutTheLine, criticiseVisuals, drawnAs, fillerShot, kindFor, lineUnder, photoOfTheLine, repairVisuals, sceneLine,
   shareOut, shares, slotsFor, somebodyIn, unlettered, visualFrom, visualsOf, visualsPrompt, type Visual, shotKey,
 } from './visuals.ts';
 import type { Scene } from './spec.ts';
@@ -198,6 +198,16 @@ describe('the phrase under one shot', () => {
   it('takes the words whose middle falls inside the shot', () => {
     expect(lineUnder(words, 0, 1.4, 'the whole line')).toBe('investors want proof');
     expect(lineUnder(words, 1.9, 3, 'the whole line')).toBe('never promises');
+  });
+
+  it('gives a film nobody narrates the words on its screen as each shot\'s line', () => {
+    expect(sceneLine({ say: ' Investors want proof. ', text: 'Proof' })).toBe('Investors want proof.');
+    expect(sceneLine({ heading: 'Clay', text: 'A pottery class' })).toBe('Clay. A pottery class');
+    expect(sceneLine(undefined)).toBe('');
+    // The silent film's picture is held to its words: hand washing is not a pottery class.
+    const line = lineUnder([], 0, 3, sceneLine({ text: 'A pottery class' }));
+    expect(photoOfTheLine('Soap bubbles gather pair hands', { line })).toBe(false);
+    expect(photoOfTheLine('Pottery class at the community centre', { line })).toBe(true);
   });
 
   it('falls back to the scene\'s own line when the shot lands in a gap', () => {
