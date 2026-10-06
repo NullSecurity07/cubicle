@@ -159,6 +159,22 @@ describe('the Leads card', () => {
     expect((await system('marketing')).messages[0].content).toContain('A Leads card');
     expect((await system('build')).messages[0].content).toBe('You are Maya.');
   });
+
+  // Journey 14: Rosa, wired to a card with Dr. Anna Weber's address, guessed dr.anna.weber@example.com.
+  it('lists the addresses the card holds, so none is guessed: to the wired person, and to anyone when it is the only card', async () => {
+    const { part, seams, use } = await setup();
+    closing = part.close;
+    await use('add_lead', { person: 'Dr. Anna Weber', company: 'Weber Dental', email: 'anna.weber@example-dental.de' });
+    await use('add_lead', { person: 'Jonas Keller', company: 'Keller Dental' });
+    const system = async (roomId: string) => (await seams.run('turn:before', { roomId, source: 'chat' as never, query: 'hi', messages: [{ role: 'system', content: 'You are Maya.' }] })).messages[0].content as string;
+    const wiredOne = await system('marketing');
+    expect(wiredOne).toContain('Email addresses on the Leads card wired to you');
+    expect(wiredOne).toContain('Dr. Anna Weber at Weber Dental: anna.weber@example-dental.de');
+    expect(wiredOne).not.toContain('Jonas Keller');
+    const other = await system('build');
+    expect(other).toContain('Email addresses on the Leads card on the stage');
+    expect(other).not.toContain('A Leads card:');
+  });
 });
 
 describe('the founder\'s own changes', () => {

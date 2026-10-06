@@ -96,6 +96,21 @@ const UNITS = 'users|customers|clients|signups|sign-ups|subscribers|downloads|vi
 // A figure worth checking: money, a percentage, or a count with a unit. Bare numbers (dates, section numbers, steps)
 // are not figures here.
 const FIGURE = new RegExp(String.raw`[$€£]\s?${AMOUNT}\s?(k|mm|m|bn|b|thousand|million|billion)?\b|${AMOUNT}\s?(%|percent\b)|${AMOUNT}\s?(k|m|x|×)?\s?(${UNITS})\b|${AMOUNT}(x|×)(?![\w])`, 'gi');
+// LaTeX math is not money: journey 14's "$$900 / 49 = 18.37$$" read as "$900" and drew "Currency changed: $900
+// (source €)" under a reply in euros. The dollar signs of a math span are blanked, one for one so every place in the
+// text stays where it was: a closed "$$…$$", an inline "$…$" that holds math ("$x$", "$a^2$", "$900/49$"), and an
+// unclosed "$$" whose line holds nothing but math after it. "costs $$900 a month" is a doubled sign in words: one
+// dollar amount, read once.
+const MATH_INLINE = /(?<![$\\\d])\$(?=[^\s$])([^$\n]{1,80}?)(?<=[^\s$])\$(?![$\d])/g;
+const MATH_ONLY = /^[\d\s.,+\-*/×÷=<>()[\]^_{}\\a-zA-Z]*$/;
+export function unmath(text: string): string {
+  if (!text.includes('$')) return text;
+  const blank = (span: string) => span.replace(/\$/g, ' ');
+  return text
+    .replace(/\$\$[^$]{1,400}?\$\$/g, blank)
+    .replace(/\$\$(?=\S)([^\n]*)/g, (whole, rest: string) => (MATH_ONLY.test(rest) && !/[a-zA-Z]{3,}/.test(rest.replace(/\\[a-zA-Z]+/g, '')) ? blank(whole) : ` ${whole.slice(1)}`))
+    .replace(MATH_INLINE, (whole, inner: string) => (/^[a-zA-Z]{1,3}$|[\\^_{}=/]/.test(inner) && !/\$|\s[a-zA-Z]{3,}/.test(inner) ? blank(whole) : whole));
+}
 // Hours, days and weeks are nearly always advice ("reply within 24 hours"), so they count only as a range ("20–40
 // hours") or a rate ("12 hours per week", "12 hours/week"; not "a", which is as often "within 24 hours a customer"), which is a claim about the world that has to come from somewhere.
 const SPAN = new RegExp(String.raw`${AMOUNT}(?:\s?(?:–|—|-|to)\s?${AMOUNT})?\s?(hours|days|weeks)\b(?=(\s*\/\s*\w|\s+per\b)?)`, 'gi');
@@ -111,7 +126,8 @@ const halfUnit = (value: number) => (value === 0 ? 0.5 : 0.5 * 10 ** (Math.floor
 // squeezes a past message into one line (the morning note's talk, a colleague's excerpt) runs it through here first,
 // while the flag line still starts a line of its own.
 // Every line the truth net writes under a reply; a reader of past replies (the morning note) finds them with this.
-export const FLAG_LINE = /^(?:Unconfirmed: this reply claims|Unconfirmed: the verdict was not written|Unsourced figures: ).*$/gm;
+export const FLAG_LINE = /^(?:Unconfirmed: this reply claims|Unconfirmed: the verdict was not written|Unsourced figures: |Not worked out: ).*$/gm;
+const UNWORKED = 'Not worked out: ';
 export function stripFlagged(source: string): string {
   const named = [...source.matchAll(/^Unsourced figures: (.+?) \(not found/gm)].flatMap((match) => match[1].split(', '));
   // Taken out whole only: a flagged "2%" must not eat the end of a real "32%".
@@ -280,10 +296,22 @@ function otherFrom(a: Known, b: Known): number[] {
 // `drifted`: money the reply gives in another currency than the sources hold it in ("€87" from "$29 × 3").
 // Whose time it is has to be said: "of the time" is how often, a claim ("it fails 100% of the time").
 const ALL_OR_NONE = /^\s*of\s+(?:(?:your|my|our|their|his|her)\s+(?:time|effort|focus|attention|energy)|the\s+(?:effort|focus|attention|energy))\b/i;
-export function figureCheck(reply: string, sources: string[]): { unsourced: string[]; proposals: string[]; drifted?: { label: string; source: string }[] } {
+// Arithmetic a reply shows: an operator before an "=" (or "is", "so", a comma) that leads to the figure, "€4,000 ÷
+// €802 = 5 months", "$22,000 over 40 customers, $550 each", or the sum in brackets right after it, "€98/mo (49 × 2)", or the step it is part of, "30% of your 40, so 12".
+const SHOWN_BEFORE = /(?:[×*÷+−]|\s[x/-]\s|\b(?:over|times|minus|less|plus|divided by|of)\b)[^.;!?\n]{0,60}(?:=|≈|→|,|\bis\b|\bso\b|\bgives\b|\bmakes\b|\bcomes to\b)\s*(?:~|about\s|roughly\s)?\s*$/i;
+const SHOWN_AFTER = /^[^\s(]{0,8}\s?\(\s*[$€£]?\s?[\d.,]+\s?(?:[a-z/]+\s?)?[×x*/÷+−-]\s?[$€£]?\s?[\d.,]+|^\s(?:of|times|over)\s[^.;!?\n]{0,30}?(?:=|,\s*so\b|\bso\b|\bis\b)\s*[$€£]?\d/i;
+const shownAt = (reply: string, at: number, length: number) => {
+  const start = Math.max(0, reply.lastIndexOf('\n', at - 1) + 1, ...['. ', '; ', '! ', '? '].map((stop) => reply.lastIndexOf(stop, at - 1) + 2));
+  return SHOWN_BEFORE.test(reply.slice(start, at)) || SHOWN_AFTER.test(reply.slice(at + length, at + length + 60));
+};
+// `unworked`: figures the reply worked out from what was read in a step it does not show and no calc ran, so a reader
+// cannot check them. Journey 14: on ollama-cloud Otto gave "€490/mo revenue", "net burn €410/mo" and "~9.8 months"
+// with no sum and no calc; the guard took each as one step from the figure before it and said nothing.
+export function figureCheck(reply: string, sources: string[]): { unsourced: string[]; proposals: string[]; drifted?: { label: string; source: string }[]; unworked?: string[] } {
+  reply = unmath(reply);
   const known: Known[] = [];
   for (const source of sources) {
-    for (const match of stripFlagged(source).matchAll(TOKEN)) {
+    for (const match of stripFlagged(unmath(source)).matchAll(TOKEN)) {
       const raw = valueOf(match[2], match[3]);
       const closer = match[5]?.trim().toLowerCase();
       const kind: Kind = match[1] ? 'money' : closer ? 'share' : 'other';
@@ -333,6 +361,7 @@ export function figureCheck(reply: string, sources: string[]): { unsourced: stri
   const unsourced: string[] = [];
   const proposals: string[] = [];
   const drifted: { label: string; source: string }[] = [];
+  const unworked: string[] = [];
   const note = (list: string[], label: string) => { if (!unsourced.includes(label) && !proposals.includes(label)) list.push(label); };
   for (const match of reply.matchAll(FIGURE)) {
     const label = match[0].trim();
@@ -347,7 +376,8 @@ export function figureCheck(reply: string, sources: string[]): { unsourced: stri
     } else if (match[7] !== undefined) {
       const times = !!match[9] && /x|×/i.test(match[9]);
       value = valueOf(match[7], match[8], match[9] && !times ? match[9] : undefined);
-      if (value <= 10) continue;
+      // A small count is advice ("3 customers"), but months to a decimal are a runway somebody worked out: "~9.8 months".
+      if (value <= 10 && !(match[8] && /^months$/i.test(match[10]))) continue;
     } else {
       // A multiple is a claim at any size: "they pay 2x the median" is the classic invented benchmark.
       value = valueOf(match[11], match[12]);
@@ -367,7 +397,9 @@ export function figureCheck(reply: string, sources: string[]): { unsourced: stri
         continue;
       }
     }
-    if (found(value, kind) || (bare !== undefined && found(bare, kind)) || derived(value, kind, around)) {
+    const direct = found(value, kind) || (bare !== undefined && found(bare, kind));
+    if (direct || derived(value, kind, around)) {
+      if (!direct && !shownAt(reply, match.index, match[0].length) && !unworked.includes(label)) unworked.push(label);
       // Worked out once, it is known for the next figure in the reply ($1,960 a month, so $23,520 a year).
       known.push({ value, digits: 12, kind });
       continue;
@@ -379,7 +411,7 @@ export function figureCheck(reply: string, sources: string[]): { unsourced: stri
     if ((match[3] === undefined && match[6] === undefined) || Math.max(...ends) <= 10 || ends.every((end) => found(end, 'other'))) continue;
     note(proposed(reply, match.index) ? proposals : unsourced, match[0].trim());
   }
-  return { unsourced, proposals, ...(drifted.length ? { drifted } : {}) };
+  return { unsourced, proposals, ...(drifted.length ? { drifted } : {}), ...(unworked.length ? { unworked } : {}) };
 }
 
 export const unsourcedFigures = (reply: string, sources: string[]): string[] => figureCheck(reply, sources).unsourced;
@@ -528,7 +560,7 @@ export function holdVerdict(reply: string, receipts: Receipt[], sources: string[
   const words = wordsOf(held.outcomes);
   let changed = false;
   const lines = reply.split('\n').map((line) => {
-    if (/^(?:Unconfirmed: |Unsourced figures: |Currency changed: )/.test(line)) return line;
+    if (/^(?:Unconfirmed: |Unsourced figures: |Currency changed: |Not worked out: )/.test(line)) return line;
     let out = [...words, SCORE].reduce((kept, word) => kept.replace(word, NOT_WRITTEN), line).replace(PART, maskPart);
     if (out === line) return line;
     changed = true;
@@ -548,8 +580,9 @@ export function checkReply(input: { reply: string; receipts: Receipt[]; sources:
   if (claims.length) lines.push(`Unconfirmed: this reply claims an action no tool confirmed (${claims.join(', ')}).`);
   const verdict = verdictUnwritten(input.reply, input.receipts, input.sources);
   if (verdict) lines.push(verdict);
-  const { unsourced: figures, drifted = [] } = figureCheck(input.reply, input.sources);
+  const { unsourced: figures, drifted = [], unworked = [] } = figureCheck(input.reply, input.sources);
   if (figures.length) lines.push(`Unsourced figures: ${figures.slice(0, 8).join(', ')} (not found in anything this turn read).`);
+  if (unworked.length) lines.push(`${UNWORKED}${unworked.slice(0, 8).join(', ')} (worked out without calc and without the sum written out; check them).`);
   if (drifted.length) lines.push(`Currency changed: ${drifted.slice(0, 8).map((one) => `${one.label} (source ${one.source})`).join(', ')}.`);
   return lines;
 }

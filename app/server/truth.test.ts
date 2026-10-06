@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PARTNER_STANCE, STANCE } from '../shared/model.ts';
-import { checkReply, dropFlagged, figureCheck, holdVerdict, NOT_WRITTEN, proseToolCall, stripFlagged, turnEvidence, turnSources, unreceiptedClaims, unsourcedFigures, verdictRefused, verdictStanding, VERDICT_WRITTEN } from './truth.ts';
+import { checkReply, dropFlagged, figureCheck, holdVerdict, NOT_WRITTEN, proseToolCall, stripFlagged, unmath, turnEvidence, turnSources, unreceiptedClaims, unsourcedFigures, verdictRefused, verdictStanding, VERDICT_WRITTEN } from './truth.ts';
 
 const wrote = { name: 'write_doc', ok: true };
 const failedWrite = { name: 'write_doc', ok: false };
@@ -201,7 +201,9 @@ describe('the truth net on ordinary founder replies', () => {
   const figures = (reply: string) => figureCheck(reply, [founder]);
 
   it('takes correct arithmetic on the founder\'s figures as sourced', () => {
-    expect(check('40 customers is $1,960 MRR, about $23,520 a year.')).toEqual([]);
+    expect(check('40 × $49 is $1,960 MRR, times 12 is about $23,520 a year.')).toEqual([]);
+    // Right, but worked out in a step the reply does not show and no calc ran: not unsourced, and said so.
+    expect(check('40 customers is $1,960 MRR.')).toEqual(['Not worked out: $1,960 (worked out without calc and without the sum written out; check them).']);
     expect(check('3 of 40 is 7.5% monthly churn.')).toEqual([]);
     expect(check('30% of your 40, so 12 accounts.')).toEqual([]);
   });
@@ -240,7 +242,22 @@ describe('the truth net on ordinary founder replies', () => {
   it('takes runway worked out from cash and burn as sourced, as journey 3 wrote it', () => {
     const reply = 'Cash: $8,000. Burn: $300 a month.\nRunway: 26.67 months at this burn.';
     expect(check(reply).length).toBe(1);
-    expect(checkReply({ reply, receipts: [], sources: ['We have $8,000 in the bank and burn $300 a month.'] })).toEqual([]);
+    expect(checkReply({ reply, receipts: [], sources: ['We have $8,000 in the bank and burn $300 a month.'] })).toEqual(['Not worked out: 26.67 months (worked out without calc and without the sum written out; check them).']);
+    // With the sum written out, or the result of a calc read this turn, it stands.
+    expect(checkReply({ reply: 'Runway: $8,000 / $300 = 26.67 months.', receipts: [], sources: ['We have $8,000 in the bank and burn $300 a month.'] })).toEqual([]);
+    expect(checkReply({ reply, receipts: [], sources: ['We have $8,000 in the bank and burn $300 a month.', '8000 / 300 = 26.6666667 (exact: 26.666666666666668)'] })).toEqual([]);
+  });
+
+  // Journey 14: Otto on ollama-cloud gave these with no calc and no sum, and the guard said nothing; the same arithmetic
+  // run through calc (as Otto did on hf) stands. Whatever model wrote it, the same text gets the same lines.
+  it('says which figures were worked out unseen, as the ollama-cloud reply wrote them', () => {
+    const brief = 'Callback: €49 a month per practice. 2 paying practices. Burn €900 a month. Cash €4,000. Target: 10 paying practices this quarter.';
+    const reply = '- With 2 paying practices at €49/mo, revenue is €98/mo against €900/mo burn → net burn €802/mo.\n- €4,000 cash ÷ €802/mo = ~5 months runway.\n'
+      + '- Hitting the 10-practice target (€490/mo revenue) would cut net burn to €410/mo and stretch runway to ~9.8 months; missing it means cash runs out before revenue catches up.';
+    const lines = checkReply({ reply, receipts: [], sources: [brief] });
+    expect(lines.find((line) => line.startsWith('Not worked out: '))).toBe('Not worked out: €98, €802, €490, €410, 9.8 months (worked out without calc and without the sum written out; check them).');
+    const calc = ['49 * 2 = 98', '900 - 98 = 802', '49 * 10 = 490', '900 - 490 = 410', '4000 / 410 = 9.756097561 (exact: 9.75609756097561)'];
+    expect(checkReply({ reply, receipts: [], sources: [brief, ...calc] })).toEqual([]);
   });
 });
 
@@ -441,6 +458,35 @@ describe('money in another currency than its source', () => {
     expect(lines).toContain('Currency changed: €29 (source $), €87 (source $).');
     expect(lines).toContain('Unsourced figures: $95 (not found in anything this turn read).');
     expect(checkReply({ reply: 'Revenue $29 × 3 = $87 a month.', receipts: [], sources })).toEqual([]);
+  });
+});
+
+// Journey 14: "$$900 / 49 = 18.37$$" in a reply in euros drew "Currency changed: $900 (source €)" twice.
+describe('LaTeX math is not money', () => {
+  const euros = ['Price €49 a month per practice. Burn €900 a month. Cash €4,000.'];
+  const money = (text: string) => figureCheck(text, []).unsourced;
+  it.each([
+    ['$900', ['$900']],
+    ['US$900', ['$900']],
+    ['$$x$$', []],
+    ['$x$', []],
+    ['$$900', []],
+    ['$$900$$', []],
+    ['$$900 / 49 = 18.37$$', []],
+    ['$900/49$', []],
+    ['$a^2 + 900$', []],
+    ['costs $$900 a month', ['$900']],
+    ['$900 and $49 a month', ['$900', '$49']],
+  ])('%s', (text, want) => {
+    expect(money(text)).toEqual(want);
+    expect(unmath(text)).toHaveLength(text.length);
+  });
+
+  it('gives no currency notice for the journey\'s break-even in math', () => {
+    const reply = 'Break-even: 19 paying practices ($$900 / 49 = 18.37$$, rounded up to 19).';
+    expect(checkReply({ reply, receipts: [], sources: euros }).filter((line) => line.startsWith('Currency changed'))).toEqual([]);
+    // Dollars written in words still change currency once.
+    expect(checkReply({ reply: 'It costs $$900 a month.', receipts: [], sources: euros })).toContain('Currency changed: $900 (source €).');
   });
 });
 

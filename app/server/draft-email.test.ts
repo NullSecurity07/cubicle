@@ -9,7 +9,8 @@ import { createAttention } from './attention.ts';
 import { createMail } from './mail.ts';
 import { runTool } from './tools/registry.ts';
 import { createStore } from './store.ts';
-import { openInGmailCard, outwardTools } from './tools/outward.ts';
+import { leadAddresses, leadContacts, openInGmailCard, outwardTools } from './tools/outward.ts';
+import { leadsFor } from './leads/store.ts';
 
 const draft = { to: 'lead@example.com', subject: 'Hello & welcome?', body: 'Hi there,\nline two = 100% #1' };
 
@@ -127,6 +128,50 @@ describe('an address in a draft', () => {
     // One of two unknown is still refused, naming only that one.
     const two = await (await turn(['Contact us: office@example.com'])).run({ ...ask, to: 'office@example.com, anna@samplely.example' });
     expect(two.text).toMatch(/^Failed: no address on record for anna@samplely\.example: /);
+  });
+});
+
+// Journey 14: Rosa was wired to a Leads card holding Dr. Anna Weber's address, drafted to a guessed one, and the
+// refusal said "no Leads card". The real lookup, on a real workspace.
+describe('an address on the Leads card the person reaches', () => {
+  async function stageWith(cards: { wired: boolean; email?: string }[]) {
+    const dir = await mkdtemp(join(tmpdir(), 'draft-leads-'));
+    const store = createStore(dir);
+    const attention = createAttention(dir, () => 1000);
+    const stage = await store.loadStage();
+    const roomId = stage.rooms[0].id;
+    stage.cards = [];
+    for (const [index, card] of cards.entries()) {
+      const id = `leads-${index + 1}`;
+      stage.cards.push({ id, kind: 'leads', x: 0, y: 0, w: 1, h: 1 } as Card);
+      if (card.wired) stage.wires.push({ id: `w${index}`, from: roomId, fromHandle: 'r', to: id, toHandle: 'l' } as Stage['wires'][number]);
+      await leadsFor(dir).add(id, { name: 'Dr. Anna Weber', company: 'Weber Dental', source: 'founder', ...(card.email ? { email: card.email } : {}) });
+    }
+    await store.saveStage(stage);
+    const tools = outwardTools(createMail({}, (async () => new Response('{}')) as typeof fetch), store.filesDir, { raise: attention.raise, onRecord: leadAddresses(dir), contacts: leadContacts(dir) }, () => 1000);
+    const context = { stage: await store.loadStage(), roomId, store, granted: new Map(), sources: () => [] as string[] };
+    return (to: string) => runTool(tools, 'draft_email', JSON.stringify({ to, subject: 'A free two-week pilot', body: 'Hi Dr. Weber,' }), context);
+  }
+
+  it('drafts to the address the wired card gives', async () => {
+    const run = await stageWith([{ wired: true, email: 'anna.weber@example-dental.de' }]);
+    expect((await run('anna.weber@example-dental.de')).ok).toBe(true);
+  });
+
+  it('refuses a guess and names the address the card gives, wired or the only card on the stage', async () => {
+    for (const wired of [true, false]) {
+      const out = await (await stageWith([{ wired, email: 'anna.weber@example-dental.de' }]))('dr.anna.weber@example.com');
+      expect(out.ok).toBe(false);
+      expect(out.text).toContain('no address on record for dr.anna.weber@example.com: it is not on the Leads card you reach. The card gives Dr. Anna Weber at Weber Dental: anna.weber@example-dental.de.');
+      expect(out.text).not.toContain('no Leads card');
+    }
+  });
+
+  it('says the card holds no address when it has none, and "no Leads card" only when there is none', async () => {
+    expect((await (await stageWith([{ wired: true }]))('dr.anna.weber@example.com')).text).toContain('the Leads card you reach holds no address for anyone');
+    expect((await (await stageWith([]))('dr.anna.weber@example.com')).text).toMatch(/^Failed: no address on record for dr\.anna\.weber@example\.com: nothing read this turn, no Leads card, /);
+    // Two cards, neither wired: none is the person's.
+    expect((await (await stageWith([{ wired: false, email: 'a@x.de' }, { wired: false, email: 'b@y.de' }]))('dr.anna.weber@example.com')).text).toContain('no Leads card');
   });
 });
 
