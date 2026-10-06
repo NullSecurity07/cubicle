@@ -2,6 +2,8 @@ import { execFile } from 'node:child_process';
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Check } from '../../shared/openends.ts';
+import { checkWords, type CheckOutcome } from '../../shared/model.ts';
+import { outcomeOf } from '../usage.ts';
 import { fallbackList, PROVIDERS } from '../keys-file/catalogue.ts';
 import { planless, PLANLESS, unpaid, UNPAID } from '../breaker.ts';
 import { ENTRIES, providerOf, unset, type ModelClient } from '../providers.ts';
@@ -296,22 +298,35 @@ const planFix = (name: string) => {
 };
 
 // `failed` hears each error as it came, so the usage book can know a refused key before a turn is refused by it.
-export async function liveChecks(clients: ModelClient[], failed?: (client: ModelClient, error: unknown) => void): Promise<Check[]> {
-  if (!clients.length) return [{ name: 'A word with each model', ok: false, detail: 'there is no provider to ask', fix: 'Put a free key in the .env file beside the app.' }];
-  return Promise.all(clients.map(async (client) => {
+// `capMs`: how long each model is given; the key check gives each 20 s, all at once, so the panel answers in 20 s.
+// Each check says what it came to (`outcome`, usage.ts) and the status the provider gave, if any.
+export type LiveCheck = Check & { outcome: CheckOutcome; status?: number };
+export async function liveChecks(clients: ModelClient[], failed?: (client: ModelClient, error: unknown) => void, capMs?: number): Promise<LiveCheck[]> {
+  if (!clients.length) return [{ name: 'A word with each model', ok: false, detail: 'there is no provider to ask', fix: 'Put a free key in the .env file beside the app.', outcome: 'failed' }];
+  return Promise.all(clients.map(async (client): Promise<LiveCheck> => {
     const started = Date.now();
+    // Unless capped: as long as a turn would wait for this model's first word, and 15 s more (Kimi on NVIDIA takes 13-44 s).
+    const cap = capMs ?? Math.max(30_000, (client.firstWordMs ?? 0) + 15_000);
+    let timedOut = false;
+    const stop = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      // As long as a turn would wait for this model's first word, and 15 s more: Kimi on NVIDIA takes 13-44 s, and cut
-      // at 30 s a good key read as not working.
-      const stop = new AbortController();
-      const timer = setTimeout(() => stop.abort(), Math.max(30_000, (client.firstWordMs ?? 0) + 15_000));
-      try { await client.step([{ role: 'user', content: 'Say ok.' }], { onToken: () => {}, signal: stop.signal }); } finally { clearTimeout(timer); }
-      return { name: `A word with ${client.name}`, ok: true, detail: `answered in ${Date.now() - started} ms as ${client.model}`, fix: '' };
+      // The cap holds even for a client that does not stop when told to, or that waits in its own queue first.
+      const late = new Promise<never>((_, reject) => { timer = setTimeout(() => { timedOut = true; stop.abort(); reject(new Error(`no answer in ${Math.round(cap / 1000)} s`)); }, cap); });
+      await Promise.race([client.step([{ role: 'user', content: 'Say ok.' }], { onToken: () => {}, signal: stop.signal }), late]);
+      return { name: `A word with ${client.name}`, ok: true, detail: `answered in ${Date.now() - started} ms as ${client.model}`, fix: '', outcome: 'ok' };
     } catch (error) {
-      failed?.(client, error);
-      if (unpaid(error)) return { name: `A word with ${client.name}`, ok: false, detail: UNPAID, fix: `Add a card or payment method to ${client.name}'s account, or leave it off; the others answer.` };
-      return { name: `A word with ${client.name}`, ok: false, detail: planless(error) ? PLANLESS : (error as Error).message.slice(0, 200), fix: planless(error) ? planFix(client.name) : `Check this provider's key in .env, and whether today's free allowance is used up.` };
-    }
+      const outcome = outcomeOf(error, timedOut);
+      const status = timedOut ? undefined : (error as { status?: number })?.status;
+      const name = `A word with ${client.name}`;
+      if (!timedOut) failed?.(client, error);
+      if (outcome === 'slow') return { name, ok: false, detail: `slow (no answer in ${Math.round(cap / 1000)} s)`, fix: 'Nothing to do now: the others answer first. Check again later.', outcome };
+      if (outcome === 'card') return { name, ok: false, detail: UNPAID, fix: `Add a card or payment method to ${client.name}'s account, or leave it off; the others answer.`, outcome, status };
+      if (outcome === 'plan') return { name, ok: false, detail: PLANLESS, fix: planFix(client.name), outcome, status };
+      if (outcome === 'not-found') return { name, ok: false, detail: checkWords({ outcome, status }), fix: `${client.model} is no longer served under that name; models.json needs a new one.`, outcome, status };
+      if (outcome === 'down') return { name, ok: false, detail: checkWords({ outcome, status }), fix: 'Nothing to do: the provider is having trouble; the others answer.', outcome, status };
+      return { name, ok: false, detail: (error as Error).message.slice(0, 200), fix: `Check this provider's key in .env, and whether today's free allowance is used up.`, outcome, ...(status ? { status } : {}) };
+    } finally { clearTimeout(timer); }
   }));
 }
 

@@ -54,4 +54,18 @@ describe('a model dot says what is known about the model, not a guess', () => {
     expect(dotOf(model('mistral', { slow: true, planOff: true }), new Map()).tone).toBe('refused');
     expect(dotOf(model('nvidia', { slow: true }), refusedKeys([refused('NVIDIA_API_KEY')])).tone).toBe('refused');
   });
+
+  it('says how the last key check went when it did not pass, until the model answers after it', () => {
+    const checked = (outcome: NonNullable<ModelInfo['check']>['outcome'], status?: number) => model('x', { requests: 0, check: { outcome, at: 100, ...(status ? { status } : {}) } });
+    expect(dotOf(checked('slow'), new Map())).toEqual({ tone: 'slow', words: 'slow (no answer in 20 s)' });
+    expect(dotOf(checked('not-found', 404), new Map())).toEqual({ tone: 'refused', words: 'model not found (404), so its name needs changing' });
+    expect(dotOf(checked('down', 503), new Map())).toEqual({ tone: 'refused', words: 'provider error (503), try again later' });
+    expect(dotOf(checked('refused', 401), new Map())).toEqual({ tone: 'refused', words: 'key refused (401)' });
+    expect(dotOf(checked('card'), new Map())).toEqual({ tone: 'refused', words: 'needs a card on file' });
+    expect(dotOf(checked('plan'), new Map())).toEqual({ tone: 'refused', words: 'free plan not on' });
+    expect(dotOf(checked('failed'), new Map())).toEqual({ tone: 'refused', words: 'check failed' });
+    expect(dotOf(checked('ok'), new Map())).toEqual({ tone: 'fine', words: 'key checked, 100% left' });
+    // An answer after the check is newer news than the check.
+    expect(dotOf(model('x', { requests: 1, lastAnswerAt: 200, left: 0.9, check: { outcome: 'slow', at: 100 } }), new Map())).toEqual({ tone: 'fine', words: '90% left' });
+  });
 });

@@ -1,11 +1,24 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import type { ModelInfo, Usage } from '../shared/model.ts';
+import type { CheckOutcome, KeyCheck, ModelInfo, Usage } from '../shared/model.ts';
 import { createBreaker, planless, refused, unpaid } from './breaker.ts';
 import { fromCache, onCache } from './cache.ts';
 import { neuronPoolOf, PICTURE_POOL, poolOf, providerOf, type ModelClient, type Quota } from './providers.ts';
 import { writeAtomic } from './fsx.ts';
+
+// What one key check with a model came to, from how its one word failed: a refusal says which kind, a 404 that the
+// model is gone, a 5xx that the provider is down, an abort at the cap that it is slow; anything else simply failed.
+export function outcomeOf(error: unknown, timedOut = false): CheckOutcome {
+  if (timedOut) return 'slow';
+  if (planless(error)) return 'plan';
+  if (unpaid(error)) return 'card';
+  if (refused(error)) return 'refused';
+  const status = (error as { status?: number })?.status;
+  if (status === 404) return 'not-found';
+  if (typeof status === 'number' && status >= 500) return 'down';
+  return 'failed';
+}
 
 // `neurons`: what Cloudflare said this key's answers cost from its free daily pool.
 type Count = { requests: number; input: number; output: number; neurons?: number };
@@ -25,7 +38,9 @@ export type KeyEvent = { name: string; dead: boolean; status?: number; planless?
 // until when it holds, when a key last answered, and whether a check found it answering. A refusal kept here is put
 // back on start, so the dot, the Needs-you item and the route all know it before the key is asked again.
 // `key` is a short hash of the key that was refused: a new key pasted while the app was off starts clean.
-type KeyMemory = { deadUntil?: number; status?: number; why?: 'plan' | 'card' | 'key'; key?: string; answeredAt?: number; checked?: boolean };
+// `check`: how the last key check with it went and when, so a check that timed out or found no such model is said as that
+// after a restart, never as a key that passed. `checked: true` is how a file written before outcomes said a check passed.
+type KeyMemory = { deadUntil?: number; status?: number; why?: 'plan' | 'card' | 'key'; key?: string; answeredAt?: number; check?: KeyCheck; checked?: boolean };
 // A key's short hash, never the key: enough to tell a new key from the one that was refused.
 export const keyPrint = (key?: string | null) => (key ? createHash('sha256').update(key).digest('hex').slice(0, 12) : undefined);
 
@@ -54,7 +69,7 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
   // When each key last answered, and the keys a check found answering: kept past midnight, while the server runs, so a
   // model that has answered or passed a check is never "untested" again only because the day's count went to zero.
   const answeredAt: Record<string, number> = {};
-  const checked = new Set<string>();
+  const checks: Record<string, KeyCheck> = {};
   let saving: Promise<unknown> = Promise.resolve();
   const breaker = createBreaker(now);
   // Keys last refused because their plan allows no requests. Only true while the refusal itself still holds.
@@ -74,11 +89,11 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
   const saveKeys = () => {
     if (!keysPath) return;
     const keys: Record<string, KeyMemory> = {};
-    for (const name of new Set([...Object.keys(answeredAt), ...checked, ...planlessKeys, ...unpaidKeys, ...Object.keys(refusalStatus)])) {
+    for (const name of new Set([...Object.keys(answeredAt), ...Object.keys(checks), ...planlessKeys, ...unpaidKeys, ...Object.keys(refusalStatus)])) {
       const until = breaker.dead(name) ? breaker.deadUntil(name) : undefined;
       const one: KeyMemory = {
         ...(until ? { deadUntil: until, status: refusalStatus[name], why: planlessKeys.has(name) ? 'plan' : unpaidKeys.has(name) ? 'card' : 'key', ...(prints[name] ? { key: prints[name] } : {}) } : {}),
-        ...(answeredAt[name] ? { answeredAt: answeredAt[name] } : {}), ...(checked.has(name) ? { checked: true } : {}),
+        ...(answeredAt[name] ? { answeredAt: answeredAt[name] } : {}), ...(checks[name] ? { check: checks[name] } : {}),
       };
       if (Object.keys(one).length) keys[name] = one;
     }
@@ -163,7 +178,9 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
         const saved = JSON.parse(await readFile(keysPath, 'utf8')) as { keys?: Record<string, KeyMemory> };
         for (const [name, one] of Object.entries(saved.keys ?? {})) {
           if (typeof one.answeredAt === 'number') answeredAt[name] = one.answeredAt;
-          if (one.checked) checked.add(name);
+          const check = one.check;
+          if (check && typeof check.at === 'number' && typeof check.outcome === 'string') checks[name] = { outcome: check.outcome, at: check.at, ...(typeof check.status === 'number' ? { status: check.status } : {}) };
+          else if (one.checked) checks[name] = { outcome: 'ok', at: one.answeredAt ?? 0 };
           if (typeof one.deadUntil !== 'number' || one.deadUntil <= now() || one.key !== prints[name]) continue;
           breaker.refuse(name, one.deadUntil);
           refusalStatus[name] = one.status;
@@ -238,7 +255,13 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
     // A key a check found answering: whatever its breaker held against it (a refusal's six hours, say, after the founder
     // turned a plan on) is forgotten, and whoever heard of the refusal hears it answer.
     // The check that found it answering is remembered, so its dot says so.
-    revive(name: string) { breaker.ok(name); forget(name); checked.add(name); saveKeys(); if (keyWatchers.size) tellKey({ name, dead: false }); },
+    revive(name: string) { breaker.ok(name); forget(name); checks[name] = { outcome: 'ok', at: now() }; saveKeys(); if (keyWatchers.size) tellKey({ name, dead: false }); },
+    // A key check that did not pass, kept as what it came to: slow, no such model, refused, a card or a plan wanted.
+    checkFailed(name: string, outcome: Exclude<CheckOutcome, 'ok'>, status?: number) { checks[name] = { outcome, at: now(), ...(status ? { status } : {}) }; saveKeys(); },
+    // The last check with each key, as kept: what the Keys panel says after a restart.
+    checks: (): Record<string, KeyCheck> => ({ ...checks }),
+    // When this key last answered, kept across a restart.
+    answeredAt: (name: string): number | undefined => answeredAt[name],
     // How much one key has carried, the last minute first: what spreads a provider's keys evenly.
     carried(name: string) {
       roll();
@@ -305,11 +328,15 @@ export function createUsage(path: string | null, now: () => number = Date.now) {
         const used = count(client.name);
         const row = rows.get(name) ?? { info: { name, model: client.model, ready: true, left: 0, requests: 0, tokens: 0 }, keys: 0, off: 0, card: 0, slow: 0 };
         const last = Math.max(row.info.lastAnswerAt ?? 0, answeredAt[client.name] ?? 0);
+        // One key that passed is the provider passing; with none, the latest check that did not pass is what is said.
+        const mine = checks[client.name];
+        const was = row.info.check;
+        const check = !mine ? was : !was ? mine : (was.outcome === 'ok') !== (mine.outcome === 'ok') ? (was.outcome === 'ok' ? was : mine) : (mine.at > was.at ? mine : was);
         rows.set(name, {
           keys: row.keys + 1, off: row.off + (planOff(client.name) ? 1 : 0), card: row.card + (needsCard(client.name) ? 1 : 0), slow: row.slow + (breaker.slow(client.name) ? 1 : 0),
           info: {
             ...row.info, left: row.info.left + left(client), requests: row.info.requests + used.requests, tokens: row.info.tokens + used.input + used.output,
-            ...(last ? { lastAnswerAt: last } : {}), ...(row.info.checked || checked.has(client.name) ? { checked: true } : {}),
+            ...(last ? { lastAnswerAt: last } : {}), ...(check ? { check, ...(check.outcome === 'ok' ? { checked: true } : {}) } : {}),
           },
         });
       }
