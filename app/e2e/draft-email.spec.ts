@@ -25,7 +25,8 @@ test.afterEach(async ({ page }) => {
   const from = chat.findIndex((message) => message.text.startsWith('/tool draft_email'));
   if (from >= 0) for (const message of chat.slice(from)) await page.request.delete(`/api/rooms/marketing/chat/${message.id}`);
   for (const entry of (await (await page.request.get('/api/attention')).json()) as { id: string; kind: string }[]) {
-    if (entry.kind === 'mail-draft') await page.request.post(`/api/attention/${encodeURIComponent(entry.id)}/dismiss`);
+    // Cleared as opened, so the clean-up is not kept as the founder's no.
+    if (entry.kind === 'mail-draft') await page.request.post(`/api/attention/${encodeURIComponent(entry.id)}/dismiss`, { data: { opened: true } });
   }
 });
 
@@ -69,4 +70,34 @@ test('a drafted email opens in Gmail from the chat or from Needs you, and openin
   await expect(bell).toHaveAccessibleName('Needs you: nothing waiting');
   // Opened from Needs you, the chat says so too.
   await expect(room.locator('.draft-open__said').last()).toHaveText('Opened in Gmail');
+});
+
+// Journey 15: opening a draft in Gmail was logged as the founder saying no, and the same email drafted again was put
+// to them as "You said no to this". Opening is acting on it; only Dismiss is a no.
+test('opening a draft in Gmail is not a no, and Dismiss on Needs you is', async ({ page }) => {
+  const draft = '/tool draft_email {"to":"chip-saidno@example.com","subject":"Intro to the chip test","body":"Hi"}';
+  const room = node(page, 'marketing');
+  await send(page, 'marketing', draft);
+  const [tab] = await Promise.all([page.waitForEvent('popup'), room.getByRole('link', { name: 'Open in Gmail' }).last().click()]);
+  await tab.close();
+  const bell = page.getByRole('button', { name: /^Needs you/ });
+  await expect(bell).toHaveAccessibleName('Needs you: nothing waiting');
+
+  // The same draft again is fresh: drafted at once, with no "You said no".
+  await send(page, 'marketing', draft);
+  await expect(room.locator('.chip--ok summary').last()).toHaveText('Drafted email to chip-saidno@example.com');
+  await expect(room.locator('.approval__title')).toHaveCount(0);
+
+  // Dismiss on Needs you is the founder's no: the same email comes back asked, with the no quoted.
+  await bell.click();
+  const needs = page.getByRole('dialog', { name: 'Needs you' });
+  await needs.locator('.needs__item--mail-draft').getByRole('button', { name: 'Dismiss' }).click();
+  await expect(bell).toHaveAccessibleName('Needs you: nothing waiting');
+  await page.keyboard.press('Escape');
+  await expect(node(page, 'marketing').locator('.status--idle')).toBeVisible();
+  await node(page, 'marketing').locator('.ask textarea').fill(draft);
+  await node(page, 'marketing').locator('.ask textarea').press('Enter');
+  await expect(room.locator('.approval__title').last()).toHaveText(/^You said no to this on \d{1,2} \w{3}\. Ask again\?$/);
+  await room.getByRole('button', { name: "Don't" }).last().click();
+  await expect(node(page, 'marketing').locator('.status--idle')).toBeVisible({ timeout: 20_000 });
 });

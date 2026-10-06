@@ -60,6 +60,13 @@ export function overlap(a: string, b: string): number {
 // most of the same words.
 export function sameProposal(entry: Pick<SaidNoEntry, 'tool' | 'subject' | 'key' | 'to'>, proposal: Proposal): boolean {
   if (entry.tool !== 'chat' && proposal.tool !== 'chat' && familyOf(entry.tool) !== familyOf(proposal.tool)) return false;
+  // An email is the same email only to the same lead and about much the same thing. Journey 15: one Don't on an intro
+  // to a lead, keyed by the lead alone, refused every email to her after it, the answer to her own question too.
+  if (familyOf(entry.tool) === 'email' && familyOf(proposal.tool) === 'email') {
+    if (entry.key && proposal.key && entry.key.toLowerCase() !== proposal.key.toLowerCase()) return false;
+    if (entry.to && proposal.to && entry.to !== proposal.to) return false;
+    return overlap(entry.subject, proposal.subject) >= SAID_NO_OVERLAP;
+  }
   if (entry.key && proposal.key && entry.key.toLowerCase() === proposal.key.toLowerCase()) return true;
   if (entry.to && proposal.to && entry.to !== proposal.to) return false;
   return overlap(entry.subject, proposal.subject) >= SAID_NO_OVERLAP;
@@ -94,9 +101,12 @@ export function proposalOf(tool: string, args: Record<string, unknown>, leads: I
 }
 
 // One line per no, the way a prompt and the standing facts say it.
-export const saidNoLine = (entry: SaidNoEntry) => `- "${short(entry.subject, 90)}" (${entry.who ? `${entry.who}, ` : ''}${saidOn(entry.at)}${entry.reason ? `: ${short(entry.reason, 80)}` : ''})`;
+// What was said no to, with its kind where the subject alone does not say it: an email names whom it was to.
+export const whatSaidNo = (entry: Pick<SaidNoEntry, 'tool' | 'subject' | 'to'>) => (familyOf(entry.tool) === 'email' && entry.to
+  ? `email to ${entry.to} about "${short(entry.subject, 90)}"` : `"${short(entry.subject, 90)}"`);
+export const saidNoLine = (entry: SaidNoEntry) => `- ${whatSaidNo(entry)} (${entry.who ? `${entry.who}, ` : ''}${saidOn(entry.at)}${entry.reason ? `: ${short(entry.reason, 80)}` : ''})`;
 export const reaskLine = (entry: SaidNoEntry) => `You said no to this on ${saidOn(entry.at)}${entry.reason ? `: '${short(entry.reason, 120)}'` : ''}. Ask again?`;
-export const declinedLine = (entry: SaidNoEntry) => `Already declined: the founder said no to "${short(entry.subject, 90)}" on ${saidOn(entry.at)}${entry.reason ? ` ('${short(entry.reason, 120)}')` : ''} `
+export const declinedLine = (entry: SaidNoEntry) => `Already declined: the founder said no to ${whatSaidNo(entry)} on ${saidOn(entry.at)}${entry.reason ? ` ('${short(entry.reason, 120)}')` : ''} `
   + 'and again when it was put to them once more, so it was not raised. Do not propose it again. If something has changed, say what in your reply and let the founder ask for it.';
 export const promptLine = (entries: SaidNoEntry[]) => (entries.length
   ? `The founder said no to:\n${entries.slice(0, SAID_NO_SHOWN).map(saidNoLine).join('\n')}\nDo not put these to the founder again unless something has changed, and then say what changed.`

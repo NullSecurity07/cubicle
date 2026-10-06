@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { createApprovals, putToFounder } from '../approvals.ts';
 import { standingBlock } from './standing.ts';
 import { citedFacts, standingFacts } from './synthesis.ts';
+import { saidNoProposal } from './watch.ts';
 import { chatNo, checkAgainst, createSaidNo, overlap, proposalOf, promptLine, sameProposal, SAID_NO_MOST, suggestionIn, type SaidNoEntry } from './saidno.ts';
 
 const DAY = 86_400_000;
@@ -21,13 +22,33 @@ describe('the said-no match', () => {
     expect(sameProposal(entry({ tool: 'chat' }), { tool: 'propose_decision', subject: 'Cut the price to 29' })).toBe(true);
   });
 
-  it('takes an email by its lead whatever the subject, and the same subject to another address as another email', () => {
+  it('takes an email as the same only to the same lead and about much the same thing', () => {
     const declined = { ...proposalOf('draft_email', { to: 'ana@acme.io', subject: 'Quick intro' }, ['ana@acme.io'])!, at: OCT_3, id: 'x', asked: 0 } as SaidNoEntry;
     expect(declined.key).toBe('lead:ana@acme.io');
-    expect(sameProposal(declined, proposalOf('send_email', { to: 'Ana@acme.io', subject: 'Following up on pricing' }, ['ana@acme.io'])!)).toBe(true);
+    expect(sameProposal(declined, proposalOf('send_email', { to: 'Ana@acme.io', subject: 'Following up on pricing' }, ['ana@acme.io'])!)).toBe(false);
+    expect(sameProposal(declined, proposalOf('send_email', { to: 'Ana@acme.io', subject: 'Quick intro!' }, ['ana@acme.io'])!)).toBe(true);
+    expect(sameProposal(declined, proposalOf('send_email', { to: 'bo@acme.io', subject: 'Quick intro' }, ['bo@acme.io'])!)).toBe(false);
     const plain = { ...proposalOf('send_email', { to: 'bob@x.io', subject: 'Launch day' })!, at: OCT_3, id: 'y', asked: 0 } as SaidNoEntry;
     expect(sameProposal(plain, proposalOf('send_email', { to: 'eve@x.io', subject: 'Launch day' })!)).toBe(false);
     expect(sameProposal(plain, proposalOf('draft_email', { to: 'bob@x.io', subject: 'Launch day!' })!)).toBe(true);
+  });
+
+  it("a Don't on an intro email to a lead leaves a follow-up about a meeting fresh, and the same intro is asked again", () => {
+    const leads = ['mira@fablab.example'];
+    const intro = { ...proposalOf('draft_email', { to: 'mira@fablab.example', subject: 'Intro: PrintNear for FabLab members' }, leads)!, at: OCT_3, id: 'm', asked: 0 } as SaidNoEntry;
+    const meeting = proposalOf('draft_email', { to: 'mira@fablab.example', subject: 'Follow-up about our meeting next week' }, leads)!;
+    expect(checkAgainst([intro], meeting, OCT_3 + DAY).verdict).toBe('fresh');
+    const again = proposalOf('draft_email', { to: 'mira@fablab.example', subject: 'Intro: PrintNear for FabLab members' }, leads)!;
+    expect(checkAgainst([intro], again, OCT_3 + DAY)).toMatchObject({ verdict: 'reask' });
+    expect(promptLine([intro])).toContain('email to mira@fablab.example about "Intro: PrintNear for FabLab members"');
+  });
+
+  it("a Don't on a watch proposal holds that proposal, not every email to the lead", () => {
+    const watched = saidNoProposal({ move: 'reply', draft: { kind: 'email', to: 'Mira@fablab.example', subject: 'Re: a 20-minute call about PrintNear', body: 'Would a call work?' } });
+    const held = { ...watched, at: OCT_3, id: 'w', asked: 0 } as SaidNoEntry;
+    const answer = proposalOf('draft_email', { to: 'mira@fablab.example', subject: 'How pickup works and one trial job' }, ['mira@fablab.example'])!;
+    expect(checkAgainst([held], answer, OCT_3 + DAY).verdict).toBe('fresh');
+    expect(checkAgainst([held], saidNoProposal({ move: 'reply', draft: { kind: 'email', to: 'mira@fablab.example', subject: 'Re: a 20-minute call about PrintNear', body: '' } }), OCT_3 + DAY).verdict).toBe('reask');
   });
 
   it('is fresh, then asked again once with the no quoted, then declined, and only inside fourteen days', () => {

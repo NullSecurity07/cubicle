@@ -122,9 +122,12 @@ export function workRoutes(deps: {
     if (dismissed && req.method === 'POST') {
       const id = decodeURIComponent(dismissed);
       const held = (await attention.list()).find((one) => one.id === id);
+      // Opening a drafted email in Gmail takes it off the list too, and that is the founder acting on it, not a no:
+      // journey 15 found the Gmail chip logged as "You said no", and every later email to that lead refused.
+      const opened = (await body(req).catch(() => ({}))).opened === true;
       await attention.dismiss(id);
-      // A drafted email waved away is a no to it, kept so the same email is not drafted for the founder again.
-      if (held?.kind === 'mail-draft') {
+      // A drafted email waved away with Dismiss is a no to it, kept so the same email is not drafted again.
+      if (held?.kind === 'mail-draft' && !opened) {
         const to = /^Email to (.+) ready to send$/.exec(held.title)?.[1] ?? '';
         const stage = await store.loadStage();
         const proposal = proposalOf('draft_email', { to, subject: held.detail ?? '' }, await leadAddresses(workspace)(stage).catch(() => []));
