@@ -36,7 +36,7 @@ test.afterEach(async ({ page }) => {
   const gone = new Set([...stage.rooms.filter((room) => room.partner).map((room) => room.id), ...stage.docs.filter((doc) => doc.title === 'Company').map((doc) => doc.id)]);
   await page.request.put('/api/docs/company-brief', { data: { text: brief } });
   await page.request.put('/api/stage', { data: { ...stage, rooms: stage.rooms.filter((room) => !gone.has(room.id)), docs: stage.docs.filter((doc) => !gone.has(doc.id)), wires: stage.wires.filter((wire) => !gone.has(wire.from) && !gone.has(wire.to)) } });
-  for (const name of ['partner.json', 'bets.json', 'today.json', 'promises.json', 'partner-watch.json', 'partner-watch-budget.json']) await rm(join(WORKSPACE, name), { force: true });
+  for (const name of ['partner.json', 'bets.json', 'today.json', 'promises.json', 'partner-watch.json']) await rm(join(WORKSPACE, name), { force: true });
   expect(broke).toEqual([]);
 });
 

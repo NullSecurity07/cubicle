@@ -2,6 +2,7 @@ import { providerOf, walled, type ModelClient } from '../providers.ts';
 import { asksVerdict } from './call.ts';
 import { FLOOR, LOW_EFFORT, route, SECOND, STRONG, tier } from '../router.ts';
 import type { UsageBook } from '../usage.ts';
+import { now as clockNow } from '../clock.ts';
 
 // The partner answers the calls that matter (raise, hire, spend, pivot), so their turns go to the strongest free
 // models the app has, in the one order every turn now uses (router.ts), and never to the small side model.
@@ -16,7 +17,7 @@ export const PUSHBACK_MS = 60 * 60_000;
 const verdicts = new Map<string, number>();
 // Heard when a verdict is held in the partner's room (and once at start from the kept state).
 export const markVerdict = (roomId: string, at: number) => { if (at > (verdicts.get(roomId) ?? 0)) verdicts.set(roomId, at); };
-export const reservedTurn = (roomId: string, query: string, now = Date.now()) => asksVerdict(query) || now - (verdicts.get(roomId) ?? -Infinity) < PUSHBACK_MS;
+export const reservedTurn = (roomId: string, query: string, now = clockNow()) => asksVerdict(query) || now - (verdicts.get(roomId) ?? -Infinity) < PUSHBACK_MS;
 
 // The one road every turn of a person takes, whoever started it: the founder's chat, a board run or repeat, a
 // colleague handing them work. The partner (unpinned) goes by the partner's route, the partner-only model first only

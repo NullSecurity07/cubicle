@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { writeAtomic } from '../fsx.ts';
+import { now as clockNow } from '../clock.ts';
 
 // The founder's "no", kept. Journeys found people putting the same thing in front of the founder again a day after
 // they had turned it down: "cut the price to €29" declined with a reason, and back in the next morning's advice as if
@@ -112,7 +113,7 @@ export function checkAgainst(entries: SaidNoEntry[], proposal: Proposal, now: nu
 
 export type SaidNo = ReturnType<typeof createSaidNo>;
 
-export function createSaidNo(workspace: string, now: () => number = Date.now) {
+export function createSaidNo(workspace: string, now: () => number = clockNow) {
   const path = join(workspace, 'said-no.json');
   let queue: Promise<unknown> = Promise.resolve();
   async function read(): Promise<SaidNoEntry[]> {

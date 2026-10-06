@@ -1,7 +1,7 @@
 import type { Attention, Stage } from '../../shared/model.ts';
 import { dueOf, parsePlan, planStepLine, planTaskTitle, stepText, type PlanProposal, type PlanStep } from '../../shared/partner.ts';
 import type { Boards } from '../boards.ts';
-import { localDay } from '../clock.ts';
+import { localDay, now as clockNow } from '../clock.ts';
 import { wired } from '../prompt.ts';
 import type { Store } from '../store.ts';
 import { placeOf } from './company.ts';
@@ -44,7 +44,7 @@ export async function boardForPlan(store: Pick<Store, 'patchStage'>, roomId: str
 // The founder's yes: every step a task to do, in the order written.
 // Each task carries the calendar day its label names, read against today in the founder's time zone, or counted
 // from the day the plan was offered when the label is "Day 3" or "Week 2".
-export async function addPlan(boards: Pick<Boards, 'add'>, stage: Stage, plan: PlanProposal, now = Date.now()): Promise<{ boardId: string; added: number }> {
+export async function addPlan(boards: Pick<Boards, 'add'>, stage: Stage, plan: PlanProposal, now = clockNow()): Promise<{ boardId: string; added: number }> {
   const boardId = boardFor(stage, plan.roomId);
   if (!boardId) throw new Error(NO_BOARD);
   const today = localDay(now);

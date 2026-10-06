@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
+import { now as clockNow } from '../clock.ts';
 
 // A megabyte is more than any sensible call in, and small enough that a flood costs this machine nothing.
 export const BODY_LIMIT = 1_000_000;
@@ -21,7 +22,7 @@ const one = (value: string | string[] | undefined) => (Array.isArray(value) ? va
 // The gate on `/api/hooks/:id`, which the app's own guard lets through because this is what stands in its place.
 // Everything a caller could get wrong is answered the same way: a short reason, and nothing that says whether the
 // hook or the secret was the part that was wrong.
-export function createHooks(now: () => number = Date.now) {
+export function createHooks(now: () => number = clockNow) {
   const seen = new Map<string, number>();
   return {
     // Returns why the call is refused, or null when it may go on.
