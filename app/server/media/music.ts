@@ -176,9 +176,13 @@ export function freesoundResults(body: unknown, seconds: number): Found[] {
   const found: Found[] = [];
   for (const one of results) {
     const said = text(one.license).toLowerCase();
-    // Freesound writes its licences as URLs: `.../publicdomain/zero/1.0/`.
-    const code = /publicdomain\/zero/.test(said) ? 'cc0' : /licenses\/by\/[\d.]+\/?$/.test(said) ? 'by' : said;
-    const licence = licenceOf(code);
+    // Freesound writes its licences as URLs: `.../publicdomain/zero/1.0/`. Only that one is taken from here. The
+    // search already asks for nothing else, and this is the second lock on the same door: a sound filed under any
+    // other licence — attribution included — is dropped even if the filter ever lets it through.
+    const cc0 = /creativecommons\.org\/publicdomain\/zero\/([\d.]+)?/.exec(said);
+    if (!cc0) continue;
+    // The version is kept, so the record of credit says "CC0 1.0" the way a track from Openverse does.
+    const licence = licenceOf('cc0', cc0[1]);
     if (!licence) continue;
     const candidate: Found = {
       id: `freesound-${text(one.id, String(found.length))}`,
@@ -195,6 +199,24 @@ export function freesoundResults(body: unknown, seconds: number): Found[] {
     if (keep(candidate, seconds)) found.push(candidate);
   }
   return found;
+}
+
+// The one Freesound search, on its own so a check can ask it with the founder's real key and see exactly what came
+// back. Freesound is the second library and optional by design, so a failure never throws; but a key it refuses is
+// the founder's to fix, and was swallowed with the rest, so every film quietly went without the library they had
+// set up. That one case comes back as words.
+export const FREESOUND_REFUSED = 'FREESOUND_API_KEY in .env was not accepted by Freesound, so films take music from the free library alone. A new key is free at freesound.org/apiv2/apply.';
+export async function freesoundSearch(key: string, term: string, seconds: number, http: typeof fetch = fetch, signal?: AbortSignal): Promise<{ found: Found[]; refused?: string }> {
+  const url = `${FREESOUND}?${new URLSearchParams({
+    query: term, filter: 'license:"Creative Commons 0" duration:[30 TO 600]',
+    fields: 'id,name,username,license,duration,tags,previews', page_size: '20',
+  })}`;
+  try {
+    const answer = await http(url, { headers: { accept: 'application/json', authorization: `Token ${key}` }, signal: signal ?? AbortSignal.timeout(SEARCH_TIMEOUT) });
+    if (answer.status === 401 || answer.status === 403) return { found: [], refused: FREESOUND_REFUSED };
+    if (!answer.ok) return { found: [] };
+    return { found: freesoundResults(await answer.json(), seconds) };
+  } catch { return { found: [] }; }
 }
 
 // ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -244,7 +266,7 @@ export function createMusic(deps: { cacheDir: string; env?: NodeJS.ProcessEnv; h
     ].join('\n'));
   };
 
-  async function search(mood: Mood, seconds: number, signal?: AbortSignal): Promise<Found[]> {
+  async function search(mood: Mood, seconds: number, signal?: AbortSignal, report?: (line: string) => void): Promise<Found[]> {
     if (env.STAGE_NO_MUSIC_SEARCH === '1') return [];
     const terms = SHAPES[mood].terms;
     const found: Found[] = [];
@@ -275,14 +297,9 @@ export function createMusic(deps: { cacheDir: string; env?: NodeJS.ProcessEnv; h
     }
     const key = env.FREESOUND_API_KEY?.trim();
     if (key && found.length < 4) {
-      const url = `${FREESOUND}?${new URLSearchParams({
-        query: terms[0], filter: 'license:"Creative Commons 0" duration:[30 TO 600]',
-        fields: 'id,name,username,license,duration,tags,previews', page_size: '20',
-      })}`;
-      try {
-        const answer = await http(url, { headers: { accept: 'application/json', authorization: `Token ${key}` }, signal: timeout() });
-        if (answer.ok) add(freesoundResults(await answer.json(), seconds));
-      } catch { /* optional by design */ }
+      const { found: more, refused } = await freesoundSearch(key, terms[0], seconds, http, timeout());
+      add(more);
+      if (refused) report?.(refused);
     }
     // A search matches on any word of the term, so asking for a warm acoustic loop comes back with drum loops as
     // happily as with guitars. Anything that claims none of the mood's own words is dropped outright when enough
@@ -342,7 +359,7 @@ export function createMusic(deps: { cacheDir: string; env?: NodeJS.ProcessEnv; h
       if (env.STAGE_NO_MUSIC_SEARCH !== '1') {
         try {
           help.report(`looking for ${mood} music nobody minds you selling…`);
-          const found = await search(mood, seconds, help.signal);
+          const found = await search(mood, seconds, help.signal, help.report);
           // Anything already on this machine is free and instant; anything found is a fetch. Both go in the hat, with
           // what is here weighted a little, so the second film on a plane still has a bed and the tenth is not the
           // same as the first.
