@@ -117,6 +117,10 @@ export async function ytdlpVersion(env: NodeJS.ProcessEnv = process.env): Promis
   });
 }
 
+// Where the Runs while closed row is read from: systemd, unless the openends slice put its own runner here (a check
+// run's stub), so Health and the dashboard read the same service.
+export const serviceNow: { state: (env: NodeJS.ProcessEnv) => Promise<ServiceState> } = { state: (env) => serviceState({ env }) };
+
 // The outside programs' rows, as the openends slice that talks to them last saw them. The dashboard reads its health
 // through this, so it shows the same rows as the health panel without connecting to anything itself.
 export const outsideHealth: { now: () => { name: string; ok: boolean; detail: string }[] } = { now: () => [] };
@@ -275,7 +279,7 @@ export async function checkAll(deps: HealthDeps): Promise<Check[]> {
   });
 
   // Whether the morning note, the bet checks, the watches and the backup happen with the window closed.
-  checks.push(serviceRow(await (deps.service ?? (() => serviceState({ env })))().catch(() => ({ systemd: false, installed: false, enabled: false, active: 'inactive', path: '' }))));
+  checks.push(serviceRow(await (deps.service ?? (() => serviceNow.state(env)))().catch(() => ({ systemd: false, installed: false, enabled: false, active: 'inactive', path: '' }))));
 
   checks.push(backupRow({ dir: deps.backupDir, backups: await deps.backups(), writable: await canWrite(deps.backupDir), sameDisk: await sameDisk(workspace, deps.backupDir, deps.stat) }, now()));
 
