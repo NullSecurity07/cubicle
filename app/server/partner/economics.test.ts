@@ -73,5 +73,10 @@ describe('runway and break-even only from calc', () => {
     expect(out.text.split('\n').slice(-2)).toEqual(['- Runway: 5 months (calc: round(4000 / (900 - 2 * 49), 1) = 5)', '- Break-even: 19 paying practices (calc: ceil(900 / 49) = 19)']);
     expect(out.set).toHaveLength(2);
     expect(derivedRows(out.text).set).toEqual([]);
+    // As the live check wrote them: "=" for ":", and a net burn worked in the head with a mark on its step.
+    const live = `${CALLBACK}\n- Net burn = 900 − 98 (unsourced) = 802 (calc)\n- Runway = 4,000 / (900 − 98 (unsourced)) = 5.0 months (calc)\n- Break-even = ceil(900 / 49) = 19 paying practices (calc)`;
+    expect(derivedRows(live).text.split('\n').slice(-3)).toEqual(['- Net burn: €802 a month (calc: 900 - 2 * 49 = 802)', '- Runway: 5 months (calc: round(4000 / (900 - 2 * 49), 1) = 5)', '- Break-even: 19 paying practices (calc: ceil(900 / 49) = 19)']);
+    // A net burn the founder gave stays as given.
+    expect(derivedRows('- Cash: $48,000\n- Net burn: $6,000 a month').text).toBe('- Cash: $48,000\n- Net burn: $6,000 a month');
   });
 });

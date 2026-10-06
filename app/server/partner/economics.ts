@@ -147,24 +147,39 @@ export function figuresFix(text: string, economics: Economics | null | undefined
 }
 
 // The Company brief's Runway and Break-even rows, as the working gives them: what any write to the brief keeps there,
-// whatever the writer put ("Runway: 4.4 (unsourced) months (4,000 / 900, calc)" with no calc behind it).
-const DERIVED_ROW = /^(\s*[-*]\s+)(runway|break[- ]?even)\s*:.*$/i;
+// whatever the writer put ("Runway: 4.4 (unsourced) months (4,000 / 900, calc)" with no calc behind it, or "Runway =
+// 4,000 / (900 − 98 (unsourced)) = 5.0 months (calc)" on the live check). A net burn the writer worked out ("Net burn =
+// 900 − 98 = 802 (calc)") is set the same way; one the founder gave ("Net burn: $6,000 a month") is a figure, not a sum.
+const DERIVED_ROW = /^(\s*[-*]\s+)(runway|break[- ]?even|net burn)\s*[:=].*$/i;
+const WORKED_NET = /=|\bcalc\b/i;
+const derived = (line: string) => { const found = DERIVED_ROW.exec(line); return !!found && (!/^net burn$/i.test(found[2]) || WORKED_NET.test(line.replace(/^[^:=]*[:=]/, ''))); };
 // `numbers`: the section the working is read from, when `text` is the whole document.
 export function derivedRows(text: string, numbers = text): { text: string; set: string[] } {
-  const economics = economicsOf(numbers.split('\n').filter((line) => !DERIVED_ROW.test(line)).join('\n'));
+  const economics = economicsOf(numbers.split('\n').filter((line) => !derived(line)).join('\n'));
   if (!economics) return { text, set: [] };
+  const inputs = economics.inputs ?? {};
+  // Net of what the paying units bring in: the burn less paying × (price − cost).
+  const net = inputs.net === undefined && inputs.fixed !== undefined && inputs.price !== undefined && inputs.paying !== undefined
+    ? inputs.cost === undefined ? calculate('burn - paying * price', `burn=${inputs.fixed}, paying=${inputs.paying}, price=${inputs.price}`)
+      : calculate('burn - paying * (price - cost)', `burn=${inputs.fixed}, paying=${inputs.paying}, price=${inputs.price}, cost=${inputs.cost}`) : null;
   const set: string[] = [];
   const out = text.split('\n').map((line) => {
-    const found = DERIVED_ROW.exec(line);
-    if (!found) return line;
-    const runway = /^runway$/i.test(found[2]);
-    const one = economics.working.find((each) => each.label === (runway ? 'Runway' : 'Break-even'));
-    if (!one || (!runway && !Number.isFinite(economics.breakEven))) return line;
-    const value = one.result.split(' = ').at(-1)!;
-    const row = `${found[1]}${runway ? 'Runway' : 'Break-even'}: ${value} ${runway ? 'months' : economics.unit ?? 'paying customers'} (calc: ${one.result})`;
+    if (!derived(line)) return line;
+    const found = DERIVED_ROW.exec(line)!;
+    const kind = /^runway$/i.test(found[2]) ? 'Runway' : /^net burn$/i.test(found[2]) ? 'Net burn' : 'Break-even';
+    let row: string;
+    if (kind === 'Net burn') {
+      if (!net) return line;
+      row = `${found[1]}Net burn: ${economics.currency ?? ''}${net.display} a month (calc: ${net.worked} = ${net.display})`;
+    } else {
+      const one = economics.working.find((each) => each.label === kind);
+      if (!one || (kind === 'Break-even' && !Number.isFinite(economics.breakEven))) return line;
+      const value = one.result.split(' = ').at(-1)!;
+      row = `${found[1]}${kind}: ${value} ${kind === 'Runway' ? 'months' : economics.unit ?? 'paying customers'} (calc: ${one.result})`;
+    }
     if (row !== line) set.push(row.trim().replace(/^[-*]\s+/, ''));
     return row;
   }).join('\n');
   // Runway and break-even said anywhere else the write added are held to the same working.
-  return { text: out.split('\n').map((line) => (DERIVED_ROW.test(line) ? line : figuresFix(line, economics))).join('\n'), set };
+  return { text: out.split('\n').map((line) => (derived(line) ? line : figuresFix(line, economics))).join('\n'), set };
 }
