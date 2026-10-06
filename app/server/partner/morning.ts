@@ -10,6 +10,8 @@ import { gatherMonth } from '../slices/month.ts';
 import { cardOf } from './bets.ts';
 import { learnedSection, sectionText } from './company.ts';
 import { runwayFix } from './keep.ts';
+import type { FounderPromise } from './promises.ts';
+import { gatherSince, sinceText, type SinceInput } from './since.ts';
 import type { PartnerState } from './state.ts';
 
 // The partner's morning: once a day, unasked, they read the Company document (it is in their prompt), what changed
@@ -86,6 +88,9 @@ export type MorningSources = {
   company?: string;
   // A document's text by id: the team verdicts are read out of their own documents.
   doc?: (docId: string) => Promise<string>;
+  // The founder's promises and a Metrics card's numbers, for what changed since yesterday at the head of the note.
+  promises?: () => Promise<FounderPromise[]>;
+  metrics?: (cardId: string) => Promise<SinceInput['metrics']>;
 };
 
 const VERDICT_CHARS = 400;
@@ -157,9 +162,11 @@ export async function gatherCompany(from: MorningSources, options: { verdictChar
   };
 }
 
-export async function gatherMorning(from: MorningSources): Promise<string> {
+export async function gatherMorning(from: MorningSources, since?: string[]): Promise<string> {
   const got = await gatherCompany(from);
   return [
+    // Worked out in code: the note leads with these, and a move that answers one says which.
+    ...(since ? [`Since yesterday (worked out from the stores; the note shows these above your moves):`, ...(since.length ? since.map((line) => `- ${line}`) : ['- nothing changed'])] : []),
     got.changed,
     `Said since ${got.yesterday}:`, got.chats || '- nothing',
     ...(got.verdicts.length ? ['Team verdicts:', ...got.verdicts] : []),
@@ -194,7 +201,8 @@ export async function writeMorning(input: {
   ask: (messages: ModelMessage[]) => Promise<string | { text: string; provider?: string; model?: string }>;
 }): Promise<MorningNote | null> {
   const { sources } = input;
-  const facts = await gatherMorning(sources);
+  const since = await gatherSince(sources);
+  const facts = await gatherMorning(sources, since);
   const messages: ModelMessage[] = [...await input.promptFor(sources.stage, sources.partnerId), { role: 'user', content: `${MORNING_ASK}\n\n${facts}` }];
   const once = async (these: ModelMessage[]) => {
     const answered = await input.ask(these);
@@ -221,11 +229,12 @@ export async function writeMorning(input: {
   const checked = messages.map((message, index) => (index === messages.length - 1 ? { ...message, content: `${MORNING_ASK}\n\n${withoutFlagged(facts)}` } : message));
   const flags = checkReply({ reply: morningText(read), receipts: [], sources: turnSources(checked) });
   if (fault) flags.push(`Note check: ${fault.split(':')[0].replace(/^The /, 'the ')}, even when asked again.`);
-  return { ...read, day: localDay(sources.now), at: sources.now, roomId: sources.partnerId, who: input.name, ...(flags.length ? { flags } : {}), ...(provider ? { provider } : {}), ...(model ? { model } : {}) };
+  return { ...read, since, day: localDay(sources.now), at: sources.now, roomId: sources.partnerId, who: input.name, ...(flags.length ? { flags } : {}), ...(provider ? { provider } : {}), ...(model ? { model } : {}) };
 }
 
 // How the note reads in the partner's own conversation.
-export const morningMessage = (note: MorningNote) => [`**Morning, ${weekDay(note.at)}**`, morningText(note), ...(note.flags ?? [])].join('\n\n');
+// What changed since yesterday comes first, then the day's moves; a note written before that was kept has no head.
+export const morningMessage = (note: MorningNote) => [`**Morning, ${weekDay(note.at)}**`, ...(note.since ? [sinceText(note.since)] : []), morningText(note), ...(note.flags ?? [])].join('\n\n');
 
 // The fake model's morning, for a run with no model at all: the same shape, said plainly.
 export const FAKE_MORNING = 'Three moves for today:\n1. Fill the empty sections of the Company document, so every answer rests on it.\n2. Decide what waits in Needs you, so nobody works on a guess.\n3. Check the bets that are due against their numbers.\nRisk: the Company document is thin, so every choice rests on guesses.\nQuestion: What is the one number this week should move?';

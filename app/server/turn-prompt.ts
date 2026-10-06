@@ -9,6 +9,7 @@ import { buildMessages, colleagueIds, readableDocIds, wiredCards, type Attached 
 import type { Store } from './store.ts';
 import { rulesOf } from './tools/docs.ts';
 import { standingVerdict } from './tools/verdict.ts';
+import { now as clockNow } from './clock.ts';
 
 const IMAGE_FILE = /\.(png|jpe?g|webp|gif)$/i;
 // A picture rides along with the question only while it is small enough for a model to be sent it.
@@ -67,7 +68,7 @@ export function createPromptFor(deps: Deps) {
     }
     // What the founder has decided lately, each line with the day it was decided: everyone works from it, wired or not.
     const decided = decidedLines(await decisions.list());
-    const messages = buildMessages(stage, roomId, docs, talk, toolNames, colleagues, await memory.read(roomId), fresh ? undefined : await attachedTo(store, talk), pages, decided, await founder.read(), Date.now(), slim);
+    const messages = buildMessages(stage, roomId, docs, talk, toolNames, colleagues, await memory.read(roomId), fresh ? undefined : await attachedTo(store, talk), pages, decided, await founder.read(), clockNow(), slim);
     // A judge whose team doc says "Not assessed" is told so on every turn, at the end where it lands hardest.
     const standing: string[] = [];
     for (const id of readableDocIds(stage, roomId)) {

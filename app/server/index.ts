@@ -15,6 +15,7 @@ import { gatherPieces } from './gather.ts';
 import { guard } from './guard.ts';
 import { createGuards } from './guards.ts';
 import { body, json, type Route } from './http.ts';
+import { armClock, clockRoutes } from './clock-offset.ts';
 import { installSlices, lateRuns, loadSlices } from './install.ts';
 import { tidyLapsed } from './lapsed.ts';
 import { createMail, fakeMailHttp } from './mail.ts';
@@ -77,6 +78,9 @@ const own = { ports: [port, Number(process.env.STAGE_PORT ?? 7420)], token: proc
 const clients = fake ? [fakeClient] : realClients(process.env, await findLocal());
 const busy = new Set<string>();
 const workspace = process.env.STAGE_WORKSPACE ?? resolve(root, 'workspace');
+// A check run may live "day 2" without waiting: the offset is refused on the founder's own run (server/clock-offset.ts).
+const clockPlace = { fake, workspace, founderWorkspace: resolve(root, 'workspace') };
+armClock(clockPlace);
 // Every open window hears what every other writer did, through the store: a message written anywhere at all reaches
 // the canvas, whether the founder typed it here, sent it from their phone or a colleague put it there.
 const roomFeed = createRoomFeed();
@@ -217,6 +221,7 @@ const routes: Route[] = [
   browserRoutes({ store, browser }),
   roomRoutes({ store, busy, usage, clients, memory, chat, stopTurn }),
   fileRoutes({ store }),
+  clockRoutes({ ...clockPlace, tick: async () => { await runs.tick().catch(() => {}); await extras.tick(); } }),
 ];
 
 createServer(async (req, res) => {

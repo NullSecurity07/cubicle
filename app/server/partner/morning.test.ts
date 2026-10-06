@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest';
 import type { ChatMessage, Stage } from '../../shared/model.ts';
 import type { Bet } from '../../shared/partner.ts';
 import type { ModelMessage } from '../prompt.ts';
+import type { FounderPromise } from './promises.ts';
+import { NOTHING_CHANGED } from './since.ts';
 import { gatherMorning, MORNING_ASK, morningDue, morningInputs, morningMessage, MOST_TRIES, RETRY_AFTER, writeMorning, type MorningSources } from './morning.ts';
 
 const at = (text: string) => new Date(text).getTime();
@@ -147,7 +149,7 @@ describe('one morning turn', () => {
       sources: await sources(), name: 'Sam', promptFor: prompt,
       ask: async (messages) => { heard = messages; return 'Three things that matter today:\n1. a\n2. b\n3. c\nRisk: Maya priced it at $9\nQuestion: q?'; },
     });
-    expect(note).toEqual({ things: ['a', 'b', 'c'], risk: 'Maya priced it at $9', question: 'q?', day: '2026-09-27', at: NINE, roomId: 'p1', who: 'Sam' });
+    expect(note).toEqual({ things: ['a', 'b', 'c'], risk: 'Maya priced it at $9', question: 'q?', since: [], day: '2026-09-27', at: NINE, roomId: 'p1', who: 'Sam' });
     expect(heard[0].content).toBe('You are Sam, Partner.');
     expect(heard[1].content.startsWith(MORNING_ASK)).toBe(true);
     expect(heard[1].content).toContain('Newsletter first');
@@ -272,5 +274,35 @@ describe('one morning turn', () => {
 
   it('gives back nothing when the reply lost the shape', async () => {
     expect(await writeMorning({ sources: await sources(), name: 'Sam', promptFor: prompt, ask: async () => 'Good morning!' })).toBeNull();
+  });
+});
+
+describe('the day-2 note leads with what changed since yesterday', () => {
+  const prompt = async (): Promise<ModelMessage[]> => [{ role: 'system', content: 'You are Sam, Partner.' }];
+  const reply = 'Three moves for today:\n1. Call the five beta users before noon.\n2. b\n3. c\nRisk: Maya priced it at $9\nQuestion: q?';
+  const promise = (extra: Partial<FounderPromise>): FounderPromise => ({ id: 'promise-1', what: 'call 5 beta users', due: '2026-09-26', said: '2026-09-26', at: at('2026-09-26T10:00'), status: 'open', ...extra });
+
+  it('puts a slipped promise first, in the note, its message and the facts the model reads', async () => {
+    let heard: ModelMessage[] = [];
+    const note = await writeMorning({
+      sources: await sources({ promises: async () => [promise({})] }), name: 'Sam', promptFor: prompt,
+      ask: async (messages) => { heard = messages; return reply; },
+    });
+    expect(note!.since).toEqual(['Slipped: you said you would call 5 beta users (due 2026-09-26), now 1 day late.']);
+    const lines = morningMessage(note!).split('\n').filter(Boolean);
+    expect(lines.slice(0, 3)).toEqual(['**Morning, Sunday 27 September**', '**Since yesterday**', '- Slipped: you said you would call 5 beta users (due 2026-09-26), now 1 day late.']);
+    expect(morningMessage(note!).indexOf('Slipped')).toBeLessThan(morningMessage(note!).indexOf('Three moves for today'));
+    expect(heard[1].content).toContain('- Slipped: you said you would call 5 beta users (due 2026-09-26)');
+  });
+
+  it('says in one honest line when nothing changed', async () => {
+    const note = await writeMorning({ sources: await sources({ promises: async () => [promise({ due: '2026-09-30' })] }), name: 'Sam', promptFor: prompt, ask: async () => reply });
+    expect(note!.since).toEqual([]);
+    expect(morningMessage(note!).split('\n\n')[1]).toBe(NOTHING_CHANGED);
+  });
+
+  it('reads the clock it is handed, not the machine\'s: the same promise is on time the day before', async () => {
+    const day1 = await writeMorning({ sources: await sources({ now: at('2026-09-26T09:00'), promises: async () => [promise({})] }), name: 'Sam', promptFor: prompt, ask: async () => reply });
+    expect(day1!.since).toEqual([]);
   });
 });

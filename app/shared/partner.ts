@@ -55,7 +55,8 @@ export type Morning = { things: string[]; risk: string; question: string };
 // `inputs` is what the note was read from, as a key: asked again with nothing changed, the same note stands.
 // `flags` are the truth net's lines on it: a figure nothing the note was given holds.
 // `provider` and `model` stamp it with what wrote it, as a chat reply is.
-export type MorningNote = Morning & { day: string; at: number; roomId: string; who: string; inputs?: string; flags?: string[]; provider?: string; model?: string };
+// `since` is what changed since yesterday, worked out in code: the note leads with it, and empty means nothing did.
+export type MorningNote = Morning & { since?: string[]; day: string; at: number; roomId: string; who: string; inputs?: string; flags?: string[]; provider?: string; model?: string };
 
 const plain = (text: string) => text.replace(/\*\*|__|`/g, '').replace(/\s+/g, ' ').trim();
 // A numbered or bulleted line, the number or bullet bold or not: "1. a", "**1.** a", "- a".

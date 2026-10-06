@@ -5,6 +5,7 @@ import type { Slice } from '../install.ts';
 import { dismiss, enteredAt, observe, readBook, writeBook, type LeadBook } from '../leads/moves.ts';
 import { leadsCardIds, leadsFor } from '../leads/store.ts';
 import { wired } from '../prompt.ts';
+import { now as clockNow } from '../clock.ts';
 
 // Follow-up nudges on the Leads card, as a slice of its own so the card itself is not touched. Every half minute it
 // looks at every Leads card: it writes down stage moves, raises one nudge when a lead goes quiet where a message is
@@ -26,7 +27,7 @@ export default {
     let running: Promise<{ book: LeadBook; changed: boolean }> | null = null;
 
     // One look at every card, one at a time however many ask at once.
-    async function sweep(now = Date.now()) {
+    async function sweep(now = clockNow()) {
       running ??= (async () => {
         try {
           book ??= await readBook(deps.workspace);
@@ -43,7 +44,7 @@ export default {
 
     // Every nudge that is open: raised, still quiet, not over.
     async function open(): Promise<Attention[]> {
-      const now = Date.now();
+      const now = clockNow();
       const { book } = await sweep(now);
       const stage = await deps.store.loadStage();
       const found: Attention[] = [];
@@ -83,7 +84,7 @@ export default {
         const lead = (await leadsFor(deps.workspace).list(named.cardId)).find((one) => one.id === named.leadId);
         if (!lead) { deps.json(res, 404, { error: 'that lead is no longer on the card' }); return true; }
         const { book } = await sweep();
-        deps.json(res, 200, { roomId: drafter.id, name: drafter.name, lead: leadName(lead), text: nudgeAsk(lead, enteredAt(book, named.cardId, lead), Date.now()) });
+        deps.json(res, 200, { roomId: drafter.id, name: drafter.name, lead: leadName(lead), text: nudgeAsk(lead, enteredAt(book, named.cardId, lead), clockNow()) });
         return true;
       },
     };

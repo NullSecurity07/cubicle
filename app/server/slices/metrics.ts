@@ -6,6 +6,7 @@ import { createMetrics, type MetricPatch, type MetricsStore } from '../metrics/s
 import { wired } from '../prompt.ts';
 import type { Handler } from '../seams.ts';
 import { text, type Tool, type ToolContext } from '../tools/registry.ts';
+import { now as clockNow } from '../clock.ts';
 
 // The Metrics card: the founder's north star and a few numbers beside it, with how they moved, which way they have
 // been going and whether a target is in reach. Every sum is TypeScript. A wired person reads the numbers, and may
@@ -38,7 +39,7 @@ export function readingLines(metric: Metric, since?: string): string {
   return [`${metric.label} (${about})`, ...(points.length ? points.map((point) => `- ${point.at}: ${formatValue(point.value, metric.unit)} · ${point.from}`) : ['- no readings' + (since ? ` since ${since}` : '')])].join('\n');
 }
 
-export function metricTools(store: MetricsStore, changed: () => Promise<void>, now: () => number = Date.now): Tool[] {
+export function metricTools(store: MetricsStore, changed: () => Promise<void>, now: () => number = clockNow): Tool[] {
   return [
     {
       name: 'read_metrics', perTurn: 3,
@@ -96,7 +97,7 @@ export function metricTools(store: MetricsStore, changed: () => Promise<void>, n
 
 // What waits for the founder on every Metrics card: targets suggested, and alerts not yet waved away. An alert is
 // dated from the moment this app first saw it, so one about a quiet fortnight does not sort as a fortnight old.
-export function metricsAttention(store: MetricsStore, loadStage: () => Promise<Stage>, seen: Map<string, number>, now: () => number = Date.now) {
+export function metricsAttention(store: MetricsStore, loadStage: () => Promise<Stage>, seen: Map<string, number>, now: () => number = clockNow) {
   return async (): Promise<Attention[]> => {
     const stage = await loadStage();
     const found: Attention[] = [];
@@ -142,7 +143,7 @@ export default {
       const cards = stage ? cardsOf(stage) : [];
       const mine = stage ? wired(stage, payload.roomId, cards.map((card) => card.id)) : [];
       if (!mine.length) return next(payload);
-      const today = localDay(Date.now());
+      const today = localDay(clockNow());
       const blocks = await Promise.all(cards.filter((card) => mine.includes(card.id)).map(async (card) => metricsBlock(card.title, (await store.load(card.id)).metrics, periodOf(card), today)));
       return next({ ...payload, messages: [{ ...system, content: `${system.content}\n\n${blocks.join('\n')}` }, ...rest] });
     };
@@ -162,7 +163,7 @@ export default {
       const fresh: MetricAlert[] = [];
       for (const card of await onStage()) {
         const data = await store.load(card.id);
-        for (const alert of cardAlerts(card, data.metrics, data.dismissed ?? [], Date.now)) { now.add(alert.id); if (known && !known.has(alert.id)) fresh.push(alert); }
+        for (const alert of cardAlerts(card, data.metrics, data.dismissed ?? [], clockNow)) { now.add(alert.id); if (known && !known.has(alert.id)) fresh.push(alert); }
       }
       const first = known === null;
       known = now;
