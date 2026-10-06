@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ModelClient } from '../providers.ts';
 import { realClients } from '../providers.ts';
 import { createUsage } from '../usage.ts';
-import { partnerRoute } from './route.ts';
+import { partnerRoute, turnRoute } from './route.ts';
 
 const client = (name: string, extra: Partial<ModelClient> = {}): ModelClient => ({ name, model: name, maxPromptChars: 100_000, tools: true, limits: { rpd: 1000 }, async step() { return { text: '', calls: [] }; }, ...extra });
 const want = { promptChars: 1000, tools: true };
@@ -90,5 +90,40 @@ describe('the partner route from the keys in .env', () => {
 
   it('leaves Groq off a small partner turn too, where it would fit', () => {
     expect(names(env, 2000)).not.toContain('groq');
+  });
+});
+
+// Journey 13: the founder's pushback in the partner's room was answered by Flash-Lite. Every turn of the partner, however
+// it started, goes to the partner-only model first; a colleague's never does, and a pin still wins.
+describe('every turn of the partner', () => {
+  const all = [client('gemini'), client('gemini-flash', { partnerOnly: true }), client('nvidia'), client('groq-small', { side: true })];
+  it('reaches the partner-only model first, on a chat, a run or a hand-off alike', () => {
+    for (const tools of [true, false]) expect(turnRoute({ partner: true }, all, createUsage(null), { promptChars: 150_000, tools }).order.map((one) => one.name)).toEqual(['gemini-flash', 'gemini', 'nvidia']);
+  });
+  it('never gives it to a colleague, and keeps a pin', () => {
+    expect(turnRoute({}, all, createUsage(null), want).order.map((one) => one.name)).toEqual(['gemini', 'nvidia']);
+    expect(turnRoute(undefined, all, createUsage(null), want).order.map((one) => one.name)).toEqual(['gemini', 'nvidia']);
+    expect(turnRoute({ partner: true, model: 'nvidia' }, all, createUsage(null), want).order[0].name).toBe('nvidia');
+  });
+  it('waits for the partner-only model\'s first word with another model behind it, where everyone else is cut at 20 s', () => {
+    const clients = realClients({ GEMINI_API_KEY: 'k' } as NodeJS.ProcessEnv);
+    expect(clients.find((one) => one.name === 'gemini-flash')!.firstWordMs).toBe(45_000);
+    expect(clients.find((one) => one.name === 'gemini')!.firstWordMs).toBe(20_000);
+  });
+});
+
+// Journey 13, found live: Gemini 3.5 Flash's free tier is 20 requests a day for the project (its 429 says "limit: 20"),
+// so the founder's pushback went to Flash-Lite. The router knows the 20, and the founder hears why.
+describe('the partner\'s own model out of requests', () => {
+  it('is known to have 20 a day, and when they are used the partner\'s turn says so and goes to the next strong model', () => {
+    const clients = realClients({ GEMINI_API_KEY: 'k', NVIDIA_API_KEY: 'n' } as NodeJS.ProcessEnv);
+    const flash = clients.find((one) => one.name === 'gemini-flash')!;
+    expect(flash.limits.rpd).toBe(20);
+    const usage = createUsage(null);
+    expect(turnRoute({ partner: true }, clients, usage, want).order[0].name).toBe('gemini-flash');
+    for (let index = 0; index < 20; index += 1) usage.record('gemini-flash', { input: 10, output: 1 });
+    const spent = turnRoute({ partner: true }, clients, usage, want);
+    expect(spent.order[0].name).toBe('gemini');
+    expect(spent.notice).toBe("Your partner's own model (Gemini-flash) has used today's free requests, so Gemini answers for now.");
   });
 });

@@ -14,6 +14,7 @@ import { FAKE_MORNING, MOST_TRIES, morningDue, morningInputs, morningMessage, wr
 import { addPlan, boardFor, boardForPlan, NO_BOARD, planAttention, stepsFrom } from '../partner/plans.ts';
 import { asksWhatNext, holdSynthesis, standingFacts } from '../partner/synthesis.ts';
 import { asksVerdict, callShape, holdCall } from '../partner/call.ts';
+import { economicsBlock, economicsOf, workingTools } from '../partner/economics.ts';
 import { chaseLine, keptPromiseLine, promiseLine, promisesAttention, promisesBook, promisesIn } from '../partner/promises.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import { staleNeeds, standingBlock, standingParts, stillWaiting, teamVerdict, type StandingParts } from '../partner/standing.ts';
@@ -197,6 +198,11 @@ export function createPartner(options: PartnerOptions = {}) {
       const { companyId } = await state.read();
       return companyId ? companyDocOf(on, companyId) : companyDocOf(on);
     };
+    // The brief's Numbers worked out with calc (server/partner/economics.ts), or nothing when they do not hold enough.
+    const economicsNow = async (stage?: Stage) => {
+      const doc = await companyNow(stage);
+      return doc ? economicsOf(sectionText(await deps.store.readDoc(doc.id).catch(() => ''), 'Numbers')) : null;
+    };
     // The morning turn spends a model call every day, so a fake run (the browser tests) only takes one when asked:
     // STAGE_PARTNER_MORNING=1, or the founder's own "morning note".
     const morningOnTick = !deps.fake || process.env.STAGE_PARTNER_MORNING === '1';
@@ -371,8 +377,13 @@ export function createPartner(options: PartnerOptions = {}) {
         out = withSystem(out, block);
         // Written for customers: said before it is written, and held to it after (the reply seam below).
         if (forCustomers(payload.query)) out = withSystem(out, CUSTOMER_LINE);
-        // A verdict on the company comes in four lines, held to them after (the reply seam below).
-        if (asksVerdict(payload.query)) out = withSystem(out, callShape(localDay(now())));
+        // A verdict on the company comes in four lines, held to them after (the reply seam below). The brief's numbers
+        // are worked out with calc first (break-even, runway), so the call is made with them in view.
+        if (asksVerdict(payload.query)) {
+          const economics = await economicsNow(stage).catch(() => null);
+          out = withSystem(out, callShape(localDay(now()), !!economics));
+          if (economics) out = withSystem(out, economicsBlock(economics));
+        }
       }
       return next(out);
     };
@@ -405,9 +416,13 @@ export function createPartner(options: PartnerOptions = {}) {
           ]);
           const evidence = [company, block, payload.query, ...chat.slice(-30).map((one) => one.text ?? ''), ...payload.reply.tools.map((tool) => tool.result ?? '')].join('\n');
           const said = [company, payload.query, ...chat.slice(-30).filter((one) => one.role === 'user' && !one.from).map((one) => one.text ?? ''), ...payload.reply.tools.filter((tool) => tool.ok !== false).map((tool) => tool.result ?? '')];
-          const { reply, call, askedAgain } = await holdCall(payload.query, payload.reply, payload.again, today, evidence, said);
+          const economics = company ? economicsOf(sectionText(company, 'Numbers')) : null;
+          const { reply, call, askedAgain } = await holdCall(payload.query, payload.reply, payload.again, today, evidence, said, economics);
           if (call) {
-            payload = { ...payload, reply, lookedAgain: payload.lookedAgain || askedAgain };
+            // The working rides with the turn as the calc tool's own results, so the guard and the founder see where
+            // each figure in the reason came from.
+            const worked = economics ? workingTools(economics, (index) => `calc-brief-${now()}-${index}`) : [];
+            payload = { ...payload, reply: { ...reply, tools: [...worked, ...reply.tools] }, lookedAgain: payload.lookedAgain || askedAgain };
             await state.change((held) => { held.call = { ...call, at: now(), day: today, roomId: me.id }; });
             if (call.signal) {
               await promises.add({ what: call.signal.what, due: call.signal.by, roomId: me.id, check: true });

@@ -14,9 +14,9 @@ const title = (name: string) => name[0].toUpperCase() + name.slice(1);
 // right after Gemini, ahead of Cloudflare's copy: every turn it takes leaves Cloudflare's neurons to the pictures.
 // NVIDIA is now its own Nemotron 3 Super, quick to answer; Kimi on the same key (`nvidia-kimi`) took two minutes to
 // a first word, so it is not among these and is reached only when they cannot answer.
-// 2026-10-06: Gemini 3.5 Flash (`gemini-flash`) answers the partner ahead of Flash-Lite and nobody else; NVIDIA's
-// Nemotron 3 Ultra stands right behind Gemini (a tool call in 2.8 s), then Ollama's cloud (now Nemotron 3 Ultra too, one
-// request at a time), Super on NVIDIA, and gpt-oss on Ollama behind the models that took its place. Mistral and SambaNova
+// 2026-10-06: Gemini 3.5 Flash (`gemini-flash`, 20 free requests a day for the project: its 429 says so) answers the
+// partner ahead of Flash-Lite and nobody else; NVIDIA's Nemotron 3 Ultra stands right behind Gemini (a tool call in
+// 2.8 s), then Ollama's cloud (now Nemotron 3 Ultra too, one request at a time), Super on NVIDIA, and gpt-oss on Ollama behind the models that took its place. Mistral and SambaNova
 // keep their places for a founder whose plan or card turns them on; with no key they are simply not there.
 // The whole order a turn is tried in, with every key set:
 //   partner:   gemini-flash, gemini, nvidia-ultra, ollama-cloud, cloudflare-gpt-oss, nvidia, ollama-gpt-oss, mistral,

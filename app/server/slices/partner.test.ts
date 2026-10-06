@@ -817,4 +817,23 @@ describe('the partner slice: a verdict that commits', () => {
     expect(promisesAttention([check], '2026-11-03')[0]).toMatchObject({ kind: 'promise', title: 'Check: 6 paying users by 2026-11-03?', roomId: 'p1' });
     await part.close!();
   });
+  // Journey 13: "keep going" for 10 offices while the brief's numbers put break-even at 34.
+  it('works out the brief\'s break-even and runway with calc before the call, and shows the working under the reason', async () => {
+    const { deps, part } = await installed({}, { now: () => new Date('2026-10-06T10:00').getTime(), ask: async () => SHAPED });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    const company = companyDocOf(await deps.store.loadStage())!;
+    await deps.store.writeDoc(company.id, `${await deps.store.readDoc(company.id)}`.replace('## Numbers', '## Numbers\n\n- Paying offices: 3\n- Price: €240 a month per office\n- Cost: €178 a month per office\n- Cash: €12,000\n- Burn: €2,100 a month'));
+    const system = (await deps.seams.run('turn:before', { roomId: 'p1', source: 'chat', query: 'Your verdict: keep going or stop?', messages: [{ role: 'system', content: 'You are someone.' }] })).messages[0].content as string;
+    expect(system).toContain('- Break-even: ceil(2100 / (240 - 178)) = 34 paying offices to cover fixed costs; we have 3');
+    expect(system).toContain('"keep going" is only a call if you say in Why how that gap closes');
+    const base = { tools: [], provider: 'p', model: 'm', usage: { input: 1, output: 1 }, stopped: false };
+    const out = (await deps.seams.run('turn:reply', {
+      roomId: 'p1', query: 'Your verdict: keep going or stop?',
+      reply: { ...base, text: 'My call: change course.\nWhy: Break-even is 34 paying offices against 3 today.\nKill signal: Paying offices below 5 by 2026-11-03.\nThis week: Price a bigger box.' },
+    })).reply;
+    expect(out.text).toContain('Why: Break-even is 34 paying offices against 3 today.\n- Break-even: ceil(2100 / (240 - 178)) = 34 paying offices to cover fixed costs; we have 3.\n- Runway: round(12000 / (2100 - 3 * (240 - 178)), 1) = 6.3 months at the net burn.\nKill signal');
+    expect(out.tools.map((one) => [one.name, one.result])).toEqual([['calc', 'ceil(2100 / (240 - 178)) = 34'], ['calc', 'round(12000 / (2100 - 3 * (240 - 178)), 1) = 6.3']]);
+    await part.close!();
+  });
 });

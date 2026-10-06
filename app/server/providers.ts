@@ -474,7 +474,9 @@ function clientOf(name: string, entry: Shape, api: OpenAI, firstWordMs?: number,
     // took 58.8 s to its first word on a verdict, and cutting it left the founder with no answer at all.
     // A model with somebody able behind it gets the usual wait, whatever its own: Kimi's minute cost 60 s a turn while
     // gpt-oss behind it would have answered.
-    const wait = firstWordMs && patient ? Math.max(PATIENT_MS, firstWordMs * 4) : behind && usualMs ? Math.min(firstWordMs ?? usualMs, usualMs) : firstWordMs;
+    // A partner-only model keeps its own wait even then: it thinks before its first word (6-12 s on a 40k-token room,
+    // more on a busy day), and cut at 20 s the partner's own turn went to Flash-Lite behind it (journey 13 pushback).
+    const wait = firstWordMs && patient ? Math.max(PATIENT_MS, firstWordMs * 4) : behind && usualMs && !entry.partnerOnly ? Math.min(firstWordMs ?? usualMs, usualMs) : firstWordMs;
     const silent = wait ? new AbortController() : undefined;
     // One clock, two waits: until the first words or tool call (an empty chunk saying only who speaks does not count, or
     // a provider that sends it and then nothing never tripped the clock), and after them between any two chunks.

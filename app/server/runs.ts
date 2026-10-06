@@ -9,7 +9,7 @@ import { nextDue } from './boards.ts';
 import { runTurn } from './loop.ts';
 import type { ModelMessage } from './prompt.ts';
 import { promptSize, type ModelClient } from './providers.ts';
-import { route } from './router.ts';
+import { turnRoute } from './partner/route.ts';
 import type { Seams } from './seams.ts';
 import type { Store } from './store.ts';
 import type { Tool } from './tools/registry.ts';
@@ -98,7 +98,8 @@ export function createRuns(deps: {
           : '';
         const work = { role: 'user' as const, content: `${STARTED[by]} Do it now with your tools, then report the result in a few lines.\n\n${again}${before}Task: ${asked}` };
         messages.push(work);
-        const { order } = route(clients, usage, { pinned: room.model, promptChars: promptSize(messages), tools: true });
+        // The partner's run goes by the partner's route, as their chat does.
+        const { order } = turnRoute(room, clients, usage, { promptChars: promptSize(messages), tools: true });
         const reply = await runTurn({
           messages, tools: mine, clients: order, usage, signal: stop.signal, seams, source: 'run', query: asked, slim,
           slimmer: async () => [...await promptFor(stage, room.id, mine.map((tool) => tool.name), true, true), work],

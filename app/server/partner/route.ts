@@ -8,6 +8,13 @@ import type { UsageBook } from '../usage.ts';
 export { STRONG, SECOND, LOW_EFFORT };
 const title = (name: string) => name[0].toUpperCase() + name.slice(1);
 
+// The one road every turn of a person takes, whoever started it: the founder's chat, a board run or repeat, a
+// colleague handing them work. The partner (unpinned) goes by the partner's route, so a turn of theirs that did not
+// start in their chat still reaches the partner-only model first; anyone else, or a pinned partner, by the router.
+export function turnRoute(room: { partner?: boolean; model?: string } | undefined, clients: ModelClient[], usage: UsageBook, want: { promptChars: number; tools: boolean; vision?: boolean }) {
+  return room?.partner && !room.model ? partnerRoute(clients, usage, want) : route(clients, usage, { pinned: room?.model, ...want });
+}
+
 export function partnerRoute(clients: ModelClient[], usage: UsageBook, want: { promptChars: number; tools: boolean; vision?: boolean }) {
   const { order } = route(clients, usage, { ...want, kind: 'turn', partner: true });
   const roomy = (client: ModelClient) => usage.left(client) > FLOOR && !usage.hot(client, want.promptChars);
@@ -22,7 +29,13 @@ export function partnerRoute(clients: ModelClient[], usage: UsageBook, want: { p
   const others = order.some((client) => !client.local && !client.side && !walled(client));
   const sorted = [...order].filter((client) => (!hosted || (!client.local && !client.side)) && (!others || !walled(client))).sort(compare);
   const first = sorted[0];
-  const notice = first && !STRONG.includes(providerOf(first.name)) && clients.some((one) => STRONG.includes(providerOf(one.name)))
-    ? `Your partner's stronger models are resting, so ${title(providerOf(first.name))} answers for now.` : undefined;
+  // Journey 13: the partner's own model (Gemini 3.5 Flash, 20 free requests a day for the whole project) was spent,
+  // and the founder's pushback went to Flash-Lite without a word. Said now, with which wall it was.
+  const own = sorted.find((client) => client.partnerOnly);
+  const ownWhy = !own || own === first ? '' : usage.dead?.(own.name) ? 'had its key refused' : usage.left(own) <= FLOOR ? "has used today's free requests"
+    : usage.resting(own.name) ? 'is resting after a limit' : '';
+  const notice = first && own && ownWhy ? `Your partner's own model (${title(own.name)}) ${ownWhy}, so ${title(providerOf(first.name))} answers for now.`
+    : first && !STRONG.includes(providerOf(first.name)) && clients.some((one) => STRONG.includes(providerOf(one.name)))
+      ? `Your partner's stronger models are resting, so ${title(providerOf(first.name))} answers for now.` : undefined;
   return { order: sorted, notice };
 }
