@@ -2,7 +2,7 @@ import { playbookOf } from '../shared/apps.ts';
 import { PARTNER_PRECONDITIONS, PARTNER_STANCE, STANCE, type Card, type ChatMessage, type Stage } from '../shared/model.ts';
 import { companyLine, findCompanyDoc } from '../shared/partner.ts';
 import { safeHost, sourceCards } from '../shared/sources.ts';
-import { dayKey, fullDay, shortDay, weekDay, zoneName } from './clock.ts';
+import { dayKey, fullDay, shortDay, weekDay, zoneName, now as clockNow } from './clock.ts';
 import { recent, type Memory } from './memory.ts';
 import { asksCommitment } from './partner/pushback.ts';
 import { stripFlagged } from './truth.ts';
@@ -103,7 +103,7 @@ function past(message: ChatMessage, attached: Attached, stamp = ''): ModelMessag
   ];
 }
 
-export function buildMessages(stage: Stage, roomId: string, docs: Record<string, string>, history: ChatMessage[], toolNames: string[] = [], colleagues: Record<string, ChatMessage[]> = {}, memory?: Memory, attached: Attached = { texts: {}, images: {} }, pages: Record<string, { title: string; text: string }> = {}, decided: string[] = [], founder = '', now = Date.now(), slim = false): ModelMessage[] {
+export function buildMessages(stage: Stage, roomId: string, docs: Record<string, string>, history: ChatMessage[], toolNames: string[] = [], colleagues: Record<string, ChatMessage[]> = {}, memory?: Memory, attached: Attached = { texts: {}, images: {} }, pages: Record<string, { title: string; text: string }> = {}, decided: string[] = [], founder = '', now = clockNow(), slim = false): ModelMessage[] {
   const room = stage.rooms.find((candidate) => candidate.id === roomId);
   if (!room) throw new Error(`unknown room: ${roomId}`);
 

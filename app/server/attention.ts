@@ -5,7 +5,7 @@ import type { Attention, AttentionKind, Decision, ToolEvent } from '../shared/mo
 import { planTaskTitle, stepText, type Bet, type PlanProposal } from '../shared/partner.ts';
 import type { Boards } from './boards.ts';
 import type { Damage, Store } from './store.ts';
-import { localDay } from './clock.ts';
+import { localDay, now as clockNow } from './clock.ts';
 import { PROVIDERS } from './keys-file/catalogue.ts';
 import { ENTRIES } from './providers.ts';
 import type { KeyEvent, UsageBook } from './usage.ts';
@@ -34,7 +34,7 @@ const about = (event: ToolEvent) => [event.name.replace(/_/g, ' '), ...Object.en
 // Everything that waits for the founder, as one list. Most of it is read fresh from where it lives (boards, decisions)
 // through `source`, so the list cannot drift from the truth. Only two things are kept here: approvals in flight, so
 // that one cut off by the app closing is still shown (as lapsed), and what the founder dismissed.
-export function createAttention(dir: string, now: () => number = Date.now) {
+export function createAttention(dir: string, now: () => number = clockNow) {
   const path = join(dir, 'attention.json');
   const sources: Source[] = [];
   const settles: Settle[] = [];

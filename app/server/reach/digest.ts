@@ -1,6 +1,6 @@
 import type { Attention, Skill, Stage, Task } from '../../shared/model.ts';
 import type { Boards } from '../boards.ts';
-import { clockTime, dayKey, timeOrDay, weekDay } from '../clock.ts';
+import { clockTime, dayKey, timeOrDay, weekDay, now as clockNow } from '../clock.ts';
 import type { Skills } from '../skills.ts';
 import { createTrace } from '../trace.ts';
 
@@ -35,7 +35,7 @@ export function digestText(at: number, parts: Digest): string {
 
 // Everything the note is made of, gathered from where it already lives.
 export function createDigest(deps: { boards: Boards; stage: () => Promise<Stage>; skills: Skills; attention: () => Promise<Attention[]>; workspace: string; now?: () => number; five?: () => Promise<string[]> }) {
-  const now = deps.now ?? Date.now;
+  const now = deps.now ?? clockNow;
   const trace = createTrace(deps.workspace, now);
 
   return async function make(since: number): Promise<string> {

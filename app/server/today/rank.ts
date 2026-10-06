@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { Attention, Stage, Task } from '../../shared/model.ts';
 import { TODAY_SIZE, type TodayItem } from '../../shared/today.ts';
 import type { Boards } from '../boards.ts';
-import { clockTime, localDay } from '../clock.ts';
+import { clockTime, localDay, now as clockNow } from '../clock.ts';
 
 // Today's five, worked out without a model: every signal is something the app already keeps (Needs you, the boards'
 // repeats), each kind has a fixed weight, and waiting adds a little. The same five go to the dashboard and the phone.
@@ -138,7 +138,7 @@ export async function wave(workspace: string, id: string, now: number): Promise<
 }
 
 // The five, read fresh. The dashboard, the route and the phone's digest all ask this one function.
-export async function todayFive(deps: { workspace: string; attention: { list(): Promise<Attention[]> }; boards: Pick<Boards, 'list'>; store: { loadStage(): Promise<Stage> } }, now = Date.now()): Promise<TodayItem[]> {
+export async function todayFive(deps: { workspace: string; attention: { list(): Promise<Attention[]> }; boards: Pick<Boards, 'list'>; store: { loadStage(): Promise<Stage> } }, now = clockNow()): Promise<TodayItem[]> {
   const signals = await gather({ attention: deps.attention, boards: deps.boards, stage: () => deps.store.loadStage() }, now);
   return rank(signals, now, await readWaved(deps.workspace, now));
 }

@@ -4,7 +4,7 @@ import { LEAD_STAGES, STAGE_NAMES, type LeadStage } from '../../shared/leads.ts'
 import { findMetric, formatValue, guessBetter, isDay, keyOf, UNITS, type Metrics, type Unit } from '../../shared/metrics.ts';
 import type { Attention, Stage } from '../../shared/model.ts';
 import { bare, VERDICT_WORDS, type Bet, type BetVerdict } from '../../shared/partner.ts';
-import { localDay } from '../clock.ts';
+import { localDay, now as clockNow } from '../clock.ts';
 import { writeAtomic } from '../fsx.ts';
 import { readBook } from '../rescue.ts';
 import { leadsFor } from '../leads/store.ts';
@@ -18,7 +18,7 @@ import { BUILDS, isWeak, verdictName, type TeamVerdict } from './pushback.ts';
 
 const MOST = 200;
 
-export function betsBook(workspace: string, now: () => number = Date.now) {
+export function betsBook(workspace: string, now: () => number = clockNow) {
   const path = join(workspace, 'bets.json');
   let queue: Promise<unknown> = Promise.resolve();
   async function list(): Promise<Bet[]> {

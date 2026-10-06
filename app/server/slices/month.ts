@@ -7,7 +7,7 @@ import { cleanRunway, money, monthOf, months, project, type RunwayFile } from '.
 import type { Deps, Slice } from '../install.ts';
 import { readBook, type Move } from '../leads/moves.ts';
 import { leadsFor } from '../leads/store.ts';
-import { localDay } from '../clock.ts';
+import { localDay, now as clockNow } from '../clock.ts';
 import { wired } from '../prompt.ts';
 import { offerWhenWired } from '../slice-kit.ts';
 import type { Tool } from '../tools/registry.ts';
@@ -120,7 +120,7 @@ export async function gatherMonth(from: MonthSources, since: string): Promise<st
   return out.join('\n');
 }
 
-export function monthTools(deps: Pick<Deps, 'workspace' | 'decisions' | 'boards'>, leads: (cardId: string) => Promise<Lead[]>, now: () => number = Date.now): Tool[] {
+export function monthTools(deps: Pick<Deps, 'workspace' | 'decisions' | 'boards'>, leads: (cardId: string) => Promise<Lead[]>, now: () => number = clockNow): Tool[] {
   return [{
     name: 'gather_month', perTurn: 2,
     description: 'Read what changed since a day, for the monthly update: decisions decided, board tasks done, lead moves, numbers with their change, runway left. Each line names its card. Use only these numbers.',
@@ -137,7 +137,7 @@ export function monthTools(deps: Pick<Deps, 'workspace' | 'decisions' | 'boards'
 }
 
 // A board task on the first weekday of every month, given to the first person wired to the board.
-export async function addMonthlyUpdate(deps: Pick<Deps, 'boards' | 'store'>, boardId?: string, now = Date.now()) {
+export async function addMonthlyUpdate(deps: Pick<Deps, 'boards' | 'store'>, boardId?: string, now = clockNow()) {
   const stage = await deps.store.loadStage();
   const boards = (stage.cards ?? []).filter((card) => card.kind === 'board');
   const board = boardId ? boards.find((card) => card.id === boardId) : boards[0];
@@ -165,7 +165,7 @@ export default {
       // wrote themselves is left alone.
       async tick() {
         const stage = await deps.store.loadStage();
-        const now = Date.now();
+        const now = clockNow();
         for (const card of (stage.cards ?? []).filter((one) => one.kind === 'board')) {
           for (const task of await deps.boards.list(card.id)) {
             if (task.skill !== SKILL_ID || task.repeat?.every !== 'month' || !task.nextRun || !TITLE.test(task.title)) continue;

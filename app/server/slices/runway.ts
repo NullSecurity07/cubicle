@@ -8,6 +8,7 @@ import { wired } from '../prompt.ts';
 import { createRunways, type RunwayBook } from '../runway/store.ts';
 import type { Handler } from '../seams.ts';
 import { text, type Tool, type ToolContext } from '../tools/registry.ts';
+import { now as clockNow } from '../clock.ts';
 
 // The Runway card: cash, what goes out and comes in, and when it runs out. The numbers are the founder's: a person
 // wired to the card reads them and may suggest a flow or a scenario, which waits in Needs you until the founder
@@ -32,7 +33,7 @@ const FLOW = {
   category: { type: 'string', enum: [...CATEGORIES] },
 };
 
-export function runwayTools(book: RunwayBook, now: () => number = Date.now): Tool[] {
+export function runwayTools(book: RunwayBook, now: () => number = clockNow): Tool[] {
   const today = () => todayOf(now());
   return [
     {
@@ -92,7 +93,7 @@ export default {
   install(deps) {
     const say = (cardId: string, event: RunwayEvent) => { hub.say(runwayChannel(cardId), event); void deps.attention.refresh().catch(() => {}); };
     const book = createRunways(deps.workspace, say);
-    const today = () => todayOf(Date.now());
+    const today = () => todayOf(clockNow());
     const onStage = async () => cardsOf(await deps.store.loadStage());
 
     const opening = async () => Promise.all((await onStage()).map(async (card) => ({ channel: runwayChannel(card.id), data: await book.read(card.id) })));

@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { emptyMetrics, findMetric, isDay, keyOf, localDay, MAX_METRICS, mergeRows, parseImport, UNITS, type Metric, type Metrics, type MetricsEvent, type TargetProposal, type Unit } from '../../shared/metrics.ts';
+import { now as clockNow } from '../clock.ts';
 
 export type MetricsStore = ReturnType<typeof createMetrics>;
 export type Imported = { added: number; replaced: number; skipped: string[] };
@@ -20,7 +21,7 @@ export function metricsFor(dir: string, tell?: (cardId: string, event: MetricsEv
   if (!store) { store = createMetrics(dir, tell); shared.set(dir, store); }
   return store;
 }
-export function createMetrics(dir: string, tell: (cardId: string, event: MetricsEvent) => void = () => {}, now: () => number = Date.now) {
+export function createMetrics(dir: string, tell: (cardId: string, event: MetricsEvent) => void = () => {}, now: () => number = clockNow) {
   const path = (cardId: string) => join(dir, 'metrics', `${safe(cardId)}.json`);
   const cache = new Map<string, Metrics>();
   const revs = new Map<string, number>();
