@@ -102,3 +102,20 @@ describe('the page plan', () => {
     expect((await rewriteSection(hero, 'hero: speak to buyers', { material, now: 0 })).done).toBe(false);
   });
 });
+
+// Journey 15: the deck invented a feature, a crowd and a background; a page made from the same brief is held the same way.
+describe('what a page may not invent', () => {
+  it('names and cuts a feature, a crowd and a background the material never gives', () => {
+    const plan = [
+      at('hero', 'Bill on time, every time', ['Thousands of agencies bill late every month.'], { button: DEFAULT_BUTTON }),
+      at('how', 'How it works', ['Trust built via local reviews and collection', 'Connect the tools you already use.']),
+      at('problem', 'Who we are', ['Solo founder with sales and product background']),
+      at('cta', 'Join the waitlist', [], { button: DEFAULT_BUTTON }),
+    ] as Section[];
+    const found = faults(plan, material).join('\n');
+    for (const hit of ['"Thousands"', '"reviews"', '"background"']) expect(found).toContain(hit);
+    const text = mend(plan, material).sections.flatMap((one) => [one.headline, ...one.lines]).join('\n');
+    expect(text).not.toMatch(/Thousands|reviews|background/);
+    expect(text).toContain('Connect the tools you already use.');
+  });
+});

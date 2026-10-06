@@ -1,6 +1,6 @@
 import { isSectionKind, SECTION_KINDS, SECTION_NAMES, type Section, type SectionKind } from '../../shared/site.ts';
 import { fullDay } from '../clock.ts';
-import { moneyIn, numbersIn, sourceOf, type Material } from '../deck/critic.ts';
+import { invented, moneyIn, numbersIn, sourceOf, type Material } from '../deck/critic.ts';
 import { firstJson, JSON_RULE } from '../json.ts';
 
 // A page plan is flat: a title and a run of sections, each a headline, a few lines, perhaps one figure and one picture
@@ -55,6 +55,9 @@ export function faults(sections: Section[], material: Material): string[] {
     for (const line of section.lines) if (words(line).length > LINE_WORDS) found.push(`${at}: "${line.slice(0, 40)}…" is longer than ${LINE_WORDS} words`);
     for (const number of numbersIn(textOf(section))) if (!sourceOf(number, material)) found.push(`${at}: ${number} is not in the material; use only numbers the material states, or none`);
     if (section.kind === 'proof') for (const line of section.lines) if (!numbersIn(line).length && !traced(line, material)) found.push(`${at}: "${line.slice(0, 50)}" is a claim no wired document says; cut it or use one the material states`);
+    // Journey 15's deck guard, on the page too: a count, a feature, a background or a claim the material never makes.
+    // A proof section's headline sums up its lines, which are traced one by one above.
+    for (const text of [...(section.kind === 'proof' ? [] : [section.headline]), ...section.lines]) for (const hit of invented(text, material)) found.push(`${at}: "${hit}" is not in the material; take it out`);
     if (section.button && words(section.button).length > BUTTON_WORDS) found.push(`${at}: the button says "${section.button}"; keep it to ${BUTTON_WORDS} words`);
   });
   return found;
@@ -74,6 +77,11 @@ export function mend(input: Section[], material: Material, fresh: () => string =
       said.push(`${at}: took a number with no source out of the headline`);
       cut += 1;
     }
+    if (section.kind !== 'proof' && invented(section.headline, material).length) {
+      section.headline = SECTION_NAMES[section.kind];
+      said.push(`${at}: took a claim nothing on record backs out of the headline`);
+      cut += 1;
+    }
     if (words(section.headline).length > HEADLINE_WORDS) {
       section.headline = clip(section.headline, HEADLINE_WORDS);
       said.push(`${at}: cut the headline to ${HEADLINE_WORDS} words`);
@@ -86,7 +94,7 @@ export function mend(input: Section[], material: Material, fresh: () => string =
     }
     const lines: string[] = [];
     for (const line of section.lines) {
-      const claim = section.kind === 'proof' ? traced(line, material) : sourced(line, material);
+      const claim = (section.kind === 'proof' ? traced(line, material) : sourced(line, material)) && !invented(line, material).length;
       if (!claim) { said.push(`${at}: cut "${line.slice(0, 48)}${line.length > 48 ? '…' : ''}", no wired doc says it`); cut += 1; continue; }
       lines.push(words(line).length > LINE_WORDS ? `${words(line).slice(0, LINE_WORDS).join(' ')}…` : line);
     }

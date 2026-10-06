@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { competitorChannel, competitorLine, FOUNDER, hostOf, pageLabel, siteUrl, type CompetitorView } from '../../shared/competitor.ts';
 import type { Stage } from '../../shared/model.ts';
 import { localDay } from '../clock.ts';
-import { buildView, changesOf, competitorCards, joinWatches, lastCrawl, noteChange, personOf, twoLines, type CompetitorCard } from '../competitor/view.ts';
+import { buildView, changesOf, competitorCards, joinWatches, lastCrawl, noteChange, guardedNote, personOf, type CompetitorCard } from '../competitor/view.ts';
 import { hub } from '../events.ts';
 import type { Deps, Slice } from '../install.ts';
 import { wired } from '../prompt.ts';
@@ -44,7 +44,7 @@ export default {
       const { order } = routeModels(deps.clients, deps.usage, { promptChars: promptSize(messages), tools: false });
       const reply = await complete(messages, { onToken: () => {} }, order);
       deps.usage.record(reply.client.name, reply.usage, reply.quota);
-      return twoLines(reply.text);
+      return guardedNote(reply.text, diff);
     }
 
     // One change without a note, on any card with a person wired, is read at a time. A failure is left for the next tick.

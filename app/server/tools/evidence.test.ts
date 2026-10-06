@@ -239,3 +239,47 @@ describe('invented testimonials and eagerness', () => {
     expect(plain('## Quotes\n- "Pickup is going great for the pilot offices."').marked).toHaveLength(1);
   });
 });
+
+// Journey 15: Pia's spec read "Enable local 3 (unsourced)D printing" and "Printers listed (Current: 9 (unsourced))"
+// against a brief that says "9 printers listed". A number glued to letters, a code and a ratio read are no counts.
+describe('what the count guard takes as a count', () => {
+  const brief = 'PrintNear rents out idle 3D printers to local makers. 9 printers listed, 4 print jobs done, 1 paying host. 60 makers contacted.';
+  const mark = (line: string) => markUnbacked({ before: '', after: line, read: [brief] }).text;
+  it.each([
+    'Enable local 3D printing for makers.',
+    'Upload a 3D model and pick a printer.',
+    'Printers listed (Current: 9)',
+    'Makers contacted (Current: 60)',
+    'Makers reached so far: 9/60 printers to makers.',
+    'Renders in 4K for the gallery.',
+    'Ship in H2 with the host app.',
+    'Runs on v2.1 of the slicer.',
+    'Exports an mp4 of the print.',
+    'Prints fit an A4 sheet.',
+    'Hosts paused during COVID-19 lockdowns.',
+    'Hosts call +44 20 7946 0958 for help.',
+    'Support line 555-123-4567 for hosts.',
+    'First print on 2026-10-19 for makers.',
+    'Pickup at postcode 10115 for makers.',
+    'Pickup at Torstrasse 1, 10115 Berlin.',
+    'Brand colour #ff0000 and #3d00ff for hosts.',
+    'Post with #3dprinting and #1 makers.',
+    'The 9 printers listed so far.',
+  ])('leaves "%s" as written', (line) => {
+    expect(mark(line)).toBe(line);
+  });
+  it.each([
+    ['We have 3 printers in Kreuzberg.', 'We have 3 (unsourced) printers in Kreuzberg.'],
+    ['12 makers booked a print.', '12 (unsourced) makers booked a print.'],
+    ['Makers reached so far: 9/70.', 'Makers reached so far: 9/70 (unsourced).'],
+    ['Hosts listed 3D models: 7 printers.', 'Hosts listed 3D models: 7 (unsourced) printers.'],
+  ])('marks "%s"', (line, marked) => {
+    expect(mark(line)).toBe(marked);
+  });
+  it('takes no count from a brief\'s "3D printers"', () => {
+    expect(markUnbacked({ before: '', after: '3 printers in use', read: ['We rent idle 3D printers.'] }).text).toBe('3 (unsourced) printers in use');
+  });
+  it('leaves "3D" alone in a derived figure line', () => {
+    expect(markUnworked({ before: '', after: 'Monthly burn on 3D printing: €600', read: ['burn €600 a month'] }).text).toBe('Monthly burn on 3D printing: €600');
+  });
+});

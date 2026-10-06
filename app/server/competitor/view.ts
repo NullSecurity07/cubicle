@@ -4,6 +4,7 @@ import { changePhrase, diffLines, FOUNDER, OVERDUE_MS, pageLabel, samePage, type
 import type { Card, Stage } from '../../shared/model.ts';
 import type { Watch, WatchChange, Watches } from '../slices/crawl.ts';
 import { wired } from '../prompt.ts';
+import { markClaims, markUnbacked } from '../tools/evidence.ts';
 
 export type CompetitorCard = Extract<Card, { kind: 'competitor' }>;
 export const competitorCards = (stage: Stage) => (stage.cards ?? []).filter((card): card is CompetitorCard => card.kind === 'competitor');
@@ -80,6 +81,11 @@ export async function noteChange(watches: Watches, watch: Pick<Watch, 'id' | 'ro
 }
 
 // What is said back, trimmed to the two short lines the card has room for.
+// A person's note on a change held to the change itself: a count the diff does not give is marked "(unsourced)" and a
+// claim of evidence ("customers love it", "validated") "(assumption)", the way a doc marks them.
+export function guardedNote(text: string, diff: string): string {
+  return markUnbacked({ before: '', after: twoLines(text), read: [diff] }).text.split('\n').map((line) => markClaims(line, [diff])).join('\n');
+}
 export function twoLines(text: string): string {
   const lines = text.replace(/\r/g, '').split('\n').map((line) => line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim()).filter(Boolean).slice(0, 2);
   return lines.map((line) => (line.length > 200 ? `${line.slice(0, 199).trimEnd()}…` : line)).join('\n');

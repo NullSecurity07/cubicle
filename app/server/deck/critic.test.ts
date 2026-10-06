@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Slide } from '../../shared/deck.ts';
-import { faults, mend, moneyIn, normal, numbersIn, parseStoryboard, sourceOf, type Material } from './critic.ts';
+import { faults, inventedIn, mend, moneyIn, normal, numbersIn, parseStoryboard, sourceOf, type Material } from './critic.ts';
 
 const slide = (shape: Slide['shape'], headline: string, lines: string[] = [], extra: Partial<Slide> = {}): Slide => ({ id: `s-${shape}-${headline.length}`, shape, headline, lines, ...extra });
 const bare: Material = { brief: 'A seed deck for Relay. We are raising $1.5M.', sources: [{ name: 'Brand doc', text: 'The market is 4,200 agencies in the UK.' }] };
@@ -139,5 +139,54 @@ describe('a storyboard as a model wrote it', () => {
     expect(made.slides[2].figure).toBeUndefined();
     expect(() => parseStoryboard({ slides: [{ shape: 'title', headline: 'a' }] }, ids)).toThrow('at least 3');
     expect(() => parseStoryboard({ slides: [{ shape: 'x', headline: 'a' }, {}, {}] }, ids)).toThrow('"shape" must be one of');
+  });
+});
+
+// Journey 15: the PrintNear deck's invented lines, against the brief the founder wrote.
+describe('what a slide may not invent', () => {
+  const brief = '# PrintNear\n\nA marketplace for renting out idle 3D printers to local makers.\n\n## Numbers\n- Price: €12 per print job\n- 9 printers listed\n- 4 print jobs done\n- 1 paying host\n- 60 makers contacted\n\n## Open questions\n- Will makers trust a stranger\'s printer?';
+  const printNear: Material = { brief: 'Pre-seed deck for PrintNear', sources: [{ name: 'Company', text: brief }], metrics: { name: 'the Company brief', text: '- 9 printers listed\n- 4 print jobs done\n- 1 paying host\n- 60 makers contacted' } };
+  it.each([
+    ['thousands of printers sit unused nearby', 'thousands'],
+    ['Trust built via local reviews and collection', 'reviews'],
+    ['Solo founder with sales and product background', 'background'],
+    ['No dominant local player exists yet', 'No dominant local player'],
+    ['Four completed jobs prove makers will use local hosts.', 'prove'],
+    ['3 printers already rented weekly', '3 printers'],
+  ])('finds "%s"', (line, hit) => {
+    expect(inventedIn(line, printNear)).toContain(hit);
+  });
+  it.each([
+    'Rent out idle 3D printers to local makers',
+    '9 printers listed, 4 print jobs done',
+    '60 makers contacted',
+    'Will makers trust a stranger\'s printer?',
+    'We need to prove makers trust local hosts',
+  ])('passes "%s"', (line) => {
+    expect(inventedIn(line, printNear)).toEqual([]);
+  });
+  it('takes a background the Team section gives', () => {
+    const withTeam: Material = { ...printNear, sources: [{ name: 'Company', text: `${brief}\n\n## Team\n- Lena: six years at Ultimaker, sales lead` }] };
+    expect(inventedIn('Lena: ex-Ultimaker sales lead', withTeam)).toEqual([]);
+    expect(inventedIn('Lena: former Google PhD', withTeam)).not.toEqual([]);
+  });
+  it('names each in the faults and the mend drops or cuts it', () => {
+    const slides = [
+      slide('problem', 'Idle printers everywhere', ['thousands of printers sit unused nearby', 'Makers wait days for a print']),
+      slide('solution', 'Rent a printer next door', ['Trust built via local reviews and collection', 'Rent out idle 3D printers to local makers']),
+      slide('team', 'The team', ['Solo founder with sales and product background']),
+      slide('market', 'Open field', ['No dominant local player exists yet']),
+      slide('traction', 'Early jobs', ['60 makers contacted, 9 printers listed'], { notes: 'Four completed jobs prove makers will use local hosts. Next: ten jobs.' }),
+    ];
+    const found = faults(slides, printNear).join('\n');
+    for (const hit of ['"thousands"', '"reviews"', '"background"', '"No dominant local player"', '"prove"']) expect(found).toContain(hit);
+    const { slides: mended } = mend(slides, printNear);
+    const text = mended.map((one) => [one.headline, ...one.lines].join('\n')).join('\n');
+    expect(text).not.toMatch(/thousands|reviews|background|dominant/);
+    expect(text).toContain('Makers wait days for a print');
+    expect(text).toContain('Rent out idle 3D printers to local makers');
+    expect(text).toContain('60 makers contacted, 9 printers listed');
+    expect(mended[4].notes).not.toMatch(/prove makers/);
+    expect(mended[4].notes).toContain('Next: ten jobs.');
   });
 });
