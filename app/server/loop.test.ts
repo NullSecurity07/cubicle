@@ -629,3 +629,29 @@ describe('a pinned model that cannot hold the prompt', () => {
     } finally { vi.useRealTimers(); }
   });
 });
+
+// Journey 13: a "Page Not Found" read backed a lead's "team size in ICP range".
+describe('a page that did not load', () => {
+  it('is no source for anything after it in the turn, and its address is kept as not reached', async () => {
+    const store = createStore(await mkdtemp(join(tmpdir(), 'loop-')));
+    const seen: { sources: string[]; read: string[]; said: string[]; reads: { reached: string[]; unreached: string[] } }[] = [];
+    const fetch: Tool = {
+      name: 'web_fetch', description: 'read', parameters: { type: 'object', properties: {} },
+      async run() { return { text: '## Exampleco: Jobs\nhttps://www.example.com/jobs\n\nHiring an office manager, 30 staff.\n\n---\n\n## https://samplely.example/about\nThis page was not reachable: it says "Page Not Found". It backs nothing.' }; },
+    };
+    const look: Tool = {
+      name: 'look', description: 'look', parameters: { type: 'object', properties: {} },
+      async run(_args, context) { seen.push({ sources: context.sources!(), ...context.evidence!(), reads: context.reads!() }); return { text: 'ok' }; },
+    };
+    await runTurn({
+      messages: [{ role: 'user', content: 'go' }], tools: [fetch, look], clients: [scripted([[{ name: 'web_fetch', args: {} }], [{ name: 'look', args: {} }], 'done'])], usage: createUsage(null),
+      context: { stage: await store.loadStage(), roomId: 'marketing', store, granted: new Map() }, events: { token: () => {}, tool: () => {} },
+    });
+    const [at] = seen;
+    for (const list of [at.sources, at.read, at.said]) {
+      expect(list.join('\n')).toContain('Hiring an office manager');
+      expect(list.join('\n')).not.toMatch(/samplely|Page Not Found/);
+    }
+    expect(at.reads).toEqual({ reached: ['https://www.example.com/jobs'], unreached: ['https://samplely.example/about'] });
+  });
+});

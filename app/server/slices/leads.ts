@@ -1,4 +1,5 @@
 import { resolve } from 'node:path';
+import { unreachedFor } from '../tools/unread.ts';
 import { LEAD_STAGES, leadName, leadsChannel, STAGE_NAMES, type Lead, type LeadsEvent } from '../../shared/leads.ts';
 import { shortDay } from '../clock.ts';
 import { hub } from '../events.ts';
@@ -44,7 +45,12 @@ export function leadTools(leads: Leads, outreach: ReturnType<typeof createOutrea
         const why = typeof args.why === 'string' ? args.why : '';
         const email = typeof args.email === 'string' ? args.email.trim() : '';
         if (email && !EMAIL.test(email)) return { text: `"${email.slice(0, 200)}" is not an email address. Add them without it, or with the right one.` };
-        const { lead, added } = await leads.add(id, { name: text(args, 'person', 120), company: text(args, 'company', 120), source: 'person', ...(email ? { email } : {}), ...(why.trim() ? { note: { by: nameOf(context), text: why } } : {}) });
+        const company = text(args, 'company', 120);
+        // A lead whose page did not load this turn carries that, not a fit nothing read supports.
+        const unread = context.reads ? unreachedFor(company, why, context.reads()) : null;
+        const note = unread ? `Page not reachable: ${unread} did not load, so nothing read says why ${company} fits yet.` : why;
+        const { lead, added } = await leads.add(id, { name: text(args, 'person', 120), company, source: 'person', ...(email ? { email } : {}), ...(note.trim() ? { note: { by: nameOf(context), text: note } } : {}) });
+        if (added && unread) return { text: `Added ${leadName(lead)}. ${unread} was not reachable, so its note says "page not reachable" instead of why they fit. Read another source before you score them or say they fit.` };
         if (added) return { text: `Added ${leadName(lead)}.` };
         // Already here: an email given now fills in, or corrects, the one on the card.
         if (email && email !== lead.person.email) {

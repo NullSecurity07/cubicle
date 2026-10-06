@@ -1,4 +1,5 @@
 import { execFile, execFileSync, spawn } from 'node:child_process';
+import { unreachable, unreachedNote } from './tools/unread.ts';
 import { lookup } from 'node:dns/promises';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -281,6 +282,8 @@ export function createBrowser(run: Runner, readers: Readers = { direct: [], fall
         }
         if (!page) throw new Error('the page did not load');
         if (walled(page.title, page.text)) return `## ${raw}\n${WALL_NOTE}`;
+        // A not-found or server-error page is said as one, never handed over as the page: it backs nothing.
+        if (unreachable(page.title, page.text)) return `## ${raw}\n${unreachedNote(page.title || page.text.slice(0, 60))}`;
         if (page.text.length < 150) return `## ${raw}\nThis page came back almost empty (a silent bot wall or a login page). Do not guess what it says; try another source.`;
         const cut = page.text.length > PAGE_CHARS ? `${page.text.slice(0, PAGE_CHARS)}\n… (cut at ${PAGE_CHARS} of ${page.text.length} characters)` : page.text;
         return `## ${page.title || page.url}\n${page.url}\n\n${cut || '(no readable text)'}`;
