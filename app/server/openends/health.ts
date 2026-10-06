@@ -376,3 +376,17 @@ export async function liveReaders(http: typeof fetch = fetch): Promise<Check[]> 
   })();
   return [reddit, feed];
 }
+
+// The day's budget for work nobody asked for (usage.ts, createUnasked): how much of it is used, and on what. Each reason
+// once, with how many times when it came up more than once, so twelve page watches read as one line, not twelve.
+export function unaskedRow(state: { cap: number; used: { reason: string }[] }): Check {
+  const counts = new Map<string, number>();
+  for (const one of state.used) counts.set(one.reason, (counts.get(one.reason) ?? 0) + 1);
+  const reasons = [...counts].map(([reason, times]) => (times > 1 ? `${reason} (${times})` : reason)).join(', ');
+  const full = state.used.length >= state.cap;
+  return {
+    name: 'Unasked work today', ok: true, ...(full ? { warn: true } : {}),
+    detail: `${state.used.length} of ${state.cap} used${reasons ? `: ${reasons}` : ''}`,
+    fix: full ? 'Nothing to do: what was left waits for tomorrow, and anything you ask still gets an answer today.' : '',
+  };
+}

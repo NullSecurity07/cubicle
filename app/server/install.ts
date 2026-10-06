@@ -18,7 +18,7 @@ import type { Seams } from './seams.ts';
 import type { Skills } from './skills.ts';
 import type { Store } from './store.ts';
 import type { Tool } from './tools/registry.ts';
-import type { UsageBook } from './usage.ts';
+import type { Unasked, UsageBook } from './usage.ts';
 
 export type Runs = ReturnType<typeof createRuns>;
 
@@ -27,6 +27,8 @@ export type Runs = ReturnType<typeof createRuns>;
 export type Deps = {
   workspace: string; root: string; fake: boolean;
   store: Store; seams: Seams; clients: ModelClient[]; usage: UsageBook;
+  // The day's budget of model turns for work nobody asked for: `take(reason)` before one, `release()` if it never ran.
+  unasked: Unasked;
   approvals: ReturnType<typeof createApprovals>; attention: AttentionBook; boards: Boards;
   recall: ReturnType<typeof createRecall>; skills: Skills; founder: Founder; memory: ReturnType<typeof createMemory>; decisions: Decisions;
   busy: Set<string>; notify: Notify;

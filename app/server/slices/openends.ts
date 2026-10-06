@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { Slice } from '../install.ts';
 import { backupAttention } from '../attention.ts';
 import { autoBackup, backupDirOf, listBackups, makeBackup } from '../openends/backup.ts';
-import { checkAll, outsideHealth, refusals } from '../openends/health.ts';
+import { checkAll, healthRows, outsideHealth, refusals, unaskedRow } from '../openends/health.ts';
 import { coderHealth } from '../opencode/server.ts';
 import { createInsights } from '../openends/insights.ts';
 import { connectAll, createSafeBook, FILE, loadEntries, outsideTools, outsideView, type Connected } from '../openends/mcp.ts';
@@ -41,6 +41,8 @@ export default {
       counts: () => deps.usage.today(),
     });
     const outside = () => connections.map((one) => ({ name: one.entry.name, ok: one.ok, detail: one.detail }));
+    // How much of the day's budget for unasked work is used, and on what.
+    healthRows.set('unasked', () => unaskedRow({ cap: deps.unasked.cap, used: deps.unasked.used() }));
     const outsideBefore = outsideHealth.now;
     outsideHealth.now = outside;
     const health = () => checkAll({
@@ -103,6 +105,7 @@ export default {
       async tick() { await told((await daily?.tick()) ?? null).catch(() => {}); },
       async close() {
         outsideHealth.now = outsideBefore;
+        healthRows.delete('unasked');
         for (const one of connections) await one.rpc?.close().catch(() => {});
       },
     };
