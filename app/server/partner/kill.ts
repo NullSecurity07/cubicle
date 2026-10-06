@@ -18,9 +18,10 @@ const OVER = /(?:>=?|≥|\babove|\bover|\bmore than|\bgreater than|\bhigher than
 
 // The founder's ask to set or move the kill signal, read against the brief's rows and the Metrics rows; null when what
 // they said is not one. `signal`: the one standing. `lastSaid`: the partner's last message, for "make it 9".
-export function killAskIn(said: string, given: { today: string; labels: string[]; signal?: KillSignal; lastSaid?: string; goalDay?: string }): KillAsk | null {
+// `loose`: read inside a verdict ask or a question too, to tell whether the founder named the kill line themselves.
+export function killAskIn(said: string, given: { today: string; labels: string[]; signal?: KillSignal; lastSaid?: string; goalDay?: string; loose?: boolean }): KillAsk | null {
   const text = said.replace(/[*_`]/g, '').trim();
-  if (!text || asksVerdict(text) || /\?\s*$/.test(text)) return null;
+  if (!text || (!given.loose && (asksVerdict(text) || /\?\s*$/.test(text)))) return null;
   const named = KILL.test(text) && CHANGE.test(text);
   const itTo = !named && !!given.signal && IT_TO.test(text) && !!given.lastSaid && KILL.test(given.lastSaid);
   if (!named && !itTo) return null;

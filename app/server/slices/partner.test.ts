@@ -1157,3 +1157,62 @@ describe('the partner slice: one picture of the numbers (journey 16)', () => {
     await part.close!();
   });
 });
+
+// The founder's own kill line stays theirs: a refresh proposes moving it as their decision, never moves it; one the
+// partner set itself still moves with old → new. And a claim to have written the Company document needs a write.
+describe('the partner slice: the founder\'s kill line is theirs', () => {
+  const BRIEF = (price = '€59') => `# Company\n\n## Numbers\n\n- Price: ${price} per week per subscriber\n- Subscribers: 14\n- Paying subscribers: 11\n- Cash: €6,000\n- Burn: €1,900 a month\n`;
+  const turn = (text: string) => ({ text, tools: [] as ToolEvent[], provider: 'p', model: 'm', usage: { input: 1, output: 1 }, stopped: false });
+  const DAY1 = 'My call: keep going\nWhy: 11 pay.\nKill signal: Paying subscribers below 8 by 2026-10-17\nThis week: ask the 3 who do not pay why.';
+  const MOVED = 'My call: keep going\nWhy: the price went up.\nKill signal: Paying subscribers below 7 by 2026-10-17\nThis week: ask the 3 who do not pay why.';
+
+  it('proposes moving a founder-set line as a decision, and moves it only when the founder chooses so', async () => {
+    let clock = new Date('2026-10-06T10:00').getTime();
+    const { deps, part } = await installed({}, { now: () => clock, ask: async () => MOVED, budget: { take: () => ({ ok: true }) } });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    const company = companyDocOf(await deps.store.loadStage())!;
+    await deps.store.writeDoc(company.id, BRIEF());
+    await deps.seams.run('turn:reply', { roomId: 'p1', query: 'Your verdict: keep going, pivot or stop?', reply: turn(DAY1) });
+    await deps.seams.run('turn:answer', { roomId: 'p1', query: 'replace the kill with <12 paying' });
+    await deps.store.writeDoc(company.id, BRIEF('€67.85'));
+    clock = new Date('2026-10-08T06:30').getTime();
+    await part.tick!();
+    const posted = (await deps.store.readChat('p1')).at(-1)!.text;
+    expect(posted).toContain('*Your kill line stays "Paying subscribers below 12" by 2026-10-17: you set it. Shall it move to "Paying subscribers below 7" by 2026-10-17? It waits in Needs you as your decision.*');
+    expect(posted).not.toContain('Kill signal moved');
+    const held = () => readFile(join(deps.workspace, 'partner.json'), 'utf8').then((text) => JSON.parse(text));
+    expect((await held()).call).toMatchObject({ signal: { what: 'Paying subscribers below 12', by: '2026-10-17' }, signalBy: 'founder' });
+    const proposed = (await deps.decisions.list()).find((one) => one.status === 'proposed')!;
+    expect(proposed.title).toBe('Move your kill line from "Paying subscribers below 12" to "Paying subscribers below 7"?');
+    await deps.decisions.decide(proposed.id, { chosen: proposed.options[0], why: 'The price went up.' });
+    await vi.waitFor(async () => expect((await held()).call.signal).toEqual({ what: 'Paying subscribers below 7', by: '2026-10-17' }));
+    expect((await deps.store.readChat('p1')).at(-1)!.text).toContain('Kill signal moved: "Paying subscribers below 12" by 2026-10-17 → "Paying subscribers below 7" by 2026-10-17.');
+    await part.close!();
+  });
+
+  it('still moves a line the partner set, old → new', async () => {
+    let clock = new Date('2026-10-06T10:00').getTime();
+    const { deps, part } = await installed({}, { now: () => clock, ask: async () => MOVED, budget: { take: () => ({ ok: true }) } });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    const company = companyDocOf(await deps.store.loadStage())!;
+    await deps.store.writeDoc(company.id, BRIEF());
+    await deps.seams.run('turn:reply', { roomId: 'p1', query: 'Your verdict: keep going, pivot or stop?', reply: turn(DAY1) });
+    await deps.store.writeDoc(company.id, BRIEF('€67.85'));
+    clock = new Date('2026-10-08T06:30').getTime();
+    await part.tick!();
+    expect((await deps.store.readChat('p1')).at(-1)!.text).toContain('*Kill signal moved: "Paying subscribers below 8" by 2026-10-17 → "Paying subscribers below 7" by 2026-10-17.');
+    expect((await deps.decisions.list()).filter((one) => one.status === 'proposed')).toHaveLength(0);
+    await part.close!();
+  });
+
+  it('puts right a claim to have written the Company document when nothing was written', async () => {
+    const { deps, part } = await installed({}, { now: () => new Date('2026-10-06T10:00').getTime(), ask: async () => SHAPED });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    const out = (await deps.seams.run('turn:reply', { roomId: 'p1', query: 'How are we doing?', reply: turn('Fine. I updated the Company document with the new count.') })).reply.text;
+    expect(out).toBe('Fine. Nothing was written to the Company brief this turn.');
+    await part.close!();
+  });
+});

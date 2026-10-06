@@ -1,7 +1,7 @@
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { MorningNote, PlanProposal } from '../../shared/partner.ts';
-import type { PartnerCall } from './call.ts';
+import type { KillSignal, PartnerCall } from './call.ts';
 import type { Correction } from './corrections.ts';
 import type { InputFix, Inputs, Snapshot } from './economics.ts';
 import { writeAtomic } from '../fsx.ts';
@@ -35,7 +35,10 @@ export type PartnerState = {
   // was made on (`snapshot`, economics.ts); every figure derived from them is worked again on each read. Any input that
   // changed since (a correction, a brief edit, a reading) makes the call stale (refresh.ts). `basis` is the older
   // monthly figures, read only from a call kept before.
-  call?: PartnerCall & { at: number; day: string; roomId: string; snapshot?: Snapshot; basis?: Inputs };
+  // `signalBy`: who set the kill signal. One the founder set is theirs: a refresh only proposes moving it (a decision in
+  // Needs you, `killProposal`), never moves it.
+  call?: PartnerCall & { at: number; day: string; roomId: string; snapshot?: Snapshot; basis?: Inputs; signalBy?: 'founder' | 'partner' };
+  killProposal?: { decisionId: string; signal: KillSignal; roomId: string };
   // The day the partner last tried to refresh its verdict unasked: one try a day.
   refreshTried?: string;
   // The last slip on the brief's goal a refresh answered, without its count of days: a slip is looked at once.

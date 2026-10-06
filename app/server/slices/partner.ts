@@ -24,6 +24,7 @@ import { killAskIn, killMovedLine, pastLine } from '../partner/kill.ts';
 import { goalsIn } from '../partner/goal.ts';
 import { correctionLines, correctionsIn, fixesLine, inputFixesIn, keepCorrections, keepFixes, unitFix, unitsFix } from '../partner/corrections.ts';
 import { markClaims } from '../tools/evidence.ts';
+import { holdDocClaims } from '../draftclaim.ts';
 import { createWatch, fakeWatchReply, leadTwins, watchBudget, type Budget } from '../partner/watch.ts';
 import { guardUnasked } from '../partner/unasked.ts';
 import { draftId, gmailLink } from '../../shared/maildraft.ts';
@@ -254,9 +255,23 @@ export function createPartner(options: PartnerOptions = {}) {
       return killMovedLine(old, fresh, reading);
     };
     // Only what was decided is kept, with the inputs it was made on: never a figure worked from them.
-    const keptCall = (call: PartnerCall, at: number, day: string, roomId: string, economics: EconomicsState | null) => {
+    const keptCall = (call: PartnerCall, at: number, day: string, roomId: string, economics: EconomicsState | null, signalBy?: 'founder' | 'partner') => {
       const { working: _working, ...decided } = call;
-      return { ...decided, at, day, roomId, ...(economics ? { snapshot: economics.snapshot() } : {}) };
+      return { ...decided, at, day, roomId, ...(economics ? { snapshot: economics.snapshot() } : {}), ...(call.signal && signalBy ? { signalBy } : {}) };
+    };
+    // A kill line the founder set is theirs (journey 16: the refresh moved the founder's "below 12" to "below 7"). The
+    // partner may only propose moving it, as a decision in Needs you; the line stands until the founder chooses.
+    const protectSignal = async (held: { signal?: KillSignal; signalBy?: 'founder' | 'partner' } | undefined, fresh: PartnerCall, roomId: string, who: string): Promise<{ call: PartnerCall; line?: string }> => {
+      if (held?.signalBy !== 'founder' || !held.signal || !fresh.signal || (fresh.signal.what === held.signal.what && fresh.signal.by === held.signal.by)) return { call: fresh };
+      const decision = await deps.decisions.propose({
+        title: `Move your kill line from "${held.signal.what}" to "${fresh.signal.what}"?`,
+        context: `You set the kill signal "${held.signal.what}" by ${held.signal.by}. The numbers moved since, and ${who} would move it to "${fresh.signal.what}" by ${fresh.signal.by}. It stays yours until you choose.`,
+        options: [`Move it to "${fresh.signal.what}" by ${fresh.signal.by}`, `Keep "${held.signal.what}" by ${held.signal.by}`],
+        proposedBy: who,
+      });
+      await state.change((draft) => { draft.killProposal = { decisionId: decision.id, signal: fresh.signal!, roomId }; });
+      await deps.attention.refresh().catch(() => {});
+      return { call: { ...fresh, signal: held.signal }, line: `Your kill line stays "${held.signal.what}" by ${held.signal.by}: you set it. Shall it move to "${fresh.signal.what}" by ${fresh.signal.by}? It waits in Needs you as your decision.` };
     };
     // What the founder said in the partner's room lately, their own words only.
     const founderWords = async (roomId: string) => (await deps.store.readChat(roomId).catch(() => [])).slice(-30).filter((one) => one.role === 'user' && !one.from).map((one) => one.text ?? '');
@@ -290,7 +305,22 @@ export function createPartner(options: PartnerOptions = {}) {
         await state.change(async (held) => { Object.assign(held, await syncDecisions(deps.store, doc.id, list, held, changed, now())); });
       } finally { syncing = null; }
     })());
-    const offDecisions = deps.decisions.onChange(() => { standing = null; void sync().catch(() => {}); });
+    // The founder chose on a proposed move of their kill line: moved only when they said so.
+    const killChosen = async () => {
+      const { killProposal } = await state.read();
+      if (!killProposal) return;
+      const decision = (await deps.decisions.list()).find((one) => one.id === killProposal.decisionId);
+      if (decision && decision.status !== 'decided') return;
+      await state.change((draft) => { delete draft.killProposal; });
+      if (!decision || !/^Move it\b/.test(decision.chosen ?? '')) return;
+      const held = (await state.read()).call;
+      const old = held?.signal;
+      await state.change((draft) => { if (draft.call) draft.call = { ...draft.call, signal: killProposal.signal, signalBy: 'founder' }; });
+      const line = await keepSignal(old, killProposal.signal, killProposal.roomId, await deps.store.loadStage());
+      await deps.store.appendChat(killProposal.roomId, { id: newMessageId(), role: 'assistant', text: `*${line}*`, at: now() });
+      standing = null;
+    };
+    const offDecisions = deps.decisions.onChange(() => { standing = null; void sync().catch(() => {}); void killChosen().catch((error: Error) => console.error(`partner kill: ${error.message}`)); });
 
     // A partner on the stage owns the Company document: with none recorded yet it is made or adopted, and each
     // partner is wired to it once. A wire the founder takes away later stays away; so does a document they removed.
@@ -571,7 +601,14 @@ export function createPartner(options: PartnerOptions = {}) {
           const { reply, call: made, askedAgain } = await holdCall(payload.query, payload.reply, payload.again, today, evidence, said, economics, company ? sectionText(company, 'Numbers') : '', pushed, goalsIn(company, today));
           // No stop for a company that is not running out, unless the founder's own words asked for it (refresh.ts).
           const stopHeld = made ? holdStop(made, numbersState, [payload.query, ...await founderWords(me.id)], before?.decision) : null;
-          const call = stopHeld?.call ?? made;
+          const unprotected = stopHeld?.call ?? made;
+          // The founder naming the kill line in their own ask makes it theirs; else a line they set stays theirs.
+          const labels = [...sectionText(company, 'Numbers').split('\n').flatMap((line) => { const found = /^\s*[-*]\s+([^:]{1,40}):\s*[$€£]?\s?\d/.exec(line); return found ? [found[1].trim()] : []; })];
+          const named = unprotected?.signal ? killAskIn(payload.query, { today, labels, signal: before?.signal, loose: true }) : null;
+          const theirs = !!named && thresholdOf(unprotected!.signal!.what)?.value === named.line;
+          const guarded = unprotected && !theirs ? await protectSignal(before, unprotected, me.id, me.name) : { call: unprotected, line: undefined as string | undefined };
+          const call = guarded.call;
+          const signalBy: 'founder' | 'partner' = theirs || (guarded.line && before?.signalBy === 'founder') || (call?.signal && before?.signalBy === 'founder' && before.signal?.what === call.signal.what && before.signal.by === call.signal.by) ? 'founder' : 'partner';
           if (call) {
             let said = reply.text;
             if (stopHeld?.note) {
@@ -584,7 +621,7 @@ export function createPartner(options: PartnerOptions = {}) {
             const worked = economics ? workingTools(economics, (index) => `calc-brief-${now()}-${index}`) : [];
             payload = { ...payload, reply: { ...reply, text: said, tools: [...worked, ...reply.tools] }, lookedAgain: payload.lookedAgain || askedAgain };
             const at = now();
-            await state.change((held) => { held.call = keptCall(call, at, today, me.id, numbersState); });
+            await state.change((held) => { held.call = keptCall(call, at, today, me.id, numbersState, signalBy); });
             // The founder's pushback in the next hour is answered on the partner-only model too.
             markVerdict(me.id, at);
             if (call.signal) {
@@ -594,12 +631,14 @@ export function createPartner(options: PartnerOptions = {}) {
               const line = await keepSignal(moved ? before!.signal : undefined, call.signal, me.id, stage);
               checkLine = moved || /already past/.test(line) ? `*${line}*` : `*Kept as a check: it comes to Needs you on ${call.signal.by}.*`;
             }
+            if (guarded.line) checkLine = `*${guarded.line}*`;
           }
         } catch (error) { console.error(`partner verdict: ${(error as Error).message}`); }
       }
       const facts = companyFacts(payload.query);
       let text = payload.reply.text;
       let receipt = '';
+      let wroteBrief = false;
       try {
         const doc = await companyNow(stage);
         let company = doc ? await deps.store.readDoc(doc.id) : '';
@@ -607,6 +646,7 @@ export function createPartner(options: PartnerOptions = {}) {
           const kept = keepFacts(company, facts, localDay(now()));
           let line = '';
           if (kept.kept.length && wired(stage, me.id, [doc.id]).length) {
+            wroteBrief = true;
             await deps.store.writeDoc(doc.id, kept.text);
             changed(doc.id);
             standing = null;
@@ -619,6 +659,8 @@ export function createPartner(options: PartnerOptions = {}) {
         // What customers will read carries no source tags, placeholders or company money, and is not called ready while it does.
         if (forCustomers(payload.query)) text = customerReply(text, numbers);
         // Runway and break-even come from calc on the brief's numbers, never from the model (server/partner/economics.ts).
+        // A claim to have written a document with no write behind it this turn is put right (server/draftclaim.ts).
+        if (doc) text = holdDocClaims(text, payload.reply.tools, { title: doc.title, wrote: wroteBrief });
         const numbersNow = await stateFrom(stage, company);
         text = breakEvenFix(unitsFix(runwayFix(figuresFix(text, numbersNow.economics()), numbers), fixes), numbersNow);
         // The inputs the founder put right this turn, said under the reply.
@@ -732,15 +774,17 @@ export function createPartner(options: PartnerOptions = {}) {
       // The week's move is held to what the founder ruled out (journey 15: "Contact 40 more makers" minutes after "no
       // cold outreach"): one set against a standing no is dropped, and the refresh says which no it kept to.
       const ruled = stopHeld.call.move ? await saidNoFor(deps.workspace).ruledOut(stopHeld.call.move).catch(() => undefined) : undefined;
-      const call = ruled ? { ...stopHeld.call, move: undefined } : stopHeld.call;
+      const unguarded = ruled ? { ...stopHeld.call, move: undefined } : stopHeld.call;
+      const guarded = await protectSignal(held.call, unguarded, partner.id, partner.name);
+      const call = guarded.call;
       const at = now();
       // A kill line that moves is never silent: old → new, and a number already past the new line raises the check now.
       const moves = call.signal && (call.signal.what !== held.call.signal?.what || call.signal.by !== held.call.signal?.by);
       const killLine = moves && call.signal ? await keepSignal(held.call.signal, call.signal, partner.id, stage) : '';
       const body = breakEvenFix(figuresFix(refreshText(opening, held.call.decision, call), economics), numbers);
-      const text = `${body}${stopHeld.note ? `\n\n${stopHeld.note}` : ''}${killLine ? `\n\n*${killLine}*` : ''}${ruled ? `\n\n*${ruledOutLine(ruled)}, so the move "${stopHeld.call.move}" was dropped.*` : ''}`;
+      const text = `${body}${stopHeld.note ? `\n\n${stopHeld.note}` : ''}${killLine ? `\n\n*${killLine}*` : ''}${guarded.line ? `\n\n*${guarded.line}*` : ''}${ruled ? `\n\n*${ruledOutLine(ruled)}, so the move "${stopHeld.call.move}" was dropped.*` : ''}`;
       await deps.store.appendChat(partner.id, { id: newMessageId(), role: 'assistant', text, at, ...(reply.provider ? { provider: reply.provider } : {}), ...(reply.model ? { model: reply.model } : {}) });
-      await state.change((draft) => { draft.call = keptCall(call, at, today, partner.id, numbers); });
+      await state.change((draft) => { draft.call = keptCall(call, at, today, partner.id, numbers, guarded.line || (held.call!.signalBy === 'founder' && !killLine) ? 'founder' : 'partner'); });
       markVerdict(partner.id, at);
       standing = null;
       await deps.attention.refresh().catch(() => {});
@@ -770,7 +814,7 @@ export function createPartner(options: PartnerOptions = {}) {
         const old = held.call?.signal;
         if (old && old.what === asked.signal.what && old.by === asked.signal.by) return next({ ...payload, answer: `The kill signal is already "${old.what}" by ${old.by}: nothing to change.` });
         const at = now();
-        await state.change((draft) => { draft.call = { ...(draft.call ?? { day: today, roomId: me.id, at }), signal: asked.signal }; });
+        await state.change((draft) => { draft.call = { ...(draft.call ?? { day: today, roomId: me.id, at }), signal: asked.signal, signalBy: 'founder' }; delete draft.killProposal; });
         const line = await keepSignal(old, asked.signal, me.id, stage);
         standing = null;
         return next({ ...payload, answer: line });
