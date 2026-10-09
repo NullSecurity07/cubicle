@@ -178,3 +178,19 @@ describe('a decision declined in the panel and asked about again', () => {
     await part.close?.();
   });
 });
+
+// Journey 21: after "No to that reply for Ines …", Sam proposed a "Booking Refund Policy" decision nobody asked for.
+describe('a decision proposed in the turn of a no', () => {
+  it('is not raised, and one asked for is', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'saidno-slice-'));
+    const deps = stubDeps(workspace, ROOT);
+    const part = (await saidno.install(deps)) as Installed;
+    const roomId = (await deps.store.loadStage()).rooms[0].id;
+    const call = { id: 'c', name: 'propose_decision', args: { title: 'Booking Refund Policy', options: ['Full refund', 'Offer no refunds'] } };
+    await deps.seams.run('turn:before', { roomId, source: 'chat', query: 'No to that reply for Ines, because we have never decided a refund policy. Never state a policy we have not decided.', messages: [] });
+    expect((await deps.seams.run('tool:before', { roomId, call })).refusal).toMatch(/^not raised: the founder's message was a no/);
+    await deps.seams.run('turn:before', { roomId, source: 'chat', query: 'Should we have a refund policy? Propose it as a decision.', messages: [] });
+    expect((await deps.seams.run('tool:before', { roomId, call })).refusal).toBeUndefined();
+    await part.close?.();
+  });
+});
