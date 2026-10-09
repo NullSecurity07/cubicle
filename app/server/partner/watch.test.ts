@@ -45,13 +45,25 @@ describe('the kill-signal trend', () => {
     expect(metricSparks([{ cardId: 'm1', metrics: [signups(['2026-09-30', 6])] }], killCheck(), [], NOON)).toHaveLength(0);
   });
 
+  // Journey 17: the founder replaced the kill line with "below 9" on 7 Oct, then logged 9.5 for 7 Oct (11 on 6 Oct).
+  // Measured from 7 Oct's own reading, 9.5 was both start and latest and nothing was raised.
+  it('measures a kill line from the reading before the moment it was set, so a same-day reading after it counts', () => {
+    const paying = (...values: [string, number][]): Metric => ({ key: 'paying-subscribers', label: 'Paying subscribers', better: 'up', points: values.map(([at, value]) => ({ at, value, from: 'founder' })) });
+    const replaced: FounderPromise = { id: 'promise-kill-9', what: 'Paying subscribers below 9', due: '2026-10-17', said: '2026-10-07', at: new Date('2026-10-07T07:10').getTime(), status: 'open', check: true };
+    const raised = metricSparks([{ cardId: 'm1', metrics: [paying(['2026-10-06', 11], ['2026-10-07', 9.5])] }], replaced, [], new Date('2026-10-07T07:20').getTime());
+    expect(raised.map((one) => one.why)).toEqual(['Paying subscribers is trending to the kill line']);
+    expect(raised[0].number).toBe('Paying subscribers: 9.5 on 2026-10-07, from 11 on 2026-10-06; the kill line is 9 (Paying subscribers below 9, checked on 2026-10-17).');
+    // A reading of the same day past the line is the line crossed.
+    expect(metricSparks([{ cardId: 'm1', metrics: [paying(['2026-10-06', 11], ['2026-10-07', 8])] }], replaced, [], NOON + DAY).map((one) => one.why)).toEqual(['Paying subscribers crossed the kill line']);
+  });
+
   // Journey 15: kill signal "fewer than 10 print jobs done", readings 7 then 9, and Needs you said the number was
   // trending to the kill line. Progress toward the goal is never danger; only a move to the losing side is.
   it('fixture table: only a move toward the losing side of the kill line is raised, in both directions', () => {
     const jobs = (...values: [string, number][]): Metric => ({ key: 'print-jobs-done', label: 'Print jobs done', better: 'up', points: values.map(([at, value]) => ({ at, value, from: 'founder' })) });
     const churn = (...values: [string, number][]): Metric => ({ key: 'churn', label: 'Churn', better: 'down', unit: '%', points: values.map(([at, value]) => ({ at, value, from: 'founder' })) });
     const kill = killCheck('fewer than 10 print jobs done');
-    const killed = { ...kill, said: '2026-10-07' };
+    const killed = { ...kill, said: '2026-10-07', at: new Date('2026-10-07T08:00').getTime() };
     const above = killCheck('churn above 8%');
     const table: [string, Metric, FounderPromise, string | null][] = [
       ['7 to 9 under "fewer than 10": progress', jobs(['2026-10-07', 7], ['2026-10-08', 9]), killed, null],
