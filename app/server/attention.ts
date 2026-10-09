@@ -21,6 +21,14 @@ const DISMISSABLE = new Set<AttentionKind>(['run-failed', 'missed', 'review-due'
 // What is raised here only to tell the founder something, with no answer to wait for: they may wave it away once read.
 const SAID = new Set<AttentionKind>(['key-rejected', 'file-damaged', 'backup-failed', 'mail-draft']);
 const A_DAY = 86_400_000;
+// A drafted email nobody opened in three days has been passed over: journey 19's stayed four days, second in Today's five.
+export const DRAFT_DAYS = 3;
+// The line a room keeps when its draft leaves Needs you unopened.
+export const draftSweptLine = (entry: Pick<Attention, 'title' | 'at'>) => {
+  const to = /^Email to (.+) ready to send$/.exec(entry.title)?.[1] ?? 'them';
+  const day = new Date(entry.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  return `*The email to ${to} drafted on ${day} was not opened in ${DRAFT_DAYS} days, so it is off Needs you. Its Open in Gmail button is still above in this chat.*`;
+};
 // Argument names whose value is nobody's to keep, not even for a line the founder reads.
 const PRIVATE = /key|token|secret|password/i;
 
@@ -39,6 +47,7 @@ export function createAttention(dir: string, now: () => number = clockNow) {
   const sources: Source[] = [];
   const settles: Settle[] = [];
   const watchers = new Set<(list: Attention[]) => void>();
+  const sweepers = new Set<(entries: Attention[]) => void>();
   let queue: Promise<unknown> = Promise.resolve();
   let state: { open: Lapsed[]; dismissed: string[] } | null = null;
 
@@ -64,8 +73,12 @@ export function createAttention(dir: string, now: () => number = clockNow) {
     const { open, dismissed } = await load();
     // Nothing waits for ever. An approval that lapsed a day ago is about a turn the founder has long walked past, so
     // reading the list is also where it is let go, and the file is written again without it.
-    const held = open.filter((entry) => !entry.lapsed || now() - entry.at < A_DAY);
+    const stale = (entry: Lapsed) => entry.kind === 'mail-draft' && now() - entry.at >= DRAFT_DAYS * A_DAY;
+    const held = open.filter((entry) => (!entry.lapsed || now() - entry.at < A_DAY) && !stale(entry));
+    const swept = open.filter(stale);
     if (held.length !== open.length) { state!.open = held; await changed(); }
+    // Whoever keeps the room says so in a line there, so the draft is not gone without a word.
+    if (swept.length) for (const tell of sweepers) { try { tell(swept); } catch { /* the line is a courtesy */ } }
     const reported = (await Promise.all(sources.map((source) => source().catch(() => [])))).flat().filter((entry) => !dismissed.includes(entry.id));
     // A question whose answer is already given somewhere else (the tasks on the board, the bet taken, the decision on
     // record) is not asked again: every reader of this list, the partner's advice included, sees it gone at once.
@@ -95,11 +108,15 @@ export function createAttention(dir: string, now: () => number = clockNow) {
       // A refused key waits on nothing but the founder, who may have seen it and moved on; it comes back only if the
       // key is refused again after answering once.
       if (held) { if (!held.lapsed && !SAID.has(held.kind)) throw new Error('this is still waiting for an answer'); state!.open = open.filter((one) => one.id !== id); return changed(); }
+      // A drafted email already gone (opened from somewhere else, swept, or named by an older id) is nothing to do.
+      if (id.startsWith('mail-draft:')) return;
       const reported = (await list()).find((one) => one.id === id);
       if (!reported || !DISMISSABLE.has(reported.kind)) throw new Error('this cannot be dismissed; answer it where it lives');
       state!.dismissed = [...dismissed, id];
       await changed();
     },
+    // Drafted emails taken off the list after DRAFT_DAYS unopened.
+    onSwept(tell: (entries: Attention[]) => void) { sweepers.add(tell); return () => { sweepers.delete(tell); }; },
     watch(tell: (list: Attention[]) => void) { watchers.add(tell); return () => { watchers.delete(tell); }; },
   };
 }

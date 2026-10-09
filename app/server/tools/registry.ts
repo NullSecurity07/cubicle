@@ -14,7 +14,7 @@ import type { Store } from '../store.ts';
 // `sources` is what the turn has read so far, as the truth net counts it, for a tool that writes figures down.
 // `evidence` is what a team doc's counts and claims may rest on: `read` without the person's memory or own replies, and
 // `said`, only the founder's words and the tool results that worked.
-export type ToolContext = { stage: Stage; roomId: string; store: Store; granted: Map<string, string>; calls?: Map<string, number>; query?: string; sources?: () => string[]; evidence?: () => { read: string[]; said: string[] }; reads?: () => { reached: string[]; unreached: string[] }; report?: (effect: ToolEffect) => void; signal?: AbortSignal; approve?: (event: ToolEvent, signal?: AbortSignal) => Promise<Answer> };
+export type ToolContext = { stage: Stage; roomId: string; store: Store; granted: Map<string, string>; calls?: Map<string, number>; query?: string; allowed?: boolean; sources?: () => string[]; evidence?: () => { read: string[]; said: string[] }; reads?: () => { reached: string[]; unreached: string[] }; report?: (effect: ToolEffect) => void; signal?: AbortSignal; approve?: (event: ToolEvent, signal?: AbortSignal) => Promise<Answer> };
 // The person a tool is running for: the room whose turn this is.
 export const speaker = (context: Pick<ToolContext, 'stage' | 'roomId'>) => context.stage.rooms.find((room) => room.id === context.roomId);
 // `heard` is for a result that is someone's say-so, not a read: the part of it that may back a count in a team doc,

@@ -148,7 +148,7 @@ export const watchAttention = (onList: (list: Attention[]) => void) => feed<Atte
 export const getDashboard = () => request<Dashboard>('/api/dashboard');
 export const watchDashboard = (changed: () => void) => feed<{ dashboard: true }>(DASHBOARD_CHANNEL, () => changed(), (again) => { if (again) changed(); });
 // Opened is not a no: the founder took a drafted email to Gmail, so it leaves Needs you without going in the said-no log.
-export const dismissAttention = (id: string, how?: { opened: true }) => request(`/api/attention/${encodeURIComponent(id)}/dismiss`, how ? send('POST', how) : { method: 'POST' });
+export const dismissAttention = (id: string, how?: { opened: true; to?: string; subject?: string }) => request(`/api/attention/${encodeURIComponent(id)}/dismiss`, how ? send('POST', how) : { method: 'POST' });
 // The founder turns down a website a person proposed as a source, or has just added it to the stage.
 export const dropSource = (id: string) => request(`/api/sources/${id}/drop`, { method: 'POST' });
 export const getThreads = (query = '') => request<Thread[]>(`/api/threads${query ? `?q=${encodeURIComponent(query)}` : ''}`);

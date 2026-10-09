@@ -190,3 +190,29 @@ describe('what a slide may not invent', () => {
     expect(mended[4].notes).toContain('Next: ten jobs.');
   });
 });
+
+// Journey 19: slide 4 was a "quote" whose words were a Metrics row, attributed to Tom Becker.
+describe('a quote slide', () => {
+  const tom: Material = {
+    brief: 'A seed pitch for QuoteSnap. As the founder I say: plumbers should never write a quote at night again.',
+    sources: [{ name: 'Tom Becker at Becker Sanitär (Leads card)', text: 'Two of my lads would use it too. Does it work with photos from my old Android phone?' }],
+    metrics: { name: 'Metrics card', text: 'Paying plumbers: 14 on 2026-10-11' },
+  };
+  it('stands only on words on record, with who said them', () => {
+    const real = slide('quote', '“Two of my lads would use it too.”', ['Tom Becker at Becker Sanitär']);
+    const founder = slide('quote', 'Never write a quote at night again', ['The founder']);
+    expect(faults([real, founder], tom)).toEqual([]);
+    const metric = slide('quote', 'Paying plumbers: 14 on 2026-10-11', ['Tom Becker at Becker Sanitär']);
+    const madeUp = slide('quote', 'QuoteSnap saves me every evening', ['Tom Becker at Becker Sanitär']);
+    const wrongPerson = slide('quote', 'Two of my lads would use it too', ['Jana Wolf']);
+    const nobody = slide('quote', 'Two of my lads would use it too', []);
+    for (const one of [metric, madeUp, wrongPerson, nobody]) expect(faults([one], tom).join(' ')).toContain('is not a quote on record with who said it');
+  });
+  it('is dropped when there is no quote on record, and the card is told', () => {
+    const title = slide('title', 'QuoteSnap');
+    const metric = slide('quote', 'Paying plumbers: 14 on 2026-10-11', ['Tom Becker at Becker Sanitär']);
+    const mended = mend([title, metric], tom);
+    expect(mended.slides.map((one) => one.shape)).toEqual(['title']);
+    expect(mended.said).toContain('slide 2: dropped a quote slide, since "Paying plumbers: 14 on 2026-10-11" is not a quote anyone on record said');
+  });
+});

@@ -43,7 +43,7 @@ async function setup(env: NodeJS.ProcessEnv, open?: (stage: Stage, roomId: strin
   const attention = createAttention(dir, () => 1000);
   const tools = outwardTools(createMail(env, (async () => new Response('{}')) as typeof fetch), store.filesDir, { raise: attention.raise, open }, () => 1000);
   const context = { stage: await store.loadStage(), roomId: 'marketing', store, granted: new Map() };
-  return { attention, run: (args: object) => runTool(tools, 'draft_email', JSON.stringify(args), context), tools, dir };
+  return { attention, run: (args: object, allowed = false) => runTool(tools, 'draft_email', JSON.stringify(args), { ...context, allowed }), tools, dir };
 }
 
 describe('draft_email', () => {
@@ -84,6 +84,14 @@ describe('draft_email', () => {
     expect(said.text).toContain('the email says something about Android, VAT that nothing on record states');
     const honest = await run({ ...draft, body: 'Hi Tom,\n\nI will check whether it works with photos from your old Android phone and come back to you by Friday.\n\nBest,' });
     expect(honest.ok).toBe(true);
+  });
+
+  // Journey 19: the founder pressed Allow on a draft and the guard refused the same body again.
+  it('drafts what the founder read and allowed', async () => {
+    const { run } = await setup({});
+    const body = 'Hi Tom,\n\nThe quote shows VAT on its own line.\n\nBest,';
+    expect((await run({ ...draft, body })).ok).toBe(false);
+    expect((await run({ ...draft, body }, true)).ok).toBe(true);
   });
 
   it("opens in the founder's Gmail card when one is wired to the person", async () => {
@@ -160,7 +168,7 @@ describe('an address on the Leads card the person reaches', () => {
     await store.saveStage(stage);
     const tools = outwardTools(createMail({}, (async () => new Response('{}')) as typeof fetch), store.filesDir, { raise: attention.raise, onRecord: leadAddresses(dir), contacts: leadContacts(dir) }, () => 1000);
     const context = { stage: await store.loadStage(), roomId, store, granted: new Map(), sources: () => [] as string[] };
-    return (to: string) => runTool(tools, 'draft_email', JSON.stringify({ to, subject: 'A free two-week pilot', body: 'Hi Dr. Weber,' }), context);
+    return (to: string, body = 'Hi Dr. Weber,') => runTool(tools, 'draft_email', JSON.stringify({ to, subject: 'A free two-week pilot', body }), context);
   }
 
   it('drafts to the address the wired card gives', async () => {
@@ -175,6 +183,21 @@ describe('an address on the Leads card the person reaches', () => {
       expect(out.text).toContain('no address on record for dr.anna.weber@example.com: it is not on the Leads card you reach. The card gives Dr. Anna Weber at Weber Dental: anna.weber@example-dental.de.');
       expect(out.text).not.toContain('no Leads card');
     }
+  });
+
+  // Journey 19: Lea drafted to tom@becker-sanitaer.email when the card said tom@becker-sanitaer.example.
+  it('takes only the very address on record, in any case, and names it when one is near', async () => {
+    const run = await stageWith([{ wired: true, email: 'tom@becker-sanitaer.example' }]);
+    expect((await run('Tom@Becker-Sanitaer.EXAMPLE')).ok).toBe(true);
+    for (const typo of ['tom@becker-sanitaer.email', 'tom@becker-sanitar.example', 'tomm@becker-sanitaer.example']) {
+      const out = await run(typo);
+      expect(out.ok).toBe(false);
+      expect(out.text).toContain(`no address on record for ${typo}: the record has tom@becker-sanitaer.example, which is not the same address. Draft again to exactly tom@becker-sanitaer.example`);
+    }
+    // The address is held before anything the body says.
+    const both = await run('tom@becker-sanitaer.email', 'Hi Tom,\n\nYes, the quote shows VAT separately.');
+    expect(both.text).toContain('the record has tom@becker-sanitaer.example');
+    expect(both.text).not.toContain('says something about');
   });
 
   it('says the card holds no address when it has none, and "no Leads card" only when there is none', async () => {

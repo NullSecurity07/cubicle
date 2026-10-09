@@ -1,9 +1,9 @@
 import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import { resolve } from 'node:path';
-import { isHeaded, type Card, type Stage } from '../shared/model.ts';
+import { isHeaded, newMessageId, type Card, type Stage } from '../shared/model.ts';
 import { createApprovals } from './approvals.ts';
-import { boardAttention, createAttention, damageAttention, doneAttention, keyAttention } from './attention.ts';
+import { boardAttention, createAttention, damageAttention, doneAttention, draftSweptLine, keyAttention } from './attention.ts';
 import { createBoards } from './boards.ts';
 import { createBrowser, dnsResolve, fakeHand, fakeRunner, jinaReader, realRunner } from './browser.ts';
 import { createChat } from './chat.ts';
@@ -117,6 +117,16 @@ const boards = createBoards(workspace);
 const attention = createAttention(workspace);
 // A key the provider refuses is said once in Needs you, and goes from there when that key answers again.
 keyAttention(usage, attention);
+// A drafted email left unopened for three days leaves Needs you, and the room that drafted it says so in a line.
+attention.onSwept((entries) => {
+  void (async () => {
+    const rooms = new Set((await store.loadStage()).rooms.map((room) => room.id));
+    for (const entry of entries) {
+      if (!entry.roomId || !rooms.has(entry.roomId)) continue;
+      await store.appendChat(entry.roomId, { id: newMessageId(), role: 'assistant', text: draftSweptLine(entry), at: Date.now(), provider: 'Needs you', model: 'drafts' });
+    }
+  })().catch(() => {});
+});
 tellDamage = (damage) => { console.log(`${damage.file} could not be read; the damaged copy is ${damage.aside}`); void attention.raise(damageAttention(damage)).catch(() => {}); };
 for (const damage of damaged.splice(0)) tellDamage(damage);
 attention.source(boardAttention(store, boards));

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { answerQuestions, guardUnasked } from './partner/unasked.ts';
-import { holdProductClaims, productTopic, unbackedProductClaims } from './productclaim.ts';
+import { holdProductClaims, productClaimsIn, productTopic, unbackedProductClaims } from './productclaim.ts';
 
 // Journey 18: the brief says what QuoteSnap does and nothing about phones, platforms or VAT.
 const BRIEF = '## Product\nQuoteSnap turns a plumber\'s WhatsApp photos into written quotes.\n\n## Numbers\n- Price: €29 a month per plumber\n- Paying plumbers: 9';
@@ -65,5 +65,19 @@ describe('a claim about the product, held to the record', () => {
     expect(plain.text).toMatch(/^Tom can start today\./);
     const clean = 'QuoteSnap turns WhatsApp photos into quotes. We have not tested Android yet.';
     expect(holdProductClaims(clean, [BRIEF])).toEqual({ text: clean, left: [] });
+  });
+
+  it('passes journey 19\'s three honest answers to Tom: a line that says the answer is still to come claims nothing', () => {
+    const sources = [BRIEF, TOM];
+    // First try: one line for both questions.
+    expect(productClaimsIn('Hi Tom,\n\nRegarding your old Android phone and VAT separately: I will check on those details and come back to you.\n\nBest,\nAlex Hart', sources)).toEqual([]);
+    // Second try, after the founder's Allow: the questions named first, the promise to check after.
+    expect(productClaimsIn('Thanks for your questions about photos from your old Android phone and showing VAT separately. I will check on both and come back to you by Tuesday.', sources)).toEqual([]);
+    // Third try: each question quoted with its own line.
+    expect(productClaimsIn('"Does it work with photos from my old Android phone?" I will check and come back to you.\n"Can the quote show VAT separately?" I will check and come back to you.', sources)).toEqual([]);
+    for (const line of ['I don\'t know yet about Android.', 'Let me confirm the VAT part and get back to you.']) expect(productClaimsIn(line, sources)).toEqual([]);
+    // A clause that says the product does it is still a claim, honest words elsewhere or not.
+    expect(productClaimsIn('It works on any Android phone, and I will check the VAT part.', sources)).toEqual(['Android']);
+    expect(productClaimsIn('Yes, the quote shows VAT separately; I will confirm the layout.', sources)).toEqual(['VAT']);
   });
 });

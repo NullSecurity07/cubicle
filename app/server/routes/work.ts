@@ -127,8 +127,20 @@ export function workRoutes(deps: {
       const held = (await attention.list()).find((one) => one.id === id);
       // Opening a drafted email in Gmail takes it off the list too, and that is the founder acting on it, not a no:
       // journey 15 found the Gmail chip logged as "You said no", and every later email to that lead refused.
-      const opened = (await body(req).catch(() => ({}))).opened === true;
+      const sent = await body(req).catch(() => ({})) as { opened?: unknown; to?: unknown; subject?: unknown };
+      const opened = sent.opened === true;
       await attention.dismiss(id);
+      // Journey 19: the room's button named the draft by the words the person wrote, Needs you by the words that went
+      // to Gmail (the name filled in), so the row stayed four days. Opened from anywhere, the same email's row goes.
+      if (opened && typeof sent.to === 'string') {
+        const same = (address: string) => address.split(/[,;\s]+/).filter(Boolean).map((one) => one.toLowerCase()).sort().join(',');
+        for (const one of await attention.list()) {
+          const to = /^Email to (.+) ready to send$/.exec(one.title)?.[1];
+          if (one.kind !== 'mail-draft' || one.id === id || !to || same(to) !== same(sent.to)) continue;
+          if (typeof sent.subject === 'string' && (one.detail ?? '').split('\n')[0] !== sent.subject) continue;
+          await attention.dismiss(one.id);
+        }
+      }
       // A drafted email waved away with Dismiss is a no to it, kept so the same email is not drafted again.
       if (held?.kind === 'mail-draft' && !opened) {
         const to = /^Email to (.+) ready to send$/.exec(held.title)?.[1] ?? '';

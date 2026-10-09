@@ -539,6 +539,16 @@ describe('runTurn, the truth net', () => {
     expect(reply.text).not.toContain('ask_founder');
   });
 
+  // Journey 19: Maya made the doc, then her words came back as a call written out twice, and the reply said "Ask again".
+  it('says what was made when the words after a step that worked are held back', async () => {
+    const json = '{"name": "ask_founder", "arguments": {"question": "What price?"}}';
+    const { client } = recording([[{ name: 'write_file', args: { path: 'budget.md', text: 'Net burn 1,100' } }], json, json]);
+    const { reply } = await turn(client);
+    expect(reply.text).not.toContain('Ask again');
+    expect(reply.text).toMatch(/^What this turn did:\n\n- write file: done/);
+    expect(reply.text).toContain('The work above is done');
+  });
+
   it('says a reply the stream broke off is cut short, and lists what the tools did', async () => {
     const { client } = recording([[{ name: 'list_files', args: {} }], { text: 'The plan has three par', calls: [], cut: true, broke: 'socket hang up' }]);
     const { reply } = await turn(client);

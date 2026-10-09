@@ -11,6 +11,7 @@ import { createStore } from '../store.ts';
 import type { Tool, ToolContext } from '../tools/registry.ts';
 import deck, { DECK_TOOLS, gatherDeck, metricsOf } from './deck.ts';
 import { tractionLines, type Material } from '../deck/critic.ts';
+import { leadsFor } from '../leads/store.ts';
 
 // The slice in fake mode on a throwaway workspace: a real store, a Deck card wired to Maya, the brand doc wired to it.
 async function setup() {
@@ -68,6 +69,22 @@ describe('the Deck card', { timeout: 60_000 }, () => {
     await mkdir(join(workspace, 'metrics'), { recursive: true });
     await writeFile(join(workspace, 'metrics', 'metrics-1.json'), JSON.stringify({ block: 'MRR 12,400 (Sep 24)' }));
     expect(await metricsOf(workspace, stage, 'deck-1')).toEqual({ name: 'Metrics card', text: 'MRR 12,400 (Sep 24)' });
+  });
+
+  // Journey 19: a quote slide may give a lead only words they wrote back or said in a meeting.
+  it('reads what leads wrote back from a wired Leads card, and nothing else about them', async () => {
+    const { part, deps, store, workspace } = await setup();
+    closing = part.close;
+    const stage = await store.loadStage();
+    stage.cards!.push({ id: 'leads-1', kind: 'leads' } as never);
+    stage.wires.push({ id: 'l', from: 'leads-1', fromHandle: 'r', to: 'deck-1', toHandle: 'l' });
+    await store.saveStage(stage);
+    const { lead } = await leadsFor(workspace).add('leads-1', { name: 'Tom Becker', company: 'Becker Sanitär', source: 'founder', email: 'tom@becker.example' });
+    await leadsFor(workspace).add('leads-1', { name: 'Jana Wolf', company: 'Wolf Bad', source: 'founder' });
+    await leadsFor(workspace).thread('leads-1', lead.id, { kind: 'replied', text: 'Two of my lads would use it too.' } as never);
+    const gathered = await gatherDeck(deps, 'deck-1');
+    expect(gathered.material.sources.find((one) => one.name.includes('Leads card'))).toEqual({ name: 'Tom Becker at Becker Sanitär (Leads card)', text: 'Two of my lads would use it too.' });
+    expect(gathered.material.sources.filter((one) => one.name.includes('Jana'))).toEqual([]);
   });
 
   // Journey 18: the card's sidecar holds no block, and slide 5 printed its raw json as a bullet.

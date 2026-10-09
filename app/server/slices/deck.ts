@@ -15,6 +15,7 @@ import { projectDir } from '../folder.ts';
 import type { Deps, Slice } from '../install.ts';
 import { docsFor, sourcesFor, wiredTo } from '../media/gather.ts';
 import { readProject } from '../media/sources.ts';
+import { leadsFor } from '../leads/store.ts';
 import { wired } from '../prompt.ts';
 import { complete, promptSize } from '../providers.ts';
 import { route as routeModels } from '../router.ts';
@@ -91,6 +92,14 @@ export async function gatherDeck(deps: Pick<Deps, 'workspace' | 'root' | 'store'
   for (const one of sourcesFor(stage, cardId, roomId)) {
     try {
       if (one.kind === 'note' && one.text.trim()) { sources.push({ name: 'a note', text: one.text.slice(0, 1600) }); using.push('a note'); }
+      // What leads wrote back and the notes from meeting them: the only words a quote slide may give a lead.
+      else if (one.kind === 'leads') {
+        for (const lead of await leadsFor(deps.workspace).list(one.id)) {
+          const said = (lead.thread ?? []).filter((event) => (event.kind === 'replied' || event.kind === 'notes') && event.text).map((event) => event.text!);
+          if (said.length) sources.push({ name: `${lead.person.name}${lead.company.name ? ` at ${lead.company.name}` : ''} (Leads card)`, text: said.join('\n').slice(0, 1600) });
+        }
+        using.push('the Leads card');
+      }
       else if (one.kind === 'project' && one.path) {
         const product = await readProject(projectDir(one.path, [deps.workspace, deps.root]));
         if (product.words) sources.push({ name: `the ${product.name ?? 'project'} README`, text: product.words.slice(0, 3000) });

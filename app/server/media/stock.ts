@@ -65,6 +65,9 @@ export type Stock = {
   noClip?(): Promise<void>;
   // The library as one film uses it: its own allowance, and a library set aside for that film only.
   film?(): Stock;
+  // Counts the photographs and clips a finished film shows, for Health. Journey 19: Health said three photographs
+  // while every picture in the film was drawn, because a picture was counted as it was fetched, before it was looked at.
+  shown?(ones: Found[]): Promise<void>;
 };
 
 // A photographer's name and the page their picture lives on, said the way a credit is said.
@@ -125,6 +128,8 @@ export type FilmStock = {
   // Why the clips asked for since the last call found nothing, in one line, or '' when one was found; the miss is
   // counted for Health.
   noClip(): Promise<string>;
+  // The pictures and clips the finished film shows, counted for Health; what was fetched and passed over is not.
+  shown(ones: Found[]): Promise<void>;
 };
 
 // The one line a film's log says when no footage fitted: what was asked, where, and how many came back against how
@@ -176,6 +181,10 @@ export function filmStock(library: Stock | undefined, pack: string, report: (lin
       const got = await one('video', ask, signal);
       if (got) misses.length = 0;
       return got;
+    },
+    async shown(ones) {
+      const each = [...new Map(ones.map((one) => [one.id, one])).values()];
+      if (each.length) await (stock?.shown ?? library?.shown)?.(each).catch(() => {});
     },
     async noClip() {
       const line = clipMissLine(misses.splice(0), stock?.footageFrom?.() ?? (stock?.moving ? [stock.name] : []));
@@ -298,13 +307,12 @@ export function pexels(env: NodeJS.ProcessEnv = process.env, http: typeof fetch 
       const ext = one.kind === 'video' ? 'mp4' : 'jpg';
       const file = join(dir, `${digestOf(one.id, 24)}.${ext}`);
       const held = await readFile(file).catch(() => null);
-      if (held?.length) { if (!taken.some((other) => other.id === one.id)) taken.push(one); await served(dir, one); return { ext, bytes: held }; }
+      if (held?.length) { if (!taken.some((other) => other.id === one.id)) taken.push(one); return { ext, bytes: held }; }
       const answer = await http(one.url, { signal });
       if (!answer.ok) throw new Error(`that photograph could not be fetched (${answer.status})`);
       const bytes = Buffer.from(await answer.arrayBuffer());
       await writeFile(file, bytes).catch(() => {});
       await remember(dir, one);
-      await served(dir, one);
       taken.push(one);
       return { ext, bytes };
     },

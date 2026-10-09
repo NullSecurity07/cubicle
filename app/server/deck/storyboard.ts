@@ -30,7 +30,7 @@ export function storyboardPrompt(brief: string, purpose: DeckPurpose, material: 
   const plan = PLAN[purpose];
   return [
     `You write the storyboard for ${plan.what}. Make ${slideCount(brief, purpose)} slides. Start from these shapes and add or repeat where the material earns it: ${plan.shapes.join(', ')}.`,
-    `Shapes: ${SLIDE_SHAPES.join(', ')}. The first slide is "title". A "chart" slide's lines are "label: number". A "quote" slide's headline is the quote and its line says who said it.`,
+    `Shapes: ${SLIDE_SHAPES.join(', ')}. The first slide is "title". A "chart" slide's lines are "label: number". A "quote" slide's headline is the quote and its line says who said it: only words a person on record said, word for word (a lead's reply, interview notes, the founder's brief), never a number or a metric row; with no such words, make no quote slide.`,
     'Rules. One idea a slide. A headline under 9 words that says the point, not the topic. At most 4 lines, each under 16 words. '
       + 'A number only when the material below states it; set the one number that matters as "figure" ({"value":"40%","label":"of trials convert"}). '
       + (material.metrics ? `Traction numbers come only from ${material.metrics.name}, and the traction slide states them. ` : `There is no traction source, so the traction slide's lines say "${NO_NUMBERS}". `)

@@ -117,10 +117,28 @@ const unsourcedIn = (text: string, material: Material) => numbersIn(text).filter
 const short = (text: string) => (text.length > 60 ? `${text.slice(0, 59)}…` : text);
 
 // What is wrong with a deck, slide by slide, in words a model can act on. Empty is a deck that passes.
+// Journey 19: a "quote" slide read "Paying plumbers: 14 on 2026-10-11" under "Tom Becker at Becker Sanitär", a metric
+// shown as if Tom had said it. A quote slide stands only on words on record (a lead's reply, interview notes, the
+// founder's brief) and names someone that same record names; with no such quote there is no quote slide.
+const plainWords = (text: string) => text.toLowerCase().replace(/[‘’]/g, "'").replace(/[^\p{L}\p{N}'\s]+/gu, ' ').replace(/\s+/g, ' ').trim();
+const METRIC_ROW = /^[^:]{1,60}:\s*[$€£]?\s?\d/;
+export function quoteOnRecord(slide: Pick<Slide, 'shape' | 'headline' | 'lines'>, material: Material): boolean {
+  if (slide.shape !== 'quote') return true;
+  const quote = slide.headline.trim().replace(/^["“”'‘’]+|["“”'‘’]+$/g, '').trim();
+  const speaker = (slide.lines[0] ?? '').replace(/^[—–-]\s*/, '').trim();
+  if (!speaker || METRIC_ROW.test(quote) || plainWords(quote).split(' ').length < 3) return false;
+  const said = plainWords(quote);
+  const names = speaker.split(/\s+(?:at|from|of)\s+|,/)[0].split(/\s+/).filter((part) => /^\p{Lu}\p{L}+/u.test(part) && part.length > 2);
+  const records = [{ name: 'the founder\'s brief', text: material.brief, founder: true }, ...material.sources.map((one) => ({ ...one, founder: false }))];
+  return records.some((record) => plainWords(record.text).includes(said)
+    && ((record.founder && /\bfounder\b/i.test(speaker)) || names.some((name) => new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'iu').test(`${record.name}\n${record.text}`))));
+}
+
 export function faults(slides: Slide[], material: Material): string[] {
   const found: string[] = [];
   slides.forEach((slide, index) => {
     const at = `slide ${index + 1} (${slide.shape})`;
+    if (!quoteOnRecord(slide, material)) found.push(`${at}: "${short(slide.headline)}" is not a quote on record with who said it; a quote slide quotes a lead's reply, interview notes or the founder's words word for word and names that person, or there is no quote slide`);
     const count = words(slide.headline).length;
     if (!count) found.push(`${at} has no headline`);
     if (count > HEADLINE_WORDS) found.push(`${at}: the headline has ${count} words; keep it under 9`);
@@ -149,8 +167,13 @@ export function faults(slides: Slide[], material: Material): string[] {
 // The rules, applied rather than asked for: what a model left wrong after its own two goes is put right here, and the
 // card is told each thing that was changed. It changes nothing on a slide that already passes, so running it over a
 // kept slide keeps it exactly as it was.
-export function mend(slides: Slide[], material: Material): { slides: Slide[]; said: string[] } {
+export function mend(given: Slide[], material: Material): { slides: Slide[]; said: string[] } {
   const said: string[] = [];
+  const slides = given.filter((slide, index) => {
+    if (quoteOnRecord(slide, material)) return true;
+    said.push(`slide ${index + 1}: dropped a quote slide, since "${short(slide.headline)}" is not a quote anyone on record said`);
+    return false;
+  });
   const out = slides.map((original, index) => {
     const slide: Slide = { ...original, lines: [...original.lines], ...(original.figure ? { figure: { ...original.figure } } : {}) };
     const at = `slide ${index + 1}`;

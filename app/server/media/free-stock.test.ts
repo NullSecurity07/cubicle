@@ -311,3 +311,20 @@ describe('FLUX.1 Krea', () => {
     expect(spacesFor('a flat illustration of a baker')[0].name).toBe('Z-Image Turbo');
   });
 });
+
+// Journey 19: Health said a film used three photographs while its log said every picture was drawn. A photograph is
+// counted when a finished film shows it, not when it is fetched to be looked at.
+describe('the photographs Health counts', () => {
+  it('counts what a film shows, never what it fetched and drew over', async () => {
+    const { servedToday } = await import('./stock.ts');
+    const library = photoLibrary({}, answering(OPENVERSE), dir);
+    const film = filmStock(library, 'documentary', () => {});
+    const taken = await film.take({ query: 'baker at the oven' });
+    expect(taken).not.toBeNull();
+    expect(await servedToday(dir)).toEqual({});
+    await film.shown([]);
+    expect(await servedToday(dir)).toEqual({});
+    await film.shown([taken!.found, taken!.found]);
+    expect(await servedToday(dir)).toEqual({ Openverse: 1 });
+  });
+});
