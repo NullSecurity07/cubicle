@@ -1,3 +1,5 @@
+import { isFraming } from './opener.ts';
+
 // What the product does, as said to a lead or the founder, is a claim the record has to make. Journey 18: Tom asked
 // "Does it work with photos from my old Android phone? And can the quote show VAT separately?" and the partner's
 // ready reply said "Yes, QuoteSnap works seamlessly with photos from any Android phone ... And yes, your quotes can
@@ -170,8 +172,9 @@ export function unbackedProductClaims(sentence: string, sources: string[]): stri
 }
 
 // The same over a whole text, sentence by sentence: for an email body.
+// A header, a greeting or a sign-off frames the email and claims nothing (server/opener.ts).
 export function productClaimsIn(text: string, sources: string[]): string[] {
-  return [...new Set(text.split('\n').flatMap((line) => line.split(/(?<=[.!?])\s+/)).flatMap((sentence) => unbackedProductClaims(sentence, sources)))];
+  return [...new Set(text.split('\n').filter((line) => !isFraming(line)).flatMap((line) => line.split(/(?<=[.!?])\s+/)).flatMap((sentence) => unbackedProductClaims(sentence, sources)))];
 }
 
 // A chat reply held to the record: a product claim inside brackets loses the brackets, any other sentence holding one

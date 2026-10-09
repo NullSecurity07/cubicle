@@ -31,7 +31,17 @@ const words = (text: string) => (text.toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{
   .map((one) => one.replace(/(?:'s|’s)$/, '').replace(/(?:ing|ed|es|s)$/, ''));
 
 const sentencesOf = (text: string) => text.split('\n').flatMap((line) => line.split(/(?<=[.!?])\s+/)).map((one) => one.trim()).filter(Boolean);
-const isPersonal = (sentence: string) => !/\?\s*$/.test(sentence) && PERSONAL.some((pattern) => pattern.test(sentence));
+// Journey 20: "Regarding your questions:" was refused twice as a thing said about Ines. A line that only frames what
+// follows says nothing about anyone: a short header ending in a colon, a greeting, a sign-off, a name under it.
+const HEADER = /^(?:[-*]\s+)?[^.!?:\n]{1,60}:\s*$/;
+const GREETING = /^(?:hi|hello|hey|dear|good\s+(?:morning|afternoon|evening))\b[\p{L}\s'.-]{0,40}[,!]?$/iu;
+const SIGN_OFF = /^(?:best|kind|warm|many|all the best|regards|thanks|thank you|cheers|sincerely|yours)(?:\s+(?:regards|wishes|thanks|truly))?\s*[,.!]?$/i;
+const NAME = /^\p{Lu}[\p{L}'.&-]*(?:(?:\s*[/|,–—]\s*|\s+)\p{Lu}[\p{L}'.&-]*){0,4}$/u;
+export const isFraming = (line: string) => {
+  const said = line.trim();
+  return !!said && (HEADER.test(said) && said.split(/\s+/).length <= 8 || GREETING.test(said) || SIGN_OFF.test(said) || NAME.test(said));
+};
+const isPersonal = (sentence: string) => !/\?\s*$/.test(sentence) && !isFraming(sentence) && PERSONAL.some((pattern) => pattern.test(sentence));
 
 // The source a personal sentence rests on, or null: the place it names is in the source, and two words of substance
 // are (one, when the sentence has only one).

@@ -223,7 +223,7 @@ describe('draft_email: what the email says about the person', () => {
     await store.saveStage(stage);
     const tools = outwardTools(createMail({}, (async () => new Response('{}')) as typeof fetch), store.filesDir, { raise: attention.raise, onRecord: leadAddresses(dir), contacts: leadContacts(dir) }, () => 1000);
     const context = { stage: await store.loadStage(), roomId, store, granted: new Map(), sources: () => [] as string[], query: 'Draft a first message to Tom Becker at Becker Sanitär using the evidence-outreach skill.' };
-    return { attention, run: (body: string) => runTool(tools, 'draft_email', JSON.stringify({ to: 'tom@becker.example', subject: 'Quotes from photos', body }), context) };
+    return { attention, colleague: stage.rooms[0].name, run: (body: string) => runTool(tools, 'draft_email', JSON.stringify({ to: 'tom@becker.example', subject: 'Quotes from photos', body }), context) };
   }
   const REDDIT = 'Hi Tom,\n\nI saw your comment on Reddit about spending your evenings after jobs writing up quotes in the van.\n\nBest,';
 
@@ -241,6 +241,18 @@ describe('draft_email: what the email says about the person', () => {
     expect(out.ok).toBe(true);
     expect(out.text).toContain("(from: Tom Becker's row on the Leads card)");
     expect((await attention.list())[0].detail).toBe("Quotes from photos\n(from: Tom Becker's row on the Leads card)");
+  });
+
+  // Journey 20: "Regarding your questions:" was refused twice, and the third try was signed with the partner's name.
+  it('drafts a header line that frames the answers, and signs with no colleague\'s name', async () => {
+    const { run, attention, colleague } = await tom();
+    const out = await run(`Hi Tom,\n\nThanks for getting back to us.\n\nRegarding your questions:\n- "Does it work on Android?" We will check and come back to you.\n\nBest,\n${colleague}`);
+    expect(out.ok, out.text).toBe(true);
+    const body = new URL((await attention.list())[0].url!).searchParams.get('body')!;
+    expect(body).toContain('Regarding your questions:');
+    expect(body).not.toContain(colleague);
+    expect(body).toMatch(/Best,(?:\n[^\n]+)?$/);
+    expect(out.text).toContain('The sign-off was put right');
   });
 
   it('takes what their row gives, and a plain opener about us needs nothing about them', async () => {

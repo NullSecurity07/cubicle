@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { answerQuestions, filledIn, guardMove, guardUnasked, guardView, leftOutLine, questionsIn, unbackedPromises } from './unasked.ts';
+import { answerQuestions, companyOf, filledIn, guardMove, guardUnasked, guardView, leftOutLine, questionsIn, unbackedPromises } from './unasked.ts';
 import { draftLine } from './watch.ts';
 
 // Journey 16: Anna asked "Can you deliver on Thursday instead of Sunday? And are the meals nut-free?" and the ready
@@ -109,10 +109,24 @@ describe('the name under a draft', () => {
   it('signs with the founder\'s name the brief gives and the company only when the brief names it, never a colleague', () => {
     expect(filledIn('Hi Tom,\n\nThanks.\n\nBest, Sam / QuoteSnap', BRIEF, ['Sam', 'Lea'])).toBe('Hi Tom,\n\nThanks.\n\nBest,\nQuoteSnap');
     expect(filledIn('Hi Tom,\n\nThanks.\n\nBest,\nSam / QuoteSnap', `${BRIEF}\n- Founder: Mara Lind`, ['Sam'])).toBe('Hi Tom,\n\nThanks.\n\nBest,\nMara Lind / QuoteSnap');
-    expect(filledIn('Hi Tom,\n\nThanks.\n\nBest,\nLea\nPlumbFast', BRIEF, ['Lea'])).toBe('Hi Tom,\n\nThanks.\n\nBest,');
+    // A company the brief does not name goes, and the brief's own stands in its place.
+    expect(filledIn('Hi Tom,\n\nThanks.\n\nBest,\nLea\nPlumbFast', BRIEF, ['Lea'])).toBe('Hi Tom,\n\nThanks.\n\nBest,\nQuoteSnap');
+    expect(filledIn('Hi Tom,\n\nThanks.\n\nBest,\nLea', '# Company\n\nNothing named here.', ['Lea'])).toBe('Hi Tom,\n\nThanks.\n\nBest,');
     // A sign-off already right is left as written, and a sentence that starts with thanks is no sign-off.
     expect(filledIn('Hi Tom,\n\nKind regards,\nMara Lind\nQuoteSnap', `${BRIEF}\n- Founder: Mara Lind`)).toBe('Hi Tom,\n\nKind regards,\nMara Lind\nQuoteSnap');
     expect(filledIn('Hi Tom,\n\nThanks for your reply.', BRIEF)).toBe('Hi Tom,\n\nThanks for your reply.');
   });
 });
 
+// Journey 20: Lea signed the answer to Ines "Best,\nSam" (the partner) and the first message "Best,\nFounder".
+describe('the name under a draft, journey 20', () => {
+  const FIXSLOT = '# Company brief\n\nWhat the company does: FixSlot is a pop-up repair café booking tool for neighbourhoods.\n\nHow we work: two founders.\n\n## Numbers\n- Cash: €5,400 (founder, 2026-10-09)';
+  it('signs with the founder\'s name and the company the brief gives, never a colleague or a role', () => {
+    expect(filledIn('Hi Ines,\n\nWe will check.\n\nBest,\nSam', FIXSLOT, ['Sam', 'Lea'])).toBe('Hi Ines,\n\nWe will check.\n\nBest,\nFixSlot');
+    expect(filledIn('Hi Ines,\n\nWe will check.\n\nBest,\nFounder', FIXSLOT, ['Sam', 'Lea'])).toBe('Hi Ines,\n\nWe will check.\n\nBest,\nFixSlot');
+    expect(filledIn('Hi Ines,\n\nWe will check.\n\nBest,\nSam', `${FIXSLOT}\n- Founder: Jana Roth`, ['Sam'])).toBe('Hi Ines,\n\nWe will check.\n\nBest,\nJana Roth / FixSlot');
+    expect(filledIn('Hi Ines,\n\nWe will check.\n\nBest,\nThe Team', FIXSLOT)).toBe('Hi Ines,\n\nWe will check.\n\nBest,\nFixSlot');
+    expect(companyOf(FIXSLOT)).toBe('FixSlot');
+    expect(companyOf('# Company\n\nEveryone on the stage reads this.\n\nCustomers are repair cafés.')).toBeNull();
+  });
+});

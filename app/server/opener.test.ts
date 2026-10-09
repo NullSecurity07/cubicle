@@ -16,6 +16,9 @@ describe('a first message, held to what is on record about the person', () => {
     expect(unbackedPersonal('QuoteSnap turns WhatsApp photos into written quotes. Would a short call help?', row(tom()))).toEqual([]);
     expect(unbackedPersonal('I noticed you run Becker Sanitär.', row(tom()))).toEqual([]);
     expect(unbackedPersonal('Congrats on the new van fleet!', row(tom()))).toHaveLength(1);
+    // Journey 20: a line that frames what follows says nothing about them.
+    expect(unbackedPersonal('Hi Ines,\n\nRegarding your questions:\n- "Is there an iOS app?" We will check and come back to you.\n\nBest,\nSam', row(tom()))).toEqual([]);
+    expect(unbackedPersonal('About your question on Reddit:', row(tom()))).toEqual([]);
   });
 
   it('takes a detail their notes give, and names where it came from', () => {

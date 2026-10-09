@@ -142,7 +142,11 @@ export function outwardTools(mail: Mail, filesDir: string, drafting?: Drafting, 
         // No "[Founder Name]" goes to Gmail: filled from the brief, or the line dropped (server/partner/unasked.ts).
         const company = findCompanyDoc(context.stage.docs);
         const brief = company ? await context.store.readDoc(company.id).catch(() => '') : '';
-        const draft = { to: text(args, 'to', 500), subject: text(args, 'subject', 300), body: filledIn(text(args, 'body', 20_000), brief, context.stage.rooms.map((room) => room.name)) };
+        const written = text(args, 'body', 20_000);
+        const draft = { to: text(args, 'to', 500), subject: text(args, 'subject', 300), body: filledIn(written, brief, context.stage.rooms.map((room) => room.name)) };
+        // Journey 20: the draft went out signed right while the chat still showed "Best, Sam". Say what it ends with.
+        const tail = (body: string) => body.trim().split('\n').slice(-2).join('\n');
+        const signed = tail(written) !== tail(draft.body) ? ` The sign-off was put right: the email ends "${tail(draft.body).replace(/\n/g, ' ')}" (the founder and the company, never a colleague); say so, not the old one.` : '';
         const to = draft.to.split(/[,;\s]+/).filter(Boolean);
         const bad = to.filter((address) => !ADDRESS.test(address));
         if (bad.length) throw new Error(`not an email address: ${bad.join(', ')}`);
@@ -194,7 +198,7 @@ export function outwardTools(mail: Mail, filesDir: string, drafting?: Drafting, 
         const cut = draftBody(draft.body).cut ? ` The body was longer than ${DRAFT_BODY_MOST} characters, so the draft holds only the first ${DRAFT_BODY_MOST}; tell the founder the rest has to be pasted in.` : '';
         const keyed = mail.ready() ? ' send_email can also send it for you, with the founder\'s yes.' : '';
         const from = used.length ? ` What it rests on: ${used.join(' ')}.` : '';
-        return { text: `${where} It is in Needs you as well. Say it is drafted, never that it was sent.${from}${cut}${keyed}`, ...(cardId ? { effect: { kind: 'browser-moved' as const, id: cardId } } : {}) };
+        return { text: `${where} It is in Needs you as well. Say it is drafted, never that it was sent.${from}${signed}${cut}${keyed}`, ...(cardId ? { effect: { kind: 'browser-moved' as const, id: cardId } } : {}) };
       },
     },
     {
