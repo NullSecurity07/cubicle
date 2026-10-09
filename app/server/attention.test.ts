@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Lapsed } from '../shared/lapsed.ts';
 import type { Attention } from '../shared/model.ts';
-import { backupAttention, boardAttention, createAttention, damageAttention, doneAttention, keyAttention } from './attention.ts';
+import { backupAttention, boardAttention, createAttention, damageAttention, doneAttention, draftSweptLine, keyAttention } from './attention.ts';
 import { createDecisions, decisionAttention } from './decisions.ts';
 import { betsBook } from './partner/bets.ts';
 import { createUsage } from './usage.ts';
@@ -16,6 +16,26 @@ const NOON = new Date(2026, 8, 20, 12).getTime();
 const waiting = (id: string): Attention => ({ id: `approval:${id}`, kind: 'approval', title: 'Send this email?', at: 1, roomId: 'marketing', who: 'Maya', event: { id, name: 'send_email', args: { to: 'a@b.co' }, waiting: true } });
 
 describe('attention', () => {
+  // Journey 19: the room's Open in Gmail dismissed a draft id with no row (500), and the row stayed four days.
+  it('takes a dismiss of a drafted email that is already gone as nothing to do, and sweeps one unopened for three days', async () => {
+    let clock = NOON;
+    const attention = createAttention(await mkdtemp(join(tmpdir(), 'attention-')), () => clock);
+    await expect(attention.dismiss('mail-draft:gone')).resolves.toBeUndefined();
+    await expect(attention.dismiss('approval:gone')).rejects.toThrow();
+    const draft: Attention = { id: 'mail-draft:tom', kind: 'mail-draft', title: 'Email to tom@becker.example ready to send', at: NOON, roomId: 'marketing', who: 'Lea' };
+    await attention.raise(draft);
+    const swept: Attention[][] = [];
+    attention.onSwept((entries) => swept.push(entries));
+    clock = NOON + 2.9 * 86_400_000;
+    expect((await attention.list()).map((one) => one.id)).toEqual(['mail-draft:tom']);
+    clock = NOON + 3 * 86_400_000;
+    expect(await attention.list()).toEqual([]);
+    expect(swept).toEqual([[draft]]);
+    expect(await attention.list()).toEqual([]);
+    expect(swept).toHaveLength(1);
+    expect(draftSweptLine(draft)).toBe('*The email to tom@becker.example drafted on 20 Sept was not opened in 3 days, so it is off Needs you. Its Open in Gmail button is still above in this chat.*');
+  });
+
   it('keeps everything raised in the first moment, when several ask before the file has been read', async () => {
     const attention = createAttention(await mkdtemp(join(tmpdir(), 'attention-')));
     await Promise.all([attention.raise(waiting('c1')), attention.list(), attention.raise(waiting('c2')), attention.list()]);

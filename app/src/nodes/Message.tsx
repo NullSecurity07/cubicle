@@ -94,7 +94,7 @@ function DraftOpen({ tool }: { tool: ToolEvent }) {
 function DraftLinks({ draft }: { draft: NonNullable<ReturnType<typeof draftOf>> }) {
   const id = draftId(draft);
   const seen = useDraftOpened(id);
-  const opened = () => { markDraftOpened(id); void dismissAttention(id, { opened: true }).catch(() => { /* already gone from Needs you */ }); void draftOpenedFor(id, draft.to).catch(() => { /* no lead to move */ }); };
+  const opened = () => { markDraftOpened(id); void dismissAttention(id, { opened: true, to: draft.to, subject: draft.subject }).catch(() => { /* already gone from Needs you */ }); void draftOpenedFor(id, draft.to).catch(() => { /* no lead to move */ }); };
   return (
     <div className="draft-open nodrag">
       <span className="draft-open__said">{seen ? 'Opened in Gmail' : 'Email drafted for you'}</span>

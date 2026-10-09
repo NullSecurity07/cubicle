@@ -131,3 +131,20 @@ test('an honest "I will check" drafts at once, and a body the founder allowed is
   await expect(room.locator('.status--idle')).toBeVisible({ timeout: 20_000 });
   await expect(room.locator('.chip--ok summary').last()).toHaveText(`Drafted email to ${to}`);
 });
+
+// Journey 19: the room's Open in Gmail named the draft by the words the person wrote (signed by a colleague), Needs
+// you by the words that went to Gmail (the signature taken off), so the dismiss answered 500 and the row stayed.
+test('opening a draft from the room clears its row even when the sent words were tidied, and a gone draft dismisses quietly', async ({ page }) => {
+  const room = node(page, 'marketing');
+  await send(page, 'marketing', `/tool draft_email ${JSON.stringify({ to: 'stale-row@example.com', subject: 'Quotes from photos', body: 'Hi Tom,\n\nA short note.\n\nBest,\nMaya' })}`);
+  await expect(room.locator('.chip--ok summary').last()).toHaveText('Drafted email to stale-row@example.com');
+  const bell = page.getByRole('button', { name: /^Needs you/ });
+  await expect(bell).toHaveAccessibleName('Needs you: 1 waiting');
+  const answers: number[] = [];
+  page.on('response', (response) => { if (/\/api\/attention\/.+\/dismiss$/.test(response.url())) answers.push(response.status()); });
+  const [tab] = await Promise.all([page.waitForEvent('popup'), room.getByRole('link', { name: 'Open in Gmail' }).last().click()]);
+  await tab.close();
+  await expect(bell).toHaveAccessibleName('Needs you: nothing waiting');
+  expect(answers).toEqual([200]);
+  expect((await page.request.post(`/api/attention/${encodeURIComponent('mail-draft:nothere')}/dismiss`, { data: { opened: true } })).status()).toBe(200);
+});
