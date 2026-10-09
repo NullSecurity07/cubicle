@@ -43,7 +43,7 @@ async function setup(env: NodeJS.ProcessEnv, open?: (stage: Stage, roomId: strin
   const attention = createAttention(dir, () => 1000);
   const tools = outwardTools(createMail(env, (async () => new Response('{}')) as typeof fetch), store.filesDir, { raise: attention.raise, open }, () => 1000);
   const context = { stage: await store.loadStage(), roomId: 'marketing', store, granted: new Map() };
-  return { attention, run: (args: object) => runTool(tools, 'draft_email', JSON.stringify(args), context), tools, dir };
+  return { attention, run: (args: object, allowed = false) => runTool(tools, 'draft_email', JSON.stringify(args), { ...context, allowed }), tools, dir };
 }
 
 describe('draft_email', () => {
@@ -84,6 +84,14 @@ describe('draft_email', () => {
     expect(said.text).toContain('the email says something about Android, VAT that nothing on record states');
     const honest = await run({ ...draft, body: 'Hi Tom,\n\nI will check whether it works with photos from your old Android phone and come back to you by Friday.\n\nBest,' });
     expect(honest.ok).toBe(true);
+  });
+
+  // Journey 19: the founder pressed Allow on a draft and the guard refused the same body again.
+  it('drafts what the founder read and allowed', async () => {
+    const { run } = await setup({});
+    const body = 'Hi Tom,\n\nThe quote shows VAT on its own line.\n\nBest,';
+    expect((await run({ ...draft, body })).ok).toBe(false);
+    expect((await run({ ...draft, body }, true)).ok).toBe(true);
   });
 
   it("opens in the founder's Gmail card when one is wired to the person", async () => {

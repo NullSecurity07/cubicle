@@ -121,7 +121,9 @@ export function outwardTools(mail: Mail, filesDir: string, drafting?: Drafting, 
         // Journey 18: "Yes, it works with any Android phone ... VAT charged separately" with nothing on record. A claim
         // about what the product does, runs on or charges stands only when the brief, a read or the founder states it.
         const evidence = context.evidence?.();
-        const claimed = productClaimsIn(draft.body, [brief, ...(evidence?.read ?? []), ...(context.query ? [context.query] : [])]);
+        // Journey 19: the founder pressed Allow on a draft and the same body was refused again. Words the founder read and
+        // allowed are theirs to send.
+        const claimed = context.allowed ? [] : productClaimsIn(draft.body, [brief, ...(evidence?.read ?? []).filter((one) => !/^\/tool\s/.test(one)), ...(context.query && !/^\/tool\s/.test(context.query) ? [context.query] : [])]);
         if (claimed.length) {
           throw new Error(`the email says something about ${claimed.join(', ')} that nothing on record states (not the Company brief, `
             + 'nothing read this turn, no founder message). Write "I will check ... and come back to you by <day>" in its place, or ask the founder, then draft again.');

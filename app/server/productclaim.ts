@@ -51,8 +51,13 @@ const KINDS: Kind[] = [
 // A clause that says no, doubts or is still to find out: "we have not tested old Android phones", "I will check
 // whether it works on Android", "Tom asked about VAT".
 const DENIED = /\b(?:no|not|never|cannot|can't|can’t|won't|won’t|don't|don’t|doesn't|doesn’t|isn't|isn’t|aren't|aren’t|unable|untested|yet to|without)\b/i;
-const LEARNING = /\b(?:check|find out|ask|asks|asked|asking|confirm|look into|see (?:if|whether)|whether|if|let you know|come back to you|get back to you|wonder\w*|question)\b/i;
+const LEARNING = /\b(?:check|find out|ask|asks|asked|asking|confirm|look into|see (?:if|whether)|whether|if|let you know|come back to you|get back to you|wonder\w*|questions?)\b/i;
 const QUESTION = /\?\s*["”')]*\s*$/;
+// Journey 19: "Regarding your old Android phone and VAT separately: I will check on those details and come back to
+// you." was refused as a claim about VAT. A sentence that says the answer is still to come ("I will check", "let me
+// confirm", "I don't know yet") asserts nothing about what it names, unless a clause of its own says the product does it.
+const HONEST = /\b(?:(?:I|we)(?:'ll|’ll|\s+will|\s+shall|\s+need\s+to|\s+have\s+to|\s+want\s+to)\s+(?:double[- ])?(?:check|confirm|find\s+out|look\s+into|ask|verify|come\s+back|get\s+back)|let\s+me\s+(?:check|confirm|find\s+out|look\s+into|verify|ask)|(?:I|we)\s+(?:don't|don’t|do\s+not)\s+know(?:\s+yet)?|not\s+sure\s+yet|to\s+be\s+confirmed)\b/i;
+const ASSERTS = /\b(?:works?|runs?|is|are|was|were|supports?|supported|available|compatible|integrates?|syncs?|connects?|exports?|imports?|handles?|shows?|offers?|includes?|does|do|can|could|will|lets?|allows?|has|have|comes?|charges?|adds?)\b/i;
 // The clause around a hit: a "no" in another clause of the sentence ("..., no app to install") says nothing about it.
 function clauseAt(sentence: string, at: number, length: number): string {
   const cut = /[,;:—–]|\s-\s|\bbut\b|\band\s+(?=(?:it|we|you|they|the|our)\b)/gi;
@@ -79,6 +84,7 @@ function claimsIn(sentence: string): Claim[] {
       if (!key) continue;
       const clause = clauseAt(sentence, hit.index!, hit[0].length);
       if (said_no(clause) || LEARNING.test(sentence.slice(0, hit.index!)) || LEARNING.test(clause)) continue;
+      if (HONEST.test(sentence) && !ASSERTS.test(clause)) continue;
       // A platform named only in passing ("Tom has an old Android phone") claims nothing about the product.
       if (kind === KINDS[0]) {
         const before = sentence.slice(Math.max(0, hit.index! - 60), hit.index!);

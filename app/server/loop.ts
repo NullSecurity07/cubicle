@@ -262,6 +262,7 @@ export async function runTurn(input: {
       if (standIn && changes && !refusal) standInCalls += 1;
       // The founder may have said yes in advance to calls that reach exactly this far. It only skips the asking.
       let approved = false;
+      let allowed = false;
       let ask = '';
       if (seams) {
         const checked = await seams.run('tool:before', { roomId, call: { id: call.id, name: call.name, args }, ...(refusal ? { refusal } : {}) });
@@ -279,6 +280,7 @@ export async function runTurn(input: {
         events.tool(asking);
         // An approval that fails is a no, not the end of the turn: the founder still gets their reply.
         const answer: Answer = input.approve ? await input.approve(asking, signal).catch(() => ({ ok: false })) : { ok: false };
+        allowed = answer.ok;
         if (!answer.ok) refusal = signal?.aborted ? 'Stopped by the founder.' : 'The founder said no to this. Do not try it again; ask what they want changed.';
         // The founder may have edited what goes out. Only fields the person proposed can change; nothing new is added.
         else if (answer.args) { args = { ...args, ...Object.fromEntries(Object.entries(answer.args).filter(([key, value]) => key in args && typeof value === typeof args[key])) }; rawArgs = JSON.stringify(args); }
@@ -286,6 +288,8 @@ export async function runTurn(input: {
       events.tool({ id: call.id, name: call.name, args });
       context.signal = signal;
       context.query = query;
+      // The founder read this call's words and pressed Allow: a guard on what it says does not refuse it again.
+      context.allowed = allowed;
       // What the turn has read up to this call, so a doc write can mark a figure nothing backs as the reply would.
       context.sources = () => [...turnSources(inputs), ...results, query];
       context.evidence = () => {

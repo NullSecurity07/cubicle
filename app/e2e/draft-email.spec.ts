@@ -101,3 +101,33 @@ test('opening a draft in Gmail is not a no, and Dismiss on Needs you is', async 
   await room.getByRole('button', { name: "Don't" }).last().click();
   await expect(node(page, 'marketing').locator('.status--idle')).toBeVisible({ timeout: 20_000 });
 });
+
+// Journey 19: "I will check on those details and come back to you" was refused as a claim about VAT, and after the
+// founder pressed Allow on the gate the same body was refused again.
+test('an honest "I will check" drafts at once, and a body the founder allowed is not refused again', async ({ page }) => {
+  const room = node(page, 'marketing');
+  const to = 'honest-check@example.com';
+  const subject = 'Re: your questions';
+  const honest = 'Hi Tom,\n\nRegarding your old Android phone and VAT separately: I will check on those details and come back to you.\n\nBest,\nAlex Hart';
+  await send(page, 'marketing', `/tool draft_email ${JSON.stringify({ to, subject, body: honest })}`);
+  await expect(room.locator('.chip--ok summary').last()).toHaveText(`Drafted email to ${to}`);
+
+  // A body that says the product shows VAT, with nothing on record, is refused.
+  const claim = 'Hi Tom,\n\nThe quote shows VAT on its own line.\n\nBest,\nAlex Hart';
+  await send(page, 'marketing', `/tool draft_email ${JSON.stringify({ to, subject: 'Re: VAT', body: claim })}`);
+  await expect(room.locator('.msg--assistant').last()).toContainText('says something about VAT');
+
+  // Dismiss on Needs you is a no; the same email asked again comes with the gate, and the founder's Allow drafts it.
+  const bell = page.getByRole('button', { name: /^Needs you/ });
+  await bell.click();
+  const needs = page.getByRole('dialog', { name: 'Needs you' });
+  await needs.locator('.needs__item--mail-draft').getByRole('button', { name: 'Dismiss' }).click();
+  await page.keyboard.press('Escape');
+  await expect(room.locator('.status--idle')).toBeVisible();
+  await room.locator('.ask textarea').fill(`/tool draft_email ${JSON.stringify({ to, subject, body: claim })}`);
+  await room.locator('.ask textarea').press('Enter');
+  await expect(room.locator('.approval__title').last()).toHaveText(/^You said no to this on/);
+  await room.getByRole('button', { name: 'Allow' }).last().click();
+  await expect(room.locator('.status--idle')).toBeVisible({ timeout: 20_000 });
+  await expect(room.locator('.chip--ok summary').last()).toHaveText(`Drafted email to ${to}`);
+});
