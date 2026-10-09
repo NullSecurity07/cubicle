@@ -189,27 +189,46 @@ describe('a kill signal that can fail', () => {
     expect(thresholdOf('more traction')).toBeNull();
   });
 
-  it('turns down a threshold on the winning side of today, or out of reach, and keeps one the company could miss', () => {
+  it('turns down a threshold crossed already, or too far off to fire, and keeps one the company has not crossed', () => {
     const by = '2026-11-03';
-    expect(deadSignal({ what: 'paying practices < 2', by }, CALLBACK)).toContain('Paying practices is 2 now (Company brief), so "paying practices < 2" can only fire if it falls back');
-    expect(deadSignal({ what: 'paying practices < 1', by }, CALLBACK)).toContain('can only fire');
-    expect(deadSignal({ what: 'Paying practices < 10', by }, CALLBACK)).toBeNull();
-    expect(deadSignal({ what: 'paying practices < 500', by }, CALLBACK)).toContain('out of reach');
-    expect(deadSignal({ what: 'monthly burn above €1,200', by }, CALLBACK)).toContain('can only fire if it rises back');
-    expect(deadSignal({ what: 'monthly burn above €800', by }, CALLBACK)).toBeNull();
+    expect(deadSignal({ what: 'Paying practices < 10', by }, CALLBACK)).toContain('Paying practices is 2 now (Company brief), so "Paying practices < 10" is crossed already: it would fire today. Name a threshold below 2');
+    expect(deadSignal({ what: 'paying practices < 2', by }, CALLBACK)).toBeNull();
+    expect(deadSignal({ what: 'paying practices < 1', by }, CALLBACK)).toBeNull();
+    expect(deadSignal({ what: 'monthly burn above €800', by }, CALLBACK)).toContain('is crossed already');
+    expect(deadSignal({ what: 'monthly burn above €1,200', by }, CALLBACK)).toBeNull();
     // A number the brief does not hold is not judged.
     expect(deadSignal({ what: 'reply rate < 20%', by }, CALLBACK)).toBeNull();
   });
 
+  it('refuses journey 17\'s day-1 kill line: fewer than 15 paying with 11 paying', () => {
+    const shiftmeals = '- Subscribers: 14\n- Paying subscribers: 11\n- Price: €59 per week\n- Cash: €6,000\n- Burn: €1,900 a month';
+    const by = '2026-10-17';
+    expect(deadSignal({ what: 'fewer than 15 paying subscribers', by }, shiftmeals)).toContain('Paying subscribers is 11 now (Company brief), so "fewer than 15 paying subscribers" is crossed already: it would fire today. Name a threshold below 11');
+    expect(deadSignal({ what: 'fewer than 9 paying subscribers', by }, shiftmeals)).toBeNull();
+    expect(deadSignal({ what: 'fewer than 11 paying subscribers', by }, shiftmeals)).toBeNull();
+  });
+
   it('asks once for a real one, and says none is named when the second is no better', async () => {
-    const first = turn('My call: keep going.\nWhy: 2 paying practices out of 40 contacted.\nKill signal: paying practices < 2 by 2026-11-03.\nThis week: convert the 3 pilots.');
+    const first = turn('My call: keep going.\nWhy: 2 paying practices out of 40 contacted.\nKill signal: paying practices < 10 by 2026-11-03.\nThis week: convert the 3 pilots.');
     const nudges: string[] = [];
-    const fixed = await holdCall('your verdict?', first, async (_, nudge) => { nudges.push(nudge); return turn('Kill signal: paying practices < 10 by 2026-11-03'); }, today, CALLBACK, [CALLBACK], null, CALLBACK);
-    expect(nudges[0]).toContain('can only fire if it falls back');
-    expect(fixed.call?.signal).toEqual({ what: 'paying practices < 10', by: '2026-11-03' });
-    const still = await holdCall('your verdict?', first, async () => turn('Kill signal: paying practices < 2 by 2026-11-03'), today, CALLBACK, [CALLBACK], null, CALLBACK);
+    const fixed = await holdCall('your verdict?', first, async (_, nudge) => { nudges.push(nudge); return turn('Kill signal: paying practices < 2 by 2026-11-03'); }, today, CALLBACK, [CALLBACK], null, CALLBACK);
+    expect(nudges[0]).toContain('is crossed already: it would fire today. Name a threshold below 2');
+    expect(fixed.call?.signal).toEqual({ what: 'paying practices < 2', by: '2026-11-03' });
+    const still = await holdCall('your verdict?', first, async () => turn('Kill signal: paying practices < 10 by 2026-11-03'), today, CALLBACK, [CALLBACK], null, CALLBACK);
     expect(still.call?.signal).toBeUndefined();
     expect(still.reply.text).toContain(`Kill signal: ${NO_SIGNAL}.`);
+  });
+});
+
+describe('journey 17\'s day-1 kill line', () => {
+  it('refuses "fewer than 15 paying subscribers" with 11 paying, and asks once for a line below 11', async () => {
+    const numbers = '- Subscribers: 14\n- Paying subscribers: 11\n- Price: €59 per week\n- Cash: €6,000\n- Burn: €1,900 a month';
+    const first = turn('My call: keep going.\nWhy: 11 paying subscribers cover the €1,900 burn.\nKill signal: fewer than 15 paying subscribers by 2026-10-17.\nThis week: call the 3 unpaid subscribers.');
+    const nudges: string[] = [];
+    const fixed = await holdCall('your verdict?', first, async (_, nudge) => { nudges.push(nudge); return turn('Kill signal: fewer than 9 paying subscribers by 2026-10-17'); }, '2026-10-06', numbers, [numbers], null, numbers);
+    expect(nudges).toHaveLength(1);
+    expect(nudges[0]).toContain('Paying subscribers is 11 now (Company brief), so "fewer than 15 paying subscribers" is crossed already: it would fire today. Name a threshold below 11');
+    expect(fixed.call?.signal).toEqual({ what: 'fewer than 9 paying subscribers', by: '2026-10-17' });
   });
 });
 

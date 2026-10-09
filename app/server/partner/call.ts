@@ -55,7 +55,7 @@ const window = (today: string, goals: GoalDay[]) => {
 export const callShape = (today: string, worked = false, goals: GoalDay[] = []) => `The founder asks for your verdict on the company. Start your answer with these four lines, each on its own line with its label, then at most a few short lines more:\n`
   + 'My call: keep going, change course or stop (one of the three).\n'
   + `Why: the strongest reason, using only numbers from the Company document, the chat or what you read this turn${worked ? ', and the break-even and runway working given you below' : ''}. Never a number you worked out or guessed.\n`
-  + `Kill signal: one number the founder can measure and the threshold that would change your call, then "by YYYY-MM-DD", ${window(today, goals)}.${goalRule(goals)}\n`
+  + `Kill signal: one number the founder can measure and the threshold that would change your call, one the company has not crossed today (for a number it wants up, a floor below today's value), then "by YYYY-MM-DD", ${window(today, goals)}.${goalRule(goals)}\n`
   + 'This week: the first move, one thing the founder does this week.';
 
 const LABELS: { field: 'call' | 'why' | 'kill' | 'week' | 'gap'; label: RegExp }[] = [
@@ -149,10 +149,13 @@ export function thresholdOf(what: string): { metric: string; below: boolean; val
   return null;
 }
 
-// Journey 14: "Kill signal: paying practices < 2" with 2 paying already could only fire if a customer left. A kill
-// signal holds the call to a test it could fail: today's value is on the losing side of the threshold (under it for a
-// number the company wants up, over it for one it wants down), and the threshold is in reach by the day (within ten
-// times today's value). Read against the Company brief's Numbers; a number the brief does not hold is not judged.
+// A kill signal holds the call to a test it could fail, and one it has not failed yet: today's value is on the safe
+// side of the threshold, and the threshold is near enough that a real slide crosses it (within ten times today's
+// value). Journey 17: "fewer than 15 paying subscribers by 2026-10-17" with 11 paying was crossed the moment it was
+// set, and the check sat in Needs you from day 1: a kill line that fires on the day it is set is no kill line. The
+// founder's own lines (journeys 16 and 17: "below 9" with 11 paying) and the watch read a kill line as a floor, so a
+// line for a number the company wants up sits below today's value, one for a number it wants down above it. Read
+// against the Company brief's Numbers; a number the brief does not hold is not judged.
 export function deadSignal(signal: KillSignal, numbers: string): string | null {
   const said = thresholdOf(signal.what);
   if (!said || !numbers.trim()) return null;
@@ -160,11 +163,11 @@ export function deadSignal(signal: KillSignal, numbers: string): string | null {
   if (!row) return null;
   const now = row.value;
   const name = row.label.toLowerCase();
-  if (said.below ? now >= said.value : now <= said.value) {
-    return `${row.label} is ${now} now (Company brief), so "${signal.what}" can only fire if it ${said.below ? 'falls' : 'rises'} back: it cannot fail on progress. Name a threshold ${said.below ? 'above' : 'below'} ${now} that ${name} must ${said.below ? 'reach' : 'come down to'} by the day, one the company could miss.`;
+  if (said.below ? now < said.value : now > said.value) {
+    return `${row.label} is ${now} now (Company brief), so "${signal.what}" is crossed already: it would fire today. Name a threshold ${said.below ? 'below' : 'above'} ${now} that ${name} would cross if it ${said.below ? 'fell' : 'rose'} far enough to change your call by the day.`;
   }
-  const far = said.below ? now > 0 && said.value > now * 10 : said.value < now / 10;
-  if (far) return `${row.label} is ${now} now (Company brief), so ${said.value} by ${signal.by} is out of reach: name a threshold the company could ${said.below ? 'reach' : 'come down to'} by then.`;
+  const far = said.below ? said.value < now / 10 : now > 0 && said.value > now * 10;
+  if (far) return `${row.label} is ${now} now (Company brief), so ${said.value} by ${signal.by} is too far off to fire: name a threshold ${name} could ${said.below ? 'fall' : 'rise'} to by then.`;
   return null;
 }
 
@@ -219,7 +222,7 @@ export function callNudge(read: Pick<ReadCall, 'missing' | 'unsourced' | 'dead'>
   if (read.missing.includes('how the gap closes') && economics) lines.push(`Gap: your call is keep going, but break-even is ${economics.breakEven} ${economics.unit} and the company has ${economics.current}. In one line, say how that gap closes (price, cost, or reaching ${economics.breakEven} by when), or change the call.`);
   if (read.missing.includes('call')) lines.push('My call: keep going, change course or stop (one of the three).');
   if (read.missing.includes('why')) lines.push(`Why: the strongest reason, with only numbers the Company document, the chat or what you read gives${read.unsourced.length ? ` (nothing on record gives ${read.unsourced.join(', ')})` : ''}.`);
-  if (read.missing.includes('kill signal') || read.missing.includes('date')) lines.push(`Kill signal: one number the founder can measure and the threshold that would change your call, then "by YYYY-MM-DD", ${window(today, goals)}.${goalRule(goals)}${read.dead ? ` ${read.dead}` : ''}`);
+  if (read.missing.includes('kill signal') || read.missing.includes('date')) lines.push(`Kill signal: one number the founder can measure and the threshold that would change your call, one the company has not crossed today (for a number it wants up, a floor below today's value), then "by YYYY-MM-DD", ${window(today, goals)}.${goalRule(goals)}${read.dead ? ` ${read.dead}` : ''}`);
   if (read.missing.includes('this week')) lines.push('This week: the first move, one thing the founder does this week.');
   const names = read.missing.filter((one, index, all) => all.indexOf(one) === index && !(one === 'date' && all.includes('kill signal')));
   // A gap asked about may change the call itself, so the call line is answered again with it.

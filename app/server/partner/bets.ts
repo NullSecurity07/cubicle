@@ -134,16 +134,22 @@ const stems = (text: string) => text.toLowerCase().split(/[^a-z0-9]+/).filter(Bo
 export function briefRow(numbers: string, metric: string): BriefRow | null {
   const asked = stems(metric);
   if (!asked.length) return null;
-  const rows = numbers.split('\n').flatMap((line): BriefRow[] => {
+  const rows = numbers.split('\n').flatMap((line): (BriefRow & { exact: boolean })[] => {
     const found = /^\s*[-*]\s+([^:]{1,40}):\s*([$€£])?\s?(\d[\d,]*(?:\.\d+)?)(\s?%)?/.exec(line);
     if (!found) return [];
     const label = found[1].trim();
     const words = stems(label);
     if (!asked.every((word) => words.includes(word)) && !words.every((word) => asked.includes(word))) return [];
     const unit = (found[2] ?? (found[4] ? '%' : '')) as Unit;
-    return [{ label, value: Number(found[3].replace(/,/g, '')), ...(unit && UNITS.includes(unit) ? { unit } : {}) }];
+    return [{ label, value: Number(found[3].replace(/,/g, '')), ...(unit && UNITS.includes(unit) ? { unit } : {}), exact: words.length === asked.length && asked.every((word) => words.includes(word)) }];
   });
-  return rows.length === 1 ? rows[0] : null;
+  // Journey 17: "paying subscribers" matched both "Subscribers" and "Paying subscribers", so the kill line was never
+  // judged; the row naming exactly the asked words is the one.
+  const exact = rows.filter((row) => row.exact);
+  const one = rows.length === 1 ? rows[0] : exact.length === 1 ? exact[0] : null;
+  if (!one) return null;
+  const { exact: _exact, ...row } = one;
+  return row;
 }
 export const briefReading = (row: BriefRow): Reading => ({ value: row.value, said: `${row.label} is ${formatValue(row.value, row.unit)}, read from the Company brief`, better: guessBetter(row.label) });
 // The Metrics card a taken bet adds: one row, today's reading from the brief, and the bet's own number and day as
