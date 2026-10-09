@@ -38,7 +38,7 @@ describe('the kill-signal trend', () => {
   it('fixture: kill line 5, 6 at the verdict, 5.5 now: raised once; 5.8: not', () => {
     const raised = metricSparks([{ cardId: 'm1', metrics: [signups(['2026-09-30', 6], ['2026-10-05', 5.5])] }], killCheck(), [], NOON);
     expect(raised).toHaveLength(1);
-    expect(raised[0]).toMatchObject({ kind: 'metric', why: 'Signups is trending to the kill line', key: 'kill:promise-kill:signups' });
+    expect(raised[0]).toMatchObject({ kind: 'metric', why: 'Signups is trending to the kill line', key: 'kill:promise-kill:signups:trending' });
     expect(raised[0].number).toBe('Signups: 5.5 on 2026-10-05, from 6 on 2026-09-30; the kill line is 5 (weekly signups below 5, checked on 2026-10-30).');
     expect(metricSparks([{ cardId: 'm1', metrics: [signups(['2026-09-30', 6], ['2026-10-05', 5.8])] }], killCheck(), [], NOON)).toHaveLength(0);
     // No reading since the verdict: nothing has moved.
@@ -197,6 +197,57 @@ describe('the partner watch', () => {
     const rows = await watch.rows();
     expect(rows).toHaveLength(1);
     expect(rows[0].detail).toContain('Paying plumbers: 12 on 2026-10-12, from 14 on 2026-10-11; the kill line is 11');
+  });
+
+  // Journey 19: line below 7 replaced by below 11 on 12 Oct; 12 logged for 12 Oct (from 14) raised the trend row; 12
+  // replaced by 10 the same day; two looks: nothing, the row still said 12. The crossing is its own event.
+  it('(a3) a same-day reading past a replaced line raises the crossing, and the trend row goes', async () => {
+    const { watch, world, writeMetrics, at, asked } = await rig();
+    const paying = (...values: [string, number][]): Metric => ({ key: 'paying-plumbers', label: 'Paying plumbers', better: 'up', points: values.map(([day, value]) => ({ at: day, value, from: 'founder' })) });
+    const line = (id: string, what: string, set: string, time = '09:00'): FounderPromise => ({ id, what, due: '2026-10-29', said: set, at: new Date(`${set}T${time}`).getTime(), status: 'open', check: true });
+    world.promises = [line('promise-7', 'Paying plumbers below 7', '2026-10-09')];
+    world.metrics = [paying(['2026-10-09', 9], ['2026-10-11', 14])];
+    await writeMetrics();
+    at(new Date('2026-10-12T08:00').getTime());
+    await watch.look();
+    expect(await watch.rows()).toEqual([]);
+    world.promises = [line('promise-11', 'Paying plumbers below 11', '2026-10-12', '08:30')];
+    world.metrics = [paying(['2026-10-09', 9], ['2026-10-11', 14], ['2026-10-12', 12])];
+    await writeMetrics();
+    at(new Date('2026-10-12T09:00').getTime());
+    await watch.look();
+    expect((await watch.rows()).map((one) => one.detail)).toEqual([expect.stringContaining('Paying plumbers: 12 on 2026-10-12, from 14 on 2026-10-11; the kill line is 11')]);
+    world.metrics = [paying(['2026-10-09', 9], ['2026-10-11', 14], ['2026-10-12', 10])];
+    await writeMetrics();
+    at(new Date('2026-10-12T09:10').getTime());
+    await watch.look();
+    const rows = await watch.rows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].detail).toContain('Paying plumbers crossed the kill line');
+    expect(rows[0].detail).toContain('Paying plumbers: 10 on 2026-10-12, from 14 on 2026-10-11; the kill line is 11');
+    expect(rows[0].detail).not.toContain(' 12 on ');
+    // The next look: the crossing stands, no second turn.
+    const turns = asked.length;
+    await watch.look();
+    expect(await watch.rows()).toHaveLength(1);
+    expect(asked).toHaveLength(turns);
+  });
+
+  it('(a4) a trend row whose reading moves but still trends is told the reading of now, with no new turn', async () => {
+    const { watch, world, writeMetrics, at, asked } = await rig();
+    const paying = (...values: [string, number][]): Metric => ({ key: 'paying-plumbers', label: 'Paying plumbers', better: 'up', points: values.map(([day, value]) => ({ at: day, value, from: 'founder' })) });
+    world.promises = [{ id: 'promise-11', what: 'Paying plumbers below 11', due: '2026-10-29', said: '2026-10-12', at: new Date('2026-10-12T08:30').getTime(), status: 'open', check: true }];
+    world.metrics = [paying(['2026-10-11', 14], ['2026-10-12', 12])];
+    await writeMetrics();
+    at(new Date('2026-10-12T09:00').getTime());
+    await watch.look();
+    world.metrics = [paying(['2026-10-11', 14], ['2026-10-12', 11.5])];
+    await writeMetrics();
+    await watch.look();
+    const rows = await watch.rows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].detail).toContain('Paying plumbers: 11.5 on 2026-10-12');
+    expect(asked).toHaveLength(1);
   });
 
   it('(b) a lead moved to Replied: a reply draft to the address on record; with no address, a task', async () => {
