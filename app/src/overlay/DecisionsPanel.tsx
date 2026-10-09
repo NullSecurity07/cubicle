@@ -9,7 +9,8 @@ const date = (at: number) => new Date(at).toLocaleDateString(undefined, { day: '
 type Verdict = { title: string; context: string; chosen: string; why: string; effect: string; review: string };
 
 // The form the founder decides in: pick one of the options or write another, say why, and when to look again.
-function DecideForm({ decision, onDone }: { decision: Decision | null; onDone: (saved: Decision) => void }) {
+// `onWhy` hears the Why as it is typed: a proposal declined keeps it as the reason for the no (journey 17).
+function DecideForm({ decision, onDone, onWhy }: { decision: Decision | null; onDone: (saved: Decision) => void; onWhy?: (why: string) => void }) {
   const [draft, setDraft] = useState<Verdict>({ title: '', context: '', chosen: decision?.chosen ?? '', why: decision?.why ?? '', effect: decision?.effect ?? '', review: decision?.review ?? '' });
   const [state, setState] = useState<'idle' | 'saving'>('idle');
   const [problem, setProblem] = useState('');
@@ -41,7 +42,7 @@ function DecideForm({ decision, onDone }: { decision: Decision | null; onDone: (
         </fieldset>
       )}
       <label>{decision?.options.length ? 'Chosen (pick above, or write your own)' : 'Chosen'}<input aria-label="Chosen" value={draft.chosen} placeholder="What you decided" onChange={(event) => set({ chosen: event.target.value })} /></label>
-      <label>Why<textarea aria-label="Why" rows={3} value={draft.why} placeholder="The reason, for you in three months" onChange={(event) => set({ why: event.target.value })} /></label>
+      <label>Why<textarea aria-label="Why" rows={3} value={draft.why} placeholder="The reason, for you in three months" onChange={(event) => { set({ why: event.target.value }); onWhy?.(event.target.value); }} /></label>
       <label>Expected effect<textarea aria-label="Expected effect" rows={2} value={draft.effect} placeholder="What should be different if this was right" onChange={(event) => set({ effect: event.target.value })} /></label>
       <label className="decide__date">Look at it again on<input type="date" aria-label="Review date" value={draft.review} onChange={(event) => set({ review: event.target.value })} /></label>
       {problem && <p className="msg--problem">{problem}</p>}
@@ -55,13 +56,15 @@ export function DecisionsPanel() {
   const [list, setList] = useState<Decision[] | null>(null);
   const [editing, setEditing] = useState(false);
   const [problem, setProblem] = useState('');
+  // The Why typed on a proposal, sent with Decline so the no keeps its reason.
+  const [why, setWhy] = useState('');
   const open = useDecision();
   const waiting = useAttention();
 
   const load = () => getDecisions().then(setList).catch((error: Error) => setProblem(error.message));
   // A proposal arriving, or one answered elsewhere, changes the founder's list: read again when it does.
   useEffect(() => { void load(); }, [waiting]);
-  useEffect(() => { setEditing(false); }, [open]);
+  useEffect(() => { setEditing(false); setWhy(''); }, [open]);
   useEffect(() => { if (list?.length && open !== 'new' && !list.some((one) => one.id === open)) showDecision(list[0].id); }, [list, open]);
 
   const current = list?.find((one) => one.id === open) ?? null;
@@ -96,14 +99,14 @@ export function DecisionsPanel() {
               <p className="decision__meta">{current.status === 'proposed' ? `${current.proposedBy ?? 'Someone'} laid this out on ${date(current.at)}. It is yours to decide.` : `Decided on ${date(current.decidedAt ?? current.at)}${current.proposedBy ? `, laid out by ${current.proposedBy}` : ''}${current.review ? ` · look again on ${current.review}` : ''}`}</p>
               {current.context && <section><h4>Context</h4><p>{current.context}</p></section>}
               {current.recommendation && <section><h4>{current.proposedBy ?? 'They'} would pick</h4><p>{current.recommendation}</p></section>}
-              {current.status === 'proposed' || editing ? <DecideForm key={current.id} decision={current} onDone={done} /> : <>
+              {current.status === 'proposed' || editing ? <DecideForm key={current.id} decision={current} onDone={done} onWhy={setWhy} /> : <>
                 {current.options.length > 0 && <section><h4>Options that were on the table</h4><ol>{current.options.map((option) => <li key={option} className={option === current.chosen ? 'is-chosen' : undefined}>{option}</li>)}</ol></section>}
                 <section><h4>Chosen</h4><p className="decision__chosen">{current.chosen}</p></section>
                 {current.why && <section><h4>Why</h4><p>{current.why}</p></section>}
                 {current.effect && <section><h4>Expected effect</h4><p>{current.effect}</p></section>}
               </>}
               <div className="decision__end">
-                <button type="button" onClick={() => { removeDecision(current.id).then(() => { showDecision(null); void load(); }).catch((error: Error) => setProblem(error.message)); }}>{current.status === 'proposed' ? 'Decline' : 'Remove'}</button>
+                <button type="button" onClick={() => { removeDecision(current.id, current.status === 'proposed' ? why : undefined).then(() => { showDecision(null); void load(); }).catch((error: Error) => setProblem(error.message)); }}>{current.status === 'proposed' ? 'Decline' : 'Remove'}</button>
                 {current.status === 'decided' && !editing && <button type="button" onClick={() => setEditing(true)}>Change</button>}
               </div>
             </article>

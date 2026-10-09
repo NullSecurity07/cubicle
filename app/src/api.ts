@@ -155,7 +155,8 @@ export const getThreads = (query = '') => request<Thread[]>(`/api/threads${query
 export const getDecisions = () => request<Decision[]>('/api/decisions');
 export const recordDecision = (decision: Partial<Decision>) => request<Decision>('/api/decisions', send('POST', decision));
 export const decide = (id: string, verdict: Pick<Decision, 'chosen' | 'why' | 'effect' | 'review'>) => request<Decision>(`/api/decisions/${id}/decide`, send('POST', verdict));
-export const removeDecision = (id: string) => request(`/api/decisions/${id}`, send('DELETE'));
+// A proposal declined with a Why keeps it as the reason for the no.
+export const removeDecision = (id: string, why?: string) => request(`/api/decisions/${id}`, send('DELETE', why?.trim() ? { why: why.trim() } : undefined));
 export const search = (query: string, signal?: AbortSignal) => request<{ hits: Hit[]; mode: 'meaning' | 'words' }>(`/api/search?q=${encodeURIComponent(query)}`, { signal });
 // The founder's library: the notes they learn from. The index is small — a title, its tags and its size — so cards
 // and pickers read the whole of it; the words themselves are fetched only when a note is opened.

@@ -121,6 +121,31 @@ test('a no said as "No X, because Y" is kept, and a reply says recorded only whe
   } finally { await clearFrom(page, 'marketing', 'No cold outreach to nurses we have not met'); }
 });
 
+// Journey 17: Decline with a Why kept the no with no reason, and the re-ask had nothing to quote.
+test('a decision declined with a Why is said no to with that reason, and the re-ask quotes it', async ({ page }) => {
+  await page.goto('/');
+  const room = node(page, 'marketing');
+  await expect(room).toBeVisible();
+  const propose = '/tool propose_decision {"title":"Win lapsed nurses back with 20% off","context":"Two cancelled.","options":["Discount","Keep the price"],"recommendation":"Discount"}';
+  try {
+    await send(page, 'marketing', propose);
+    await expect(room.locator('.msg--assistant').last()).toContainText('It waits for the founder');
+    await page.getByRole('button', { name: /^Needs you/ }).click();
+    await page.getByRole('dialog', { name: 'Needs you' }).locator('li').filter({ hasText: 'Win lapsed nurses back' }).getByRole('button', { name: 'Decide' }).click();
+    const memo = page.getByRole('dialog', { name: 'Decisions' }).getByRole('article', { name: 'Win lapsed nurses back with 20% off' });
+    await memo.getByLabel('Why').fill('no discounts: we never cut the price to win nurses back');
+    await memo.getByRole('button', { name: 'Decline' }).click();
+    await expect(memo).toHaveCount(0);
+    await expect.poll(saidNo).toEqual(expect.arrayContaining([expect.objectContaining({ subject: 'Win lapsed nurses back with 20% off', reason: 'no discounts: we never cut the price to win nurses back' })]));
+    await page.keyboard.press('Escape');
+
+    await send(page, 'marketing', propose);
+    await expect(room.locator('.approval__title').last()).toHaveText(/^You said no to this on \d{1,2} \w{3}: 'no discounts: we never cut the price to win nurses back'\. Ask again\?$/);
+    await room.getByRole('button', { name: "Don't" }).last().click();
+    await expect(room.locator('.msg--assistant').last()).toContainText('founder said no');
+  } finally { await clearFrom(page, 'marketing', 'Win lapsed nurses back'); }
+});
+
 // Journey 17: a colleague's reply opened with "![chart](/api/files/chart.png)"; no chart was made, and it 404'd.
 test('a reply that said it made a chart links no file nothing made', async ({ page }) => {
   await page.goto('/');

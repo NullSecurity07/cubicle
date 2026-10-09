@@ -57,8 +57,11 @@ export function workRoutes(deps: {
     }
     if (ruled && !ruled[2] && req.method === 'DELETE') {
       const held = (await decisions.list()).find((one) => one.id === ruled[1]);
+      // Journey 17: Decline with a Why kept the no with no reason, and the re-ask had nothing to quote.
+      const said = (await body(req).catch(() => ({}))) as { why?: unknown };
+      const why = typeof said.why === 'string' && said.why.trim() ? said.why.trim() : '';
       await decisions.remove(ruled[1]);
-      if (held?.status === 'proposed') await saidNoFor(workspace).record({ tool: 'propose_decision', subject: held.title, ...(held.proposedBy ? { who: held.proposedBy } : {}) }).catch(() => {});
+      if (held?.status === 'proposed') await saidNoFor(workspace).record({ tool: 'propose_decision', subject: held.title, ...(held.proposedBy ? { who: held.proposedBy } : {}), ...(why ? { reason: why } : {}) }).catch(() => {});
       return answer(res, 200, { ok: true });
     }
     // The playbook. Everything in it was written without asking, so everything in it can be edited, switched off,
