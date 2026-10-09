@@ -112,3 +112,90 @@ export function filledIn(body: string, brief: string): string {
   const named = name ? body.replace(NAME_SLOT, name) : body;
   return named.split('\n').filter((line) => !SLOT.test(line)).join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
+
+// ---------------------------------------------------------------- a reply built from the lead's questions
+
+// Journey 17: Anna asked "Can you deliver on Thursday instead of Sunday? And are the meals nut-free?"; the guard took
+// out both made-up yeses and what was left was "Thanks for reaching out ... Let me know if you would like to set this
+// up ... Best,", an email that answers nothing. A reply to a lead is built from their questions: each one is answered
+// by a line that survived the guard (so the record backs it) or gets an honest line ("I will check Thursday delivery
+// and come back to you by Friday."). A reply with no line of substance left is not offered as an email at all:
+// the row says the draft needs the founder and lists the questions.
+
+export type Answered = { body: string; asks: string[]; hollow: boolean };
+
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+// The questions in what the lead wrote, as they asked them.
+export const questionsIn = (said: string) => said.split(/\n|(?<=[.!?])\s+/).map((one) => one.trim()).filter((one) => /\?\s*["”']?$/.test(one))
+  .map((one) => one.replace(/^(?:and|also|so|but|plus)\s+/i, '').replace(/^\p{Ll}/u, (first) => first.toUpperCase()));
+
+// What a question is about, in a few words, and what a line answering it would name.
+export function topicOf(question: string): { name: string; keys: RegExp } | null {
+  const day = PROMISES[0].pattern.exec(question);
+  if (day) {
+    const when = day[2][0].toUpperCase() + day[2].slice(1).toLowerCase();
+    return { name: `${when} ${nounOf(day[1])}`, keys: new RegExp(`\\b${day[2].replace(/s$/i, '')}`, 'i') };
+  }
+  const free = /\b(\p{L}{2,})-free\b/iu.exec(question);
+  if (free && !SOFT.test(free[1])) {
+    const what = /\b(?:are|is)\s+(?:the|your|all|all the|these|those)?\s*(\p{L}+)\s+(?:all\s+|completely\s+)?\p{L}+-free\b/iu.exec(question)?.[1];
+    const named = what && !/^(?:they|it|those|these|them)$/i.test(what) ? ` ${what.toLowerCase()}` : '';
+    return { name: `${free[1].toLowerCase()}-free${named}`, keys: new RegExp(`\\b${word(free[1])}[-\\s]?free\\b|\\ballerg`, 'i') };
+  }
+  return null;
+}
+
+// Lines that say nothing: a greeting, thanks, a sign-off, "let me know", "hope this helps", a name on its own.
+const PLEASANTRY = /^(?:hi|hello|dear|hey|good (?:morning|afternoon|evening))\b|^(?:many\s+)?(?:thanks|thank you)\b|^(?:best|regards|kind regards|warm regards|best regards|cheers|sincerely|all the best)\b[\p{L}\s,.!]*$|\blet me know\b|\breaching out\b|\bhope (?:this|you|that)\b|\blook(?:ing)? forward\b|\bgreat to hear\b|\bhappy to help\b|^\p{Lu}[\p{L}'-]+(?:\s+\p{Lu}[\p{L}'-]+){0,2}[,.]?$/iu;
+const SIGN_OFF = /^(?:best|regards|kind regards|warm regards|best regards|cheers|sincerely|all the best|thanks|thank you)\b[\p{L}\s]*[,.!]?$/iu;
+const sentencesIn = (body: string) => body.split('\n').flatMap((line) => line.split(/(?<=[.!?])\s+/)).map((one) => one.trim()).filter(Boolean);
+export const substantive = (body: string) => sentencesIn(body).filter((one) => !PLEASANTRY.test(one));
+
+// Two working days on from today, by name: "by Friday".
+function dayAfter(today: string): string {
+  const at = new Date(`${today}T12:00:00Z`);
+  if (Number.isNaN(at.getTime())) return '';
+  let left = 2;
+  while (left > 0) { at.setUTCDate(at.getUTCDate() + 1); if (at.getUTCDay() !== 0 && at.getUTCDay() !== 6) left -= 1; }
+  return WEEKDAYS[at.getUTCDay()];
+}
+
+// The reply, held to the questions the lead asked. `body` is what is left after the guard.
+export function answerQuestions(body: string, said: string, given: { name: string; today?: string }): Answered {
+  const questions = questionsIn(said);
+  // We wrote first: the lead is getting back to us, not reaching out.
+  let text = body.replace(/\b(thanks|thank you)( so much)? for reaching out\b/gi, (_, thanks: string, much = '') => `${thanks}${much} for getting back to me`);
+  const said_ = substantive(text);
+  const by = given.today ? dayAfter(given.today) : '';
+  const lines: string[] = [];
+  const asks: string[] = [];
+  for (const question of questions) {
+    const topic = topicOf(question);
+    const answered = topic ? said_.some((one) => topic.keys.test(one)) : said_.some((one) => sharedWords(one, question) >= 2);
+    if (answered) continue;
+    // Worded so the check comes first: the guard reads "I will check Thursday delivery" as finding out, not a promise.
+    if (topic) lines.push(`I will check ${topic.name} and come back to you${by ? ` by ${by}` : ''}.`);
+    else asks.push(question);
+  }
+  if (lines.length) {
+    const rows = text.split('\n');
+    let end = rows.length;
+    while (end > 0 && (!rows[end - 1].trim() || SIGN_OFF.test(rows[end - 1].trim()) || /^\p{Lu}[\p{L}'-]+(?:\s+\p{Lu}[\p{L}'-]+){0,2}$/u.test(rows[end - 1].trim()))) end -= 1;
+    // A sign-off at the very end stays there, under the new lines.
+    const tail = rows.slice(end).join('\n').trim();
+    text = [rows.slice(0, end).join('\n').trim(), lines.join('\n'), tail].filter(Boolean).join('\n\n');
+  }
+  const hollow = !said_.length && !lines.length;
+  if (hollow) {
+    const first = given.name.split(' ')[0];
+    return { body: [`Hi ${first},`, ...questions].join('\n\n'), asks: questions, hollow };
+  }
+  return { body: text, asks, hollow };
+}
+
+const CONTENT_STOP = /^(?:the|and|you|your|our|can|could|would|will|are|is|does|do|did|what|when|where|how|which|who|why|for|with|from|that|this|have|has|any|also|there|them|they|it|its|instead|of|to|on|in|a|an|us|we)$/i;
+const sharedWords = (a: string, b: string) => {
+  const of = (text: string) => new Set((text.toLowerCase().match(/[\p{L}][\p{L}'-]{2,}/gu) ?? []).filter((one) => !CONTENT_STOP.test(one)));
+  const left = of(a);
+  return [...of(b)].filter((one) => left.has(one)).length;
+};

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { guardUnasked, leftOutLine, unbackedPromises } from './unasked.ts';
+import { answerQuestions, guardUnasked, leftOutLine, questionsIn, unbackedPromises } from './unasked.ts';
+import { draftLine } from './watch.ts';
 
 // Journey 16: Anna asked "Can you deliver on Thursday instead of Sunday? And are the meals nut-free?" and the ready
 // reply promised both, with "eat safely" on top.
@@ -51,5 +52,36 @@ describe('a count nothing on record gives, in an unasked output', () => {
     expect(guardUnasked('Call all 11 paying subscribers.', [FACTS, BRIEF]).left).toEqual([]);
     expect(guardUnasked('Contact 30 more night-shift nurses this week.', [FACTS, BRIEF]).left).toEqual([]);
     expect(guardUnasked('Call five lapsed signups this week and ask what stopped them.', [FACTS]).left).toEqual([]);
+  });
+});
+
+// Journey 17: the guard took out both made-up yeses to Anna and left "Thanks for reaching out ... Best,".
+describe('a reply built from the lead\'s questions', () => {
+  const ANNA = 'Three of us on the night ward would try it. Can you deliver on Thursday instead of Sunday? And are the meals nut-free? Anna';
+  const HOLLOW = 'Hi Anna,\n\nThanks for reaching out from St. Marien Hospital. Let me know if you would like to set this up for your shift week.\n\nBest,';
+
+  it('gives each of Anna\'s questions an honest line, before the sign-off, and says we wrote first', () => {
+    expect(questionsIn(ANNA)).toEqual(['Can you deliver on Thursday instead of Sunday?', 'Are the meals nut-free?']);
+    const built = answerQuestions(HOLLOW, ANNA, { name: 'Anna Kowalski', today: '2026-10-07' });
+    expect(built.body).toBe('Hi Anna,\n\nThanks for getting back to me from St. Marien Hospital. Let me know if you would like to set this up for your shift week.\n\n'
+      + 'I will check Thursday delivery and come back to you by Friday.\nI will check nut-free meals and come back to you by Friday.\n\nBest,');
+    expect(built).toMatchObject({ asks: [], hollow: false });
+    // The honest lines promise nothing the guard would take out.
+    expect(guardUnasked(built.body, [ANNA]).left).toEqual([]);
+  });
+
+  it('keeps an answer the record backs and adds no line for it', () => {
+    const body = 'Hi Anna,\n\nOur meals are delivered on Sunday to the staff entrance, so Thursday is not something we do yet.\n\nBest,';
+    const built = answerQuestions(body, ANNA, { name: 'Anna Kowalski', today: '2026-10-07' });
+    expect(built.body).not.toContain('On Thursday delivery');
+    expect(built.body).toContain('I will check nut-free meals and come back to you by Friday.');
+  });
+
+  it('offers the questions to the founder, never a hollow email, when nothing on record answers them', () => {
+    const said = 'What does a week cost for three people? Who cooks the meals?';
+    const built = answerQuestions('Hi Anna,\n\nThanks for your reply.\n\nBest,', said, { name: 'Anna Kowalski', today: '2026-10-07' });
+    expect(built).toEqual({ body: 'Hi Anna,\n\nWhat does a week cost for three people?\n\nWho cooks the meals?', asks: ['What does a week cost for three people?', 'Who cooks the meals?'], hollow: true });
+    expect(draftLine({ kind: 'email', to: 'anna@marien.example', subject: 'Thanks', ...built, hollow: true }))
+      .toBe("Nothing on record to answer Anna's questions; draft needs the founder.\n☐ What does a week cost for three people?\n☐ Who cooks the meals?");
   });
 });
