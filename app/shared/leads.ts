@@ -50,8 +50,24 @@ const fold = (text: string) => text.trim().replace(/\s+/g, ' ').toLowerCase();
 export const sameLead = (lead: Pick<Lead, 'person' | 'company'>, name: string, company: string) => fold(lead.person.name) === fold(name) && fold(lead.company.name) === fold(company);
 export const leadName = (lead: Pick<Lead, 'person' | 'company'>) => `${lead.person.name} at ${lead.company.name}`;
 
-// What the founder's "Draft first message" puts into a person's room.
-export const draftAsk = (lead: Lead) => `Draft a first message to ${lead.person.name} at ${lead.company.name} using the evidence-outreach skill.`;
+// What is on record about a lead, as text: their row, the notes on it and what they wrote back. A first message may
+// say about them only what this (or a read) gives (server/opener.ts).
+export function leadRecord(lead: Pick<Lead, 'person' | 'company' | 'notes'> & Partial<Pick<Lead, 'fit' | 'thread'>>): string {
+  const row = [lead.person.name, lead.person.title, lead.company.name, lead.company.site, lead.company.size].filter(Boolean).join(', ');
+  const notes = lead.notes.map((note) => note.text);
+  const said = (lead.thread ?? []).filter((event) => (event.kind === 'replied' || event.kind === 'notes') && event.text).map((event) => event.text!);
+  return [row, ...(lead.fit?.why ? [lead.fit.why] : []), ...notes, ...said].join('\n');
+}
+
+// What the founder's "Draft first message" puts into a person's room. Journey 18: with nothing on record, Lea opened
+// with "I saw your comment on Reddit"; the ask now says what is on record about them, or that nothing is.
+export const draftAsk = (lead: Lead) => {
+  const notes = lead.notes.map((note) => note.text.trim()).filter(Boolean);
+  const known = notes.length
+    ? ` On record about them (their notes on the Leads card): ${notes.join(' | ')}. Say about them only what these notes or a page you read now say.`
+    : ' Nothing is on record about them beyond their name and company: say nothing about what they did, wrote or posted unless you read it now, and open with what we do, from the Company brief.';
+  return `Draft a first message to ${lead.person.name} at ${lead.company.name} using the evidence-outreach skill.${known}`;
+};
 
 // The list as a spreadsheet: one row a lead, its notes joined, so it opens anywhere and imports into a sender as it is.
 const COLUMNS = ['name', 'title', 'company', 'website', 'size', 'linkedin_url', 'email', 'stage', 'fit', 'fit_why', 'source', 'added', 'notes'];
