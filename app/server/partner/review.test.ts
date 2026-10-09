@@ -247,3 +247,71 @@ describe('a review of a doc on two revenue streams (journey 20)', () => {
     expect(sense.flags).toEqual([]);
   });
 });
+
+// Journey 21: Lea's notes named six cafés nobody on record had heard of; Sam flagged one line, then, on the re-read,
+// called the doc fit with all six still in it.
+describe('a review of a doc that names customers (journey 21)', () => {
+  it('flags every named café nothing on record names, marked or not', async () => {
+    const { J21_BRIEF, J21_NOTES } = await import('../tools/named.fixture.ts');
+    const review = reviewDoc({ text: J21_NOTES, numbers: J21_BRIEF, read: [], said: [], title: 'Customer notes' });
+    expect(review.verdict).toMatch(/^Fix first: .*6 named customers are not on record/);
+    expect(review.flags.find((flag) => /named as customers/.test(flag.said))!.said).toBe('"Café Neukölln", "Kreuzberg Repair Hub", "Schöneberg Flick-Stube" and 3 more are named as customers, with 6 people, and no Leads card row, the Company brief, notes or the founder\'s words name them: take them out, or name only customers on record.');
+    const marked = J21_NOTES.replace(/\*\*: Organiser: (\w+)\./g, '** (not on record): Organiser: $1 (not on record).');
+    expect(reviewDoc({ text: marked, numbers: J21_BRIEF, read: [], said: [], title: 'Customer notes' }).verdict).toMatch(/6 named customers are not on record/);
+  });
+
+  it('keeps the flag on a re-read with the same lines, and calls it fit once they are gone', async () => {
+    const { J21_BRIEF, J21_NOTES } = await import('../tools/named.fixture.ts');
+    const workspace = await mkdtemp(join(tmpdir(), 'review-'));
+    try {
+      const docs: Record<string, string> = { notes: J21_NOTES };
+      const stage = { rooms: [{ id: 'lea', name: 'Lea' }, { id: 'sam', name: 'Sam', partner: true }], docs: [{ id: 'notes', title: 'Customer notes' }], wires: [] } as unknown as Stage;
+      const said: string[] = [];
+      const reviews = createReviews({
+        workspace, busy: new Set(), now: () => Date.now(), budget: dailyBudget(0),
+        store: { loadStage: async () => stage, readDoc: async (id) => docs[id] ?? '', appendChat: async (_room, message) => { said.push(message.text); } },
+        attention: { refresh: async () => undefined },
+        company: async () => ({ id: 'brief', text: J21_BRIEF }),
+      });
+      const turn = () => reviews.heard({ roomId: 'lea', query: 'Mark the flagged line.', reply: { tools: [{ name: 'write_doc', ok: true, result: 'Wrote it.', effect: { kind: 'doc-changed', id: 'notes' } }] } } as never, async () => undefined as never);
+      await turn();
+      await reviews.tick({ id: 'sam', name: 'Sam' });
+      expect(said.at(-1)).toMatch(/Fix first: .*6 named customers are not on record/);
+      // Lea marks one line and writes the doc again: the five other cafés are still there, so the flag stands.
+      docs.notes = J21_NOTES.replace('Feedback: Very happy with the booking page. No specific complaints.', 'Feedback: no feedback on record.');
+      await turn();
+      await reviews.tick({ id: 'sam', name: 'Sam' });
+      expect(said.at(-1)).not.toMatch(/Fit for the founder/);
+      expect(said.at(-1)).toMatch(/6 named customers are not on record/);
+      expect(await reviews.rows()).toHaveLength(1);
+      // The named cafés gone, the re-read is fit and the row goes.
+      docs.notes = '# Customer notes\n\n## Paying cafés (6)\n\nNo café is named on record yet; no feedback on record.\n';
+      await turn();
+      await reviews.tick({ id: 'sam', name: 'Sam' });
+      expect(said.at(-1)).toMatch(/Fit for the founder\.$/);
+      expect(await reviews.rows()).toEqual([]);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+});
+
+// Journey 21: Pia's "Booking flow spec" was flagged "a claim has no record behind it" for what the app is to do.
+describe('a spec is a plan, not a claim (journey 21)', () => {
+  const SPEC_DOC = `# Booking flow spec
+
+## Volunteer list generation
+1. **Categorisation:** As bookings are submitted, FixSlot automatically assigns items to matching volunteer skill sets.
+2. **Café dashboard view:** The café organiser views a consolidated dashboard showing all confirmed bookings for the session, sorted by time slot and volunteer category.
+3. **Reminders:** The app will send each visitor a reminder the day before, and it works offline at the café.`;
+  it('calls Pia\'s spec fit, in present or future tense', () => {
+    expect(reviewDoc({ text: SPEC_DOC, numbers: '', read: [], said: [], title: 'Booking flow spec' }).verdict).toBe('Fit for the founder.');
+  });
+
+  it('still flags what customers said, a count nothing gives, and a claim of evidence outside a spec', () => {
+    const said = `${SPEC_DOC}\n4. Organisers told us they love the dashboard.`;
+    expect(reviewDoc({ text: said, numbers: '', read: [], said: [], title: 'Booking flow spec' }).verdict).toMatch(/^Fix first: a claim has no record/);
+    expect(reviewDoc({ text: `${SPEC_DOC}\n5. We have 14 cafés waiting for it.`, numbers: '', read: [], said: [], title: 'Booking flow spec' }).verdict).toMatch(/no source or calc/);
+    expect(reviewDoc({ text: '# Notes\n\nThe pain is validated.', numbers: '', read: [], said: [], title: 'Notes' }).verdict).toMatch(/^Fix first: a claim has no record/);
+  });
+});

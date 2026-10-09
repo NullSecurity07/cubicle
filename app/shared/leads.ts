@@ -68,7 +68,10 @@ export const draftAsk = (lead: Lead) => {
   const known = notes.length
     ? ` On record about them (their notes on the Leads card): ${notes.join(' | ')}. Say about them only what these notes or a page you read now say.`
     : ' Nothing is on record about them beyond their name and company: say nothing about what they did, wrote or posted unless you read it now, and open with what we do, from the Company brief.';
-  return `Draft a first message to ${lead.person.name} at ${lead.company.name} using the evidence-outreach skill.${known}`;
+  // Journey 21: Lea wrote the message in chat and made no draft until asked. With an address on record, it is an email
+  // draft at once (server/firstdraft.ts makes it from the words when the model does not).
+  const to = lead.person.email ? ` Their address: ${lead.person.email}. Write it with draft_email to that address, so it is a draft the founder opens in Gmail now, not only words in chat.` : '';
+  return `Draft a first message to ${lead.person.name} at ${lead.company.name} using the evidence-outreach skill.${known}${to}`;
 };
 
 // The list as a spreadsheet: one row a lead, its notes joined, so it opens anywhere and imports into a sender as it is.

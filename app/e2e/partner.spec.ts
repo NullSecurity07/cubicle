@@ -18,6 +18,17 @@ async function bar(page: Page, words: string, pick: string) {
   await input.press('Enter');
 }
 
+// A doc a tool put on the stage is kept until a stage sent back has it once (server/store.ts), so a check that made one
+// sends the stage back with it first, then without it.
+async function takeAway(page: Page, title: string) {
+  const stage = await stageOf(page);
+  const made = new Set(stage.docs.filter((one) => one.title === title).map((one) => one.id));
+  if (!made.size) return;
+  await page.request.put('/api/stage', { data: stage });
+  await page.request.put('/api/stage', { data: { ...stage, docs: stage.docs.filter((one) => !made.has(one.id)), wires: stage.wires.filter((wire) => !made.has(wire.from) && !made.has(wire.to)) } });
+  expect((await stageOf(page)).docs.some((one) => made.has(one.id))).toBe(false);
+}
+
 const broke: string[] = [];
 let brief = '';
 // The lines each team room held before the check: what a check or Sam's review adds to Maya's or Dev's thread is cut
@@ -203,9 +214,43 @@ test('the partner reviews a colleague\'s doc unasked, and Fix sends the colleagu
 
   // The doc the check made goes with it.
   await page.goto('about:blank');
-  const stage = await stageOf(page);
-  const made = new Set(stage.docs.filter((one) => one.title === 'Unit Economics').map((one) => one.id));
-  await page.request.put('/api/stage', { data: { ...stage, docs: stage.docs.filter((one) => !made.has(one.id)), wires: stage.wires.filter((wire) => !made.has(wire.from) && !made.has(wire.to)) } });
+  await takeAway(page, 'Unit Economics');
+});
+
+// Journey 21: Lea's "Customer notes" named six cafés nobody on record had heard of; Sam flagged one line and, on the
+// re-read, called the doc fit. The doc marks each name "(not on record)", the review flags all of them, and a re-read
+// with the same cafés keeps the flag.
+test('a doc that names customers nobody has on record is marked, flagged, and stays flagged on a re-read', async ({ page }) => {
+  test.setTimeout(120_000);
+  await bar(page, 'add a partner called Sam', 'Add Sam, your partner');
+  await expect(page.getByRole('status').filter({ hasText: 'Sam is your partner' })).toBeVisible({ timeout: 15_000 });
+  const notes = '# Customer notes\n\n## Paying cafés (6)\n\n- **Café Neukölln**: Organiser: Sarah. Feedback: Volunteers love seeing the item list ahead of time.\n- **Kreuzberg Repair Hub**: Organiser: Jan. Feedback: requested SMS reminders.\n- **Tempelhof Repair Club**: Organiser: Thomas. Feedback: Very happy with the booking page.';
+  const chat = async () => (await (await page.request.get('/api/rooms/marketing/chat')).json()) as { role: string; text: string; from?: string }[];
+  const fromSam = async () => (await chat()).filter((one) => one.from === 'Sam').map((one) => one.text);
+  try {
+    await page.request.post('/api/rooms/marketing/chat', { data: { text: `/tool create_doc ${JSON.stringify({ title: 'Customer notes', text: notes })}` } });
+    await expect.poll(async () => (await fromSam()).at(-1) ?? '', { timeout: 45_000 }).toMatch(/3 named customers are not on record/);
+    const id = (await stageOf(page)).docs.find((one) => one.title === 'Customer notes')!.id;
+    const saved = ((await (await page.request.get(`/api/docs/${id}`)).json()) as { text: string }).text;
+    expect(saved).toContain('- **Café Neukölln** (not on record): Organiser: Sarah (not on record).');
+    expect(saved).not.toMatch(/Tempelhof Repair Club\*\*: /);
+    // Lea answers the flag on one line only: the cafés stay, so the re-read keeps the flag and never says Fit.
+    const heard = (await fromSam()).length;
+    await page.request.post('/api/rooms/marketing/chat', { data: { text: `/tool write_doc ${JSON.stringify({ doc: 'Customer notes', text: saved.replace('Feedback: Very happy with the booking page.', 'Feedback: no feedback on record.') })}` } });
+    await expect.poll(async () => (await fromSam()).length, { timeout: 45_000 }).toBeGreaterThan(heard);
+    expect((await fromSam()).at(-1)).toMatch(/3 named customers are not on record/);
+    expect((await fromSam()).at(-1)).not.toContain('Fit for the founder');
+    await bar(page, 'needs', 'Needs you');
+    await expect(page.getByRole('dialog', { name: 'Needs you' }).locator('.needs__item--review-flag')).toContainText('Sam flagged: Maya\'s "Customer notes". Fix first: 3 named customers are not on record');
+    await page.keyboard.press('Escape');
+  } finally {
+    // Ignore on the flag: the row goes, so no later check finds Needs you waiting.
+    for (const row of ((await (await page.request.get('/api/attention')).json()) as { id: string; kind: string }[]).filter((one) => one.kind === 'review-flag')) {
+      await page.request.post(`/api/partner/reviews/${row.id.replace(/^review-flag:/, '')}`, { data: { fix: false } });
+    }
+    await page.goto('about:blank');
+    await takeAway(page, 'Customer notes');
+  }
 });
 
 // The partner watch: the verdict's kill signal is "weekly signups below 5", kept as a check. A Signups reading of 4
@@ -329,6 +374,8 @@ test('a lead\'s question about a policy gets "I will check our refund policy", n
   await expect(page.getByRole('status').filter({ hasText: 'Sam is your partner' })).toBeVisible({ timeout: 15_000 });
   const stage = await (await page.request.get('/api/stage')).json();
   await page.request.put('/api/stage', { data: { ...stage, cards: [...(stage.cards ?? []), { id: LEADS, kind: 'leads', x: 2400, y: 0, w: 900, h: 460 }] } });
+  // The watch's own three unasked outputs a day are spent by the checks before this one: a new day has its own.
+  await advanceDay(page, 1, '09:00');
   try {
     const lead = (await (await page.request.post(`/api/leads/${LEADS}`, { data: { name: 'Ines Vogel', company: 'Repair Café Kreuzberg', email: 'ines@repaircafe.example' } })).json()) as { id: string };
     await page.request.patch(`/api/leads/${LEADS}/${lead.id}`, { data: { stage: 'contacted' } });
@@ -347,6 +394,48 @@ test('a lead\'s question about a policy gets "I will check our refund policy", n
     await expect(row).toContainText(/I will check whether there is an iOS app for your volunteers and come back to you by \w+day\./);
     await expect(row).toContainText(/I will check our refund policy and come back to you by \w+day\./);
   } finally {
+    await resetClock(page);
+    const held = ((await (await page.request.get('/api/partner/watch')).json()) as { proposals: { id: string; cardId?: string; status: string }[] }).proposals;
+    for (const one of held.filter((each) => each.cardId === LEADS && each.status === 'open')) await page.request.post(`/api/partner/proposals/${one.id}`, { data: { run: false } });
+    for (const one of ((await (await page.request.get(`/api/leads/${LEADS}`)).json()) as { leads: { id: string }[] }).leads ?? []) await page.request.delete(`/api/leads/${LEADS}/${one.id}`);
+    const now = await (await page.request.get('/api/stage')).json();
+    await page.request.put('/api/stage', { data: { ...now, cards: (now.cards ?? []).filter((card: { id: string }) => card.id !== LEADS) } });
+  }
+});
+
+// Journey 21: Jonas asked for a German version and Clara what happens to their data; the ready replies said "we have a
+// full German version" and promised a spreadsheet export and a 90-day archive. The fake partner invents all three; the
+// rows keep none and check each instead.
+test('a lead\'s question about a language or their data gets "I will check", never a feature nobody has', async ({ page }) => {
+  const LEADS = 'leads-feature-e2e';
+  await bar(page, 'add a partner called Sam', 'Add Sam, your partner');
+  await expect(page.getByRole('status').filter({ hasText: 'Sam is your partner' })).toBeVisible({ timeout: 15_000 });
+  const stage = await (await page.request.get('/api/stage')).json();
+  await page.request.put('/api/stage', { data: { ...stage, cards: [...(stage.cards ?? []), { id: LEADS, kind: 'leads', x: 2400, y: 0, w: 900, h: 460 }] } });
+  // The watch's own three unasked outputs a day are spent by the checks before this one: a new day has its own.
+  await advanceDay(page, 1, '09:00');
+  try {
+    const asked = [['Jonas Brandt', 'Repair Café Wedding', 'jonas@repaircafe.example', 'Looks useful. Do you have a German version of the booking page?'], ['Clara Meier', 'Repair Café Pankow', 'clara@repaircafe.example', 'Sounds good. What happens to our data if we stop paying?']];
+    for (const [name, company, email, text] of asked) {
+      const lead = (await (await page.request.post(`/api/leads/${LEADS}`, { data: { name, company, email } })).json()) as { id: string };
+      await page.request.patch(`/api/leads/${LEADS}/${lead.id}`, { data: { stage: 'contacted' } });
+      await page.request.post('/api/partner/watch');
+      await page.request.post(`/api/leads/${LEADS}/${lead.id}/replied`, { data: { text } });
+      await expect.poll(async () => { await page.request.post('/api/partner/watch'); return JSON.stringify(((await (await page.request.get('/api/partner/watch')).json()) as { proposals: { leadId?: string }[] }).proposals.filter((one) => one.leadId === lead.id)); }, { timeout: 10_000 }).toContain(lead.id);
+    }
+
+    await bar(page, 'needs', 'Needs you');
+    const rows = page.getByRole('dialog', { name: 'Needs you' }).locator('.needs__item--partner-proposal');
+    const jonas = rows.filter({ hasText: 'jonas@repaircafe.example' });
+    await expect(jonas).toContainText(/\(left out: nothing on record about [^)]*a German version/);
+    await expect(jonas).not.toContainText('Yes, we have');
+    await expect(jonas).toContainText(/I will check whether we have a German version of the booking page and come back to you by \w+day\./);
+    const clara = rows.filter({ hasText: 'clara@repaircafe.example' });
+    await expect(clara).toContainText(/\(left out: nothing on record about [^)]*what happens to your data/);
+    for (const made of ['secure and accessible', 'We export', 'account archive active']) await expect(clara).not.toContainText(made);
+    await expect(clara).toContainText(/I will check what happens to your data and come back to you by \w+day\./);
+  } finally {
+    await resetClock(page);
     const held = ((await (await page.request.get('/api/partner/watch')).json()) as { proposals: { id: string; cardId?: string; status: string }[] }).proposals;
     for (const one of held.filter((each) => each.cardId === LEADS && each.status === 'open')) await page.request.post(`/api/partner/proposals/${one.id}`, { data: { run: false } });
     for (const one of ((await (await page.request.get(`/api/leads/${LEADS}`)).json()) as { leads: { id: string }[] }).leads ?? []) await page.request.delete(`/api/leads/${LEADS}/${one.id}`);

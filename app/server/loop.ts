@@ -12,6 +12,7 @@ import { readsOf } from './tools/unread.ts';
 import { calcTagsHeld } from './calctag.ts';
 import { holdDraftClaims, holdFileLinks, notDone } from './draftclaim.ts';
 import { holdProductClaims } from './productclaim.ts';
+import { owedFirstDraft, withoutPlaceholders } from './firstdraft.ts';
 import { ANSWER_IN_WORDS, CALL_THE_TOOL, checkReply, HELD_BACK, heldAfterWork, proseToolCall, turnEvidence, turnSources } from './truth.ts';
 import type { UsageBook } from './usage.ts';
 import { needsSlim, slimNotice } from './slim.ts';
@@ -321,6 +322,29 @@ export async function runTurn(input: {
     }
   }
 
+  // A first message the founder asked for from the Leads card, written out in words with no draft made: the draft is
+  // made from those words, through draft_email's own checks, so the chip and Open in Gmail come with the reply
+  // (server/firstdraft.ts). A draft its checks refuse is left undone; the words stay.
+  const owed = signal?.aborted || held ? null : owedFirstDraft(query, text, done);
+  if (owed && tools.some((tool) => tool.name === 'draft_email')) {
+    const id = unique('first-draft');
+    context.query = query;
+    context.allowed = false;
+    context.sources = () => [...turnSources(inputs), ...results, query];
+    context.evidence = () => {
+      const { read, said } = turnEvidence(inputs);
+      return { read: [...read, ...worked, ...heard, query], said: [...said, ...worked, query] };
+    };
+    context.report = (effect) => events.tool({ id, name: 'draft_email', args: owed, effect });
+    const ran = await runTool(tools, 'draft_email', JSON.stringify(owed), context);
+    if (ran.ok) {
+      let event: ToolEvent = { id, name: 'draft_email', args: ran.args, ok: true, result: ran.text, effect: ran.effect };
+      if (seams) event = (await seams.run('tool:after', { roomId, event })).event;
+      done.push(event);
+      events.tool(event);
+    }
+  }
+
   // Tools ran and nothing was said: asked once more with no tools, then, if still nothing, the receipts speak.
   if (done.length && !text.trim() && !signal?.aborted) {
     if (!unanswered) {
@@ -357,6 +381,8 @@ export async function runTurn(input: {
   if (!signal?.aborted && !summarised && text.trim()) text = holdDraftClaims(text, done);
   // No "works on Android" or "VAT shown separately" the brief, a read or the founder never said (server/productclaim.ts).
   if (!signal?.aborted && !summarised && text.trim()) text = holdProductClaims(text, [...turnEvidence(inputs).read, ...worked, ...heard, query]).text;
+  // "[Founder]" or "[Your Name]" never reaches the founder (server/firstdraft.ts).
+  if (!signal?.aborted && !summarised && text.trim()) text = withoutPlaceholders(text);
   // No link to a file nothing made: the link goes and the words say so (server/draftclaim.ts).
   if (!signal?.aborted && !summarised && text.trim()) text = await holdFileLinks(text, done, async (path) => (typeof context.store?.fileSize === 'function' ? (await context.store.fileSize(path)) !== null : true));
   // "(calc)" only beside a figure a calc working this turn gave (server/calctag.ts).

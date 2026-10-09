@@ -416,3 +416,38 @@ describe('the brief\'s Numbers rows', () => {
     expect(await store.readDoc('company-brief')).toContain('- Cash: €5,100');
   });
 });
+
+// Journey 21: Lea's "Customer notes" named six cafés and their organisers, none on record.
+describe('a customer by name nothing on record names', () => {
+  it('is marked "(not on record)" in a plain doc, per name, and the writer is told', async () => {
+    const { J21_BRIEF, J21_NOTES } = await import('./named.fixture.ts');
+    const { store, context } = await setup();
+    const read = [J21_BRIEF, 'Write a Customer notes doc: who our cafés are and what we know about them so far.'];
+    const turn = { ...context, sources: () => read, evidence: () => ({ read, said: read }) };
+    const out = await runTool(docTools, 'create_doc', JSON.stringify({ title: 'Customer notes', text: J21_NOTES }), turn);
+    expect(out.ok).toBe(true);
+    expect(out.text).toMatch(/Marked \(not on record\) after "Café Neukölln", "Sarah", "Kreuzberg Repair Hub", "Jan", "Schöneberg Flick-Stube", "Marcus" and 6 more: no Leads card row/);
+    const id = [...context.granted].find(([, title]) => title === 'Customer notes')![0];
+    const saved = await store.readDoc(id);
+    expect(saved).toContain('- **Kreuzberg Repair Hub** (not on record): Organiser: Jan (not on record). Runs bi-weekly sessions.');
+    expect(saved.match(/\(not on record\)/g)).toHaveLength(12);
+  });
+
+  it('is refused in a team doc with rules', async () => {
+    const { J21_BRIEF } = await import('./named.fixture.ts');
+    const { readFile } = await import('node:fs/promises');
+    const { resolve } = await import('node:path');
+    const { place } = await import('../frameworks/place.ts');
+    const framework = JSON.parse(await readFile(resolve(import.meta.dirname, '../../frameworks/startup-evaluation/framework.json'), 'utf8'));
+    const store = createStore(await mkdtemp(join(tmpdir(), 'docs-named-')));
+    const seed = await store.loadStage();
+    const { placed, texts } = place(framework, seed, { x: 2000, y: 0 });
+    const stage = { ...seed, rooms: [...seed.rooms, ...placed.rooms], docs: [...seed.docs, ...placed.docs], wires: [...seed.wires, ...placed.wires], cards: [...(seed.cards ?? []), ...placed.cards] };
+    for (const [id, text] of Object.entries(texts)) await store.replaceDoc(id, text as string);
+    const context = { stage, roomId: 'pain', store, granted: new Map<string, string>(), sources: () => [J21_BRIEF] };
+    const text = 'Paying customers so far:\n\n- **Café Neukölln**: monthly repair evenings.';
+    const out = await runTool(docTools, 'replace_section', JSON.stringify({ doc: 'Evaluation', heading: '3. Is the pain real?', text }), context);
+    expect(out.ok).toBe(false);
+    expect(out.text).toMatch(/not written: "Café Neukölln" is named as a customer, and no Leads card row, the Company brief, nothing read and no founder message names it\. Name only customers/);
+  });
+});

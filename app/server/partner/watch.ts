@@ -309,6 +309,11 @@ const yesTo = (said: string) => said.split(/(?<=[.!?])\s+/).filter((one) => one.
   const there = /^is there an? (.+)$/i.exec(plain);
   if (there) return `We do not have ${there[1].replace(/\bour\b/gi, 'your')}; it is web-based and works in any browser, no app needed.`;
   if (/\bget (?:the|their|my|our|a) .*\bback$/i.test(plain)) return 'The booking fee is non-refundable.';
+  // Journey 21: "Do you have a German version of the booking page?" → a made-up German version; "What happens to our
+  // data if we stop paying?" → a made-up export and archive.
+  const have = /^do you have an? (.+)$/i.exec(plain);
+  if (have) return `Yes, we have a full ${have[1].replace(/\bour\b/gi, 'your')}.`;
+  if (/^what happens to (?:our|my) data\b/i.test(plain)) return 'Your data remains secure and accessible. We export all your past bookings into a standard spreadsheet format for you, and we keep your account archive active for 90 days.';
   // "Does it work with photos from my old Android phone?" → "Yes, it works with photos from any Android phone."
   const does = /^does it (\p{L}+) (.+)$/iu.exec(plain);
   if (does) return `Yes, it ${does[1]}s ${does[2].replace(/\bmy(?: old)?\b/gi, 'any')}.`;

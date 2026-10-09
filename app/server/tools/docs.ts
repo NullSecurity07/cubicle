@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import type { Framework } from '../../shared/frameworks.ts';
 import type { Box, DocRules, Stage } from '../../shared/model.ts';
 import { readableDocIds, wiredDocIds } from '../prompt.ts';
@@ -13,6 +13,7 @@ import { derivedRows } from '../partner/economics.ts';
 import { goalMoved } from '../partner/goal.ts';
 import { numbersRefusal } from '../partner/briefrows.ts';
 import { evidenceCheck, markFeedback, markSaid, markUnbacked, markUnworked, readableSources, unbackedEnds } from './evidence.ts';
+import { leadRecords, listed, markNames, NOT_ON_RECORD, unheardSayings, unrecordedNames } from './named.ts';
 import { filled, guardWrite, sectionBody, standingVerdict, unmarked, verdictState, WHOLE } from './verdict.ts';
 
 // A new doc card's size, and the gap kept round it: the same the window uses when it places one.
@@ -233,7 +234,7 @@ async function save(context: ToolContext, id: string, before: string, written: s
 
 // What a write would save and what its result says, or a throw saying what is not written and why. A new doc's first
 // text goes through here too: journey 13's invented customer notes came in a create_doc, which checked nothing.
-async function checkWrite(context: ToolContext, id: string, before: string, written: string, done: string, touches?: string | typeof WHOLE): Promise<{ text: string; said: string }> {
+async function checkWrite(context: ToolContext, id: string, before: string, written: string, done: string, touches?: string | typeof WHOLE, titled?: string): Promise<{ text: string; said: string }> {
   // Journey 21: a colleague answering a flag wrote a stale net burn over the brief's Burn row. The brief's Numbers
   // rows are the founder's and the partner's, and an input row never takes a worked-out figure (server/partner/briefrows.ts).
   if (findCompanyDoc(context.stage.docs)?.id === id) {
@@ -242,6 +243,7 @@ async function checkWrite(context: ToolContext, id: string, before: string, writ
     if (refused) throw new Error(`not written: ${refused}`);
   }
   const rules = await rulesOf(context.stage, id);
+  const title = titled ?? context.stage.docs.find((doc) => doc.id === id)?.title ?? context.granted.get(id) ?? '';
   const honest = honestMarks(context, before, written, (await evidenceFor(context, before))?.read ?? null);
   written = honest.text;
   if (honest.dropped) done = `${done} Took out "(unsourced)" where this turn's reading gives the figure or no figure stands before it.`;
@@ -262,11 +264,34 @@ async function checkWrite(context: ToolContext, id: string, before: string, writ
     after = unworked.text;
     done = `${done} Marked as unsourced, since no calc this turn worked them out and nothing read gives them: ${which}. ${WORK_IT_OUT}`;
   }
+  // Journey 21: Lea's "Customer notes" named six cafés, their organisers and their feedback, none of them on record. A
+  // customer, a lead or a user by name is on record (a Leads card row, the brief, a read, the founder's words), and
+  // what a named one said needs their own words on record (server/tools/named.ts).
+  const named = await namedCheck(context, id, before, after, title);
+  if (rules && (named.missing.length || named.unheard.length)) {
+    throw new Error(`not written: ${[
+      ...(named.missing.length ? [`${listed(named.missing.map((one) => one.name))} ${named.missing.length > 1 ? 'are' : 'is'} named as ${named.missing.length > 1 ? 'customers' : 'a customer'}, and no Leads card row, the Company brief, nothing read and no founder message names ${named.missing.length > 1 ? 'them' : 'it'}`] : []),
+      ...(named.unheard.length ? [`${named.unheard.slice(0, 2).map((one) => `"${quote(one.sentence)}" (${one.name})`).join(', ')} ${named.unheard.length > 1 ? 'say' : 'says'} what a named customer said or did, and nothing they said is on record`] : []),
+    ].join('; ')}. ${NAME_ONLY}`);
+  }
   if (rules) {
     const held = await heldToEvidence(context, before, after);
     after = held.text;
     done = `${done}${held.note}`;
   } else {
+    if (named.missing.length) {
+      after = markNames({ after, before, read: named.read, title }).text;
+      done = `${done} Marked ${NOT_ON_RECORD} after ${listed(named.missing.map((one) => one.name), 6)}: no Leads card row, the Company brief, nothing read and no founder message names ${named.missing.length > 1 ? 'them' : 'it'}. ${NAME_ONLY}`;
+    }
+    if (named.unheard.length) {
+      const lines = after.split('\n');
+      for (const one of named.unheard) {
+        const at = lines.findIndex((line) => line.includes(one.sentence) && !line.includes(`${one.sentence} (assumption)`));
+        if (at >= 0) lines[at] = lines[at].replace(one.sentence, one.sentence.replace(/([.!?]*)$/, ' (assumption)$1'));
+      }
+      after = lines.join('\n');
+      done = `${done} Marked as an assumption, since nothing they said is on record: ${named.unheard.slice(0, 3).map((one) => `"${quote(one.sentence)}" (${one.name})`).join(', ')}.`;
+    }
     // Any other doc gets the same count check, marking what it would refuse: the writer's words stay, said as theirs.
     const read = await evidenceFor(context, before);
     const counts = read ? markUnbacked({ before, after, read: read.read }) : null;
@@ -303,6 +328,21 @@ async function checkWrite(context: ToolContext, id: string, before: string, writ
   const guarded = rules ? guardWrite({ rules, stage: context.stage, docId: id, writerId: context.roomId, before, after, now: Date.now(), touches, numbers: await numbersOf(context) }) : { text: after };
   const said = guarded.held ? guarded.note! : [done, guarded.note].filter(Boolean).join(' ');
   return { text: guarded.text, said };
+}
+// The names a write adds as customers that nothing on record gives, and what named ones are said to have said with
+// none of their own words on record. Outside a turn there is nothing to check against.
+const NAME_ONLY = 'Name only customers, leads and users the Leads card, the Company brief or the founder names, and their feedback only from their own words on record; with none, write "no feedback on record".';
+async function namedCheck(context: ToolContext, id: string, before: string, after: string, title: string) {
+  const evidence = await evidenceFor(context, before);
+  if (!evidence) return { missing: [], unheard: [], read: [] as string[] };
+  const company = findCompanyDoc(context.stage.docs);
+  const brief = company && company.id !== id ? await context.store.readDoc(company.id).catch(() => '') : '';
+  const workspace = typeof context.store?.filesDir === 'string' ? dirname(context.store.filesDir) : null;
+  const read = [...evidence.read, brief, ...await leadRecords(context.stage, workspace)];
+  const missing = unrecordedNames({ after, before, read, title });
+  const gone = new Set(missing.map((one) => one.name));
+  const unheard = unheardSayings({ after, before, read, title }).filter((one) => !gone.has(one.name));
+  return { missing, unheard, read };
 }
 // With no numbers in it: a tool result is read, and an example figure here would source itself.
 const WORK_IT_OUT = 'Work each one out with calc from figures read, every cost in, and write the working line in the doc, as "Net burn = costs − MRR = result (calc)".';
@@ -590,7 +630,7 @@ export const docTools: Tool[] = [
       }
       const id = `doc-${Math.random().toString(36).slice(2, 8)}`;
       // A new doc has no rules, so its text is marked, never refused.
-      const checked = await checkWrite(context, id, '', text(args, 'text'), `Created "${title}".`);
+      const checked = await checkWrite(context, id, '', text(args, 'text'), `Created "${title}".`, undefined, title);
       await context.store.writeDoc(id, checked.text);
       context.granted.set(id, title);
       // A stage that cannot be saved just now still leaves a doc the person can write to this turn.

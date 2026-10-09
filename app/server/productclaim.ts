@@ -30,6 +30,40 @@ const PLATFORM_KIND: Kind = {
   key: (hit) => hit[1].toLowerCase().replace(/^the\s+/, '').replace(/s$/, '').replace(/^web[- ]app$/, 'web'),
   about: (hit) => PLATFORMS[hit[1].toLowerCase().replace(/^the\s+/, '').replace(/s$/, '')] ?? hit[1],
 };
+const LANGUAGES = 'German|English|French|Spanish|Italian|Dutch|Polish|Turkish|Arabic|Portuguese|Chinese|Mandarin|Japanese|Korean|Russian|Ukrainian|Swedish|Danish|Norwegian|Finnish|Czech|Greek|Hebrew|Hindi|Deutsch';
+// What the product is said to do or hold, by a subject that is the product ("we", "it", "the app", "the booking
+// page") and a verb of having or doing in the present: "we have a full German version", "we export all your past
+// bookings", "we keep your account archive". A plan ("will", "plan to") is no claim, and neither is "we have six
+// paying cafés": a verb of having claims only with a feature after it.
+const SUBJECT = String.raw`\b(?:we|it|they|the\s+(?:tool|app|product|platform|service|system|booking\s+page|page|site|dashboard|software))\s+(?:also\s+|already\s+|automatically\s+|can\s+|do\s+|does\s+)?`;
+const DOING = /^(?:export|archive|translate|back(?:s)?\s+up|sync)/i;
+const FEATURES = /\b(spreadsheets?|csv|excel|exports?|archives?|backups?|api|integrations?|reminders?|sms|text messages?|notifications?|mobile app|(?:ios|android) app|dashboard|analytics|translations?|calendar sync|invoices?|receipts?|templates?|offline mode|dark mode|free trial|guarantee|history|versions?)\b/i;
+const CAPABILITY_KIND: Kind = {
+  pattern: new RegExp(`${SUBJECT}(offers?|have|has|supports?|includes?|provides?|comes?\\s+with|come\\s+with|exports?|archives?|stores?|keeps?|translates?|backs?\\s+up|syncs?)\\s+((?:(?!,?\\s+(?:and|but|so)\\s+(?:we|it|they|you)\\b)[^.;!?]){0,120})`, 'i'),
+  key: (hit) => {
+    const doing = DOING.exec(hit[1]);
+    if (doing) return doing[0].toLowerCase().replace(/^backs?\s+up$/, 'backup').replace(/s$/, '');
+    const feature = FEATURES.exec(hit[2]);
+    if (!feature) return null;
+    // A version is a language's (its own kind); "versions" alone claims nothing.
+    if (/^versions?$/i.test(feature[1])) return null;
+    return feature[1].toLowerCase().replace(/s$/, '');
+  },
+  about: (hit) => {
+    const said = `${hit[1]} ${hit[2]}`;
+    const days = /\b(\d+)[- ]days?\b/i.exec(said);
+    if (/archive/i.test(said)) return days ? `a ${days[1]}-day archive` : 'an archive';
+    if (/^export/i.test(hit[1]) || /\bexports?\b/i.test(hit[2])) return /spreadsheet|csv|excel/i.test(said) ? 'a spreadsheet export' : 'an export';
+    if (/^translat/i.test(hit[1])) return 'translation';
+    if (/^sync/i.test(hit[1])) return 'syncing';
+    if (/^back/i.test(hit[1])) return 'backups';
+    // The thing as said, up to its last feature word within a few words: "SMS reminders", "booking history".
+    const head = hit[2].split(/\s+/).slice(0, 6).join(' ');
+    const last = [...head.matchAll(new RegExp(FEATURES.source, 'gi'))].at(-1);
+    if (!last) return hit[1].toLowerCase();
+    return head.slice(0, last.index! + last[0].length).replace(/^(?:(?:a|an|the|your|our|their|all|full|every|complete)\s+)+/i, '');
+  },
+};
 // Journey 20: Sam's ready reply to Ines said "FixSlot is web-based and works on any phone or tablet browser so
 // volunteers can view the list without downloading an app" and "If a visitor cancels, the €4 booking fee is
 // non-refundable." Nothing on record said either: the brief says only that visitors book a slot online. A refund,
@@ -86,6 +120,26 @@ const KINDS: Kind[] = [
     key: (hit) => hit[1].toLowerCase().split(/\s+/).at(-1)!.replace(/s$/, '').replace(/^any ?time$/, 'cancel'),
     about: (hit) => hit[1].toLowerCase(),
   },
+  // Journey 21: Jonas asked "Do you have a German version of the booking page?" and the ready reply said "yes, we have
+  // a full German version of the booking page"; Clara asked what happens to their data if they stop paying and was
+  // told "We export all your past bookings ... into a standard spreadsheet format" and "we keep your account archive
+  // active for 90 days". Nothing on record said any of it. A language the product is in, what it exports, archives,
+  // stores, keeps or translates, a feature it is said to have, offer, include or come with, and what happens to a
+  // customer's data are claims like a platform is.
+  {
+    pattern: new RegExp(`\\b(?:(?:in|into)\\s+(${LANGUAGES})|(${LANGUAGES})(?:[- ]language)?\\s+(?:versions?|translations?|interfaces?|sites?|websites?|pages?|apps?|ui|locali[sz]ations?|support|editions?))\\b`, 'i'),
+    key: (hit) => (hit[1] ?? hit[2]).toLowerCase(),
+    about: (hit) => { const name = `${(hit[1] ?? hit[2])[0].toUpperCase()}${(hit[1] ?? hit[2]).slice(1).toLowerCase()}`; return `${/^[AEIOU]/.test(name) ? 'an' : 'a'} ${name} version`; },
+  },
+  { pattern: /\b(multilingual|multi-language|(?:auto(?:matically)?[- ])?translat(?:es|ed|ion|ions)|locali[sz]ed)\b/i, key: () => 'translat', about: () => 'translation' },
+  {
+    pattern: /\b(?:(?:your|the|all|our)\s+(?:account\s+|booking\s+|customer\s+)?data\s+(?:remains?|stays?|is|are|will\s+(?:be|remain|stay))\s+(?:\w+\s+)?(?:safe|secure|stored|kept|deleted|available|accessible|yours|encrypted|private|retained|archived|exported|protected)|data\s+(?:retention|deletion|portability)|(?:delete|deletes|deleted|erase|erases|erased)\s+(?:all\s+)?(?:of\s+)?(?:your|the|their)\s+data|happens?\s+to\s+(?:our|your|my|the|their)\s+data)\b/i,
+    key: () => 'data',
+    about: () => 'what happens to your data',
+    stated: true,
+    policy: true,
+  },
+  CAPABILITY_KIND,
   // An integration with something named: "integrates with Xero", "syncs with Google Calendar", "works with WhatsApp".
   {
     pattern: /\b(?:integrat\w*|syncs?|synced|connects?|connected|compatible|exports?|imports?|plugs? into|works?|working)\s+(?:seamlessly\s+|directly\s+|natively\s+|fully\s+)?(?:with|to|into|from)\s+(?:[\p{Ll}]+\s+){0,3}?(\p{Lu}[\p{L}\d]+(?:\s+\p{Lu}[\p{L}\d]+)?)/u,
@@ -226,6 +280,12 @@ export function productTopic(question: string): { name: string; keys: RegExp } |
   if (policy) return { name: about, keys };
   const you = (text: string) => text.replace(/\bmy\b/gi, 'your').replace(/\bme\b/gi, 'you').replace(/\bI\b/g, 'you').replace(/\bmine\b/gi, 'yours').replace(/\bwe\b/gi, 'you').replace(/\bour\b/gi, 'your');
   const subject = '(it|they|this|that|the\\s+\\p{L}+|your\\s+\\p{L}+|\\p{Lu}[\\p{L}]+)';
+  // "Do you have a German version?" asks about us: "whether we have a German version", never "whether you have".
+  const ours = /^(do|does|can|could|will|would)\s+you\s+(?:guys\s+|still\s+|also\s+)?(\p{L}+)\s+(.*)$/iu.exec(asked);
+  if (ours) {
+    const modal = /^(?:can|could)$/i.test(ours[1]) ? 'can ' : /^(?:will|would)$/i.test(ours[1]) ? 'will ' : '';
+    return { name: `whether we ${modal}${ours[2].toLowerCase()} ${you(ours[3])}`, keys };
+  }
   const does = new RegExp(`^(does|do)\\s+${subject}\\s+(\\p{L}+)(.*)$`, 'iu').exec(asked);
   if (does) {
     const verb = does[1].toLowerCase() === 'does' ? (/(?:s|sh|ch|x|o)$/i.test(does[3]) ? `${does[3]}es` : /[^aeiou]y$/i.test(does[3]) ? `${does[3].slice(0, -1)}ies` : `${does[3]}s`) : does[3];

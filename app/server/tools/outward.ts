@@ -144,6 +144,8 @@ export function outwardTools(mail: Mail, filesDir: string, drafting?: Drafting, 
         const brief = company ? await context.store.readDoc(company.id).catch(() => '') : '';
         const written = text(args, 'body', 20_000);
         const draft = { to: text(args, 'to', 500), subject: text(args, 'subject', 300), body: filledIn(written, brief, context.stage.rooms.map((room) => room.name)) };
+        // The step shows what goes to Gmail: never the "[Founder]" the words held (journey 21).
+        args.body = draft.body;
         // Journey 20: the draft went out signed right while the chat still showed "Best, Sam". Say what it ends with.
         const tail = (body: string) => body.trim().split('\n').slice(-2).join('\n');
         const signed = tail(written) !== tail(draft.body) ? ` The sign-off was put right: the email ends "${tail(draft.body).replace(/\n/g, ' ')}" (the founder and the company, never a colleague); say so, not the old one.` : '';
