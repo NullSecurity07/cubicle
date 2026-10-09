@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TurnResult } from '../loop.ts';
 import { economicsOf } from './economics.ts';
-import { asksVerdict, callNudge, callShape, checkTitle, deadSignal, holdCall, killOf, NO_SIGNAL, plusDays, pushesBack, readCall, renderCall, thresholdOf, unsourcedIn } from './call.ts';
+import { asksVerdict, NOTED, offVerdict, callNudge, callShape, checkTitle, deadSignal, holdCall, killOf, NO_SIGNAL, plusDays, pushesBack, readCall, renderCall, thresholdOf, unsourcedIn } from './call.ts';
 
 const today = '2026-10-06';
 const brief = '## Numbers\n- Beta users: 12 (2 paying)\n- Price: €39 a month\n- MRR: €78\n- Cash: €9,800\n- Burn: €1,650 a month\n- Runway: 5.9 months';
@@ -239,5 +239,19 @@ describe('pushback on the verdict', () => {
     expect(pushesBack('That kill signal is too easy.')).toBe(true);
     expect(pushesBack('What is the kill signal we hold ourselves to?')).toBe(false);
     expect(pushesBack("I don't buy the new logo.")).toBe(false);
+  });
+});
+
+// Journey 19: "My call: keep going" on nearly every reply, and the no on Tom's reply answered with the whole verdict.
+describe('the verdict shape off a verdict turn', () => {
+  const VERDICT = 'My call: **keep going**.\nWhy: With €3,200 in cash and 9 paying plumbers, runway is 3.8 months.\nKill signal: Paying plumbers below 7 by 2026-10-29.\nThis week: call the trials.';
+  it('drops a recycled verdict and a bare "My call: keep going", and keeps a call that says a move', () => {
+    expect(offVerdict(`Understood, no promises about unbuilt features.\n\n${VERDICT}`)).toBe('Understood, no promises about unbuilt features.');
+    expect(offVerdict('Short and friendly is best.\n\nMy call: keep going.')).toBe('Short and friendly is best.');
+    expect(offVerdict('Send it today.\n\nMy call: send Tom the honest answer today.')).toBe('Send it today.\n\nMy call: send Tom the honest answer today.');
+  });
+  it('on a no, no verdict line stands, and a reply that was only the verdict says the no is kept', () => {
+    expect(offVerdict('Noted.\nMy call: send the other email.', true)).toBe('Noted.');
+    expect(offVerdict(VERDICT, true)).toBe(NOTED);
   });
 });

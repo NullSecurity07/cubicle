@@ -13,7 +13,7 @@ import { saysSomething } from '../missions.ts';
 import { FAKE_MORNING, MOST_TRIES, morningDue, morningInputs, morningMessage, writeMorning, type MorningSources } from '../partner/morning.ts';
 import { addPlan, boardFor, boardForPlan, NO_BOARD, planAttention, stepsFrom } from '../partner/plans.ts';
 import { asksWhatNext, holdSynthesis, standingFacts } from '../partner/synthesis.ts';
-import { asksVerdict, callShape, holdCall, PUSHBACK_LINE, pushesBack, thresholdOf, type KillSignal, type PartnerCall } from '../partner/call.ts';
+import { asksVerdict, callShape, holdCall, offVerdict, PUSHBACK_LINE, pushesBack, thresholdOf, type KillSignal, type PartnerCall } from '../partner/call.ts';
 import { breakEvenFix, changedLine, economicsBlock, figuresFix, sameMetric, stateOf, workingTools, type EconomicsState, type Reading } from '../partner/economics.ts';
 import { chaseLine, keptPromiseLine, promiseLine, promisesAttention, promisesBook, promisesIn } from '../partner/promises.ts';
 import { gatherSince, metricsOnDisk, sinceHeadline } from '../partner/since.ts';
@@ -29,7 +29,7 @@ import { createWatch, fakeWatchReply, leadTwins, watchBudget, type Budget } from
 import { guardUnasked } from '../partner/unasked.ts';
 import { draftId, gmailLink } from '../../shared/maildraft.ts';
 import { leadAddresses, noAddress } from '../tools/outward.ts';
-import { ruledOutLine, saidNoFor } from '../partner/saidno.ts';
+import { asksSaidNo, chatNo, ruledOutLine, saidNoFor, standingNosIn } from '../partner/saidno.ts';
 import { staleNeeds, standingBlock, standingParts, stillWaiting, teamVerdict, verdictLines, type StandingParts } from '../partner/standing.ts';
 import { companyFacts, keepFacts, keptLine, runwayFix } from '../partner/keep.ts';
 import { CUSTOMER_LINE, customerReply, forCustomers } from '../partner/audience.ts';
@@ -40,6 +40,9 @@ import { markVerdict, partnerRoute } from '../partner/route.ts';
 import { withSystem, type Handler } from '../seams.ts';
 import { newId, patchStageVia } from '../slice-kit.ts';
 import { speaker, text, type Tool } from '../tools/registry.ts';
+
+// A question about what was said or decided before.
+const RECALL = /\b(?:remind me|what did (?:we|i) (?:decide|say|agree)|what was (?:the|our|my)|recall)\b/i;
 
 // The partner: one person who holds the whole company rather than one part of it, and the things that make that
 // true. The Company document is the shared record every person reads; decisions land in it as they are made. Once a
@@ -577,6 +580,13 @@ export function createPartner(options: PartnerOptions = {}) {
         standing = null;
       }
       const fixes = await fixesNow();
+      // The verdict's shape only where a verdict was asked for or pushed on (server/partner/call.ts, journey 19).
+      // A question about what was decided is answered in the verdict's own words, so it is left as it is.
+      if (!asksVerdict(payload.query) && !RECALL.test(payload.query) && !await pushedBack(me.id, payload.query).catch(() => false)) {
+        const quiet = !!chatNo(payload.query) || standingNosIn(payload.query).length > 0 || asksSaidNo(payload.query);
+        const off = offVerdict(payload.reply.text, quiet);
+        if (off !== payload.reply.text) payload = { ...payload, reply: { ...payload.reply, text: off } };
+      }
       // "What now" is answered across the rooms: held to the standing facts in code, asked once more if it names too
       // few of them (server/partner/synthesis.ts).
       if (asksWhatNext(payload.query)) {

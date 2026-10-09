@@ -67,6 +67,29 @@ const LABELS: { field: 'call' | 'why' | 'kill' | 'week' | 'gap'; label: RegExp }
 ];
 // A line as the label sees it: no bullet, no bold or italics, no heading marks.
 const plain = (line: string) => line.replace(/^\s*(?:[-*+]|\d+[.)]|#+)\s+/, '').replace(/[*_`]/g, '').trim();
+
+// Journey 19: "My call: keep going" closed nearly every partner reply, after a no and a recall question too, and the
+// founder's no on a drafted reply was answered with the whole verdict again. The verdict's shape belongs to a verdict,
+// a pushback on it and the refresh. On any other turn a recycled verdict loses its Why, Kill signal and This week
+// lines, and a "My call" that only says the verdict's word again goes. `quiet`: a turn that answers a no or a recall
+// question, where no verdict line stands at all.
+const VERDICT_WORD = /^(?:keep going|change course|stop|pivot|continue)\b[\s.!]*$/i;
+export function offVerdict(text: string, quiet = false): string {
+  const lines = text.split('\n');
+  const fieldOf = (line: string) => LABELS.find((one) => one.label.test(plain(line)))?.field;
+  const fields = new Set(lines.map(fieldOf).filter(Boolean));
+  const recycled = fields.size >= 3;
+  const kept = lines.filter((line) => {
+    const field = fieldOf(line);
+    if (!field) return true;
+    if (quiet) return false;
+    if (field === 'call') return !VERDICT_WORD.test(plain(line).replace(LABELS[0].label, ''));
+    return !recycled;
+  });
+  const out = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  return out || (quiet ? NOTED : text);
+}
+export const NOTED = 'Understood: that is kept as your no, and I will not put it to you again unless something changes.';
 const tidy = (text: string) => text.replace(/\s+/g, ' ').trim().replace(/^[\s:,-]+/, '');
 
 const DECISIONS: [Decision, RegExp][] = [
