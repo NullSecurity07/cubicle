@@ -8,7 +8,7 @@ import type { ModelMessage } from '../prompt.ts';
 import type { FounderPromise } from './promises.ts';
 import { saidNoFor } from './saidno.ts';
 import { NOTHING_CHANGED } from './since.ts';
-import { confirmedFix, gatherMorning, MORNING_ASK, morningDue, morningInputs, morningMessage, MOST_TRIES, RETRY_AFTER, writeMorning, type MorningSources } from './morning.ts';
+import { attributed, confirmedFix, gatherMorning, MORNING_ASK, morningDue, morningInputs, morningMessage, MOST_TRIES, RETRY_AFTER, writeMorning, type MorningSources } from './morning.ts';
 
 const at = (text: string) => new Date(text).getTime();
 const NINE = at('2026-09-27T09:00');
@@ -229,10 +229,11 @@ describe('one morning turn', () => {
   it('flags a figure again when yesterday\'s note was flagged for it and today\'s repeats it', async () => {
     const note = (price: string) => `Three moves for today:\n1. Set the price at ${price} on the landing page.\n2. Email the replied leads.\n3. Log signups.\nRisk: Maya priced it at $9\nQuestion: q?`;
     const first = await writeMorning({ sources: await sources({ chat: async () => [] }), name: 'Sam', promptFor: prompt, ask: async () => note('$29/month') });
-    expect(first?.flags).toEqual([expect.stringMatching(/^Unsourced figures: \$29/)]);
+    // Maya said nothing today, so "$9" is no figure of hers: the risk that puts it on her goes.
+    expect(first?.flags).toEqual([expect.stringMatching(/^Unsourced figures: \$29/), '(left out: nothing on record about $9, which Maya never gave)']);
     const posted: ChatMessage = { id: 'n1', role: 'assistant', text: morningMessage(first!), at: at('2026-09-26T09:00') };
     const second = await writeMorning({ sources: await sources({ chat: async (roomId) => (roomId === 'p1' ? [posted] : []) }), name: 'Sam', promptFor: prompt, ask: async () => note('$29/month') });
-    expect(second?.flags).toEqual([expect.stringMatching(/^Unsourced figures: \$29/)]);
+    expect(second?.flags).toEqual([expect.stringMatching(/^Unsourced figures: \$29/), '(left out: nothing on record about $9, which Maya never gave)']);
   });
 
   it('checks the note as it is posted, not the words around it the reshaping drops', async () => {
@@ -386,5 +387,22 @@ describe('journey 17\'s morning notes', () => {
   it('never ships an empty section: no moves is said in words, an empty risk or question is left out', () => {
     expect(morningText({ things: [], risk: '', question: 'Which count is right?' })).toBe('No moves today.\n\nQuestion: Which count is right?');
     expect(morningText({ things: ['Call Anna.'], risk: 'r', question: '' })).toBe('Three moves for today:\n1. Call Anna.\n\nRisk: r');
+  });
+
+  it('day 2: never puts the partner\'s own €2,556.67 on Otto, whose Runway never had it', async () => {
+    const note = await writeMorning({ sources: await j17('2026-10-07T06:30'), name: 'Sam', promptFor: prompt, ask: async () => 'Three moves for today:\n1. Send the email to Anna.\n2. Read Otto\'s Runway: net burn is -€912.33 a month.\n3. Ask Pia for the spec.\nRisk: Otto\'s Runway doc listed unsourced figures (€2,556.67)\nQuestion: Otto, why did you save unsourced figures like €2,556.67?' });
+    expect(note!.things[1]).toBe('Read Otto\'s Runway: net burn is -€912.33 a month.');
+    expect(note!.risk).toBe('');
+    expect(note!.question).toBe('');
+    expect(note!.flags).toContain('(left out: nothing on record about €2,556.67, which Otto never gave)');
+    expect(morningText(note!)).not.toContain('2,556.67');
+  });
+
+  it('says "(calc)" or "(from the brief)" for a figure beside a colleague\'s name that came from neither of their own', () => {
+    const otto = [{ name: 'Otto', text: RUNWAY }];
+    expect(attributed('Otto has break-even at 8 and runway at 3.16 months.', otto, { brief: company, worked: [] }).text).toBe('Otto has break-even at 8 and runway at 3.16 months.');
+    expect(attributed('Otto says the cash is €6,000.', [{ name: 'Otto', text: '' }], { brief: company, worked: [] }).text).toBe('Otto says the cash is €6,000 (from the brief).');
+    expect(attributed('Otto put MRR at €2,812.33.', [{ name: 'Otto', text: '' }], { brief: company, worked: [2812.333333] }).text).toBe('Otto put MRR at €2,812.33 (calc).');
+    expect(attributed('Otto put MRR at €2,556.67.', [{ name: 'Otto', text: '' }], { brief: company, worked: [2812.333333] })).toEqual({ text: '', left: ['€2,556.67, which Otto never gave'] });
   });
 });

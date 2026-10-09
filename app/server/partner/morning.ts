@@ -209,6 +209,55 @@ export function confirmedFix(line: string, read: string[]): string {
   return line.replace(CONFIRMED, (_whole, article?: string) => (article ? `${article} ` : 'said')).replace(/\s{2,}/g, ' ');
 }
 
+// Journey 17, day 2: "Risk: Otto's Runway doc listed unsourced figures (€2,556.67)". €2,556.67 was the partner's own,
+// from its day-1 reply; Otto never wrote it. A figure said beside a colleague's name is theirs only when it is in what
+// that colleague wrote: their replies, their tool results (a calc among them) and the docs their turns wrote. Else a
+// figure of the brief says "(from the brief)" and one the one state works out says "(calc)"; a figure nobody of that
+// name gave and nothing on record holds takes its sentence out, since it says a colleague did what they did not.
+export type Colleague = { name: string; text: string };
+const FIGURE_SAID = /(?<![\d.,-])([$€£]\s?)?-?\d[\d,]*(?:\.\d+)?(?![\d-])/g;
+const flatNumber = (text: string) => text.replace(/[$€£\s]/g, '').replace(/,/g, '').replace(/^-/, '');
+const numbersIn = (text: string) => new Set([...text.replace(/(?<=\d),(?=\d{3}\b)/g, '').matchAll(/\d+(?:\.\d+)?/g)].map((hit) => hit[0]));
+export function attributed(line: string, people: Colleague[], own: { brief: string; worked: number[] }): { text: string; left: string[] } {
+  const left: string[] = [];
+  const briefNumbers = numbersIn(own.brief);
+  const sentences = line.split(/(?<=[.!?])\s+/).flatMap((sentence) => {
+    const named = people.filter((one) => one.name.trim().length > 1 && new RegExp(`(?<![\\p{L}])${one.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}])`, 'u').test(sentence));
+    if (!named.length) return [sentence];
+    const theirs = new Set(named.flatMap((one) => [...numbersIn(one.text)]));
+    let out = '';
+    let last = 0;
+    for (const hit of sentence.matchAll(FIGURE_SAID)) {
+      const at = hit.index ?? 0;
+      const rest = sentence.slice(at + hit[0].length);
+      if (/^\s*(?:\(calc\)|\(from the brief\))/.test(rest) || /^-\d{2}-\d{2}/.test(rest)) continue;
+      const bare = flatNumber(hit[0]);
+      if (!hit[1] && !bare.includes('.') && Number(bare) >= 1900 && Number(bare) <= 2099) continue;
+      if (theirs.has(bare)) continue;
+      const decimals = bare.split('.')[1]?.length ?? 0;
+      const value = Number(bare);
+      const tag = briefNumbers.has(bare) ? ' (from the brief)' : own.worked.some((one) => Math.abs(Math.abs(one) - value) <= 0.5 * 10 ** -decimals + 1e-9) ? ' (calc)' : null;
+      if (!tag) { left.push(`${hit[0].trim()}, which ${named.map((one) => one.name).join(' or ')} never gave`); return []; }
+      out += sentence.slice(last, at + hit[0].length) + tag;
+      last = at + hit[0].length;
+    }
+    return [out + sentence.slice(last)];
+  });
+  return { text: sentences.join(' ').trim(), left };
+}
+
+// What each colleague wrote, for attributed(): their replies, their tool results and the docs their turns wrote.
+async function colleaguesOf(sources: MorningSources): Promise<Colleague[]> {
+  const out: Colleague[] = [];
+  for (const room of sources.stage.rooms.filter((one) => one.id !== sources.partnerId && !one.partner)) {
+    const said = (await sources.chat(room.id).catch(() => [] as ChatMessage[])).filter((message) => message.role === 'assistant' && !message.failed && !message.from);
+    const docIds = new Set(said.flatMap((message) => (message.tools ?? []).flatMap((tool) => { const id = (tool.effect as { id?: unknown } | undefined)?.id; return tool.ok !== false && typeof id === 'string' && /^doc-/.test(tool.effect?.kind ?? '') ? [id] : []; })));
+    const docs = sources.doc ? await Promise.all([...docIds].map((id) => sources.doc!(id).catch(() => ''))) : [];
+    out.push({ name: room.name, text: [...said.flatMap((message) => [message.text, ...(message.tools ?? []).map((tool) => tool.result ?? '')]), ...docs].join('\n').slice(-60_000) });
+  }
+  return out;
+}
+
 // The facts without the truth net's flagged block, which runs from its heading to the Company numbers.
 const FLAGGED_BLOCK = /^Flagged by the truth net since [^\n]*\n(?:(?!Company Numbers:)[^\n]*\n)*/m;
 const withoutFlagged = (facts: string) => facts.replace(FLAGGED_BLOCK, '');
@@ -266,12 +315,17 @@ export async function writeMorning(input: {
   const things = reply.read.things.filter((thing) => !against(thing));
   // Nobody asked for the note, so a line that promises, counts or quotes what the facts and the brief do not say is
   // taken out, and the note says what was left out (server/partner/unasked.ts).
-  // A move is a plan and the risk is the partner's view: neither is taken out (guardMove, guardView).
+  // A move is a plan and the risk is the partner's view: neither is taken out (guardMove, guardView); a figure said
+  // as a colleague's that the colleague never gave is (attributed).
   const record = [withoutFlagged(facts), sources.company ?? ''];
   const left: string[] = [];
-  const kept = things.map(fix).map((thing) => guardMove(thing, record)).filter((thing) => thing.trim());
-  const risk = guardView(fix(reply.read.risk), record);
-  const held = guardUnasked(fix(reply.read.question), record);
+  const people = await colleaguesOf(sources).catch(() => [] as Colleague[]);
+  const own = { brief: numbers, worked: [...(economics?.working ?? []).flatMap((one) => [...one.result.replace(/(?<=\d),(?=\d{3}\b)/g, '').matchAll(/-?\d+(?:\.\d+)?/g)].map((hit) => Number(hit[0]))), ...(state ? state.explain().flatMap((one) => [...one.replace(/(?<=\d),(?=\d{3}\b)/g, '').matchAll(/=\s*(-?\d+(?:\.\d+)?)/g)].map((hit) => Number(hit[1]))) : [])] };
+  const owned = (line: string) => { const held = attributed(line, people, own); left.push(...held.left); return held.text; };
+  const kept = things.map(fix).map((thing) => guardMove(owned(thing), record, numbers)).filter((thing) => thing.trim());
+  const risk = guardView(owned(fix(reply.read.risk)), record);
+  const question = owned(fix(reply.read.question));
+  const held = guardUnasked(question, record);
   left.push(...held.left);
   const read: Morning = { things: kept, risk, question: held.text };
   // The truth net, as every turn has it: a figure in the note that nothing it was given holds is flagged under it,
