@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { breakEvenFix, breakEvenLine, derivedRows, economicsBlock, economicsOf, figuresFix, gapFix, gapLine, saysGap, stateOf, wideGap, workingTools } from './economics.ts';
+import { checkReply } from '../truth.ts';
+import { breakEvenFix, breakEvenLine, derivedRows, economicsBlock, economicsOf, figuresFix, gapFix, gapLine, saysGap, stateFigures, stateOf, wideGap, workingTools } from './economics.ts';
 import { inputFixesIn } from './corrections.ts';
 
 // The Numbers of journey 13's Company brief, as the founder wrote them.
@@ -218,5 +219,19 @@ describe('arithmetic on the gap to break-even, held to the state', () => {
       'Convert 5 trial users this week.',
       'Sign 3 more plumbers this week as a step toward break-even.',
     ]) expect(gapFix(ok, state)).toBe(ok);
+  });
+});
+
+// Journey 19: "Unsourced figures: €839" under the verdict for the net burn the state works out, and "Not worked out:
+// €261" beside "9 × €29 = €261". The state's figures are a source of the partner's every turn.
+describe('the state\'s figures as a source for the truth net', () => {
+  const QUOTESNAP = '- Price: €29 a month per plumber\n- Trial users: 22\n- Paying plumbers: 9\n- Cash: €3,200\n- Burn: €1,100 a month';
+  it('says them in one line, and the net finds every figure of a reply that uses them', () => {
+    const state = stateOf(QUOTESNAP);
+    const line = stateFigures(state);
+    expect(line).toBe('The company\'s figures, worked with calc from the Company brief: MRR €261 a month; net burn €839 a month; runway 3.8 months; break-even 38 paying plumbers; 9 paying plumbers now; gap to break-even 29.');
+    const reply = 'My call: keep going.\nWhy: MRR is €261 and net burn is €839 a month, so runway is 3.8 months; break-even is 38 paying plumbers, 29 more than today.';
+    expect(checkReply({ reply, receipts: [], sources: [QUOTESNAP, line] })).toEqual([]);
+    expect(checkReply({ reply, receipts: [], sources: [QUOTESNAP] }).join('\n')).toMatch(/839/);
   });
 });

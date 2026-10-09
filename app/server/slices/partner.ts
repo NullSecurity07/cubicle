@@ -14,7 +14,7 @@ import { FAKE_MORNING, MOST_TRIES, morningDue, morningInputs, morningMessage, wr
 import { addPlan, boardFor, boardForPlan, NO_BOARD, planAttention, stepsFrom } from '../partner/plans.ts';
 import { asksWhatNext, holdSynthesis, standingFacts } from '../partner/synthesis.ts';
 import { asksVerdict, callShape, holdCall, offVerdict, PUSHBACK_LINE, pushesBack, thresholdOf, type KillSignal, type PartnerCall } from '../partner/call.ts';
-import { breakEvenFix, changedLine, economicsBlock, figuresFix, sameMetric, stateOf, workingTools, type EconomicsState, type Reading, type Snapshot } from '../partner/economics.ts';
+import { breakEvenFix, changedLine, economicsBlock, figuresFix, sameMetric, stateFigures, stateOf, workingTools, type EconomicsState, type Reading, type Snapshot } from '../partner/economics.ts';
 import { chaseLine, keptPromiseLine, promiseLine, promisesAttention, promisesBook, promisesIn } from '../partner/promises.ts';
 import { gatherSince, metricsOnDisk, sinceHeadline } from '../partner/since.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
@@ -549,6 +549,9 @@ export function createPartner(options: PartnerOptions = {}) {
         await takeFixes(stage, payload.roomId, payload.query).catch((error: Error) => console.error(`partner numbers: ${error.message}`));
         const block = await standingFor(stage, payload.roomId).catch((error: Error) => { console.error(`partner standing facts: ${error.message}`); return ''; });
         out = withSystem(out, block);
+        // The state's own figures, a source for what the partner says (journey 19's false footers).
+        const figures = stateFigures(await stateNow(stage).catch(() => null));
+        if (figures) out = withSystem(out, figures);
         // Written for customers: said before it is written, and held to it after (the reply seam below).
         if (forCustomers(payload.query)) out = withSystem(out, CUSTOMER_LINE);
         // A verdict on the company comes in four lines, held to them after (the reply seam below). The brief's numbers

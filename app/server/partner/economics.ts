@@ -397,6 +397,29 @@ export function breakEvenLine(state: EconomicsState | null | undefined, value?: 
   return `Break-even is ${even} ${state.unit}; ${now} is ${side === 'at' ? 'right at it' : `${side} it`}${state.cashPositive() && value === undefined ? ', and the company is cash-positive' : ''}.`;
 }
 
+// Journey 19: "Unsourced figures: €839" under the verdict for the net burn worked out on the line before it, and "Not
+// worked out: €261" beside "9 × €29 = €261"; the next morning's risk was the false footer. The working is added to the
+// turn after the truth net has looked, so the net never saw it. The state's figures go into every partner turn as a
+// source of their own, worked with calc from the brief, so a figure the state holds is never flagged.
+export function stateFigures(state: EconomicsState | null | undefined): string {
+  if (!state) return '';
+  const currency = state.currency ?? '';
+  const said: string[] = [];
+  const mrr = state.mrr();
+  const net = state.net();
+  const runway = state.runway();
+  const even = state.breakEven();
+  const now = state.current();
+  const gap = state.gap();
+  if (mrr !== undefined) said.push(`MRR ${money(mrr, currency)} a month`);
+  if (net !== undefined) said.push(`net burn ${money(net, currency)} a month`);
+  if (runway) said.push(`runway ${runway.display}${Number.isFinite(runway.value) ? ' months' : ''}`);
+  if (even !== undefined && Number.isFinite(even)) said.push(`break-even ${even} ${state.unit}`);
+  if (now !== undefined) said.push(`${now} ${state.unit} now`);
+  if (gap !== undefined && gap > 0) said.push(`gap to break-even ${gap}`);
+  return said.length ? `The company's figures, worked with calc from the Company brief: ${said.join('; ')}.` : '';
+}
+
 // Break-even far above where the company stands: more than twice the count today.
 export const wideGap = (economics: Economics | null | undefined) => !!economics && economics.breakEven !== undefined
   && economics.current !== undefined && economics.breakEven > Math.max(economics.current * 2, economics.current + 2);
