@@ -283,3 +283,14 @@ describe('what the count guard takes as a count', () => {
     expect(markUnworked({ before: '', after: 'Monthly burn on 3D printing: €600', read: ['burn €600 a month'] }).text).toBe('Monthly burn on 3D printing: €600');
   });
 });
+
+// Journey 19: Maya's "~66% (unsourced)" was flagged in review as '"66" has no source or calc'.
+describe('a figure already marked (unsourced)', () => {
+  it('is never marked or flagged again, with a percent sign between', () => {
+    const read = ['Price: €29 a month. Paying plumbers: 9. Burn: €1,100 a month.'];
+    for (const line of ['- Net burn is high, so ~66% (unsourced) of the trials must convert.', '- Margin a month: ~66 % (unsourced)']) {
+      expect(markUnworked({ before: '', after: `# Runway\n\n${line}\n`, read }).marked.map((one) => one.label)).not.toContain('66');
+    }
+    expect(markUnworked({ before: '', after: '# Runway\n\n- Net burn: 66% of revenue a month\n', read }).marked.map((one) => one.label)).toEqual(['66%']);
+  });
+});

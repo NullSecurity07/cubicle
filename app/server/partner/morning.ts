@@ -9,7 +9,7 @@ import { checkReply, FLAG_LINE, stripFlagged, turnSources } from '../truth.ts';
 import { gatherMonth } from '../slices/month.ts';
 import { cardOf } from './bets.ts';
 import { learnedSection, sectionText } from './company.ts';
-import { breakEvenFix, breakEvenLine, economicsOf, figuresFix, type EconomicsState } from './economics.ts';
+import { breakEvenFix, breakEvenLine, changedLine, changedSince, economicsOf, figuresFix, stateFigures, type EconomicsState, type Snapshot } from './economics.ts';
 import { runwayFix } from './keep.ts';
 import type { FounderPromise } from './promises.ts';
 import { ruledOutBy, ruledOutLine, saidNoFor, type SaidNoEntry } from './saidno.ts';
@@ -96,7 +96,24 @@ export type MorningSources = {
   metrics?: (cardId: string) => Promise<SinceInput['metrics']>;
   // The one picture of the numbers (economics.ts), with the founder's corrections and readings in it.
   economics?: () => Promise<EconomicsState | null>;
+  // The brief's inputs as the last note saw them.
+  seen?: Snapshot;
 };
+
+// Journey 19: the founder raised the price from €29 to €33.35 one evening and the next morning's note never said so.
+// What moved in the brief's inputs since the last note (price, cost, burn, cash, the counts), old → new, from the one
+// picture of the numbers; a count a Metrics line already says moved is not said twice.
+export function briefMoves(seen: Snapshot | undefined, state: EconomicsState | null, said: string[] = []): string[] {
+  if (!seen || !state) return [];
+  return changedSince(seen, state).filter((one) => one.from && one.to)
+    .filter((one) => !((one.field === 'paying' || one.field === 'subscribers') && said.some((line) => line.startsWith('Moved:') && line.toLowerCase().includes(one.label.toLowerCase()))))
+    .map((one) => {
+      const line = changedLine(one, state.currency ?? '');
+      // Cash is money too, said with its currency.
+      const cash = one.field === 'cash' ? `${one.label} ${state.currency ?? ''}${one.from!.value.toLocaleString('en-US')} → ${state.currency ?? ''}${one.to!.value.toLocaleString('en-US')}${line.includes(' (founder: ') ? line.slice(line.indexOf(' (founder: ')) : ''}` : line;
+      return `In the brief: ${cash}.`;
+    });
+}
 
 const VERDICT_CHARS = 400;
 // The Company document's Numbers section, the one place a person's figure should agree with.
@@ -115,6 +132,24 @@ export type CompanyGather = {
   numbers: string; open: Bet[]; closed: Bet[];
 };
 
+// Journey 19: the day-2 note's risk was "Truth net flagged €839 net burn as unsourced", a figure the state works out
+// from the brief (net burn). A flag line's figures that the one state holds are no flag: they go, and a line left with
+// none goes too.
+const FLAGGED_FIGURES = /^((?:Unsourced figures|Not worked out): )(.+?)( \((?:not found|worked out)[^)]*\)\.?)$/;
+export function heldByState(line: string, state: EconomicsState | null | undefined): string | null {
+  const found = FLAGGED_FIGURES.exec(line);
+  if (!found || !state) return line;
+  const held = stateValues(state);
+  const left = found[2].split(', ').filter((figure) => {
+    const value = Number(figure.replace(/[^\d.-]/g, ''));
+    return !Number.isFinite(value) || !held.some((one) => Math.abs(one - value) <= Math.max(0.05, Math.abs(one) * 0.001));
+  });
+  return left.length ? `${found[1]}${left.join(', ')}${found[3]}` : null;
+}
+const stateValues = (state: EconomicsState) => [state.mrr(), state.net(), state.runway()?.value, state.runway()?.gross?.value, state.breakEven(), state.current(), state.gap(),
+  ...Object.values(state.inputs).map((one) => one?.value), ...(['price', 'cost', 'burn'] as const).map((field) => state.monthly(field))]
+  .filter((one): one is number => typeof one === 'number' && Number.isFinite(one));
+
 export async function gatherCompany(from: MorningSources, options: { verdictChars?: number } = {}): Promise<CompanyGather> {
   const yesterday = localDay(from.now - DAY);
   const start = new Date(`${yesterday}T00:00:00`).getTime();
@@ -124,6 +159,7 @@ export async function gatherCompany(from: MorningSources, options: { verdictChar
   const changed = (await gatherMonth({ workspace: from.workspace, stage: seen, roomId: from.partnerId, decisions: from.decisions, boards: from.boards, leads: from.leads, now: from.now }, yesterday))
     .split('\n').map((line) => line.replace(/^Not wired to you: (.+)\. Say so in the update rather than guessing\.$/, 'Not on the stage: $1.')).join('\n');
 
+  const state = await from.economics?.().catch(() => null) ?? null;
   const talk: string[] = [];
   const flagged: string[] = [];
   const flagCounts: { room: string; count: number }[] = [];
@@ -133,7 +169,8 @@ export async function gatherCompany(from: MorningSources, options: { verdictChar
     if (said.length) talk.push(`${room.name} (${room.role}):`, ...said.map((message) => `  ${message.role === 'assistant' ? room.name : message.from ?? 'Founder'}: ${stripFlagged(message.text).replace(/\s+/g, ' ').trim().slice(0, CHAT_CHARS)}`));
     // What the truth net flagged since yesterday, each flag on a line of its own: the model reads it, and the net
     // itself still treats the figure it names as unsourced when the note repeats it.
-    const lines = all.filter((message) => message.role === 'assistant' && message.at >= start).flatMap((message) => message.text.match(FLAG_LINE) ?? []);
+    const lines = all.filter((message) => message.role === 'assistant' && message.at >= start).flatMap((message) => message.text.match(FLAG_LINE) ?? [])
+      .flatMap((line) => { const kept = heldByState(line, state); return kept ? [kept] : []; });
     if (lines.length) { flagged.push(`${room.name} (${room.role}):`, ...[...new Set(lines)].slice(-4)); flagCounts.push({ room: `${room.name} (${room.role})`, count: lines.length }); }
   }
   let chats = talk.join('\n');
@@ -191,7 +228,8 @@ const working = async (from: MorningSources): Promise<string[]> => {
   const state = await from.economics?.().catch(() => null);
   const lines = state ? state.explain() : (economicsOf(sectionText(from.company ?? '', 'Numbers'))?.working ?? []).map((one) => one.line);
   const side = breakEvenLine(state);
-  return [...lines, ...(side ? [side] : [])].map((line) => `- ${line}`);
+  const figures = stateFigures(state);
+  return [...lines, ...(side ? [side] : []), ...(figures ? [figures] : [])].map((line) => `- ${line}`);
 };
 
 // Journey 14's note: "the confirmed 4.4-month runway calculated by Ops". Ops had worked out 4.99; 4.4 was the partner's
@@ -281,7 +319,9 @@ export async function writeMorning(input: {
   ask: (messages: ModelMessage[]) => Promise<string | { text: string; provider?: string; model?: string }>;
 }): Promise<MorningNote | null> {
   const { sources } = input;
-  const since = await gatherSince(sources);
+  const state = await sources.economics?.().catch(() => null) ?? null;
+  const gathered = await gatherSince(sources);
+  const since = [...briefMoves(sources.seen, state, gathered), ...gathered];
   const facts = await gatherMorning(sources, since);
   // What the founder ruled out stands against every move here, held in code (journey 15: "no cold outreach" at day 3,
   // and the day-4 note said "Reach out to 10 more makers").
@@ -305,7 +345,6 @@ export async function writeMorning(input: {
   // Runway is never rounded toward the better side, in the note either.
   const numbers = `${sectionText(sources.company ?? '', 'Numbers')}`;
   // Runway and break-even as the calc working gives them, never as a room said them; "confirmed" only beside a read.
-  const state = await sources.economics?.().catch(() => null) ?? null;
   const economics = state ? state.economics() : economicsOf(numbers);
   const reads = [numbers, ...(economics?.working ?? []).map((one) => one.result), ...since];
   // "Further below break-even" at 9.5 paying with break-even 8 (journey 16): the side is the numbers', not the model's.
@@ -341,7 +380,7 @@ export async function writeMorning(input: {
   if (fault) flags.push(`Note check: ${fault.split(':')[0].replace(/^The /, 'the ')}, even when asked again.`);
   for (const one of dropped) flags.push(`${ruledOutLine(one)}, so a move that proposed it was dropped.`);
   if (left.length) flags.push(leftOutLine([...new Set(left)]));
-  return { ...read, since, day: localDay(sources.now), at: sources.now, roomId: sources.partnerId, who: input.name, ...(flags.length ? { flags } : {}), ...(provider ? { provider } : {}), ...(model ? { model } : {}) };
+  return { ...read, since, ...(state ? { snapshot: state.snapshot() } : {}), day: localDay(sources.now), at: sources.now, roomId: sources.partnerId, who: input.name, ...(flags.length ? { flags } : {}), ...(provider ? { provider } : {}), ...(model ? { model } : {}) };
 }
 
 // Journey 18: every note ended "Unconfirmed: this reply claims an action no tool confirmed (contacted)" for "80 plumbers

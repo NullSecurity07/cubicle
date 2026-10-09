@@ -90,3 +90,24 @@ describe('a reply that says it went round a no', () => {
     expect(holdBypassClaims('A new title gets it past your no.').claimed).toBe(true);
   });
 });
+
+// Journey 19: "what have I said no to" recalled two of five from memory.
+describe('the founder asks what they said no to', () => {
+  it('is answered from the record, every no of the last thirty days', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'saidno-slice-'));
+    const deps = stubDeps(workspace, ROOT);
+    const part = (await saidno.install(deps)) as Installed;
+    const roomId = (await deps.store.loadStage()).rooms[0].id;
+    for (const query of ['Never promise a feature we have not shipped.', "Don't count the trials as customers.", 'No discounts, because it trains customers to wait.']) await deps.seams.run('turn:before', { roomId, source: 'chat', query, messages: [] });
+    // Each no keeps its own reason or none: a standing no is never the reason of the one before it.
+    expect((await saidNoFor(workspace).list()).map((one) => [one.subject, one.reason])).toEqual([
+      ['discounts', 'it trains customers to wait'], ['count the trials as customers', undefined], ['promise a feature we have not shipped', undefined]]);
+    const query = 'What have I said no to?';
+    await deps.seams.run('turn:before', { roomId, source: 'chat', query, messages: [] });
+    const reply = { text: 'You said no to discounts.', tools: [], provider: 'fake', model: 'fake', usage: { inputTokens: 0, outputTokens: 0 }, stopped: false } as never;
+    const out = await deps.seams.run('turn:reply', { roomId, query, reply });
+    expect(out.reply.text).toMatch(/^What you said no to in the last 30 days, by the record \(3\):/);
+    for (const one of ['discounts', 'count the trials as customers', 'promise a feature we have not shipped']) expect(out.reply.text).toContain(one);
+    await part.close?.();
+  });
+});

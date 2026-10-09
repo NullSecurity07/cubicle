@@ -146,7 +146,7 @@ export function metricSparks(cards: MetricsCard[], kill: FounderPromise | undefi
       const said = (value: number) => formatValue(value, metric.unit);
       const number = `${metric.label}: ${said(read.latest.value)} on ${read.latest.at}, from ${said(read.start.value)} on ${read.start.at}; the kill line is ${said(lineOf.line)} (${kill.what}, checked on ${kill.due}).`;
       found.push({
-        key: `kill:${kill.id}:${metric.key}`, trigger: `kill:${kill.id}:${metric.key}`, kind: 'metric', at, money: 100, cardId: card!.cardId, number,
+        key: `kill:${kill.id}:${metric.key}:${toward.crossed ? 'crossed' : toward.away ? 'away' : 'trending'}`, trigger: `kill:${kill.id}:${metric.key}`, kind: 'metric', at, money: 100, cardId: card!.cardId, number,
         why: toward.crossed ? `${metric.label} crossed the kill line` : toward.away ? `${metric.label} is moving away from the kill line it has to clear` : `${metric.label} is trending to the kill line`,
         facts: `${toward.crossed ? 'The number has crossed the kill line' : toward.away ? 'The number has not cleared the kill line yet and moved the wrong way since your verdict' : `The number is trending to the kill line: ${Math.round(toward.share * 100)}% of the way from where it stood at your verdict`}.\n${number}\n${kill.due >= localDay(at) ? `The verdict's check is on ${kill.due}.` : `The verdict's check day, ${kill.due}, has passed.`}`,
         out: { kind: 'task-or-decision' },
@@ -411,9 +411,9 @@ export function heldToState(spark: Spark, state: EconomicsState | null | undefin
 
 // A watch proposal in the words the said-no log keeps: an email is about its lead, a task or a decision is its title,
 // letting a promise go is about that promise.
-export function saidNoProposal(one: Pick<Proposal, 'draft' | 'move'>): SaidNoProposal {
+export function saidNoProposal(one: Pick<Proposal, 'draft' | 'move'> & { id?: string }): SaidNoProposal {
   const { draft } = one;
-  if (draft.kind === 'email') return { tool: 'draft_email', subject: draft.subject, to: draft.to.toLowerCase(), key: `lead:${draft.to.toLowerCase()}` };
+  if (draft.kind === 'email') return { tool: 'draft_email', subject: draft.subject, to: draft.to.toLowerCase(), key: `lead:${draft.to.toLowerCase()}`, body: draft.body, ...('id' in one && typeof one.id === 'string' ? { draftId: one.id } : {}) };
   if (draft.kind === 'task') return { tool: 'propose_task', subject: draft.title };
   if (draft.kind === 'decision') return { tool: 'propose_decision', subject: draft.title };
   return { tool: 'drop_promise', subject: `Let go: ${draft.what}`, key: `promise:${draft.promiseId}` };
@@ -484,11 +484,23 @@ export function createWatch(given: WatchDeps) {
       // Journey 18: a "trending" row stayed four days after its reading was replaced and its kill line dropped, quoting
       // both, and blocked the new line's row (one open row per trigger). A kill row belongs to its line: once the line
       // is replaced, or the numbers no longer trend to it, the row goes, and the line standing now is looked at at once.
-      const live = new Set(sparks.filter((one) => one.kill).map((one) => one.trigger));
-      const gone = promisesRead ? state.proposals.filter((one) => one.status === 'open' && (one.trigger ?? one.key).startsWith('kill:') && !live.has(one.trigger ?? one.key)).map((one) => one.id) : [];
+      // Journey 19: line below 11, 12 logged (trending, a row), then 12 replaced by 10 the same day: the row kept saying
+      // "12 ... trending" and the crossing never came, since the event key was the line's alone. The key now carries
+      // where the number stands against the line (trending, crossed, moving away): a row whose stand has changed goes
+      // and the new stand is raised; a row whose stand holds but whose reading moved is told the reading of now.
+      const live = new Map(sparks.filter((one) => one.kill).map((one) => [one.trigger, one]));
+      const gone = promisesRead ? state.proposals.filter((one) => one.status === 'open' && (one.trigger ?? one.key).startsWith('kill:') && live.get(one.trigger ?? one.key)?.key !== one.key).map((one) => one.id) : [];
+      const moved = new Set(state.proposals.filter((one) => gone.includes(one.id) && live.has(one.trigger ?? one.key)).map((one) => one.trigger ?? one.key));
       if (gone.length) state.proposals = state.proposals.filter((one) => !gone.includes(one.id));
+      const renumbered = new Map(state.proposals.filter((one) => one.status === 'open' && one.number && live.get(one.trigger ?? one.key)?.number && live.get(one.trigger ?? one.key)!.number !== one.number).map((one) => [one.id, live.get(one.trigger ?? one.key)!.number!]));
+      // A replaced line's events are its own: its keys leave the fired list, so the line standing now starts clean.
+      const standing = new Set(kill ? [`kill:${kill.id}:`] : []);
+      const stale = promisesRead ? state.fired.filter((key) => key.startsWith('kill:') && ![...standing].some((head) => key.startsWith(head))) : [];
+      if (stale.length) state.fired = state.fired.filter((key) => !stale.includes(key));
       const open = new Set(state.proposals.filter((one) => one.status === 'open').map((one) => one.trigger ?? one.key));
       const fired = new Set(state.fired);
+      // A stand that changed is raised even if it was raised before (crossed, back above, crossed again).
+      const unfired = [...moved].map((trigger) => live.get(trigger)!.key).filter((key) => fired.delete(key));
       const made: Proposal[] = [];
       const waiting: WatchState['waiting'] = [];
       const held = new Set<string>();
@@ -517,12 +529,12 @@ export function createWatch(given: WatchDeps) {
       const later = new Set(sparks.filter((one) => one.kind === 'lead' && held.has(one.key)).map((one) => one.trigger));
       const seen = Object.fromEntries(leads.map((lead) => [lead.id, later.has(`lead:${lead.id}`) ? (state.seenLeads?.[lead.id] ?? 'new') : lead.stage]));
       await change((draft) => {
-        draft.fired = [...draft.fired, ...[...fired].filter((key) => !draft.fired.includes(key))];
-        draft.proposals = [...draft.proposals.filter((one) => !gone.includes(one.id)), ...made];
+        draft.fired = [...draft.fired.filter((key) => !stale.includes(key) && (!unfired.includes(key) || fired.has(key))), ...[...fired].filter((key) => !draft.fired.includes(key))];
+        draft.proposals = [...draft.proposals.filter((one) => !gone.includes(one.id)).map((one) => renumbered.has(one.id) ? { ...one, number: renumbered.get(one.id)! } : one), ...made];
         draft.seenLeads = seen;
         draft.waiting = waiting;
       });
-      if (gone.length && !made.length) await deps.changed().catch(() => {});
+      if ((gone.length || renumbered.size) && !made.length) await deps.changed().catch(() => {});
       if (made.length) {
         await deps.changed().catch(() => {});
         deps.notify?.(`${partner.name} proposes a move`, made[0].move);

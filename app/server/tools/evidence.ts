@@ -310,7 +310,8 @@ export const markSaid = (mark: CountMark) => `"${mark.label}" (in "${quote(mark.
 // a total, a monthly figure), a number stands only when something read gives it as written or a calc this turn
 // worked it out from figures read; else it is marked "(unsourced)", even when its inputs were read.
 const DERIVED = /\b(?:burn|runway|margins?|profits?|loss(?:es)?|break[- ]?even|CAC|LTV|payback|totals?|per[- ]month|monthly|a month|net)\b|\/\s?mo(?:nth)?\b/i;
-const FIGURE = /(?<![\p{L}\d.,:/#+-])([$€£]\s?)?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(?:\s?(k|m)\b)?(\s?%)?(?![\d\p{L}_]|[.,]\d|\s*\(unsourced\)|(?:st|nd|rd|th|am|pm)\b|\s?[-:/]\d)/giu;
+// Journey 19: "~66% (unsourced)" was flagged as "66": the regex gave the % back and matched the bare 66 before it.
+const FIGURE = /(?<![\p{L}\d.,:/#+-])([$€£]\s?)?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(?:\s?(k|m)\b)?(\s?%)?(?![\d\p{L}_]|[.,]\d|\s?%|\s*\(unsourced\)|(?:st|nd|rd|th|am|pm)\b|\s?[-:/]\d)/giu;
 // A figure put as a goal or a suggestion is the writer's proposal, not a sum: "I suggest a target of $49 next".
 const PROPOSED = /\b(?:suggest\w*|propos\w*|recommend\w*|aim|goal|target|plan|should|could|would|want)\b/i;
 function unworkedFigures(line: string, known: Set<number>, worked: number[]): Unbacked[] {

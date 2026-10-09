@@ -1,6 +1,7 @@
 import type { Stage } from '../../shared/model.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
-import { chatNo, promptLine, proposalOf, saidNoFor, standingNosIn, suggestionIn, type Proposal } from '../partner/saidno.ts';
+import { answerNos, asksSaidNo, chatNo, promptLine, proposalOf, recallNos, saidNoFor, standingNosIn, suggestionIn, type Proposal } from '../partner/saidno.ts';
+import { now as clockNow } from '../clock.ts';
 import { withSystem, type Handler } from '../seams.ts';
 import { leadAddresses } from '../tools/outward.ts';
 
@@ -114,8 +115,10 @@ export default {
           const words = last && !proposed.length ? suggestionIn(last.text) : '';
           if (words) proposed.push({ tool: 'chat', subject: words });
           for (const one of proposed) { await book.record({ ...one, who: room.name, ...said }); wrote += 1; }
-          // Nothing proposed to say no to, and a reason given: it is why the Don't just pressed was pressed.
-          if (!proposed.length && said.reason && await book.explain(said.reason)) wrote += 1;
+          // Nothing proposed to say no to, and a reason given: it is why the Don't just pressed was pressed. A message
+          // that is a standing no of its own is not (journey 19: "Don't count the trials as customers." was kept as the
+          // reason for the no said just before it).
+          if (!proposed.length && said.reason && !standingNosIn(payload.query).length && await book.explain(said.reason)) wrote += 1;
         }
         // "Don't propose cold outreach to more makers", said anywhere in a message, stands with its reason; the
         // unasked refresh and the morning note are held to it (journey 15).
@@ -154,6 +157,8 @@ export default {
         }
       }
       if (count !== undefined && count === 0) text = holdRuleClaims(text, payload.query, count);
+      // "What have I said no to?": the record answers, all of it (journey 19).
+      if (asksSaidNo(payload.query) && !payload.reply.stopped) text = answerNos(text, payload.query, recallNos(await book.list().catch(() => []), clockNow()));
       return next(text === payload.reply.text ? payload : { ...payload, reply: { ...payload.reply, text } });
     };
 

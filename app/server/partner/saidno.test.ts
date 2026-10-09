@@ -6,7 +6,7 @@ import { createApprovals, putToFounder } from '../approvals.ts';
 import { standingBlock } from './standing.ts';
 import { citedFacts, standingFacts } from './synthesis.ts';
 import { saidNoProposal } from './watch.ts';
-import { againstNo, chatNo, checkAgainst, createSaidNo, ruledOutBy, ruledOutLine, standingNosIn, overlap, proposalOf, promptLine, sameProposal, SAID_NO_MOST, suggestionIn, type SaidNoEntry } from './saidno.ts';
+import { againstNo, answerNos, asksSaidNo, recallNos, chatNo, checkAgainst, createSaidNo, ruledOutBy, ruledOutLine, standingNosIn, overlap, proposalOf, promptLine, sameProposal, SAID_NO_MOST, suggestionIn, type SaidNoEntry } from './saidno.ts';
 
 const DAY = 86_400_000;
 const OCT_3 = Date.UTC(2026, 9, 3, 12);
@@ -228,5 +228,62 @@ describe('a decision said no to (journey 18)', () => {
     expect(sameProposal(no, proposalOf('propose_decision', { title: 'Call the 22 trial users this week', options: ['Call all', 'Call five'] })!)).toBe(false);
     const trials = { ...no, subject: 'count the trials as customers' };
     expect(sameProposal(trials, discount)).toBe(false);
+  });
+});
+
+// Journey 19: Don't on Sam's ready reply to Tom, then "No to that reply for Tom, because ... Never promise a feature we
+// have not shipped." Lea's honest answer later reused the subject and the gate said "You said no to this".
+describe('a no on a drafted email', () => {
+  const tom = 'tom@becker-sanitaer.example';
+  const subject = 'Re: QuoteSnap / WhatsApp to quotes for Becker Sanitär';
+  const sams = 'Hi Tom,\n\nThanks for your questions. Yes, QuoteSnap works with photos from any Android phone. And yes, your quotes can show VAT separately.\n\nBest,';
+  const leas = 'Hi Tom,\n\nThanks for your questions. QuoteSnap turns WhatsApp photos of a job into a written quote in your own template.\nI will check whether it works with photos from your old Android phone and come back to you by Tuesday. I will check whether the quote can show VAT separately and come back to you by Tuesday.\n\nBest,';
+
+  it('keeps the draft, its id and its claims, and holds a later draft only when it is the same or makes the same claims', async () => {
+    const book = createSaidNo(await mkdtemp(join(tmpdir(), 'saidno-')), () => OCT_3);
+    const declined = saidNoProposal({ id: 'lead-1', move: 'Reply to Tom', draft: { kind: 'email', to: tom, subject, body: sams } });
+    const kept = await book.record({ ...declined, who: 'Sam' });
+    expect(kept).toMatchObject({ draftId: 'lead-1', claims: expect.arrayContaining(['Android']) });
+    expect(kept.body).toContain('any Android phone');
+    expect(await book.explain('to that reply for Tom, because never promise a feature we have not shipped')).toMatchObject({ id: kept.id });
+    // Lea's honest answer, same lead, same subject: fresh.
+    expect((await book.check(proposalOf('draft_email', { to: tom, subject, body: leas }, [tom])!)).verdict).toBe('fresh');
+    // The same claims again under another subject: the same no.
+    expect((await book.check(proposalOf('draft_email', { to: tom, subject: 'Quick answer', body: 'Hi Tom,\n\nGood news: it runs on Android phones of any age.\n\nBest,' }, [tom])!)).verdict).toBe('reask');
+    // The same draft again: the same no.
+    expect((await book.check(saidNoProposal({ id: 'lead-1', move: 'Reply', draft: { kind: 'email', to: tom, subject, body: sams } }))).verdict).not.toBe('fresh');
+  });
+
+  it('a draft with no product claims is held only by its id or by much the same words', () => {
+    const plain = 'Hi Tom,\n\nThanks for your reply. Would a 20-minute call this week work for you to see a quote made from your photos?\n\nBest,';
+    const no = entry({ tool: 'draft_email', subject, to: tom, key: `lead:${tom}`, draftId: 'lead-2', body: 'Hi Tom,\n\nThanks for your reply. We would love to show you a quote made from your own job photos this week.\n\nBest,', claims: [] });
+    expect(sameProposal(no, proposalOf('draft_email', { to: tom, subject, body: leas }, [tom])!)).toBe(false);
+    expect(sameProposal(no, proposalOf('draft_email', { to: tom, subject, body: plain }, [tom])!)).toBe(false);
+    expect(sameProposal(no, proposalOf('draft_email', { to: tom, subject: 'Other', body: no.body }, [tom])!)).toBe(true);
+    // An older no kept without a body still stands by its subject.
+    expect(sameProposal(entry({ tool: 'draft_email', subject, to: tom, key: `lead:${tom}` }), proposalOf('draft_email', { to: tom, subject, body: leas }, [tom])!)).toBe(true);
+  });
+});
+
+// Journey 19: "what have I said no to" recalled two of five.
+describe('what the founder said no to, recalled from the record', () => {
+  it('hears the question and lists every no of the last thirty days, newest first', async () => {
+    let clock = OCT_3;
+    const book = createSaidNo(await mkdtemp(join(tmpdir(), 'saidno-')), () => clock);
+    await book.record({ tool: 'draft_email', subject: 'Re: QuoteSnap / WhatsApp to quotes', to: 'tom@becker.example', who: 'Sam', reason: 'never promise a feature we have not shipped' });
+    clock += 1000; await book.record({ tool: 'chat', subject: 'promise a feature we have not shipped', who: 'Sam' });
+    clock += 1000; await book.record({ tool: 'chat', subject: 'count the trials as customers', who: 'Sam' });
+    clock += 1000; await book.record({ tool: 'propose_decision', subject: 'Give trial users a free month', who: 'Sam', reason: 'no free months' });
+    clock += 1000; await book.record({ tool: 'chat', subject: 'discounts', who: 'Sam', reason: 'it trains customers to wait' });
+    clock -= 40 * DAY; await book.record({ tool: 'chat', subject: 'paid ads', who: 'Sam' });
+    for (const ask of ['What have I said no to?', 'which things did I say no to so far', 'Remind me what I have declined', 'List my nos']) expect(asksSaidNo(ask)).toBe(true);
+    for (const ask of ['No, too early', 'What did the lead say?', 'Should I say no to Tom?']) expect(asksSaidNo(ask)).toBe(false);
+    const recall = recallNos(await book.list(), OCT_3 + DAY);
+    expect(recall.split('\n')).toHaveLength(6);
+    expect(recall).toContain('(5)');
+    for (const one of ['discounts', 'free month', 'count the trials as customers', 'promise a feature we have not shipped', 'email to tom@becker.example']) expect(recall).toContain(one);
+    expect(recall).not.toContain('paid ads');
+    expect(answerNos('You said no to discounts and free months.', 'What have I said no to?', recall)).toBe(recall);
+    expect(answerNos('The kill line is below 11.', 'What is the kill line now, and what have I said no to?', recall)).toBe(`The kill line is below 11.\n\n${recall}`);
   });
 });

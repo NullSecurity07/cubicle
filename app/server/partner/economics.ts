@@ -335,6 +335,7 @@ export function changedLine(one: Changed, currency = ''): string {
 const SIDE = /\b(?:(?:further|still|well|far|just|now)\s+)?(below|under|short of|beneath|above|over|past|beyond)\s+(?:the\s+)?break[- ]?even(?:\s+point)?\b/gi;
 export function breakEvenFix(text: string, state: EconomicsState | null | undefined): string {
   if (!state) return text;
+  text = gapFix(text, state);
   const side = state.side();
   const even = state.breakEven();
   if (!side || even === undefined || side === 'at') return text;
@@ -344,6 +345,48 @@ export function breakEvenFix(text: string, state: EconomicsState | null | undefi
     return says === side ? whole : `${side} break-even (${now} ${state.unit} against ${even})`;
   });
 }
+// Journey 19: brief 9 paying, 22 trials, break-even 38, and the partner said "closing just 16 of them will bridge the
+// gap to break-even" three times: 9 + 16 is the goal of 25, not 38, and 29 more are needed, more than every trial on
+// record. The calc lines were right; the sentence around them was not checked. A sentence that does arithmetic on the
+// gap to break-even (a count to close it, the gap itself, the trials reaching it) is held to the state: when its
+// numbers contradict it, the sentence becomes the state's own line.
+const TRIAL = /\btrials?\b|\btrial users?\b|\bon trial\b/i;
+const GAP_COUNT = /\b(?:clos\w*|convert\w*|sign\w*|win\w*|land\w*|add\w*|need\w*|turn\w*)\s+(?:just\s+|only\s+|another\s+|the\s+)?(\d+)(?![\d%]|[.,]\d)|\b(\d+)(?![\d%]|[.,]\d)\s+(?:of\s+(?:them|those|these|the\s+(?:\d+\s+)?trials?\b|our\s+trials?\b)|more\b|additional\b|new\b|(?:are\s+|is\s+)?(?:needed|required|to go)\b)|\bgap\s+(?:is|of|stands at|sits at)\s+(?:only\s+|just\s+)?(\d+)(?![\d%]|[.,]\d)/gi;
+const REACHES = /\b(?:bridg\w*|clos\w*\s+(?:the\s+)?gap|reach\w*|get\w*\s+(?:us\s+)?to|hit\w*|cover\w*|enough|provid\w*\s+(?:the\s+)?pipeline|take\w*\s+us\s+to|push\w*\s+us\s+(?:to|past|over))\b/i;
+const CANNOT = /\b(?:cannot|can't|can not|could not|couldn't|not enough|too few|short of|fall\w*\s+short|alone|even if all|only\s+\d+\s+trials?|fewer than)\b/i;
+export function gapLine(state: EconomicsState): string | undefined {
+  const even = state.breakEven();
+  const now = state.current();
+  const gap = state.gap();
+  if (even === undefined || now === undefined || gap === undefined || !Number.isFinite(even)) return undefined;
+  const trials = trialsOf(state);
+  const tail = trials === undefined ? '' : trials < gap ? `; the ${trials} trials cannot close it alone` : `; ${gap} of the ${trials} trials would have to convert to close it`;
+  return `Break-even is ${even} ${state.unit}; ${now} pay now, gap ${gap}${tail}.`;
+}
+const trialsOf = (state: EconomicsState) => { const one = state.inputs.subscribers; return one && TRIAL.test(one.label) ? one.value : undefined; };
+export function gapFix(text: string, state: EconomicsState | null | undefined): string {
+  if (!state) return text;
+  const even = state.breakEven();
+  const gap = state.gap();
+  const line = gapLine(state);
+  if (even === undefined || gap === undefined || !line || gap === 0) return text;
+  const trials = trialsOf(state);
+  const evenSaid = new RegExp(`\\bbreak[- ]?even\\b|(?<![\\d.,])${even}(?![\\d%]|[.,]\\d)`, 'i');
+  let said = false;
+  return text.split('\n').map((row) => row.replace(/[^.!?\n]+[.!?]*/g, (sentence) => {
+    // The working itself, and a sum on another price or cost ("at €39, break-even is 29"), stay.
+    if (!evenSaid.test(sentence) || /=/.test(sentence) || /[$€£]\s?\d/.test(sentence) || /\bif\b[^.]*\b(?:price|cost|burn)\b/i.test(sentence)) return sentence;
+    const counts = [...sentence.matchAll(GAP_COUNT)].map((hit) => Number(hit[1] ?? hit[2] ?? hit[3])).filter((value) => Number.isFinite(value) && value !== even);
+    const wrongCount = counts.some((value) => value !== gap && value !== trials) && (REACHES.test(sentence) || /\b(?:needed|required|to go|gap)\b/i.test(sentence));
+    const trialsReach = trials !== undefined && trials < gap && TRIAL.test(sentence) && REACHES.test(sentence) && !CANNOT.test(sentence);
+    if (!wrongCount && !trialsReach) return sentence;
+    const lead = /^\s*/.exec(sentence)![0];
+    if (said) return '';
+    said = true;
+    return `${lead}${line}`;
+  })).join('\n').replace(/[ \t]{2,}/g, ' ');
+}
+
 // The one line on break-even for an unasked note, from the numbers alone.
 export function breakEvenLine(state: EconomicsState | null | undefined, value?: number): string | undefined {
   if (!state) return undefined;
@@ -352,6 +395,29 @@ export function breakEvenLine(state: EconomicsState | null | undefined, value?: 
   if (even === undefined || !side) return undefined;
   const now = value ?? state.current();
   return `Break-even is ${even} ${state.unit}; ${now} is ${side === 'at' ? 'right at it' : `${side} it`}${state.cashPositive() && value === undefined ? ', and the company is cash-positive' : ''}.`;
+}
+
+// Journey 19: "Unsourced figures: €839" under the verdict for the net burn worked out on the line before it, and "Not
+// worked out: €261" beside "9 × €29 = €261"; the next morning's risk was the false footer. The working is added to the
+// turn after the truth net has looked, so the net never saw it. The state's figures go into every partner turn as a
+// source of their own, worked with calc from the brief, so a figure the state holds is never flagged.
+export function stateFigures(state: EconomicsState | null | undefined): string {
+  if (!state) return '';
+  const currency = state.currency ?? '';
+  const said: string[] = [];
+  const mrr = state.mrr();
+  const net = state.net();
+  const runway = state.runway();
+  const even = state.breakEven();
+  const now = state.current();
+  const gap = state.gap();
+  if (mrr !== undefined) said.push(`MRR ${money(mrr, currency)} a month`);
+  if (net !== undefined) said.push(`net burn ${money(net, currency)} a month`);
+  if (runway) said.push(`runway ${runway.display}${Number.isFinite(runway.value) ? ' months' : ''}`);
+  if (even !== undefined && Number.isFinite(even)) said.push(`break-even ${even} ${state.unit}`);
+  if (now !== undefined) said.push(`${now} ${state.unit} now`);
+  if (gap !== undefined && gap > 0) said.push(`gap to break-even ${gap}`);
+  return said.length ? `The company's figures, worked with calc from the Company brief: ${said.join('; ')}.` : '';
 }
 
 // Break-even far above where the company stands: more than twice the count today.

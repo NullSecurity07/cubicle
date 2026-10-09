@@ -13,8 +13,8 @@ import { saysSomething } from '../missions.ts';
 import { FAKE_MORNING, MOST_TRIES, morningDue, morningInputs, morningMessage, writeMorning, type MorningSources } from '../partner/morning.ts';
 import { addPlan, boardFor, boardForPlan, NO_BOARD, planAttention, stepsFrom } from '../partner/plans.ts';
 import { asksWhatNext, holdSynthesis, standingFacts } from '../partner/synthesis.ts';
-import { asksVerdict, callShape, holdCall, PUSHBACK_LINE, pushesBack, thresholdOf, type KillSignal, type PartnerCall } from '../partner/call.ts';
-import { breakEvenFix, changedLine, economicsBlock, figuresFix, sameMetric, stateOf, workingTools, type EconomicsState, type Reading } from '../partner/economics.ts';
+import { asksVerdict, callShape, holdCall, offVerdict, PUSHBACK_LINE, pushesBack, thresholdOf, type KillSignal, type PartnerCall } from '../partner/call.ts';
+import { breakEvenFix, changedLine, economicsBlock, figuresFix, sameMetric, stateFigures, stateOf, workingTools, type EconomicsState, type Reading, type Snapshot } from '../partner/economics.ts';
 import { chaseLine, keptPromiseLine, promiseLine, promisesAttention, promisesBook, promisesIn } from '../partner/promises.ts';
 import { gatherSince, metricsOnDisk, sinceHeadline } from '../partner/since.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
@@ -29,7 +29,7 @@ import { createWatch, fakeWatchReply, leadTwins, watchBudget, type Budget } from
 import { guardUnasked } from '../partner/unasked.ts';
 import { draftId, gmailLink } from '../../shared/maildraft.ts';
 import { leadAddresses, noAddress } from '../tools/outward.ts';
-import { ruledOutLine, saidNoFor } from '../partner/saidno.ts';
+import { asksSaidNo, chatNo, ruledOutLine, saidNoFor, standingNosIn } from '../partner/saidno.ts';
 import { staleNeeds, standingBlock, standingParts, stillWaiting, teamVerdict, verdictLines, type StandingParts } from '../partner/standing.ts';
 import { companyFacts, keepFacts, keptLine, runwayFix } from '../partner/keep.ts';
 import { CUSTOMER_LINE, customerReply, forCustomers } from '../partner/audience.ts';
@@ -40,6 +40,9 @@ import { markVerdict, partnerRoute } from '../partner/route.ts';
 import { withSystem, type Handler } from '../seams.ts';
 import { newId, patchStageVia } from '../slice-kit.ts';
 import { speaker, text, type Tool } from '../tools/registry.ts';
+
+// A question about what was said or decided before.
+const RECALL = /\b(?:remind me|what did (?:we|i) (?:decide|say|agree)|what was (?:the|our|my)|recall)\b/i;
 
 // The partner: one person who holds the whole company rather than one part of it, and the things that make that
 // true. The Company document is the shared record every person reads; decisions land in it as they are made. Once a
@@ -464,7 +467,7 @@ export function createPartner(options: PartnerOptions = {}) {
           // The founder's own ask, or the day's last try, gets a note even when it is still at fault.
           name: partner.name, ask, last: asked || count + 1 >= MOST_TRIES,
           promptFor: (on, roomId) => deps.promptFor(on, roomId, [], true),
-          sources: { ...sourcesFor(stage, partner.id, inputs.company), now: at },
+          sources: { ...sourcesFor(stage, partner.id, inputs.company), now: at, ...(held.morning?.snapshot ? { seen: held.morning.snapshot as Snapshot } : {}) },
         }).catch((error: Error) => { console.error(`partner morning: ${error.message}`); return null; });
         if (!written) return null;
         const note = { ...written, inputs: inputs.key };
@@ -546,6 +549,9 @@ export function createPartner(options: PartnerOptions = {}) {
         await takeFixes(stage, payload.roomId, payload.query).catch((error: Error) => console.error(`partner numbers: ${error.message}`));
         const block = await standingFor(stage, payload.roomId).catch((error: Error) => { console.error(`partner standing facts: ${error.message}`); return ''; });
         out = withSystem(out, block);
+        // The state's own figures, a source for what the partner says (journey 19's false footers).
+        const figures = stateFigures(await stateNow(stage).catch(() => null));
+        if (figures) out = withSystem(out, figures);
         // Written for customers: said before it is written, and held to it after (the reply seam below).
         if (forCustomers(payload.query)) out = withSystem(out, CUSTOMER_LINE);
         // A verdict on the company comes in four lines, held to them after (the reply seam below). The brief's numbers
@@ -577,6 +583,13 @@ export function createPartner(options: PartnerOptions = {}) {
         standing = null;
       }
       const fixes = await fixesNow();
+      // The verdict's shape only where a verdict was asked for or pushed on (server/partner/call.ts, journey 19).
+      // A question about what was decided is answered in the verdict's own words, so it is left as it is.
+      if (!asksVerdict(payload.query) && !RECALL.test(payload.query) && !await pushedBack(me.id, payload.query).catch(() => false)) {
+        const quiet = !!chatNo(payload.query) || standingNosIn(payload.query).length > 0 || asksSaidNo(payload.query);
+        const off = offVerdict(payload.reply.text, quiet);
+        if (off !== payload.reply.text) payload = { ...payload, reply: { ...payload.reply, text: off } };
+      }
       // "What now" is answered across the rooms: held to the standing facts in code, asked once more if it names too
       // few of them (server/partner/synthesis.ts).
       if (asksWhatNext(payload.query)) {
@@ -604,16 +617,30 @@ export function createPartner(options: PartnerOptions = {}) {
           const { reply, call: made, askedAgain } = await holdCall(payload.query, payload.reply, payload.again, today, evidence, said, economics, company ? sectionText(company, 'Numbers') : '', pushed, goalsIn(company, today));
           // No stop for a company that is not running out, unless the founder's own words asked for it (refresh.ts).
           const stopHeld = made ? holdStop(made, numbersState, [payload.query, ...await founderWords(me.id)], before?.decision) : null;
-          const unprotected = stopHeld?.call ?? made;
+          let unprotected = stopHeld?.call ?? made;
           // The founder naming the kill line in their own ask makes it theirs; else a line they set stays theirs.
           const labels = [...sectionText(company, 'Numbers').split('\n').flatMap((line) => { const found = /^\s*[-*]\s+([^:]{1,40}):\s*[$€£]?\s?\d/.exec(line); return found ? [found[1].trim()] : []; })];
           const named = unprotected?.signal ? killAskIn(payload.query, { today, labels, signal: before?.signal, loose: true }) : null;
-          const theirs = !!named && thresholdOf(unprotected!.signal!.what)?.value === named.line;
+          let theirs = !!named && thresholdOf(unprotected!.signal!.what)?.value === named.line;
+          // Journey 19: "your verdict again, and this time make the kill signal 12" with 9 paying: the verdict kept
+          // "below 7" and never said why. A line the founder named that is crossed already is refused in code, in the
+          // refusal's own words under the reply; one that is not is set as theirs, and the verdict's line says it.
+          let namedLine = '';
+          if (named && !theirs && unprotected?.signal) {
+            const refusal = crossedRefusal(named.signal, await readingOf(stage, named.signal).catch(() => null));
+            if (refusal) namedLine = refusal;
+            else {
+              unprotected = { ...unprotected, signal: { ...named.signal, ...(unprotected.signal.then ? { then: unprotected.signal.then } : {}) } };
+              theirs = true;
+            }
+          }
           const guarded = unprotected && !theirs ? await protectSignal(before, unprotected, me.id, me.name) : { call: unprotected, line: undefined as string | undefined };
           const call = guarded.call;
           const signalBy: 'founder' | 'partner' = theirs || (guarded.line && before?.signalBy === 'founder') || (call?.signal && before?.signalBy === 'founder' && before.signal?.what === call.signal.what && before.signal.by === call.signal.by) ? 'founder' : 'partner';
           if (call) {
             let said = reply.text;
+            // The verdict's kill line is the one kept, in its words.
+            if (call.signal) said = said.replace(/^(\**\s*Kill signal\s*:?\**\s*:?\s*).*$/im, (_whole, head: string) => `${head}${call.signal!.what} by ${call.signal!.by}${call.signal!.then ? `; ${call.signal!.then.replace(/[\s.]+$/, '')}` : ''}.`);
             if (stopHeld?.note) {
               said = said.replace(/^My call: \*\*stop\*\*\./m, `My call: **${call.decision}**.`);
               if (!call.move) said = said.replace(/^This week: .*\n?/m, '');
@@ -635,6 +662,7 @@ export function createPartner(options: PartnerOptions = {}) {
               checkLine = moved || /already past|right on the line/.test(line) ? `*${line}*` : `*Kept as a check: it comes to Needs you on ${call.signal.by}.*`;
             }
             if (guarded.line) checkLine = `*${guarded.line}*`;
+            if (namedLine) checkLine = `*${namedLine}*`;
           }
         } catch (error) { console.error(`partner verdict: ${(error as Error).message}`); }
       }
