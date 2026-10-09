@@ -70,7 +70,36 @@ const meantFor = (address: string, contacts: LeadContact[]) => {
   return hits.length ? hits : contacts;
 };
 export const noAddress = (address: string) => `no address on record for ${address}`;
-const unknownAddress = (address: string, contacts: LeadContact[] | null) => {
+// An address on record a mistyped one was meant to be: the same name before the @, or the same domain under another
+// ending, or a letter or two apart.
+const stem = (domain: string) => domain.replace(/\.[^.]+$/, '');
+function apart(a: string, b: string): number {
+  const row = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i += 1) {
+    let last = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      const here = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, last + (a[i - 1] === b[j - 1] ? 0 : 1));
+      last = here;
+    }
+  }
+  return row[b.length];
+}
+export function nearOnRecord(address: string, known: Iterable<string>): string | null {
+  const [local, domain = ''] = address.toLowerCase().split('@');
+  let best: { one: string; score: number } | null = null;
+  for (const one of known) {
+    const [theirs, where = ''] = one.split('@');
+    const score = theirs === local && stem(where) === stem(domain) ? 0 : apart(one, address.toLowerCase()) <= 3 ? 1 : theirs === local && apart(where, domain) <= 4 ? 2 : -1;
+    if (score >= 0 && (!best || score < best.score)) best = { one, score };
+  }
+  return best?.one ?? null;
+}
+const unknownAddress = (address: string, contacts: LeadContact[] | null, near: string | null = null) => {
+  if (near) {
+    return `${noAddress(address)}: the record has ${near}, which is not the same address. Draft again to exactly ${near}, or ask the founder. Do not change an address on record.`;
+  }
   const guess = GUESSED.test(address) ? `, and "${address.split('@')[0]}@" put before their domain is a guess` : '';
   if (contacts === null) {
     return `${noAddress(address)}: nothing read this turn, no Leads card, no founder message and not the Company brief gives it${guess}. `
@@ -118,6 +147,14 @@ export function outwardTools(mail: Mail, filesDir: string, drafting?: Drafting, 
         const bad = to.filter((address) => !ADDRESS.test(address));
         if (bad.length) throw new Error(`not an email address: ${bad.join(', ')}`);
         if (to.length > 5) throw new Error('at most 5 recipients');
+        // Journey 19: Lea drafted to tom@becker-sanitaer.email while the record said tom@becker-sanitaer.example, and the
+        // refusal was about something else. The address is held first, and only an exact match (any case) stands.
+        const contacts = drafting?.contacts ? await drafting.contacts(context.stage, context.roomId).catch(() => null) : null;
+        const known = await onRecord(context, drafting);
+        const unknown = known ? to.filter((address) => !known.has(address.toLowerCase())) : [];
+        if (unknown.length) {
+          throw new Error(unknown.map((address) => unknownAddress(address, contacts, nearOnRecord(address, known!))).join(' '));
+        }
         // Journey 18: "Yes, it works with any Android phone ... VAT charged separately" with nothing on record. A claim
         // about what the product does, runs on or charges stands only when the brief, a read or the founder states it.
         const evidence = context.evidence?.();
@@ -130,7 +167,6 @@ export function outwardTools(mail: Mail, filesDir: string, drafting?: Drafting, 
         }
         // Journey 18: "I saw your comment on Reddit" with nothing read. What the email says about the person rests on their
         // row on the Leads card, what was read or said this turn, never on nothing (server/opener.ts).
-        const contacts = drafting?.contacts ? await drafting.contacts(context.stage, context.roomId).catch(() => null) : null;
         const them = (contacts ?? []).filter((one) => to.some((address) => address.toLowerCase() === one.email.toLowerCase()));
         const about: Labelled[] = [
           ...them.map((one) => ({ label: `${one.name}'s row on the Leads card`, text: one.about ?? `${one.name}, ${one.company}` })),
@@ -145,11 +181,6 @@ export function outwardTools(mail: Mail, filesDir: string, drafting?: Drafting, 
             + `nothing read this turn, no founder message). Take it out and open with what we do${ours ? `, from the Company brief: "${ours}"` : ' from the Company brief'}, then draft again.`);
         }
         const used = usedSources(draft.body, about, brief ? { label: 'Company brief', text: brief } : null);
-        const known = await onRecord(context, drafting);
-        const unknown = known ? to.filter((address) => !known.has(address.toLowerCase())) : [];
-        if (unknown.length) {
-          throw new Error(unknown.map((address) => unknownAddress(address, contacts)).join(' '));
-        }
         const room = speaker(context);
         const url = gmailLink(draft);
         const cardId = drafting?.open ? await drafting.open(context.stage, context.roomId, url).catch(() => null) : null;
