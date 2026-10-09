@@ -27,7 +27,7 @@ import {
   AI_LAYOUTS, content, countWords, MAX_AI, MAX_LOCAL_AI, PURPOSES,
   fallbackOf, withinCaps, type Spec,
 } from './spec.ts';
-import { creditOf, filmStock, photoCredits } from './stock.ts';
+import { creditOf, filmStock, photoCredits, type Found } from './stock.ts';
 import {
   afforded, closeHolds, drawnAs, heldUp, lineUnder, photoOfTheLine, sceneLine, shareOut, shotKey, slotsFor, standInOf, stockQueries, topicOf,
   ofTheWorld, packedFor, worldOf, worldScore, type Slot, type Visual,
@@ -219,6 +219,8 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
         const realClips = mayUseAi && photoLibrary.clips;
         // Who filmed each real clip, for the credits beside the film.
         const clipCredits = new Map<string, string>();
+        // Which real photograph or clip each file on disk is, so the finished film counts only what it shows.
+        const realOf = new Map<string, Found>();
         const { spec: capped, notes } = withinCaps(spec, { ai: able || realClips, assets: [...files.keys()], most: here ? MAX_LOCAL_AI : MAX_AI });
         spec = capped;
         for (const note of notes) report(note);
@@ -400,6 +402,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
                   .then(() => {
                     shot.video = cut;
                     clipCredits.set(cut, creditOf(real.found));
+                    realOf.set(cut, real.found);
                     said(index, `real footage instead${why ? ' of an AI clip' : ''}: ${creditOf(real.found)}`);
                   }, (error: Error) => { why ||= `the real footage could not be cut (${error.message})`; });
               }
@@ -620,6 +623,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
                 if (!photo) return null;
                 const taken = `stock-${name}-${photo.found.id.replace(/[^\w-]+/g, '').slice(-12)}.${photo.ext}`;
                 await writeFile(join(at, 'assets', taken), photo.bytes);
+                realOf.set(taken, photo.found);
                 return { ...photo, file: taken };
               },
               look: async (photo) => (deps.sight?.about ? deps.sight.about(join(at, 'assets', photo.file), label).catch(() => null) : null),
@@ -961,6 +965,8 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           bed: music, cues, beats, voice, words, keywords, quiet,
         };
         const { bytes, poster } = await renderProject(bin, at, film, { draft, report, signal });
+        // Health's photographs row counts what this film shows, never what was fetched and then drawn over.
+        await photoLibrary.shown(cut.flatMap((one) => [one.image, one.bg, one.video]).flatMap((file) => (file && realOf.has(file) ? [realOf.get(file)!] : [])));
         // A film read in a non-commercial voice says so beside itself, with the music's credit, so the terms go
         // wherever the file goes.
         const nc = voiceTerms ? [

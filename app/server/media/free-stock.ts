@@ -173,13 +173,12 @@ function keeper(dir: string, http: typeof fetch, taken: Found[]) {
     const ext = extOf(one);
     const file = join(dir, `${digestOf(one.id, 24)}.${ext}`);
     const held = await readFile(file).catch(() => null);
-    if (held?.length) { if (!taken.some((other) => other.id === one.id)) taken.push(one); await served(dir, one); return { ext, bytes: held }; }
+    if (held?.length) { if (!taken.some((other) => other.id === one.id)) taken.push(one); return { ext, bytes: held }; }
     const answer = await http(one.url, { headers: { 'user-agent': AGENT }, signal });
     if (!answer.ok) throw new Error(`that ${one.kind === 'video' ? 'clip' : 'photograph'} could not be fetched (${answer.status})`);
     const bytes = Buffer.from(await answer.arrayBuffer());
     await writeFile(file, bytes).catch(() => {});
     await remember(dir, one);
-    await served(dir, one);
     taken.push(one);
     return { ext, bytes };
   };
@@ -407,5 +406,6 @@ export function photoLibrary(env: NodeJS.ProcessEnv = process.env, http: typeof 
   const free = [openverse(http, dir), commons(http, dir)];
   const chain = stockChain(env.PEXELS_API_KEY?.trim() ? [pexels(env, http, dir), ...free] : free);
   const noClip = () => missedClip(dir);
-  return { ...chain, noClip, film: () => ({ ...chain.film!(), noClip }) };
+  const shown = async (ones: Found[]) => { for (const one of ones) await served(dir, one); };
+  return { ...chain, noClip, shown, film: () => ({ ...chain.film!(), noClip, shown }) };
 }
