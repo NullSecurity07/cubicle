@@ -15,7 +15,7 @@ import type { FounderPromise } from './promises.ts';
 import { ruledOutBy, ruledOutLine, saidNoFor, type SaidNoEntry } from './saidno.ts';
 import { gatherSince, sinceText, type SinceInput } from './since.ts';
 import type { PartnerState } from './state.ts';
-import { guardUnasked, leftOutLine } from './unasked.ts';
+import { guardMove, guardUnasked, guardView, leftOutLine } from './unasked.ts';
 
 // The partner's morning: once a day, unasked, they read the Company document (it is in their prompt), what changed
 // since yesterday and the bets on record, and write three things that matter today, one risk and one question.
@@ -266,12 +266,14 @@ export async function writeMorning(input: {
   const things = reply.read.things.filter((thing) => !against(thing));
   // Nobody asked for the note, so a line that promises, counts or quotes what the facts and the brief do not say is
   // taken out, and the note says what was left out (server/partner/unasked.ts).
+  // A move is a plan and the risk is the partner's view: neither is taken out (guardMove, guardView).
   const record = [withoutFlagged(facts), sources.company ?? ''];
   const left: string[] = [];
-  const hold = (line: string) => { const held = guardUnasked(line, record); left.push(...held.left); return held.text; };
-  const kept = things.map(fix).map(hold).filter(Boolean);
-  const risk = hold(fix(reply.read.risk)) || 'Nothing on record backs the risk the note named.';
-  const read: Morning = { things: kept, risk, question: hold(fix(reply.read.question)) || fix(reply.read.question) };
+  const kept = things.map(fix).map((thing) => guardMove(thing, record)).filter((thing) => thing.trim());
+  const risk = guardView(fix(reply.read.risk), record);
+  const held = guardUnasked(fix(reply.read.question), record);
+  left.push(...held.left);
+  const read: Morning = { things: kept, risk, question: held.text };
   // The truth net, as every turn has it: a figure in the note that nothing it was given holds is flagged under it,
   // and the note is posted all the same, so the founder sees both.
   // Checked as posted: the reshaped note, not the raw reply, so the flags name only what the founder reads.

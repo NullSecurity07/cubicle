@@ -468,7 +468,7 @@ export function createPartner(options: PartnerOptions = {}) {
         await state.change((draft) => { draft.morning = note; if (draft.morningDone === today) delete draft.morningDone; });
         await deps.store.appendChat(partner.id, { id: newMessageId(), role: 'assistant', text: morningMessage(note), at: note.at, ...(note.provider ? { provider: note.provider } : {}), ...(note.model ? { model: note.model } : {}) });
         await deps.attention.refresh().catch(() => {});
-        deps.notify?.(`Morning note from ${partner.name}`, sinceHeadline(note.since) ?? note.things[0]);
+        deps.notify?.(`Morning note from ${partner.name}`, sinceHeadline(note.since) ?? note.things[0] ?? 'No moves today.');
         return note;
       } finally { writing = null; }
     })());
@@ -486,7 +486,7 @@ export function createPartner(options: PartnerOptions = {}) {
         // risk and the question follow in the row itself.
         const head = sinceHeadline(note.since);
         const rest = (head ? note.things : note.things.slice(1)).map((thing, index) => `${index + (head ? 1 : 2)}. ${thing}`).join(' ');
-        found.push({ id: `morning-note:${note.day}`, kind: 'morning-note', title: `Morning note: ${head ?? note.things[0]}`, detail: `${rest ? `${rest} ` : ''}Risk: ${note.risk} Question: ${note.question}`, at: note.at, who: note.who, roomId: note.roomId });
+        found.push({ id: `morning-note:${note.day}`, kind: 'morning-note', title: `Morning note: ${head ?? note.things[0] ?? 'no moves today'}`, detail: [rest, note.risk.trim() ? `Risk: ${note.risk}` : '', note.question.trim() ? `Question: ${note.question}` : ''].filter(Boolean).join(' '), at: note.at, who: note.who, roomId: note.roomId });
       }
       const stage = await deps.store.loadStage();
       const verdict = await teamVerdict(stage, (id) => deps.store.readDoc(id)).catch(() => null);
