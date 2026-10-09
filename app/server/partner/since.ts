@@ -74,8 +74,17 @@ export function sinceYesterday(input: SinceInput): string[] {
   // Since the start of yesterday: what was done, said or logged, newest first.
   const from = noon(yesterday) - DAY / 2;
   const fresh = (when: number) => when >= from && when <= input.now;
-  const leads = (input.leads ?? []).flatMap((lead) => (lead.thread ?? []).filter((event) => fresh(event.at)).map((event) => ({ at: event.at, line: `Lead: ${THREAD[event.kind]?.(lead.person.name, event) ?? `${lead.person.name}: ${event.kind}`}.` })))
-    .sort((one, other) => other.at - one.at).map((one) => one.line);
+  // Journey 18: day 3's note left out Tom's reply and the meeting set with him for that very day, and its move was to
+  // email him because his email was opened. A lead's own reply and a meeting set come before what was drafted or
+  // opened, and a meeting on today's date is said whenever it was set.
+  const FIRST: Partial<Record<ThreadEvent['kind'], number>> = { replied: 0, meeting: 1, notes: 2 };
+  const leads = (input.leads ?? []).flatMap((lead) => (lead.thread ?? []).filter((event) => fresh(event.at)).map((event) => ({ at: event.at, first: FIRST[event.kind] ?? 9, line: `Lead: ${THREAD[event.kind]?.(lead.person.name, event) ?? `${lead.person.name}: ${event.kind}`}.` })))
+    .sort((one, other) => one.first - other.first || other.at - one.at).map((one) => one.line);
+  const meetings = (input.leads ?? []).flatMap((lead) => {
+    const set = (lead.thread ?? []).filter((event) => event.kind === 'meeting' && event.day).at(-1);
+    const met = set && (lead.thread ?? []).some((event) => event.kind === 'notes' && event.at > set.at);
+    return set?.day === today && !met ? [`Meeting today: with ${lead.person.name}${set.time ? ` at ${set.time}` : ''}.`] : [];
+  });
   const logged: string[] = [];
   for (const metric of input.metrics) {
     const points = [...metric.points].sort((one, other) => one.at.localeCompare(other.at));
@@ -92,7 +101,7 @@ export function sinceYesterday(input: SinceInput): string[] {
   });
   const docs = (input.docs ?? []).filter((one) => fresh(one.at)).sort((one, other) => other.at - one.at);
   const written = docs.length ? [`Written: ${docs.slice(0, 4).map((one) => `"${one.title}"`).join(', ')}${docs.length > 4 ? ` and ${docs.length - 4} more` : ''}.`] : [];
-  return [...slips.slice(0, EACH), ...tasks.slice(0, EACH), ...moved.slice(0, EACH), ...checks.slice(0, EACH),
+  return [...meetings.slice(0, EACH), ...slips.slice(0, EACH), ...tasks.slice(0, EACH), ...moved.slice(0, EACH), ...checks.slice(0, EACH),
     ...leads.slice(0, EACH), ...logged.slice(0, EACH), ...promised.slice(0, EACH), ...written];
 }
 
