@@ -11,6 +11,7 @@ import { dropFlagged, figureCheck, HELD_BACK, holdVerdict, verdictStanding, type
 import { findCompanyDoc } from '../../shared/partner.ts';
 import { derivedRows } from '../partner/economics.ts';
 import { goalMoved } from '../partner/goal.ts';
+import { numbersRefusal } from '../partner/briefrows.ts';
 import { evidenceCheck, markFeedback, markSaid, markUnbacked, markUnworked, readableSources, unbackedEnds } from './evidence.ts';
 import { filled, guardWrite, sectionBody, standingVerdict, unmarked, verdictState, WHOLE } from './verdict.ts';
 
@@ -233,6 +234,13 @@ async function save(context: ToolContext, id: string, before: string, written: s
 // What a write would save and what its result says, or a throw saying what is not written and why. A new doc's first
 // text goes through here too: journey 13's invented customer notes came in a create_doc, which checked nothing.
 async function checkWrite(context: ToolContext, id: string, before: string, written: string, done: string, touches?: string | typeof WHOLE): Promise<{ text: string; said: string }> {
+  // Journey 21: a colleague answering a flag wrote a stale net burn over the brief's Burn row. The brief's Numbers
+  // rows are the founder's and the partner's, and an input row never takes a worked-out figure (server/partner/briefrows.ts).
+  if (findCompanyDoc(context.stage.docs)?.id === id) {
+    const partner = !!context.stage.rooms.find((room) => room.id === context.roomId)?.partner;
+    const refused = numbersRefusal(sectionBody(before, 'Numbers') ?? '', sectionBody(written, 'Numbers') ?? '', partner);
+    if (refused) throw new Error(`not written: ${refused}`);
+  }
   const rules = await rulesOf(context.stage, id);
   const honest = honestMarks(context, before, written, (await evidenceFor(context, before))?.read ?? null);
   written = honest.text;

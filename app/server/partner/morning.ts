@@ -98,6 +98,8 @@ export type MorningSources = {
   economics?: () => Promise<EconomicsState | null>;
   // The brief's inputs as the last note saw them.
   seen?: Snapshot;
+  // Journey 21: each change to a brief Numbers row since the last note, with who made it (server/partner/briefrows.ts).
+  briefChanges?: string[];
 };
 
 // Journey 19: the founder raised the price from €29 to €33.35 one evening and the next morning's note never said so.
@@ -321,7 +323,10 @@ export async function writeMorning(input: {
   const { sources } = input;
   const state = await sources.economics?.().catch(() => null) ?? null;
   const gathered = await gatherSince(sources);
-  const since = [...briefMoves(sources.seen, state, gathered), ...gathered];
+  // A row changed or gone is said with who did it; the same move worked out of the inputs is not said twice.
+  const changes = sources.briefChanges ?? [];
+  const named = (line: string) => changes.some((one) => { const label = /^In the brief: (.+?) (?:[$€£-]?\d|not given)/.exec(line)?.[1]; return !!label && one.toLowerCase().includes(`company brief: ${label.toLowerCase()} `); });
+  const since = [...changes, ...(state?.missing ?? []), ...briefMoves(sources.seen, state, gathered).filter((line) => !named(line)), ...gathered];
   const facts = await gatherMorning(sources, since);
   // What the founder ruled out stands against every move here, held in code (journey 15: "no cold outreach" at day 3,
   // and the day-4 note said "Reach out to 10 more makers").

@@ -32,6 +32,10 @@ export type InputFix = { field: Field; value?: number; period?: Period; said: st
 export type Reading = { label: string; value: number; day: string };
 // The inputs as they stood, for the stored call: never a derived figure.
 export type Snapshot = Partial<Record<Field, { value: number; period?: Period }>>;
+// Journey 21: a colleague wrote a net burn over the brief's Burn row and the next snapshot had no burn at all. The last
+// figure the brief gave for a money row is kept, and read in its place while the row is gone or unreadable.
+export type LastGood = Partial<Record<Field, { value: number; period?: Period; label: string; said: string }>>;
+const FALLBACK: Field[] = ['burn', 'cash', 'cost'];
 
 const FACTOR: Record<Period, number> = { week: 52 / 12, month: 1, year: 1 / 12, day: 365 / 12 };
 // The same conversion written into a calc expression, so the working shows it.
@@ -130,10 +134,14 @@ export type EconomicsState = {
   economics(): Economics | null;
   // The founder's own words behind each input they put right, newest first.
   founderLines(): string[];
+  // A money row the brief no longer gives, read from the last figure on record, said as such.
+  missing: string[];
+  // The brief's own figures for the rows kept as the last on record.
+  lastGood(): LastGood;
 };
 
 // The brief's inputs, the founder's corrections over them and a later paying reading over both.
-export function stateOf(numbers: string, given: { fixes?: InputFix[]; readings?: Reading[]; unitFixes?: { wrong: string; right: string }[] } = {}): EconomicsState {
+export function stateOf(numbers: string, given: { fixes?: InputFix[]; readings?: Reading[]; unitFixes?: { wrong: string; right: string }[]; lastGood?: LastGood } = {}): EconomicsState {
   // A row someone worked out ("Net burn: €-912.33 a month (calc: …)") is a derived figure, never an input: journey 16's
   // live check had one written into the brief and read back as a positive net burn.
   const rows = rowsOf(numbers).filter((row) => !/\bcalc\b|(?:^|\s)=\s/i.test(row.line));
@@ -171,10 +179,21 @@ export function stateOf(numbers: string, given: { fixes?: InputFix[]; readings?:
   } else fromRow('paying', payingRow, false);
   if (per && inputs.price) inputs.price = { ...inputs.price, per: singular(per.split(' ').at(-1)!) };
   if (subsRow && subsRow !== payingRow && subsRow !== counted) fromRow('subscribers', subsRow, false);
+  const kept: LastGood = Object.fromEntries(FALLBACK.flatMap((field) => { const one = inputs[field]; return one ? [[field, { value: one.value, ...(one.period ? { period: one.period } : {}), label: one.label, said: one.said }]] : []; }));
+  const missing: string[] = [];
+  for (const field of FALLBACK) {
+    const last = given.lastGood?.[field];
+    if (inputs[field] || !last || !Number.isFinite(last.value)) continue;
+    inputs[field] = { value: last.value, ...(last.period ? { period: last.period } : {}), label: last.label, source: 'brief', said: last.said };
+    const figure = field === 'cash' ? `${currency ?? ''}${last.value.toLocaleString('en-US')}` : `${currency ?? ''}${last.value.toLocaleString('en-US')} ${periodName(last.period)}`;
+    missing.push(`The Company brief has no ${last.label} row it can read now, so the last figure on record is used: ${last.label} ${figure}. Put the row back in the brief.`);
+  }
   // The founder's corrections, latest last: each stands unless the brief changed that figure since.
   for (const fix of given.fixes ?? []) {
     const had = inputs[fix.field];
-    if (fix.over && had && ((fix.over.value !== undefined && fix.over.value !== had.value) || (fix.over.period !== undefined && had.period !== undefined && fix.over.period !== had.period))) continue;
+    // A brief row the correction itself was written to (journey 21) still carries the founder's words.
+    const wrote = had && (fix.value === undefined || fix.value === had.value) && (!fix.period || (had.period ?? 'month') === fix.period);
+    if (!wrote && fix.over && had && ((fix.over.value !== undefined && fix.over.value !== had.value) || (fix.over.period !== undefined && had.period !== undefined && fix.over.period !== had.period))) continue;
     const base = had ?? { value: fix.value ?? NaN, label: LABELS[fix.field], source: 'founder' as const, said: '' };
     const next: Input = { ...base, ...(fix.value !== undefined ? { value: fix.value } : {}), ...(fix.period ? { period: fix.period } : {}), source: 'founder', said: fix.said, day: fix.day };
     if (Number.isFinite(next.value)) inputs[fix.field] = next;
@@ -285,7 +304,9 @@ export function stateOf(numbers: string, given: { fixes?: InputFix[]; readings?:
       if (even === undefined || value === undefined || !Number.isFinite(even) || (per && !mixed)) return undefined;
       return value > even ? 'above' : value < even ? 'below' : 'at';
     },
-    explain: () => state.economics()?.working.map((one) => one.line) ?? [],
+    explain: () => [...missing, ...(state.economics()?.working.map((one) => one.line) ?? [])],
+    missing,
+    lastGood: () => kept,
     founderLines: () => Object.entries(inputs).filter(([, one]) => one!.source === 'founder').map(([field, one]) => `- ${one!.label}: ${shown(field as Field, one!, currency)} (founder${one!.day ? `, ${one!.day}` : ''}: "${one!.said.slice(0, 160)}")`),
     economics() {
       const working: Working[] = [];

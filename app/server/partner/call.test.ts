@@ -255,3 +255,11 @@ describe('the verdict shape off a verdict turn', () => {
     expect(offVerdict(VERDICT, true)).toBe(NOTED);
   });
 });
+
+// Journey 21: the Why line was kept as "MRR: 310 4 + 6 39 = 1,474", its times signs read as markdown.
+describe('a times sign in the Why line', () => {
+  it('is kept as "×", and bold stays plain', () => {
+    const read = readCall('My call: **keep going**.\nWhy: MRR: 310 * 4 + 6 * 39 = **1,474**, above the €1,300 burn.\nKill signal: Paying cafés below 6 by 2026-10-30\nThis week: call Ines.', '2026-10-09', 'MRR 310 4 6 39 1,474 1,300');
+    expect(read.why).toBe('MRR: 310 × 4 + 6 × 39 = 1,474, above the €1,300 burn.');
+  });
+});

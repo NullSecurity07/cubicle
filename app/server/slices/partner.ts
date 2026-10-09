@@ -18,6 +18,9 @@ import { breakEvenFix, changedLine, economicsBlock, figuresFix, sameMetric, stat
 import { chaseLine, keptPromiseLine, promiseLine, promisesAttention, promisesBook, promisesIn } from '../partner/promises.ts';
 import { gatherSince, metricsOnDisk, sinceHeadline } from '../partner/since.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
+import { fixRows, movedLine } from '../partner/fixrows.ts';
+import { asksRecall, callRecord, holdFirstLine } from '../partner/calllog.ts';
+import { briefChangeLine, briefRows, MOST_CHANGES, rowChanges } from '../partner/briefrows.ts';
 import { createReviews, granted } from '../partner/review.ts';
 import { FAKE_REFRESH, holdStop, keepCall, loosens, readRefresh, refreshAsk, refreshDue, refreshOpening, refreshText, staleOf } from '../partner/refresh.ts';
 import { crossedRefusal, killAskIn, killMovedLine, killStandLine, pastLine } from '../partner/kill.ts';
@@ -228,8 +231,28 @@ export function createPartner(options: PartnerOptions = {}) {
       .flatMap((metric) => { const last = [...metric.points].sort((a, b) => a.at.localeCompare(b.at)).at(-1); return last && Number.isFinite(last.value) ? [{ label: metric.label, value: last.value, day: last.at }] : []; })))).flat();
     const stateFrom = async (stage: Stage, company: string): Promise<EconomicsState> => {
       const held = await state.read().catch(() => null);
-      return stateOf(sectionText(company, 'Numbers'), { fixes: held?.fixes ?? [], readings: await readingsNow(stage).catch(() => []), unitFixes: unitFix(held?.corrections ?? []) });
+      const out = stateOf(sectionText(company, 'Numbers'), { fixes: held?.fixes ?? [], readings: await readingsNow(stage).catch(() => []), unitFixes: unitFix(held?.corrections ?? []), lastGood: held?.lastGood });
+      // The brief's own money rows are kept as the last on record, read in their place if a row goes (journey 21).
+      const kept = { ...(held?.lastGood ?? {}), ...out.lastGood() };
+      if (JSON.stringify(kept) !== JSON.stringify(held?.lastGood ?? {})) await state.change((draft) => { draft.lastGood = { ...(draft.lastGood ?? {}), ...out.lastGood() }; }).catch(() => {});
+      return out;
     };
+    // Each change to the brief's Numbers rows, with who made it, kept for the morning note (journey 21: Maya's write
+    // over the Burn row went unsaid). The first look only takes the rows as they are.
+    const noteBrief = async (text: string, by: string) => {
+      const rows = briefRows(sectionText(text, 'Numbers'));
+      const held = await state.read();
+      if (held.briefRows && !rowChanges(held.briefRows, rows).length) return;
+      await state.change((draft) => {
+        const moved = draft.briefRows ? rowChanges(draft.briefRows, rows) : [];
+        if (moved.length) draft.briefLog = [...(draft.briefLog ?? []), ...moved.map((one) => ({ ...one, at: now(), by }))].slice(-MOST_CHANGES);
+        draft.briefRows = rows;
+      });
+    };
+    {
+      const doc = await companyNow().catch(() => undefined);
+      if (doc && !(await state.read()).briefRows) await noteBrief(await deps.store.readDoc(doc.id).catch(() => ''), 'you').catch(() => {});
+    }
     const stateNow = async (stage?: Stage): Promise<EconomicsState | null> => {
       const on = stage ?? await deps.store.loadStage();
       const doc = await companyNow(on);
@@ -465,6 +488,10 @@ export function createPartner(options: PartnerOptions = {}) {
         // Never beside a turn of their own: the note would land in the middle of what they are saying.
         if (!partner || deps.busy.has(partner.id)) return null;
         const inputs = await inputsNow(stage, partner.id);
+        // A change no tool and no chat made is the founder's own edit in the brief.
+        if (inputs.company) await noteBrief(inputs.company, 'you, in the brief').catch(() => {});
+        const logged = (await state.read()).briefLog ?? [];
+        const changesSince = logged.map(briefChangeLine);
         if (held.morning?.day === today && held.morning.inputs === inputs.key) return { ...held.morning, unchanged: true };
         const count = held.tries?.day === today ? held.tries.count : 0;
         await state.change((draft) => { draft.tries = { day: today, count: count + 1, last: at }; });
@@ -472,11 +499,12 @@ export function createPartner(options: PartnerOptions = {}) {
           // The founder's own ask, or the day's last try, gets a note even when it is still at fault.
           name: partner.name, ask, last: asked || count + 1 >= MOST_TRIES,
           promptFor: (on, roomId) => deps.promptFor(on, roomId, [], true),
-          sources: { ...sourcesFor(stage, partner.id, inputs.company), now: at, ...(held.morning?.snapshot ? { seen: held.morning.snapshot as Snapshot } : {}) },
+          sources: { ...sourcesFor(stage, partner.id, inputs.company), now: at, ...(held.morning?.snapshot ? { seen: held.morning.snapshot as Snapshot } : {}), ...(changesSince.length ? { briefChanges: changesSince } : {}) },
         }).catch((error: Error) => { console.error(`partner morning: ${error.message}`); return null; });
         if (!written) return null;
         const note = { ...written, inputs: inputs.key };
-        await state.change((draft) => { draft.morning = note; if (draft.morningDone === today) delete draft.morningDone; });
+        // The changes said in this note leave the log: the next note says only the ones after it.
+        await state.change((draft) => { draft.morning = note; if (draft.morningDone === today) delete draft.morningDone; draft.briefLog = (draft.briefLog ?? []).filter((one) => !logged.includes(one) && !logged.some((had) => had.at === one.at && had.label === one.label && had.by === one.by)); });
         await deps.store.appendChat(partner.id, { id: newMessageId(), role: 'assistant', text: morningMessage(note), at: note.at, ...(note.provider ? { provider: note.provider } : {}), ...(note.model ? { model: note.model } : {}) });
         await deps.attention.refresh().catch(() => {});
         deps.notify?.(`Morning note from ${partner.name}`, sinceHeadline(note.since) ?? note.things[0] ?? 'No moves today.');
@@ -515,6 +543,7 @@ export function createPartner(options: PartnerOptions = {}) {
           const title = stage.docs.find((doc) => doc.id === effect.id)?.title ?? (effect.kind === 'doc-created' ? effect.title : '');
           const body = await deps.store.readDoc(effect.id);
           const who = stage.rooms.find((one) => one.id === roomId);
+          if (who && effect.id === (await companyNow(stage))?.id) await noteBrief(body, who.name);
           if (who && effect.id !== (await companyNow(stage))?.id && isPlanDoc(title, body) && await offerPlan(state, { who: who.name, roomId, title, steps: parsePlan(body), docId: effect.id }, now())) await deps.attention.refresh();
         } catch (error) { console.error(`partner plan: ${(error as Error).message}`); }
       }
@@ -535,8 +564,18 @@ export function createPartner(options: PartnerOptions = {}) {
       if (!fresh.length) { fixedNow.delete(roomId); return; }
       const held = await state.change((draft) => { draft.fixes = keepFixes(draft.fixes ?? [], fresh); return draft.call; });
       standing = null;
+      // Journey 21: the founder's correction goes on its brief row at once, so every colleague works from it too.
+      let briefLine = '';
+      const before = await deps.store.readDoc(doc.id).catch(() => '');
+      const put = fixRows(before, fresh, economics, localDay(now()));
+      if (put.moved.length && wired(stage, roomId, [doc.id]).length) {
+        await deps.store.writeDoc(doc.id, put.text);
+        await noteBrief(put.text, 'you, in chat').catch(() => {});
+        changed(doc.id);
+        briefLine = ` ${movedLine(put.moved, doc.title)}`;
+      } else if (put.moved.length) briefLine = ` Not in the "${doc.title}": it is not wired to me, so its rows still say the old figures.`;
       const stale = held?.decision ? ` My verdict of ${held.day} was made on the numbers before, so it is stale: ${asksVerdict(query) || pushesBack(query) ? 'it is made again here' : 'I make it again on the next look'}.` : '';
-      fixedNow.set(roomId, { query, line: `${fixesLine(fresh, economics.currency ?? '', Object.fromEntries(Object.entries(economics.inputs).map(([field, one]) => [field, one!.label]))).replace(/\*$/, '')}${stale}*` });
+      fixedNow.set(roomId, { query, line: `${fixesLine(fresh, economics.currency ?? '', Object.fromEntries(Object.entries(economics.inputs).map(([field, one]) => [field, one!.label]))).replace(/\*$/, '')}${briefLine}${stale}*` });
     }
     const beforeTurn: Handler<'turn:before'> = async (payload, next) => {
       const system = payload.messages[0];
@@ -554,6 +593,8 @@ export function createPartner(options: PartnerOptions = {}) {
         await takeFixes(stage, payload.roomId, payload.query).catch((error: Error) => console.error(`partner numbers: ${error.message}`));
         const block = await standingFor(stage, payload.roomId).catch((error: Error) => { console.error(`partner standing facts: ${error.message}`); return ''; });
         out = withSystem(out, block);
+        // Asked what was called or set before: the record of calls, never the chat's memory of them (journey 21).
+        if (asksRecall(payload.query)) out = withSystem(out, callRecord((await state.read()).callLog ?? []));
         // The state's own figures, a source for what the partner says (journey 19's false footers).
         const figures = stateFigures(await stateNow(stage).catch(() => null));
         if (figures) out = withSystem(out, figures);
@@ -684,6 +725,7 @@ export function createPartner(options: PartnerOptions = {}) {
           if (kept.kept.length && wired(stage, me.id, [doc.id]).length) {
             wroteBrief = true;
             await deps.store.writeDoc(doc.id, kept.text);
+            await noteBrief(kept.text, 'you, in chat').catch(() => {});
             changed(doc.id);
             standing = null;
             company = kept.text;
@@ -701,6 +743,8 @@ export function createPartner(options: PartnerOptions = {}) {
         if (doc) text = holdDocClaims(text, payload.reply.tools, { title: doc.title, wrote: wroteBrief });
         const numbersNow = await stateFrom(stage, company);
         text = breakEvenFix(unitsFix(runwayFix(figuresFix(text, numbersNow.economics()), numbers), fixes), numbersNow);
+        // A kill line recalled as day one's is day one's own, from the record (journey 21).
+        if (asksRecall(payload.query)) text = holdFirstLine(text, (await state.read()).callLog ?? []);
         // The inputs the founder put right this turn, said under the reply.
         const fixed = fixedNow.get(me.id);
         if (fixed?.query === payload.query) { receipt = receipt ? `${receipt}\n\n${fixed.line}` : fixed.line; fixedNow.delete(me.id); }

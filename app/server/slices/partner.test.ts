@@ -1125,7 +1125,9 @@ describe('the partner slice: one picture of the numbers (journey 16)', () => {
     expect(prompt).toContain('- Paying subscribers: 11 (founder, 2026-10-06: "No, 14 subscribers is not 14 paying, 11 pay")');
     expect(prompt).toContain('That verdict is stale: made on numbers that changed since (price €59 a month → €59 a week');
     const reply = (await deps.seams.run('turn:reply', { roomId: 'p1', query, reply: turn('You are right, break-even is 8.') })).reply.text;
-    expect(reply).toContain('*Taken as the numbers: paying subscribers 11; price a week (your words). Break-even, runway and the verdict are worked from these now. My verdict of 2026-10-06 was made on the numbers before, so it is stale: I make it again on the next look.*');
+    expect(reply).toContain('*Taken as the numbers: paying subscribers 11; price a week (your words). Break-even, runway and the verdict are worked from these now. Company brief: Paying subscribers 14 → 11; Price a month → a week. My verdict of 2026-10-06 was made on the numbers before, so it is stale: I make it again on the next look.*');
+    // Journey 21: the correction is on the brief's rows at once, for every colleague to work from.
+    expect(await deps.store.readDoc(company.id)).toContain('- Price: €59 a week per subscriber (founder, 2026-10-06)\n- Subscribers: 14\n- Paying subscribers: 11 (founder, 2026-10-06)');
     // Next morning: the stale call is refreshed, quoting the changed inputs, and may not reach stop.
     clock = new Date('2026-10-07T06:30').getTime();
     await part.tick!();
@@ -1271,6 +1273,26 @@ describe('the partner slice: the founder\'s kill line is theirs', () => {
     await part.tick!();
     const out = (await deps.seams.run('turn:reply', { roomId: 'p1', query: 'How are we doing?', reply: turn('Fine. I updated the Company document with the new count.') })).reply.text;
     expect(out).toBe('Fine. Nothing was written to the Company brief this turn.');
+    await part.close!();
+  });
+});
+
+// Journey 21: Maya rewrote the brief's Burn row and the morning note said nothing of it.
+describe('the partner slice: a change to the brief\'s Numbers', () => {
+  it('is said in the morning note with who made it, and a row gone is read from the last figure on record', async () => {
+    const answers: [number, unknown][] = [];
+    const { deps, part } = await installed({ json: (_res, status, body) => { answers.push([status, body]); } }, { now: () => NINE, ask: async () => SHAPED });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true }), room('maya', 'Maya')]);
+    const id = companyDocOf(await deps.store.loadStage())!.id;
+    const brief = (burn: string) => `# Company brief\n\n## Numbers\n\n- Price: €29 a month\n- Paying users: 9\n- Cash: €3,200\n- Burn: ${burn}\n`;
+    await deps.store.replaceDoc(id, brief('€1,100 a month'));
+    await part.route!({ method: 'POST' } as never, {} as never, '/api/partner/morning');
+    await deps.store.replaceDoc(id, brief('-€54 a month (cash-positive), 1,100 − 9 × 29 = −54 (calc)'));
+    await deps.seams.run('tool:after', { roomId: 'maya', event: { id: 'e', name: 'replace_section', args: {}, ok: true, effect: { kind: 'doc-changed', id } } });
+    await part.route!({ method: 'POST' } as never, {} as never, '/api/partner/morning');
+    const note = answers.at(-1)?.[1] as { since: string[] };
+    expect(note.since).toContain('Company brief: Burn €1,100 a month → -€54 a month (cash-positive), 1,100 − 9 × 29 = −54 (calc) (by Maya).');
+    expect(note.since).toContain('The Company brief has no Burn row it can read now, so the last figure on record is used: Burn €1,100 a month. Put the row back in the brief.');
     await part.close!();
   });
 });
