@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { checkReply } from '../truth.ts';
-import { breakEvenFix, breakEvenLine, derivedRows, economicsBlock, economicsOf, figuresFix, gapFix, gapLine, saysGap, stateFigures, stateOf, wideGap, workingTools } from './economics.ts';
+import { breakEvenFix, breakEvenLine, changedLine, changedSince, derivedRows, economicsBlock, economicsOf, figuresFix, gapFix, gapLine, saysGap, stateFigures, stateOf, wideGap, workingTools } from './economics.ts';
 import { inputFixesIn } from './corrections.ts';
 
 // The Numbers of journey 13's Company brief, as the founder wrote them.
@@ -233,5 +233,53 @@ describe('the state\'s figures as a source for the truth net', () => {
     const reply = 'My call: keep going.\nWhy: MRR is €261 and net burn is €839 a month, so runway is 3.8 months; break-even is 38 paying plumbers, 29 more than today.';
     expect(checkReply({ reply, receipts: [], sources: [QUOTESNAP, line] })).toEqual([]);
     expect(checkReply({ reply, receipts: [], sources: [QUOTESNAP] }).join('\n')).toMatch(/839/);
+  });
+});
+
+// Journey 20: two revenue streams, €4 per booking on 310 bookings and 6 cafés paying €39 a month. The state took the
+// bookings as the paying count and left the cafés out: break-even "325 bookings", runway 4.2 months, for a company
+// already €174 a month above its burn.
+export const FIXSLOT = '- Price: €4 per booking\n- Bookings last month: 310\n- Paying cafés: 6 at €39 a month\n- Cash: €5,400\n- Burn: €1,300 a month\n- Cafés contacted: 40\n- Goal: 12 paying cafés by 2026-11-08';
+describe('more than one revenue stream (journey 20)', () => {
+  it('MRR is both streams a month, the paying count is the cafés, and the company is cash-positive', () => {
+    const state = stateOf(FIXSLOT);
+    expect(state.streams).toBe(2);
+    expect(state.unit).toBe('paying cafés');
+    expect(state.current()).toBe(6);
+    expect(state.inputs.volume).toMatchObject({ value: 310, period: 'month' });
+    expect(state.inputs.plan).toMatchObject({ value: 39, period: 'month' });
+    expect(state.mrr()).toBe(1474);
+    expect(state.net()).toBe(-174);
+    expect(state.cashPositive()).toBe(true);
+    expect(state.runway()).toMatchObject({ value: Infinity, display: 'cash-positive' });
+    expect(state.perJob).toBe(false);
+  });
+
+  it('break-even is said in paying cafés with the bookings held where they are', () => {
+    const state = stateOf(FIXSLOT);
+    expect(state.breakEven()).toBe(2);
+    expect(state.held).toBe('at 310 bookings a month');
+    expect(state.side()).toBe('above');
+    const lines = state.explain();
+    expect(lines[0]).toBe('MRR: 310 * 4 + 6 * 39 = 1,474 a month from 310 bookings a month at €4 and 6 paying cafés at €39 a month');
+    expect(lines[1]).toContain('= 2 paying cafés to cover the burn with 310 bookings a month at €4 held where they are; we have 6');
+    expect(lines.join('\n')).not.toMatch(/325|no bookings a month to net/);
+    expect(stateFigures(state)).toContain('break-even 2 paying cafés at 310 bookings a month');
+  });
+
+  it('with fewer bookings, break-even in cafés rises and a price per booking is never said a month', () => {
+    const before = stateOf(FIXSLOT);
+    const state = stateOf(FIXSLOT.replace('€4 per booking', '€4.60 per booking'), { fixes: [{ field: 'volume', value: 100, said: 'bookings were 100', day: '2026-10-09' }] });
+    expect(state.mrr()).toBe(694);
+    expect(state.breakEven()).toBe(22);
+    expect(state.side()).toBe('below');
+    expect(state.runway()).toEqual({ value: 8.9, display: '8.9' });
+    expect(changedSince(before.snapshot(), state).map((one) => changedLine(one, '€'))).toEqual(expect.arrayContaining(['price €4 per booking → €4.6 per booking']));
+  });
+
+  it('one stream stays as it was: a per-job price beside a paying row with no price of its own', () => {
+    const state = stateOf('- Price: €12 per print job (paid by the maker)\n- Print jobs done: 4\n- Paying hosts: 1\n- Cash: €2,500\n- Burn: €600 a month');
+    expect(state.streams).toBe(1);
+    expect(state.unit).toBe('print jobs a month');
   });
 });
