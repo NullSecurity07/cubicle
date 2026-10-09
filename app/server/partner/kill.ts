@@ -85,3 +85,14 @@ export function crossedRefusal(fresh: KillSignal, reading?: { value: number; sai
   return `Not set: "${fresh.what}" is crossed already (${reading.said}), so its check would fire today. The kill line stays as it was. `
     + `Say "replace the kill signal: ${metric} ${said.below ? 'below' : 'above'} ${value} by ${fresh.by}", or a line ${said.below ? 'under' : 'over'} ${value}, and I will set it.`;
 }
+
+// Journey 20: asked for the kill line and today's number, the partner said "9 paying cafés, above the kill line of 7"
+// with 6 on the Metrics card that day. Every partner turn carries the line and today's reading against it, read in
+// code at the turn, so the number quoted is today's and its side of the line is worked out, never guessed.
+export function killStandLine(signal: KillSignal, reading?: { value: number; said: string } | null): string | null {
+  const said = thresholdOf(signal.what);
+  if (!said || !reading) return null;
+  const stand = pastLine(reading.value, said.value, said.below) ? 'past the line: the kill line is crossed'
+    : reading.value === said.value ? `right on the line, not past it: ${said.below ? 'losing one' : 'any rise'} crosses it` : 'on the safe side of the line';
+  return `Kill line now: "${signal.what}" by ${signal.by}. Today's number against it: ${reading.said}, ${stand}. Quote this reading, never an older one.`;
+}

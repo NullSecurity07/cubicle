@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { killAskIn, killMovedLine, pastLine } from './kill.ts';
+import { crossedRefusal, killAskIn, killMovedLine, killStandLine, pastLine } from './kill.ts';
+import { sameMetric, stateOf } from './economics.ts';
+import { killToward } from './watch.ts';
 
 // Journey 16: the founder's "replace the kill signal" got a CSV-header ask, then a bet of 15; the refresh moved the line
 // to 11 with the reading at 9.5 and said nothing.
@@ -27,5 +29,29 @@ describe('the founder moves the kill signal, in code', () => {
     const at = { value: 11, said: 'Paying subscribers is 11 (Company brief)' };
     expect(killMovedLine(undefined, { what: 'paying subscribers below 11', by: '2026-10-17' }, at)).toBe('Kill signal set: "paying subscribers below 11" by 2026-10-17. It is the check in Needs you on 2026-10-17. Paying subscribers is 11 (Company brief), right on the line: losing one trips it.');
     expect(killMovedLine(undefined, { what: 'paying subscribers below 9', by: '2026-10-17' }, at)).toBe('Kill signal set: "paying subscribers below 9" by 2026-10-17. It is the check in Needs you on 2026-10-17.');
+  });
+});
+
+// Journey 20: "below 7" was taken with 6 paying cafés, since the paying count the state held was the 310 bookings;
+// recall said "9, above the line of 7" with 6 that day; "8" on "below 8" was raised as crossed.
+describe('the kill line against the paying cafés (journey 20)', () => {
+  const FIXSLOT = '- Price: €4 per booking\n- Bookings last month: 310\n- Paying cafés: 6 at €39 a month\n- Cash: €5,400\n- Burn: €1,300 a month';
+  const paying = stateOf(FIXSLOT).inputs.paying!;
+  const reading = { value: paying.value, said: `${paying.label} is ${paying.value} (Company brief)` };
+  it('the state\'s paying count is the cafés, so "below 7" with 6 is refused as crossed', () => {
+    expect(sameMetric(paying.label, 'Paying cafés')).toBe(true);
+    expect(paying.value).toBe(6);
+    expect(crossedRefusal({ what: 'Paying cafés below 7', by: '2026-11-08' }, reading)).toMatch(/^Not set: "Paying cafés below 7" is crossed already \(Paying cafés is 6/);
+  });
+  it('a line at today\'s number is on the line, not crossed', () => {
+    const eight = { value: 8, said: 'Paying cafés is 8 (Metrics, 2026-10-12)' };
+    expect(crossedRefusal({ what: 'Paying cafés below 8', by: '2026-11-08' }, eight)).toBeNull();
+    expect(killStandLine({ what: 'Paying cafés below 8', by: '2026-11-08' }, eight)).toContain('right on the line, not past it');
+    expect(killToward(9, 8, 8, true)).toMatchObject({ crossed: false, share: 1 });
+    expect(killToward(9, 7, 8, true)).toMatchObject({ crossed: true });
+  });
+  it('every turn carries today\'s reading against the line', () => {
+    expect(killStandLine({ what: 'Paying cafés below 7', by: '2026-11-08' }, { value: 6, said: 'Paying cafés is 6 (Metrics, 2026-10-12)' }))
+      .toBe('Kill line now: "Paying cafés below 7" by 2026-11-08. Today\'s number against it: Paying cafés is 6 (Metrics, 2026-10-12), past the line: the kill line is crossed. Quote this reading, never an older one.');
   });
 });

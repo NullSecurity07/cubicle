@@ -78,7 +78,10 @@ export function killToward(start: number, latest: number, line: number, below: b
   if (!worse) return null;
   const losing = below ? start < line : start > line;
   if (losing) return { start, latest, line, share: 1, crossed: false, away: true };
-  return towardLine(start, latest, line);
+  // Journey 20: "8 ... the kill line is 8 (Paying cafés below 8)" was raised as crossed. A line is crossed only past
+  // it: 8 is on "below 8", not under it.
+  const toward = towardLine(start, latest, line);
+  return toward && { ...toward, crossed: below ? latest < line : latest > line };
 }
 // Which side of a kill signal's line loses: "fewer than 10", "below 5" and a bare count to reach lose under it.
 export const losesBelow = (what: string) => thresholdOf(what)?.below ?? !/\b(?:above|over|more than|greater than|higher than|exceeds?)\b|>/i.test(what);
@@ -143,12 +146,13 @@ export function metricSparks(cards: MetricsCard[], kill: FounderPromise | undefi
     const toward = read && killToward(read.start.value, read.latest.value, lineOf!.line, losesBelow(kill.what));
     if (lineOf && read && trending(toward)) {
       const { metric } = lineOf;
+      const onIt = !toward.crossed && !toward.away && read.latest.value === lineOf.line;
       const said = (value: number) => formatValue(value, metric.unit);
       const number = `${metric.label}: ${said(read.latest.value)} on ${read.latest.at}, from ${said(read.start.value)} on ${read.start.at}; the kill line is ${said(lineOf.line)} (${kill.what}, checked on ${kill.due}).`;
       found.push({
-        key: `kill:${kill.id}:${metric.key}:${toward.crossed ? 'crossed' : toward.away ? 'away' : 'trending'}`, trigger: `kill:${kill.id}:${metric.key}`, kind: 'metric', at, money: 100, cardId: card!.cardId, number,
-        why: toward.crossed ? `${metric.label} crossed the kill line` : toward.away ? `${metric.label} is moving away from the kill line it has to clear` : `${metric.label} is trending to the kill line`,
-        facts: `${toward.crossed ? 'The number has crossed the kill line' : toward.away ? 'The number has not cleared the kill line yet and moved the wrong way since your verdict' : `The number is trending to the kill line: ${Math.round(toward.share * 100)}% of the way from where it stood at your verdict`}.\n${number}\n${kill.due >= localDay(at) ? `The verdict's check is on ${kill.due}.` : `The verdict's check day, ${kill.due}, has passed.`}`,
+        key: `kill:${kill.id}:${metric.key}:${toward.crossed ? 'crossed' : toward.away ? 'away' : onIt ? 'on-line' : 'trending'}`, trigger: `kill:${kill.id}:${metric.key}`, kind: 'metric', at, money: 100, cardId: card!.cardId, number,
+        why: toward.crossed ? `${metric.label} crossed the kill line` : toward.away ? `${metric.label} is moving away from the kill line it has to clear` : onIt ? `${metric.label} is right on the kill line, not past it` : `${metric.label} is trending to the kill line`,
+        facts: `${toward.crossed ? 'The number has crossed the kill line' : toward.away ? 'The number has not cleared the kill line yet and moved the wrong way since your verdict' : onIt ? 'The number is right on the kill line, not past it: one more step the wrong way crosses it' : `The number is trending to the kill line: ${Math.round(toward.share * 100)}% of the way from where it stood at your verdict`}.\n${number}\n${kill.due >= localDay(at) ? `The verdict's check is on ${kill.due}.` : `The verdict's check day, ${kill.due}, has passed.`}`,
         out: { kind: 'task-or-decision' },
         kill: { label: metric.label, start: read.start.value, latest: read.latest.value, line: lineOf.line, below: losesBelow(kill.what) },
       });
