@@ -230,3 +230,37 @@ describe('a decision said no to (journey 18)', () => {
     expect(sameProposal(trials, discount)).toBe(false);
   });
 });
+
+// Journey 19: Don't on Sam's ready reply to Tom, then "No to that reply for Tom, because ... Never promise a feature we
+// have not shipped." Lea's honest answer later reused the subject and the gate said "You said no to this".
+describe('a no on a drafted email', () => {
+  const tom = 'tom@becker-sanitaer.example';
+  const subject = 'Re: QuoteSnap / WhatsApp to quotes for Becker Sanitär';
+  const sams = 'Hi Tom,\n\nThanks for your questions. Yes, QuoteSnap works with photos from any Android phone. And yes, your quotes can show VAT separately.\n\nBest,';
+  const leas = 'Hi Tom,\n\nThanks for your questions. QuoteSnap turns WhatsApp photos of a job into a written quote in your own template.\nI will check whether it works with photos from your old Android phone and come back to you by Tuesday. I will check whether the quote can show VAT separately and come back to you by Tuesday.\n\nBest,';
+
+  it('keeps the draft, its id and its claims, and holds a later draft only when it is the same or makes the same claims', async () => {
+    const book = createSaidNo(await mkdtemp(join(tmpdir(), 'saidno-')), () => OCT_3);
+    const declined = saidNoProposal({ id: 'lead-1', move: 'Reply to Tom', draft: { kind: 'email', to: tom, subject, body: sams } });
+    const kept = await book.record({ ...declined, who: 'Sam' });
+    expect(kept).toMatchObject({ draftId: 'lead-1', claims: expect.arrayContaining(['Android']) });
+    expect(kept.body).toContain('any Android phone');
+    expect(await book.explain('to that reply for Tom, because never promise a feature we have not shipped')).toMatchObject({ id: kept.id });
+    // Lea's honest answer, same lead, same subject: fresh.
+    expect((await book.check(proposalOf('draft_email', { to: tom, subject, body: leas }, [tom])!)).verdict).toBe('fresh');
+    // The same claims again under another subject: the same no.
+    expect((await book.check(proposalOf('draft_email', { to: tom, subject: 'Quick answer', body: 'Hi Tom,\n\nGood news: it runs on Android phones of any age.\n\nBest,' }, [tom])!)).verdict).toBe('reask');
+    // The same draft again: the same no.
+    expect((await book.check(saidNoProposal({ id: 'lead-1', move: 'Reply', draft: { kind: 'email', to: tom, subject, body: sams } }))).verdict).not.toBe('fresh');
+  });
+
+  it('a draft with no product claims is held only by its id or by much the same words', () => {
+    const plain = 'Hi Tom,\n\nThanks for your reply. Would a 20-minute call this week work for you to see a quote made from your photos?\n\nBest,';
+    const no = entry({ tool: 'draft_email', subject, to: tom, key: `lead:${tom}`, draftId: 'lead-2', body: 'Hi Tom,\n\nThanks for your reply. We would love to show you a quote made from your own job photos this week.\n\nBest,', claims: [] });
+    expect(sameProposal(no, proposalOf('draft_email', { to: tom, subject, body: leas }, [tom])!)).toBe(false);
+    expect(sameProposal(no, proposalOf('draft_email', { to: tom, subject, body: plain }, [tom])!)).toBe(false);
+    expect(sameProposal(no, proposalOf('draft_email', { to: tom, subject: 'Other', body: no.body }, [tom])!)).toBe(true);
+    // An older no kept without a body still stands by its subject.
+    expect(sameProposal(entry({ tool: 'draft_email', subject, to: tom, key: `lead:${tom}` }), proposalOf('draft_email', { to: tom, subject, body: leas }, [tom])!)).toBe(true);
+  });
+});

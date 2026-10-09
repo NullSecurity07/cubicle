@@ -411,9 +411,9 @@ export function heldToState(spark: Spark, state: EconomicsState | null | undefin
 
 // A watch proposal in the words the said-no log keeps: an email is about its lead, a task or a decision is its title,
 // letting a promise go is about that promise.
-export function saidNoProposal(one: Pick<Proposal, 'draft' | 'move'>): SaidNoProposal {
+export function saidNoProposal(one: Pick<Proposal, 'draft' | 'move'> & { id?: string }): SaidNoProposal {
   const { draft } = one;
-  if (draft.kind === 'email') return { tool: 'draft_email', subject: draft.subject, to: draft.to.toLowerCase(), key: `lead:${draft.to.toLowerCase()}` };
+  if (draft.kind === 'email') return { tool: 'draft_email', subject: draft.subject, to: draft.to.toLowerCase(), key: `lead:${draft.to.toLowerCase()}`, body: draft.body, ...('id' in one && typeof one.id === 'string' ? { draftId: one.id } : {}) };
   if (draft.kind === 'task') return { tool: 'propose_task', subject: draft.title };
   if (draft.kind === 'decision') return { tool: 'propose_decision', subject: draft.title };
   return { tool: 'drop_promise', subject: `Let go: ${draft.what}`, key: `promise:${draft.promiseId}` };

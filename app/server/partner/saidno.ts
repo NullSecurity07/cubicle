@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { writeAtomic } from '../fsx.ts';
 import { now as clockNow } from '../clock.ts';
+import { productClaimsIn } from '../productclaim.ts';
 
 // The founder's "no", kept. Journeys found people putting the same thing in front of the founder again a day after
 // they had turned it down: "cut the price to €29" declined with a reason, and back in the next morning's advice as if
@@ -30,9 +31,13 @@ export type SaidNoEntry = {
   pick?: string;
   // How often it has been put to the founder again since the first no: once is all it gets.
   asked: number;
+  // A drafted email said no to is that draft: its id, its body (short) and what it claimed about the product.
+  draftId?: string;
+  body?: string;
+  claims?: string[];
 };
 
-export type Proposal = { tool: string; subject: string; key?: string; to?: string; who?: string; options?: string[]; pick?: string };
+export type Proposal = { tool: string; subject: string; key?: string; to?: string; who?: string; options?: string[]; pick?: string; body?: string; draftId?: string };
 export type SaidNoCheck = { verdict: 'fresh' } | { verdict: 'reask' | 'declined'; entry: SaidNoEntry; line: string };
 
 export const SAID_NO_MOST = 50;
@@ -61,13 +66,18 @@ export function overlap(a: string, b: string): number {
 
 // The same proposal: the same kind of tool (a no said in chat stands against any tool), and the same lead or doc, or
 // most of the same words.
-export function sameProposal(entry: Pick<SaidNoEntry, 'tool' | 'subject' | 'key' | 'to'>, proposal: Proposal): boolean {
+export function sameProposal(entry: Pick<SaidNoEntry, 'tool' | 'subject' | 'key' | 'to'> & Partial<Pick<SaidNoEntry, 'draftId' | 'body' | 'claims'>>, proposal: Proposal): boolean {
   if (entry.tool !== 'chat' && proposal.tool !== 'chat' && familyOf(entry.tool) !== familyOf(proposal.tool)) return false;
   // An email is the same email only to the same lead and about much the same thing. Journey 15: one Don't on an intro
   // to a lead, keyed by the lead alone, refused every email to her after it, the answer to her own question too.
   if (familyOf(entry.tool) === 'email' && familyOf(proposal.tool) === 'email') {
     if (entry.key && proposal.key && entry.key.toLowerCase() !== proposal.key.toLowerCase()) return false;
     if (entry.to && proposal.to && entry.to !== proposal.to) return false;
+    // Journey 19: a Don't on the partner's ready reply to Tom, kept by its subject, gated a colleague's honest answer
+    // that reused the subject ("Re: QuoteSnap ..."). A no on a draft is a no to that draft: the same draft, or one that
+    // makes the same claims about the product, or says much the same. Another answer to the same lead is fresh.
+    if (entry.body !== undefined && proposal.body !== undefined) return sameDraft(entry, proposal);
+    if (entry.draftId && proposal.draftId) return entry.draftId === proposal.draftId;
     return overlap(entry.subject, proposal.subject) >= SAID_NO_OVERLAP;
   }
   if (entry.key && proposal.key && entry.key.toLowerCase() === proposal.key.toLowerCase()) return true;
@@ -81,6 +91,29 @@ export function sameProposal(entry: Pick<SaidNoEntry, 'tool' | 'subject' | 'key'
   // stands against a decision, bet or task that does what it ruled out.
   if (entry.tool === 'chat' && DECIDES.has(proposal.tool)) return againstNo(entry.subject, proposal.subject) || ruledEffect(entry.subject, proposal);
   return false;
+}
+
+// The sentences of an email that state something: no greeting, sign-off, question, or "I will check and come back".
+const GREETING = /^(?:hi|hello|hey|dear|good (?:morning|afternoon|evening))\b[^.!?]*,?$/i;
+const SIGN_OFF = /^(?:best|thanks|thank you|many thanks|regards|kind regards|best regards|cheers|all the best|warmly|sincerely)\b[\s\w,.!]{0,30}$/i;
+const FOLLOW_UP = /\b(?:i|we)(?:'ll|'d| will| would| can| shall)?\s+(?:double-)?(?:check|find out|look into|confirm|come back|get back|let you know|ask|verify|follow up)\b/i;
+export function statementsOf(body: string): string[] {
+  return body.split('\n').flatMap((line) => line.split(/(?<=[.!?])\s+/)).map((one) => one.trim())
+    .filter((one) => one && !GREETING.test(one) && !SIGN_OFF.test(one) && !/\?\s*$/.test(one) && !FOLLOW_UP.test(one) && subjectWords(one).length >= 3);
+}
+// What a drafted email claims about the product, each in a few words ("Android", "VAT"), from its stated sentences.
+export const draftClaims = (body: string) => productClaimsIn(statementsOf(body).join('\n'), []);
+export const DRAFT_OVERLAP = 0.8;
+export function sameDraft(entry: Pick<SaidNoEntry, 'draftId' | 'body' | 'claims' | 'subject'>, proposal: Pick<Proposal, 'draftId' | 'body' | 'subject'>): boolean {
+  if (entry.draftId && proposal.draftId && entry.draftId === proposal.draftId) return true;
+  // No body to read: the subject is all there is to go on.
+  if (!proposal.body?.trim() || !entry.body?.trim()) return overlap(entry.subject, proposal.subject) >= SAID_NO_OVERLAP;
+  const claims = new Set((entry.claims ?? draftClaims(entry.body ?? '')).map((one) => one.toLowerCase()));
+  if (claims.size && draftClaims(proposal.body ?? '').some((one) => claims.has(one.toLowerCase()))) return true;
+  const was = statementsOf(entry.body ?? '').join(' ');
+  const now = statementsOf(proposal.body ?? '').join(' ');
+  if (!was && !now) return overlap(entry.body!, proposal.body!) >= DRAFT_OVERLAP;
+  return !!was && !!now && overlap(was, now) >= DRAFT_OVERLAP;
 }
 
 // The tools whose proposal is a thing to do, matched by what it does rather than what it is called.
@@ -147,7 +180,8 @@ export function proposalOf(tool: string, args: Record<string, unknown>, leads: I
     case 'draft_email': case 'send_email': {
       const to = string(args.to).split(/[,;\s]+/).filter(Boolean).map((one) => one.toLowerCase());
       const known = to.find((one) => lead.has(one));
-      return { tool, subject: short(string(args.subject) || `email to ${to.join(', ')}`, 160), ...(to.length ? { to: [...to].sort().join(',') } : {}), ...(known ? { key: `lead:${known}` } : {}) };
+      return { tool, subject: short(string(args.subject) || `email to ${to.join(', ')}`, 160), ...(to.length ? { to: [...to].sort().join(',') } : {}), ...(known ? { key: `lead:${known}` } : {}),
+        ...(string(args.body).trim() ? { body: string(args.body) } : {}) };
     }
     case 'coder_permission': return { tool, subject: short(string(args.command) || string(args.file), 160) };
     default: {
@@ -159,8 +193,8 @@ export function proposalOf(tool: string, args: Record<string, unknown>, leads: I
 
 // One line per no, the way a prompt and the standing facts say it.
 // What was said no to, with its kind where the subject alone does not say it: an email names whom it was to.
-export const whatSaidNo = (entry: Pick<SaidNoEntry, 'tool' | 'subject' | 'to'>) => (familyOf(entry.tool) === 'email' && entry.to
-  ? `email to ${entry.to} about "${short(entry.subject, 90)}"` : `"${short(entry.subject, 90)}"`);
+export const whatSaidNo = (entry: Pick<SaidNoEntry, 'tool' | 'subject' | 'to'> & { claims?: string[] }) => (familyOf(entry.tool) === 'email' && entry.to
+  ? `email to ${entry.to} about "${short(entry.subject, 90)}"${entry.claims?.length ? ` (it claimed: ${entry.claims.join(', ')})` : ''}` : `"${short(entry.subject, 90)}"`);
 export const saidNoLine = (entry: SaidNoEntry) => `- ${whatSaidNo(entry)} (${entry.who ? `${entry.who}, ` : ''}${saidOn(entry.at)}${entry.reason ? `: ${short(entry.reason, 80)}` : ''})`;
 export const reaskLine = (entry: SaidNoEntry) => `You said no to this on ${saidOn(entry.at)}${entry.reason ? `: '${short(entry.reason, 120)}'` : ''}. Ask again?`;
 export const declinedLine = (entry: SaidNoEntry) => `Already declined: the founder said no to ${whatSaidNo(entry)} on ${saidOn(entry.at)}${entry.reason ? ` ('${short(entry.reason, 120)}')` : ''} `
@@ -216,7 +250,8 @@ export function createSaidNo(workspace: string, now: () => number = clockNow) {
         }
         const entry: SaidNoEntry = { id: `no-${at.toString(36)}-${Math.random().toString(36).slice(2, 6)}`, tool: proposal.tool, subject: short(proposal.subject, 160), at, asked: 0,
           ...(proposal.key ? { key: proposal.key } : {}), ...(proposal.to ? { to: proposal.to } : {}), ...(proposal.who ? { who: proposal.who } : {}), ...(reason ? { reason } : {}),
-          ...(proposal.options?.length ? { options: proposal.options.slice(0, 5) } : {}), ...(proposal.pick ? { pick: proposal.pick } : {}) };
+          ...(proposal.options?.length ? { options: proposal.options.slice(0, 5) } : {}), ...(proposal.pick ? { pick: proposal.pick } : {}),
+          ...(proposal.draftId ? { draftId: proposal.draftId } : {}), ...(proposal.body !== undefined ? { body: short(proposal.body, 1200), claims: draftClaims(proposal.body) } : {}) };
         entries.push(entry);
         return entry;
       });
