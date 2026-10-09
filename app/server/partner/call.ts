@@ -66,7 +66,8 @@ const LABELS: { field: 'call' | 'why' | 'kill' | 'week' | 'gap'; label: RegExp }
   { field: 'gap', label: /^(?:gap|the gap|how the gap closes)\s*:\s*/i },
 ];
 // A line as the label sees it: no bullet, no bold or italics, no heading marks.
-const plain = (line: string) => line.replace(/^\s*(?:[-*+]|\d+[.)]|#+)\s+/, '').replace(/[*_`]/g, '').trim();
+// Journey 21: "MRR: 310 * 4 + 6 * 39" was kept as "310 4 + 6 39": a times sign between figures is "×", never markdown.
+const plain = (line: string) => line.replace(/^\s*(?:[-*+]|\d+[.)]|#+)\s+/, '').replace(/(?<=[\d)%]\s*)\*(?=\s*[$€£(]?\d)/g, '×').replace(/[*_`]/g, '').trim();
 
 // Journey 19: "My call: keep going" closed nearly every partner reply, after a no and a recall question too, and the
 // founder's no on a drafted reply was answered with the whole verdict again. The verdict's shape belongs to a verdict,
