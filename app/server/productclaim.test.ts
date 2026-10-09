@@ -116,4 +116,34 @@ describe('a claim about the product, held to the record', () => {
     expect(productTopic('If a visitor cancels, do they get the €4 back?')?.name).toBe('our refund policy');
     expect(productTopic('Is there a cancellation fee?')?.name).toBe('our cancellation policy');
   });
+
+  // Journey 21: Jonas asked about a German version and Clara about her data; the ready replies made up both.
+  it('takes out journey 21\'s German version, spreadsheet export and 90-day archive, and checks each instead', () => {
+    const german = 'Yes, we have a full German version of the booking page, so visitors can book their repair slots seamlessly in German.';
+    const data = 'Your data remains secure and accessible. We export all your past bookings, volunteer lists, and visitor records into a standard spreadsheet format for you, and we keep your account archive active for 90 days.';
+    expect(unbackedProductClaims(german, [FIXSLOT])).toEqual(['a German version']);
+    expect(productClaimsIn(data, [FIXSLOT])).toEqual(['what happens to your data', 'a spreadsheet export', 'a 90-day archive']);
+    const JONAS = 'Looks useful. Do you have a German version of the booking page?';
+    const CLARA = 'What happens to our data if we stop paying?';
+    const jonas = guardUnasked(`Hi Jonas,\n\n${german}\n\nBest,`, [FIXSLOT, JONAS]);
+    expect(jonas.left).toEqual(['a German version']);
+    expect(answerQuestions(jonas.text, JONAS, { name: 'Jonas Brandt', today: '2026-10-12' }).body).toContain('I will check whether we have a German version of the booking page and come back to you by Wednesday.');
+    const clara = guardUnasked(`Hi Clara,\n\n${data}\n\nBest,`, [FIXSLOT, CLARA]);
+    expect(clara.text).not.toMatch(/secure|spreadsheet|archive|90 days/);
+    expect(clara.left).toEqual(expect.arrayContaining(['what happens to your data', 'a spreadsheet export', 'a 90-day archive']));
+    expect(answerQuestions(clara.text, CLARA, { name: 'Clara Meier', today: '2026-10-12' }).body).toContain('I will check what happens to your data and come back to you by Wednesday.');
+  });
+
+  it('holds a language, a feature and what is kept or exported, and leaves alone plans, counts and what the brief says', () => {
+    const none = [FIXSLOT];
+    expect(unbackedProductClaims('The booking page is in German, and the list is in English.', none)).toEqual(['a German version', 'an English version']);
+    expect(unbackedProductClaims('It comes with SMS reminders.', none)).toEqual(['SMS reminders']);
+    expect(unbackedProductClaims('We store your booking history for a year.', none)).toEqual(['booking history']);
+    expect(unbackedProductClaims('It translates the list automatically.', none)).toEqual(['translation']);
+    expect(unbackedProductClaims('We have six paying cafés.', none)).toEqual([]);
+    expect(unbackedProductClaims('We will add SMS reminders next month.', none)).toEqual([]);
+    expect(unbackedProductClaims('I will check whether we have a German version and come back to you.', none)).toEqual([]);
+    expect(unbackedProductClaims('The booking page is in German.', [`${FIXSLOT}\n- The booking page is in German.`])).toEqual([]);
+    expect(unbackedProductClaims('We export every booking to a spreadsheet.', [`${FIXSLOT}\n- Cafés can export their bookings as a spreadsheet.`])).toEqual([]);
+  });
 });

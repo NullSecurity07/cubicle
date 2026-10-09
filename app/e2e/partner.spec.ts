@@ -389,6 +389,44 @@ test('a lead\'s question about a policy gets "I will check our refund policy", n
   }
 });
 
+// Journey 21: Jonas asked for a German version and Clara what happens to their data; the ready replies said "we have a
+// full German version" and promised a spreadsheet export and a 90-day archive. The fake partner invents all three; the
+// rows keep none and check each instead.
+test('a lead\'s question about a language or their data gets "I will check", never a feature nobody has', async ({ page }) => {
+  const LEADS = 'leads-feature-e2e';
+  await bar(page, 'add a partner called Sam', 'Add Sam, your partner');
+  await expect(page.getByRole('status').filter({ hasText: 'Sam is your partner' })).toBeVisible({ timeout: 15_000 });
+  const stage = await (await page.request.get('/api/stage')).json();
+  await page.request.put('/api/stage', { data: { ...stage, cards: [...(stage.cards ?? []), { id: LEADS, kind: 'leads', x: 2400, y: 0, w: 900, h: 460 }] } });
+  try {
+    const asked = [['Jonas Brandt', 'Repair Café Wedding', 'jonas@repaircafe.example', 'Looks useful. Do you have a German version of the booking page?'], ['Clara Meier', 'Repair Café Pankow', 'clara@repaircafe.example', 'Sounds good. What happens to our data if we stop paying?']];
+    for (const [name, company, email, text] of asked) {
+      const lead = (await (await page.request.post(`/api/leads/${LEADS}`, { data: { name, company, email } })).json()) as { id: string };
+      await page.request.patch(`/api/leads/${LEADS}/${lead.id}`, { data: { stage: 'contacted' } });
+      await page.request.post('/api/partner/watch');
+      await page.request.post(`/api/leads/${LEADS}/${lead.id}/replied`, { data: { text } });
+      await expect.poll(async () => { await page.request.post('/api/partner/watch'); return JSON.stringify(((await (await page.request.get('/api/partner/watch')).json()) as { proposals: { leadId?: string }[] }).proposals.filter((one) => one.leadId === lead.id)); }, { timeout: 10_000 }).toContain(lead.id);
+    }
+
+    await bar(page, 'needs', 'Needs you');
+    const rows = page.getByRole('dialog', { name: 'Needs you' }).locator('.needs__item--partner-proposal');
+    const jonas = rows.filter({ hasText: 'jonas@repaircafe.example' });
+    await expect(jonas).toContainText(/\(left out: nothing on record about [^)]*a German version/);
+    await expect(jonas).not.toContainText('Yes, we have');
+    await expect(jonas).toContainText(/I will check whether we have a German version of the booking page and come back to you by \w+day\./);
+    const clara = rows.filter({ hasText: 'clara@repaircafe.example' });
+    await expect(clara).toContainText(/\(left out: nothing on record about [^)]*what happens to your data/);
+    for (const made of ['secure and accessible', 'We export', 'account archive active']) await expect(clara).not.toContainText(made);
+    await expect(clara).toContainText(/I will check what happens to your data and come back to you by \w+day\./);
+  } finally {
+    const held = ((await (await page.request.get('/api/partner/watch')).json()) as { proposals: { id: string; cardId?: string; status: string }[] }).proposals;
+    for (const one of held.filter((each) => each.cardId === LEADS && each.status === 'open')) await page.request.post(`/api/partner/proposals/${one.id}`, { data: { run: false } });
+    for (const one of ((await (await page.request.get(`/api/leads/${LEADS}`)).json()) as { leads: { id: string }[] }).leads ?? []) await page.request.delete(`/api/leads/${LEADS}/${one.id}`);
+    const now = await (await page.request.get('/api/stage')).json();
+    await page.request.put('/api/stage', { data: { ...now, cards: (now.cards ?? []).filter((card: { id: string }) => card.id !== LEADS) } });
+  }
+});
+
 // Journey 16: the founder put two inputs right in chat (11 of 14 pay; €59 is a week's price) and the stored call never
 // heard it; the next morning's refresh said "stop". Now the correction is kept in code with the founder's words, the
 // call made on the numbers before is stale, and the next morning's look quotes the old call and what changed, with
