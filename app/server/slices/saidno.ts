@@ -18,6 +18,24 @@ const reasonOf = (args: Record<string, unknown> | undefined) => {
   return undefined;
 };
 
+// "I have recorded that rule", "Noted, I won't suggest it again", "That's now a standing no": a claim that a no the
+// founder said is kept. Journey 17: Sam said it after "No cold outreach to nurses …" and said-no.json had nothing.
+const RULE_CLAIM = /\b(?:(?:I|we)(?:'ve| have| will| 'll)?\s+(?:now\s+|just\s+|already\s+)?(?:recorded|noted|logged|saved|kept|stored|added|remembered|made a note of)\b[^.!?\n]*\b(?:rule|no|standing|preference|that|this|it)\b|\b(?:rule|no|that|this|it)\s+(?:is|has been|was)\s+(?:now\s+)?(?:recorded|noted|logged|saved|kept|stored)\b|\bnow\s+a\s+standing\s+(?:no|rule)\b|^\s*(?:noted|recorded|logged|got it, recorded)\b)/i;
+// A founder's message that sounds like a rule: a sentence that opens with no, never, don't or stop.
+const SOUNDS_LIKE_RULE = /(?:^|[.!?\n]\s*)(?:no|never|don'?t|do not|stop)\b/i;
+export const NOT_KEPT = 'That was not kept as a standing no; say it as "Don\'t propose …" to keep it.';
+export function holdRuleClaims(reply: string, query: string, kept: number): string {
+  if (kept > 0 || !SOUNDS_LIKE_RULE.test(query)) return reply;
+  let said = false;
+  return reply.replace(/[^.!?\n]+[.!?]*/g, (sentence) => {
+    if (!RULE_CLAIM.test(sentence) || /\b(?:not|n't|never)\b[^.!?]*\b(?:recorded|kept|saved|noted)\b/i.test(sentence)) return sentence;
+    const lead = /^\s*/.exec(sentence)![0];
+    if (said) return '';
+    said = true;
+    return `${lead}${NOT_KEPT}`;
+  }).replace(/[ \t]{2,}/g, ' ');
+}
+
 export default {
   name: 'saidno',
   install(deps: Deps): Installed {
@@ -54,12 +72,16 @@ export default {
       return next(payload);
     };
 
+    // How many standing nos the founder's last chat turn in each room kept, for the reply to be held to.
+    const kept = new Map<string, number>();
+
     const beforeTurn: Handler<'turn:before'> = async (payload, next) => {
       let out = payload;
       try {
         const stage = await deps.store.loadStage();
         const room = stage.rooms.find((one) => one.id === payload.roomId);
         if (!room) return next(out);
+        let wrote = 0;
         // "No, too early" right after a proposal is a no to it, with its reason.
         const said = payload.source === 'chat' ? chatNo(payload.query) : null;
         if (said) {
@@ -75,13 +97,17 @@ export default {
           }
           const words = last && !proposed.length ? suggestionIn(last.text) : '';
           if (words) proposed.push({ tool: 'chat', subject: words });
-          for (const one of proposed) await book.record({ ...one, who: room.name, ...said });
+          for (const one of proposed) { await book.record({ ...one, who: room.name, ...said }); wrote += 1; }
           // Nothing proposed to say no to, and a reason given: it is why the Don't just pressed was pressed.
-          if (!proposed.length && said.reason) await book.explain(said.reason);
+          if (!proposed.length && said.reason && await book.explain(said.reason)) wrote += 1;
         }
         // "Don't propose cold outreach to more makers", said anywhere in a message, stands with its reason; the
         // unasked refresh and the morning note are held to it (journey 15).
-        if (payload.source === 'chat') for (const one of standingNosIn(payload.query)) await book.record({ tool: 'chat', ...one, who: room.name });
+        if (payload.source === 'chat') {
+          const nos = standingNosIn(payload.query);
+          for (const one of nos) { await book.record({ tool: 'chat', ...one, who: room.name }); wrote += 1; }
+          kept.set(room.id, wrote);
+        }
         // The partner has the same list in their standing facts.
         if (!room.partner) {
           const line = promptLine(await book.list());
@@ -91,8 +117,18 @@ export default {
       return next(out);
     };
 
+    // A reply says the rule was recorded only when a standing no was written this turn (journey 17).
+    const onReply: Handler<'turn:reply'> = async (payload, next) => {
+      const count = kept.get(payload.roomId);
+      kept.delete(payload.roomId);
+      if (count === undefined || count > 0) return next(payload);
+      const text = holdRuleClaims(payload.reply.text, payload.query, count);
+      return next(text === payload.reply.text ? payload : { ...payload, reply: { ...payload.reply, text } });
+    };
+
     const offTool = deps.seams.on('tool:before', beforeTool);
     const offTurn = deps.seams.on('turn:before', beforeTurn);
-    return { async close() { offAnswers(); offTool(); offTurn(); } };
+    const offReply = deps.seams.on('turn:reply', onReply);
+    return { async close() { offAnswers(); offTool(); offTurn(); offReply(); } };
   },
 } satisfies Slice;

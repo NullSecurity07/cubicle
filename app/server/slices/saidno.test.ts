@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { Installed } from '../install.ts';
 import { saidNoFor } from '../partner/saidno.ts';
 import { stubDeps } from '../slice-stubs.ts';
-import saidno from './saidno.ts';
+import saidno, { holdRuleClaims, NOT_KEPT } from './saidno.ts';
 
 const ROOT = resolve(import.meta.dirname, '../../..');
 
@@ -25,5 +25,43 @@ describe('a no said in chat', () => {
     ]));
     expect(await saidNoFor(workspace).ruledOut('Contact 40 more local makers to secure the remaining 6 print jobs.')).toMatchObject({ subject: expect.stringMatching(/makers/) });
     await part.close?.();
+  });
+});
+
+// Journey 17: "No cold outreach to nurses we have not met, because nurses hate it." Sam: "I have recorded that rule",
+// and nothing was kept.
+describe('a reply that says a no was recorded', () => {
+  const reply = (text: string) => ({ text, tools: [], provider: 'fake', model: 'fake', usage: { inputTokens: 0, outputTokens: 0 }, stopped: false }) as never;
+
+  it('keeps "No X, because Y" as a standing no and lets the reply say so', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'saidno-slice-'));
+    const deps = stubDeps(workspace, ROOT);
+    const part = (await saidno.install(deps)) as Installed;
+    const roomId = (await deps.store.loadStage()).rooms[0].id;
+    const query = 'No cold outreach to nurses we have not met, because nurses hate it.';
+    await deps.seams.run('turn:before', { roomId, source: 'chat', query, messages: [] });
+    expect((await saidNoFor(workspace).list()).map((one) => [one.subject, one.reason])).toEqual([['cold outreach to nurses we have not met', 'nurses hate it']]);
+    const out = await deps.seams.run('turn:reply', { roomId, query, reply: reply('I have recorded that rule. I will not propose it.') });
+    expect(out.reply.text).toBe('I have recorded that rule. I will not propose it.');
+    await part.close?.();
+  });
+
+  it('says it was not kept when nothing was written', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'saidno-slice-'));
+    const deps = stubDeps(workspace, ROOT);
+    const part = (await saidno.install(deps)) as Installed;
+    const roomId = (await deps.store.loadStage()).rooms[0].id;
+    const query = 'No idea why, but never mind.';
+    await deps.seams.run('turn:before', { roomId, source: 'chat', query, messages: [] });
+    expect(await saidNoFor(workspace).list()).toEqual([]);
+    const out = await deps.seams.run('turn:reply', { roomId, query, reply: reply('Understood. I have recorded that rule. Anything else?') });
+    expect(out.reply.text).toBe(`Understood. ${NOT_KEPT} Anything else?`);
+    await part.close?.();
+  });
+
+  it('leaves a reply alone when the founder said no rule, or the claim is denied', () => {
+    expect(holdRuleClaims('I have recorded the meeting.', 'Log the meeting with Anna.', 0)).toBe('I have recorded the meeting.');
+    expect(holdRuleClaims('That was not recorded as a rule.', 'Never mind.', 0)).toBe('That was not recorded as a rule.');
+    expect(holdRuleClaims('Noted. I have recorded that rule.', 'Never mind.', 0)).toBe(NOT_KEPT);
   });
 });

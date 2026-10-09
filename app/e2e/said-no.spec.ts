@@ -103,6 +103,24 @@ const clearFrom = async (page: Page, room: string, marker: string) => {
   if (from >= 0) for (const message of chat.slice(from)) await page.request.delete(`/api/rooms/${room}/chat/${message.id}`);
 };
 
+// Journey 17: "No cold outreach to nurses we have not met, because nurses hate it." was answered "I have recorded that
+// rule", and nothing was kept. It is kept now, and a reply says recorded only when something was.
+test('a no said as "No X, because Y" is kept, and a reply says recorded only when it was', async ({ page }) => {
+  await page.goto('/');
+  const room = node(page, 'marketing');
+  await expect(room).toBeVisible();
+  try {
+    await send(page, 'marketing', 'No cold outreach to nurses we have not met, because nurses hate it.\n/say I have recorded that rule.');
+    await expect(room.locator('.msg--assistant').last()).toHaveText(/I have recorded that rule\./);
+    expect(await saidNo()).toEqual(expect.arrayContaining([expect.objectContaining({ subject: 'cold outreach to nurses we have not met', reason: 'nurses hate it' })]));
+
+    await send(page, 'marketing', 'No idea how the nurses took it.\n/say I have recorded that rule.');
+    const said = room.locator('.msg--assistant').last();
+    await expect(said).toContainText('That was not kept as a standing no');
+    await expect(said).not.toContainText('I have recorded that rule');
+  } finally { await clearFrom(page, 'marketing', 'No cold outreach to nurses we have not met'); }
+});
+
 // Journey 17: a colleague's reply opened with "![chart](/api/files/chart.png)"; no chart was made, and it 404'd.
 test('a reply that said it made a chart links no file nothing made', async ({ page }) => {
   await page.goto('/');

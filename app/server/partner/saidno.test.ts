@@ -144,6 +144,20 @@ describe('a standing no said in chat', () => {
     expect(standingNosIn('No problem, do it.')).toEqual([]);
   });
 
+  it('keeps "No X, because Y", "Never X", "Don\'t X" and "Stop X" at the head of a sentence, and lets small talk through', () => {
+    // Journey 17: answered "I have recorded that rule" with nothing kept.
+    expect(standingNosIn('No cold outreach to nurses we have not met, because nurses hate it.')).toEqual([
+      { subject: 'cold outreach to nurses we have not met', reason: 'nurses hate it' },
+    ]);
+    expect(standingNosIn('Never claim allergen safety.')).toEqual([{ subject: 'claim allergen safety' }]);
+    expect(standingNosIn("Don't email Anna again.")).toEqual([{ subject: 'email Anna' }]);
+    expect(standingNosIn('Stop discounting to win nurses back, since it cheapens us.')).toEqual([
+      { subject: 'discounting to win nurses back', reason: 'it cheapens us' },
+    ]);
+    for (const talk of ['No, too early.', 'No worries.', "Don't worry about it.", 'No idea.', 'Never mind.', 'No cold outreach this week?', 'Stop.', 'No.'])
+      expect(standingNosIn(talk)).toEqual([]);
+  });
+
   it('holds a move against it by the no\'s own words, and lets a move that keeps to it through', () => {
     const no = 'cold outreach to more makers';
     expect(againstNo(no, 'Contact 40 more local makers to secure the remaining 6 print jobs.')).toBe(true);
