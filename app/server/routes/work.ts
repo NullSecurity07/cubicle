@@ -51,7 +51,7 @@ export function workRoutes(deps: {
     if (ruled && ruled[2] === 'decide' && req.method === 'POST') {
       const made = await decisions.decide(ruled[1], await body(req));
       if (made.recommendation && made.chosen && overlap(made.chosen, made.recommendation) < SAID_NO_OVERLAP) {
-        await saidNoFor(workspace).record({ tool: 'propose_decision', subject: `${made.title}: ${made.recommendation}`, ...(made.proposedBy ? { who: made.proposedBy } : {}), ...(made.why ? { reason: made.why } : {}) }).catch(() => {});
+        await saidNoFor(workspace).record({ tool: 'propose_decision', subject: `${made.title}: ${made.recommendation}`, options: made.options, pick: made.recommendation, ...(made.proposedBy ? { who: made.proposedBy } : {}), ...(made.why ? { reason: made.why } : {}) }).catch(() => {});
       }
       return answer(res, 200, made);
     }
@@ -61,7 +61,7 @@ export function workRoutes(deps: {
       const said = (await body(req).catch(() => ({}))) as { why?: unknown };
       const why = typeof said.why === 'string' && said.why.trim() ? said.why.trim() : '';
       await decisions.remove(ruled[1]);
-      if (held?.status === 'proposed') await saidNoFor(workspace).record({ tool: 'propose_decision', subject: held.title, ...(held.proposedBy ? { who: held.proposedBy } : {}), ...(why ? { reason: why } : {}) }).catch(() => {});
+      if (held?.status === 'proposed') await saidNoFor(workspace).record({ tool: 'propose_decision', subject: held.title, options: held.options, ...(held.recommendation ? { pick: held.recommendation } : {}), ...(held.proposedBy ? { who: held.proposedBy } : {}), ...(why ? { reason: why } : {}) }).catch(() => {});
       return answer(res, 200, { ok: true });
     }
     // The playbook. Everything in it was written without asking, so everything in it can be edited, switched off,

@@ -186,3 +186,37 @@ describe('a standing no said in chat', () => {
     expect(await book.explain('too late')).toBeNull();
   });
 });
+
+describe('a decision said no to (journey 18)', () => {
+  const first = proposalOf('propose_decision', {
+    title: 'Give a free month for referring two other plumbers',
+    options: ['Give one free month to any plumber who refers two others', 'No referral reward for now'],
+    recommendation: 'Give one free month for two referrals: referrals are the cheapest way to new plumbers',
+  })!;
+  const second = proposalOf('propose_decision', {
+    title: 'Free month for plumbers who refer two others',
+    options: ['A free month per two referred plumbers', 'Wait'],
+    recommendation: 'Offer the free month for two referrals',
+  })!;
+  const third = proposalOf('propose_decision', {
+    title: 'Referral program with a free month for two referrals',
+    options: ['Launch the referral program now', 'Hold it until 15 paying'],
+    recommendation: 'Launch it: a free month for every two referrals brings plumbers in cheaply',
+  })!;
+
+  it('holds the same offer under any of the three titles the journey saw, by its options and effect', () => {
+    const declined = { ...first, at: OCT_3, id: 'd', asked: 1, reason: 'no free months: plumbers who join for a free month leave when it ends' } as SaidNoEntry;
+    expect(sameProposal(declined, second)).toBe(true);
+    expect(sameProposal(declined, third)).toBe(true);
+    expect(checkAgainst([declined], third, OCT_3 + DAY).verdict).toBe('declined');
+    // Another kind of move is another decision.
+    expect(sameProposal(declined, proposalOf('propose_decision', { title: 'Raise the price to €39', options: ['Raise now', 'Wait a month'] })!)).toBe(false);
+    expect(sameProposal(declined, proposalOf('propose_decision', { title: '20% discount for trial user conversion', options: ['Offer 20% off the first month', 'No discount'] })!)).toBe(false);
+  });
+
+  it('holds a decision against an old no kept by title alone too, by its effect and words', () => {
+    const declined = { tool: 'propose_decision', subject: 'Give a free month to any plumber who refers two others', at: OCT_3, id: 'd', asked: 1 } as SaidNoEntry;
+    expect(sameProposal(declined, third)).toBe(true);
+  });
+
+});
