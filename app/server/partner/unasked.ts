@@ -40,13 +40,13 @@ const PROMISES: Promised[] = [
     backs: (hit) => new RegExp(`\\b${word(hit[1])}[-\\s]?free\\b|\\bno ${word(hit[1])}s?\\b|\\bwithout ${word(hit[1])}s?\\b`, 'i'),
     about: (hit) => `${hit[1].toLowerCase()}-free`,
   },
-  // Safety, guarantees, certificates, money back, a price cut.
+  // Safety, guarantees, certificates, a price cut. Money back is a policy (server/productclaim.ts).
   {
-    pattern: /\b(?:allerg(?:en|y)[- ]safe|safe\s+(?:to eat|for (?:you|everyone|anyone|people|allerg\w*|kids|children))|eat\s+(?:it\s+|them\s+)?safely|(?:completely|totally|perfectly|entirely|100%)\s+safe|hypoallergenic|guarantee[sd]?|certified|money[- ]back|refund(?:s|ed)?|free\s+(?:of charge|delivery|trial|week|month|meal|sample)s?|discount(?:s|ed)?|\d+%\s+off)\b/i,
+    pattern: /\b(?:allerg(?:en|y)[- ]safe|safe\s+(?:to eat|for (?:you|everyone|anyone|people|allerg\w*|kids|children))|eat\s+(?:it\s+|them\s+)?safely|(?:completely|totally|perfectly|entirely|100%)\s+safe|hypoallergenic|guarantee[sd]?|certified|free\s+(?:of charge|delivery|trial|week|month|meal|sample)s?|discount(?:s|ed)?|\d+%\s+off)\b/i,
     backs: (hit) => {
       const low = hit[0].toLowerCase();
       return /safe|allerg/.test(low) ? /\bsafe|\ballerg/i : /guarant/.test(low) ? /\bguarant/i : /certif/.test(low) ? /\bcertif/i
-        : /refund|money/.test(low) ? /\brefund|\bmoney[- ]back/i : /discount|off$/.test(low) ? /\bdiscount|%\s+off\b/i : new RegExp(`\\b${word(low)}`, 'i');
+        : /discount|off$/.test(low) ? /\bdiscount|%\s+off\b/i : new RegExp(`\\b${word(low)}`, 'i');
     },
     about: (hit) => (/eat\s+(?:it\s+|them\s+)?safely|safe/i.test(hit[0]) ? 'allergen safety' : hit[0].toLowerCase()),
   },
