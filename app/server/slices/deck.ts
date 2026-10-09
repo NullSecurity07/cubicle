@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { deckChannel, isLook, isPurpose, type DeckEvent, type DeckLook, type DeckPurpose } from '../../shared/deck.ts';
 import type { Card, Stage } from '../../shared/model.ts';
+import { formatValue, UNITS, type Metric } from '../../shared/metrics.ts';
 import { isCompanyTitle } from '../../shared/partner.ts';
 import { sectionText } from '../partner/company.ts';
 import { shortDay } from '../clock.ts';
@@ -36,6 +37,21 @@ const cardOf = (context: ToolContext) => {
   return decksOn(context.stage).find((card) => card.id === id)!;
 };
 
+// The card's numbers as rows a slide can carry: each metric's latest reading with its unit, day and source,
+// "- Paying plumbers: 14 on 2026-10-11 (from founder)". Journey 18: the card's sidecar has no block, and its raw
+// json went onto the traction slide as one bullet. Never json: a shape this does not know gives no rows.
+export function metricRows(value: Record<string, unknown>): string {
+  const metrics = Array.isArray(value.metrics) ? value.metrics as Partial<Metric>[] : [];
+  return metrics.flatMap((metric) => {
+    const points = Array.isArray(metric.points) ? metric.points.filter((one) => one && typeof one.value === 'number' && Number.isFinite(one.value)) : [];
+    const last = [...points].sort((a, b) => String(a.at).localeCompare(String(b.at))).at(-1);
+    if (!last || typeof metric.label !== 'string' || !metric.label.trim()) return [];
+    const unit = (UNITS as readonly string[]).includes(metric.unit ?? '') ? metric.unit : '';
+    const from = typeof last.from === 'string' && last.from.trim() ? ` (from ${last.from.trim()})` : '';
+    return [`- ${metric.label.trim()}: ${formatValue(last.value, unit)}${typeof last.at === 'string' ? ` on ${last.at}` : ''}${from}`];
+  }).join('\n');
+}
+
 // A Metrics card's own block, when one is wired to the deck or to whoever asked. Its sidecar is read loosely: the
 // card is built beside this one, and a deck must never fail because a card it only reads from changed its shape.
 export async function metricsOf(workspace: string, stage: Stage, cardId: string, roomId?: string): Promise<Material['metrics']> {
@@ -46,8 +62,8 @@ export async function metricsOf(workspace: string, stage: Stage, cardId: string,
     let text = '';
     try {
       const value = JSON.parse(raw) as Record<string, unknown>;
-      text = typeof value.block === 'string' ? value.block : JSON.stringify(value).slice(0, 1400);
-    } catch { text = raw.slice(0, 1400); }
+      text = typeof value.block === 'string' ? value.block : metricRows(value);
+    } catch { text = ''; }
     if (text.trim()) return { name: 'Metrics card', text: text.trim() };
   }
   return undefined;

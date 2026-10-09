@@ -34,7 +34,7 @@ const DENIED = /\b(?:not|n't|no|never|nothing|refused|declined|could not|cannot)
 const TO_GMAIL = /\b(?:open|send|review|find|check)(?:\s+(?:it|this|that|the\s+(?:draft|email|reply|message)|them))?(?:\s+(?:directly|now|yourself|from\s+there))?\s+(?:in|from|via)\s+(?:your\s+)?Gmail\b/gi;
 
 // "I have proposed the decision", "it now waits in your list", "the task is on your board", "I created the doc".
-const MADE_CLAIMS = /\b(?:I|we)(?:'ve| have)?\s+(?:just\s+|now\s+|already\s+)?(?:proposed|created|added|put|raised|logged|recorded|queued|made|set up|sent|posted|scheduled)\b|\b(?:it|this|that|they|the\s+[\w-]+(?:\s+[\w-]+)?)\s+(?:now\s+)?(?:waits?|is waiting|are waiting|sits?|is now|are now|is|are)\s+(?:now\s+)?(?:waiting\s+)?(?:in|on)\s+(?:your|the)\s+(?:list|needs you|board|decisions?|queue|stage|today)\b|\b(?:has|have) been\s+(?:proposed|created|added|raised|queued|logged|sent|posted)\b|\bis\s+(?:now\s+)?(?:proposed|created|queued|logged|posted)\b/i;
+const MADE_CLAIMS = /\b(?:I|we)(?:'ve| have)?\s+(?:just\s+|now\s+|already\s+)?(?:proposed|created|added|put|raised|logged|recorded|queued|made|set up|sent|posted|scheduled|submitted|filed|put forward|lodged|tabled)\b|\b(?:it|this|that|they|the\s+[\w-]+(?:\s+[\w-]+)?)\s+(?:now\s+)?(?:waits?|is waiting|are waiting|sits?|is now|are now|is|are)\s+(?:now\s+)?(?:waiting\s+)?(?:in|on)\s+(?:your|the)\s+(?:list|needs you|board|decisions?|queue|stage|today)\b|\b(?:has|have) been\s+(?:proposed|created|added|raised|queued|logged|sent|posted)\b|\bis\s+(?:now\s+)?(?:proposed|created|queued|logged|posted)\b/i;
 const WAITS = /\b(?:waits?|waiting|sits?)\b[^.!?]*\b(?:list|needs you|board|queue)\b/i;
 const refusalWords = (result: string) => {
   const said = result.replace(/^NOT \w+:\s*/, '').replace(/^Already declined:\s*/i, '').split(/(?<=[.!?])\s/)[0].trim().replace(/[.!?]$/, '');
@@ -68,12 +68,20 @@ export function holdDraftClaims(reply: string, receipts: Receipt[]): string {
 function holdMadeClaims(reply: string, receipts: Receipt[]): string {
   const failed = receipts.filter((one) => one.ok === false && !MAIL.test(one.name) && madeOf(one.name)
     && !receipts.some((other) => other.name === one.name && other.ok));
-  if (!failed.length) return reply;
+  if (!failed.length) return holdDenials(reply, receipts);
   const said = new Set<string>();
+  // Journey 18: "I have submitted the proposal. The decision was not proposed: you said no to this." A reply that
+  // already says the refusal has it said: a claim beside it goes, never a second refusal line.
+  for (const tool of failed) {
+    const made = madeOf(tool.name)!;
+    const noun = new RegExp(`\\b${made.what.split(' ').at(-1)}s?\\b`, 'i');
+    const act = new RegExp(`\\b${made.done.slice(0, 5)}`, 'i');
+    if (reply.split(/(?<=[.!?])\s+|\n/).some((sentence) => DENIED.test(sentence) && noun.test(sentence) && act.test(sentence))) said.add(tool.name);
+  }
   let last = '';
   return reply.replace(/[^.!?\n]+[.!?]*/g, (sentence) => {
     if (!MADE_CLAIMS.test(sentence) || DENIED.test(sentence)) { last = ''; return sentence; }
-    const tool = failed.find((one) => { const made = madeOf(one.name)!; return new RegExp(`\\b${made.what.split(' ').at(-1)}s?\\b|\\b${made.done}\\b`, 'i').test(sentence); })
+    const tool = failed.find((one) => { const made = madeOf(one.name)!; return new RegExp(`\\b${made.what.split(' ').at(-1)}s?\\b|\\b${made.done}\\b|\\b${made.done.slice(0, 5)}\\w*`, 'i').test(sentence); })
       ?? (last ? failed.find((one) => one.name === last) : undefined)
       ?? (failed.length === 1 && WAITS.test(sentence) ? failed[0] : undefined);
     if (!tool) { last = ''; return sentence; }
@@ -83,6 +91,26 @@ function holdMadeClaims(reply: string, receipts: Receipt[]): string {
     said.add(tool.name);
     const made = madeOf(tool.name)!;
     return `${lead}The ${made.what} was not ${made.done}: ${refusalWords(tool.result ?? 'it was refused')}.`;
+  }).replace(/[ \t]{2,}/g, ' ');
+}
+
+// The other way round: a tool that worked, and a reply that says it did not ("The decision was not proposed") while
+// nothing of that name failed. The receipt is the truth: the denial says what was done instead.
+function holdDenials(reply: string, receipts: Receipt[]): string {
+  const worked = receipts.filter((one) => one.ok && madeOf(one.name) && !receipts.some((other) => other.name === one.name && other.ok === false));
+  if (!worked.length) return reply;
+  const said = new Set<string>();
+  return reply.replace(/[^.!?\n]+[.!?]*/g, (sentence) => {
+    const tool = worked.find((one) => {
+      const made = madeOf(one.name)!;
+      return new RegExp(`\\b(?:the|your|my|this|that)\\s+${made.what.split(' ').at(-1)}\\s+(?:was|were|is|has)\\s+not\\s+(?:been\\s+)?${made.done}\\b`, 'i').test(sentence);
+    });
+    if (!tool) return sentence;
+    const lead = /^\s*/.exec(sentence)![0];
+    if (said.has(tool.name)) return '';
+    said.add(tool.name);
+    const made = madeOf(tool.name)!;
+    return `${lead}The ${made.what} was ${made.done}.`;
   }).replace(/[ \t]{2,}/g, ' ');
 }
 

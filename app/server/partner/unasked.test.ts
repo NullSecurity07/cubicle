@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { answerQuestions, guardMove, guardUnasked, guardView, leftOutLine, questionsIn, unbackedPromises } from './unasked.ts';
+import { answerQuestions, filledIn, guardMove, guardUnasked, guardView, leftOutLine, questionsIn, unbackedPromises } from './unasked.ts';
 import { draftLine } from './watch.ts';
 
 // Journey 16: Anna asked "Can you deliver on Thursday instead of Sunday? And are the meals nut-free?" and the ready
@@ -102,3 +102,17 @@ describe('a reply built from the lead\'s questions', () => {
       .toBe("Nothing on record to answer Anna's questions; draft needs the founder.\n☐ What does a week cost for three people?\n☐ Who cooks the meals?");
   });
 });
+
+// Journey 18: Lea signed the founder's email "Best, Sam / QuoteSnap", the partner's name on the founder's mail.
+describe('the name under a draft', () => {
+  const BRIEF = '# Company\n\n## Idea\nQuoteSnap turns a plumber\'s WhatsApp photos into written quotes.';
+  it('signs with the founder\'s name the brief gives and the company only when the brief names it, never a colleague', () => {
+    expect(filledIn('Hi Tom,\n\nThanks.\n\nBest, Sam / QuoteSnap', BRIEF, ['Sam', 'Lea'])).toBe('Hi Tom,\n\nThanks.\n\nBest,\nQuoteSnap');
+    expect(filledIn('Hi Tom,\n\nThanks.\n\nBest,\nSam / QuoteSnap', `${BRIEF}\n- Founder: Mara Lind`, ['Sam'])).toBe('Hi Tom,\n\nThanks.\n\nBest,\nMara Lind / QuoteSnap');
+    expect(filledIn('Hi Tom,\n\nThanks.\n\nBest,\nLea\nPlumbFast', BRIEF, ['Lea'])).toBe('Hi Tom,\n\nThanks.\n\nBest,');
+    // A sign-off already right is left as written, and a sentence that starts with thanks is no sign-off.
+    expect(filledIn('Hi Tom,\n\nKind regards,\nMara Lind\nQuoteSnap', `${BRIEF}\n- Founder: Mara Lind`)).toBe('Hi Tom,\n\nKind regards,\nMara Lind\nQuoteSnap');
+    expect(filledIn('Hi Tom,\n\nThanks for your reply.', BRIEF)).toBe('Hi Tom,\n\nThanks for your reply.');
+  });
+});
+

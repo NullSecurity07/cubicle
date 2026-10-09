@@ -286,6 +286,40 @@ test('a lead\'s reply wakes the partner, and the ready answer promises nothing t
   }
 });
 
+// Journey 18: Tom asked "Does it work with photos from my old Android phone? And can the quote show VAT separately?"
+// and the ready reply said yes to both; nothing on record said either. The fake partner says yes as a careless model
+// would; the row keeps neither yes and checks each instead.
+test('a lead\'s question about the product gets "I will check", never a yes the record does not give', async ({ page }) => {
+  const LEADS = 'leads-product-e2e';
+  await bar(page, 'add a partner called Sam', 'Add Sam, your partner');
+  await expect(page.getByRole('status').filter({ hasText: 'Sam is your partner' })).toBeVisible({ timeout: 15_000 });
+  const stage = await (await page.request.get('/api/stage')).json();
+  await page.request.put('/api/stage', { data: { ...stage, cards: [...(stage.cards ?? []), { id: LEADS, kind: 'leads', x: 2400, y: 0, w: 900, h: 460 }] } });
+  try {
+    const lead = (await (await page.request.post(`/api/leads/${LEADS}`, { data: { name: 'Tom Becker', company: 'Becker Sanitär', email: 'tom@becker.example' } })).json()) as { id: string };
+    await page.request.patch(`/api/leads/${LEADS}/${lead.id}`, { data: { stage: 'contacted' } });
+    await page.request.post('/api/partner/watch');
+    await page.request.post(`/api/leads/${LEADS}/${lead.id}/replied`, { data: { text: 'Hi, interesting. Does it work with photos from my old Android phone? And can the quote show VAT separately? Tom' } });
+    await expect.poll(async () => ((await (await page.request.post('/api/partner/watch')).json()) as { made: unknown[] }).made.length + ((await (await page.request.get('/api/partner/watch')).json()) as { proposals: unknown[] }).proposals.length, { timeout: 10_000 }).toBeGreaterThan(0);
+
+    await bar(page, 'needs', 'Needs you');
+    const row = page.getByRole('dialog', { name: 'Needs you' }).locator('.needs__item--partner-proposal');
+    await expect(row).toHaveCount(1);
+    await expect(row).toContainText('Ready: an email to tom@becker.example');
+    await expect(row).toContainText(/\(left out: nothing on record about [^)]*Android[^)]*VAT/);
+    await expect(row).not.toContainText('Yes, it works');
+    await expect(row).not.toContainText('Yes, the quote can');
+    await expect(row).toContainText(/I will check whether it works with photos from your old Android phone and come back to you by \w+day\./);
+    await expect(row).toContainText(/I will check whether the quote can show VAT separately and come back to you by \w+day\./);
+  } finally {
+    const held = ((await (await page.request.get('/api/partner/watch')).json()) as { proposals: { id: string; cardId?: string; status: string }[] }).proposals;
+    for (const one of held.filter((each) => each.cardId === LEADS && each.status === 'open')) await page.request.post(`/api/partner/proposals/${one.id}`, { data: { run: false } });
+    for (const one of ((await (await page.request.get(`/api/leads/${LEADS}`)).json()) as { leads: { id: string }[] }).leads ?? []) await page.request.delete(`/api/leads/${LEADS}/${one.id}`);
+    const now = await (await page.request.get('/api/stage')).json();
+    await page.request.put('/api/stage', { data: { ...now, cards: (now.cards ?? []).filter((card: { id: string }) => card.id !== LEADS) } });
+  }
+});
+
 // Journey 16: the founder put two inputs right in chat (11 of 14 pay; €59 is a week's price) and the stored call never
 // heard it; the next morning's refresh said "stop". Now the correction is kept in code with the founder's words, the
 // call made on the numbers before is stale, and the next morning's look quotes the old call and what changed, with

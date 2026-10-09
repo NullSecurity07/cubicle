@@ -53,7 +53,8 @@ const tractionFrom = (material: Material) => material.metrics?.name ?? 'the Metr
 export function tractionLines(material: Material): string[] {
   if (!material.metrics) return [];
   return material.metrics.text.split('\n').map((line) => line.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, '').replace(/[*_`]/g, '').trim())
-    .filter((line) => /\d/.test(line) && !/^#/.test(line)).map((line) => words(line).slice(0, LINE_WORDS).join(' ')).slice(0, MOST_LINES);
+    // A line of json is no slide line (journey 18), whatever the source handed over.
+    .filter((line) => /\d/.test(line) && !/^#/.test(line) && !/^[{[]|"\w+"\s*:/.test(line)).map((line) => words(line).slice(0, LINE_WORDS).join(' ')).slice(0, MOST_LINES);
 }
 
 // A claim of evidence on a slide or in its notes that nothing in the material backs, each as written: the doc guard's

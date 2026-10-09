@@ -95,3 +95,20 @@ describe('a link to a file nothing made', () => {
     expect(await holdFileLinks('![chart](/api/files/chart.png)', [{ name: 'generate_image', ok: false, result: 'could not make chart.png' }], none)).toBe(NO_FILE);
   });
 });
+
+// Journey 18: "I have submitted the proposal. The decision was not proposed: you said no to this."
+describe('a reply that both claims and denies the same act', () => {
+  const declined = { name: 'propose_decision', ok: false, result: notDone('propose_decision', 'Already declined: the founder said no to this on 10 Oct.') };
+  it('keeps the refusal it already says and takes the claim out, never two refusal lines', () => {
+    const out = holdDraftClaims('I have submitted the proposal. The decision was not proposed: you said no to this.', [declined]);
+    expect(out.trim()).toBe('The decision was not proposed: you said no to this.');
+  });
+  it('turns a claim into the refusal when the reply has none', () => {
+    expect(holdDraftClaims('I have submitted the proposal for a free month.', [declined]).trim()).toBe('The decision was not proposed: you said no to this on 10 Oct.');
+  });
+  it('says what the receipt says when a tool worked and the reply denies it', () => {
+    const made = [{ name: 'propose_decision', ok: true, result: 'Proposed: "Referral month".' }];
+    expect(holdDraftClaims('The decision was not proposed. It waits for you.', made)).toBe('The decision was proposed. It waits for you.');
+  });
+});
+

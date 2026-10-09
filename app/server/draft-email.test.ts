@@ -76,6 +76,16 @@ describe('draft_email', () => {
     expect(bad.text).toContain('not an email address');
   });
 
+  // Journey 18: a reply to a lead said yes to Android and VAT with nothing on record.
+  it('refuses a claim about the product nothing on record states, and drafts the honest line', async () => {
+    const { run } = await setup({});
+    const said = await run({ ...draft, body: 'Hi Tom,\n\nYes, it works with photos from any Android phone, VAT charged separately.\n\nBest,' });
+    expect(said.ok).toBe(false);
+    expect(said.text).toContain('the email says something about Android, VAT that nothing on record states');
+    const honest = await run({ ...draft, body: 'Hi Tom,\n\nI will check whether it works with photos from your old Android phone and come back to you by Friday.\n\nBest,' });
+    expect(honest.ok).toBe(true);
+  });
+
   it("opens in the founder's Gmail card when one is wired to the person", async () => {
     const { attention, run } = await setup({}, async () => 'gmail-card');
     const done = await run(draft);
@@ -172,6 +182,48 @@ describe('an address on the Leads card the person reaches', () => {
     expect((await (await stageWith([]))('dr.anna.weber@example.com')).text).toMatch(/^Failed: no address on record for dr\.anna\.weber@example\.com: nothing read this turn, no Leads card, /);
     // Two cards, neither wired: none is the person's.
     expect((await (await stageWith([{ wired: false, email: 'a@x.de' }, { wired: false, email: 'b@y.de' }]))('dr.anna.weber@example.com')).text).toContain('no Leads card');
+  });
+});
+
+// Journey 18: "Draft first message" on Tom Becker opened "I saw your comment on Reddit ..." with nothing read.
+describe('draft_email: what the email says about the person', () => {
+  async function tom(note?: string) {
+    const dir = await mkdtemp(join(tmpdir(), 'draft-about-'));
+    const store = createStore(dir);
+    const attention = createAttention(dir, () => 1000);
+    const stage = await store.loadStage();
+    const roomId = stage.rooms[0].id;
+    stage.cards = [{ id: 'leads-1', kind: 'leads', x: 0, y: 0, w: 1, h: 1 } as Card];
+    stage.wires.push({ id: 'w1', from: roomId, fromHandle: 'r', to: 'leads-1', toHandle: 'l' } as Stage['wires'][number]);
+    const lead = await leadsFor(dir).add('leads-1', { name: 'Tom Becker', company: 'Becker Sanitär', source: 'founder', email: 'tom@becker.example' });
+    if (note) await leadsFor(dir).note('leads-1', lead.lead.id, 'founder', note);
+    await store.saveStage(stage);
+    const tools = outwardTools(createMail({}, (async () => new Response('{}')) as typeof fetch), store.filesDir, { raise: attention.raise, onRecord: leadAddresses(dir), contacts: leadContacts(dir) }, () => 1000);
+    const context = { stage: await store.loadStage(), roomId, store, granted: new Map(), sources: () => [] as string[], query: 'Draft a first message to Tom Becker at Becker Sanitär using the evidence-outreach skill.' };
+    return { attention, run: (body: string) => runTool(tools, 'draft_email', JSON.stringify({ to: 'tom@becker.example', subject: 'Quotes from photos', body }), context) };
+  }
+  const REDDIT = 'Hi Tom,\n\nI saw your comment on Reddit about spending your evenings after jobs writing up quotes in the van.\n\nBest,';
+
+  it('refuses a detail about them nothing on record gives, and says to open with what we do', async () => {
+    const { run } = await tom();
+    const out = await run(REDDIT);
+    expect(out.ok).toBe(false);
+    expect(out.text).toContain('the email says "I saw your comment on Reddit');
+    expect(out.text).toContain('open with what we do');
+  });
+
+  it('takes it from their notes, and says what the draft rests on', async () => {
+    const { run, attention } = await tom('Posted on Reddit (r/Plumbing) that he spends his evenings in the van writing up quotes.');
+    const out = await run(REDDIT);
+    expect(out.ok).toBe(true);
+    expect(out.text).toContain("(from: Tom Becker's row on the Leads card)");
+    expect((await attention.list())[0].detail).toBe("Quotes from photos\n(from: Tom Becker's row on the Leads card)");
+  });
+
+  it('takes what their row gives, and a plain opener about us needs nothing about them', async () => {
+    const { run } = await tom();
+    expect((await run('Hi Tom,\n\nI noticed you run Becker Sanitär.\n\nBest,')).ok).toBe(true);
+    expect((await run('Hi Tom,\n\nWe help plumbers turn photos into written quotes.\n\nBest,')).ok).toBe(true);
   });
 });
 

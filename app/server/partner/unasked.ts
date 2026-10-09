@@ -1,4 +1,5 @@
 import { unaskedCounts, unaskedFeedback } from '../tools/evidence.ts';
+import { productTopic, unbackedProductClaims } from '../productclaim.ts';
 
 // What the partner writes when nobody asked: a watch proposal and its ready email to a lead, the morning note, a
 // review line. Journey 16: a lead asked "Can you deliver on Thursday instead of Sunday? And are the meals nut-free?"
@@ -69,7 +70,7 @@ export function unbackedPromises(sentence: string, sources: string[]): string[] 
     const before = sentence.slice(0, hit.index);
     if (DENIED.test(before) || LEARNING.test(before)) return [];
     return backedBy(backs(hit), said) ? [] : [about(hit)];
-  });
+  }).concat(unbackedProductClaims(sentence, sources));
 }
 
 // What one sentence says that nothing on record backs: a promise, a count, a customer's words.
@@ -142,10 +143,39 @@ export function founderOf(brief: string): string | null {
   const hit = /^\s*(?:[-*]\s*)?(?:\*\*)?(?:founder(?:'s name)?|founded by|founders?)(?:\*\*)?\s*:\s*(?:\*\*)?\s*(\p{Lu}[\p{L}'-]+(?:\s+\p{Lu}[\p{L}'-]+){0,2})/imu.exec(brief);
   return hit ? hit[1] : null;
 }
-export function filledIn(body: string, brief: string): string {
+export function filledIn(body: string, brief: string, colleagues: string[] = []): string {
   const name = founderOf(brief);
   const named = name ? body.replace(NAME_SLOT, name) : body;
-  return named.split('\n').filter((line) => !SLOT.test(line)).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  const kept = named.split('\n').filter((line) => !SLOT.test(line)).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  return signedAs(kept, brief, name, colleagues);
+}
+
+// Journey 18: Lea signed the founder's email "Best, Sam / QuoteSnap", the partner's name on the founder's mail. The
+// name under the sign-off is the founder's, and only when the brief names them; the company's name stands only when
+// the brief names it; any other name (a colleague's, a made-up one) goes. With nothing left, the email ends "Best,".
+const NAMES = "\\p{Lu}[\\p{L}'.&-]*(?:(?:\\s*[/|,–—]\\s*|\\s+)\\p{Lu}[\\p{L}'.&-]*)*";
+const CLOSING = new RegExp(`^((?:best|kind|warm|many|all the best|regards|thanks|thank you|cheers|sincerely|yours)(?:\\s+(?:regards|wishes|thanks|truly))?)\\s*([,.!]?)\\s*(${NAMES})?\\s*$`, 'iu');
+const NAME_LINE = new RegExp(`^${NAMES}$`, 'u');
+function signedAs(body: string, brief: string, founder: string | null, colleagues: string[]): string {
+  const lines = body.split('\n');
+  const at = lines.findLastIndex((line) => CLOSING.test(line.trim()));
+  if (at < 0) return body;
+  const head = CLOSING.exec(lines[at].trim())!;
+  const tail = [head[3] ?? '', ...lines.slice(at + 1)].map((line) => line.trim()).filter(Boolean);
+  // Only a short block of names: a closing with a paragraph after it is no sign-off.
+  if (tail.some((line) => !NAME_LINE.test(line) || line.split(/\s+/).length > 6) || tail.length > 3) return body;
+  const ours = (part: string) => {
+    const low = part.toLowerCase();
+    if (founder && low === founder.toLowerCase()) return true;
+    if (colleagues.some((one) => one.trim() && low.includes(one.trim().toLowerCase()))) return false;
+    return new RegExp(`(?:^|[^\\p{L}])${part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:$|[^\\p{L}])`, 'iu').test(brief);
+  };
+  const parts = tail.flatMap((line) => line.split(/\s*(?:\/|\||,|–|—|\bfrom\b|\bat\b)\s*/i)).map((one) => one.trim()).filter(Boolean);
+  const keep = parts.filter(ours);
+  if (keep.length === parts.length && (!founder || keep.some((one) => one.toLowerCase() === founder.toLowerCase()))) return body;
+  if (founder && !keep.some((one) => one.toLowerCase() === founder.toLowerCase())) keep.unshift(founder);
+  const closing = `${head[1]}${head[2] || ','}`;
+  return [...lines.slice(0, at), closing, ...(keep.length ? [keep.join(' / ')] : [])].join('\n').trim();
 }
 
 // ---------------------------------------------------------------- a reply built from the lead's questions
@@ -177,7 +207,9 @@ export function topicOf(question: string): { name: string; keys: RegExp } | null
     const named = what && !/^(?:they|it|those|these|them)$/i.test(what) ? ` ${what.toLowerCase()}` : '';
     return { name: `${free[1].toLowerCase()}-free${named}`, keys: new RegExp(`\\b${word(free[1])}[-\\s]?free\\b|\\ballerg`, 'i') };
   }
-  return null;
+  // Journey 18: "Does it work with photos from my old Android phone?" gets "I will check whether it works with photos
+  // from your old Android phone", never a yes nothing on record gives (server/productclaim.ts).
+  return productTopic(question);
 }
 
 // Lines that say nothing: a greeting, thanks, a sign-off, "let me know", "hope this helps", a name on its own.

@@ -33,7 +33,7 @@ test.afterEach(async ({ page }) => {
   const stage = await (await page.request.get('/api/stage')).json();
   await page.request.put('/api/stage', { data: { ...stage, cards: [], wires: (stage.wires as { id: string }[]).filter((wire) => wire.id === 'marketing-brand-doc') } });
   const chat = (await (await page.request.get('/api/rooms/marketing/chat')).json()) as { id: string; text: string }[];
-  const from = chat.findIndex((message) => message.text.startsWith('/tool list_leads'));
+  const from = chat.findIndex((message) => /^\/tool (?:list_leads|draft_email)/.test(message.text));
   if (from >= 0) for (const message of chat.slice(from)) await page.request.delete(`/api/rooms/marketing/chat/${message.id}`);
   expect(broke).toEqual([]);
 });
@@ -86,11 +86,35 @@ test('Draft first message asks the wired person for one', async ({ page }) => {
   // The person's card comes forward with the ask already sent, and answers it.
   const focused = page.locator('.card--focused');
   await expect(focused.locator('.msg--user').last()).toContainText('Draft a first message to Ada Lovelace at Engines Ltd using the evidence-outreach skill.');
+  // Journey 18: with no notes, the ask says nothing is on record about them, so the opener says what we do.
+  await expect(focused.locator('.msg--user').last()).toContainText('Nothing is on record about them beyond their name and company');
   await expect(focused.locator('.status--idle')).toBeVisible({ timeout: 20_000 });
   const all = (await (await page.request.get('/api/rooms/marketing/chat')).json()) as { id: string; text: string }[];
   const from = all.findIndex((message) => message.text.startsWith('Draft a first message'));
   expect(from).toBeGreaterThanOrEqual(0);
   for (const message of all.slice(from)) await page.request.delete(`/api/rooms/marketing/chat/${message.id}`);
+});
+
+// Journey 18: Lea's first message to Tom opened "I saw your comment on Reddit" with nothing read. A detail about the
+// person nothing on record gives is refused; one their row gives is drafted, and Needs you says what it rests on.
+test('a first message says about the lead only what their row or a read gives, and shows where it came from', async ({ page }) => {
+  const made = await page.request.post(`/api/leads/${ID}`, { data: { name: 'Tom Becker', company: 'Becker Sanitär', email: 'tom@becker.example' } });
+  expect(made.status(), await made.text()).toBe(200);
+  const invented = await send(page, 'marketing', '/tool draft_email {"to":"tom@becker.example","subject":"Quotes","body":"Hi Tom,\\n\\nI saw your comment on Reddit about writing up quotes in the van.\\n\\nBest,"}');
+  await expect(invented.locator('.chip--fail summary')).toBeVisible();
+  await invented.locator('.chip summary').click();
+  await expect(invented.locator('.chip pre')).toContainText('I saw your comment on Reddit');
+  await expect(invented.locator('.chip pre')).toContainText('open with what we do');
+
+  const honest = await send(page, 'marketing', '/tool draft_email {"to":"tom@becker.example","subject":"Quotes from photos","body":"Hi Tom,\\n\\nI noticed you run Becker Sanitär.\\n\\nBest,"}');
+  await expect(honest.locator('.chip--ok summary')).toHaveText('Drafted email to tom@becker.example');
+  await page.getByRole('button', { name: /^Needs you/ }).click();
+  const row = page.getByRole('dialog', { name: 'Needs you' }).locator('.needs__item--mail-draft');
+  await expect(row).toContainText("(from: Tom Becker's row on the Leads card)");
+  await page.keyboard.press('Escape');
+  for (const entry of (await (await page.request.get('/api/attention')).json()) as { id: string; kind: string }[]) {
+    if (entry.kind === 'mail-draft') await page.request.post(`/api/attention/${encodeURIComponent(entry.id)}/dismiss`, { data: { opened: true } });
+  }
 });
 
 test('a pasted spreadsheet becomes leads, read before it lands, and a dropped CSV file opens the same sheet', async ({ page }) => {
