@@ -1115,7 +1115,7 @@ describe('the partner slice: one picture of the numbers (journey 16)', () => {
     await part.close!();
   });
 
-  it('moves the kill signal on the founder\'s word in code, in one line, and raises a number already past the new line', async () => {
+  it('moves the kill signal on the founder\'s word in code, in one line, and refuses a line crossed already with the one it would take', async () => {
     const clock = new Date('2026-10-07T10:00').getTime();
     const { deps, part } = await installed({}, { now: () => clock, ask: async () => SHAPED });
     await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
@@ -1126,10 +1126,13 @@ describe('the partner slice: one picture of the numbers (journey 16)', () => {
     const asked = await deps.seams.run('turn:answer', { roomId: 'p1', query: 'Sam, tighten the kill signal: fewer than 9 paying subscribers by 2026-10-17. Replace the old one.' });
     expect(asked.answer).toBe('Kill signal moved: "Paying subscribers below 8" by 2026-10-17 → "Paying subscribers below 9" by 2026-10-17. It is the check in Needs you on 2026-10-17.');
     expect(JSON.parse(await readFile(join(deps.workspace, 'partner.json'), 'utf8')).call.signal).toEqual({ what: 'Paying subscribers below 9', by: '2026-10-17' });
-    // Past the line already: 11 paying against "below 12" raises the check now.
+    // Journey 18: past the line already, 11 paying against "below 12": refused as the partner's own would be, the line
+    // kept, and the line that would be taken named.
     const past = await deps.seams.run('turn:answer', { roomId: 'p1', query: 'replace the kill with <12 paying' });
-    expect(past.answer).toContain('Paying subscribers is 11 (Company brief): already past the new line, so the check is in Needs you now.');
-    expect((await deps.attention.list()).some((one) => one.title === 'Check now: Paying subscribers below 12 by 2026-10-17?')).toBe(true);
+    expect(past.answer).toBe('Not set: "Paying subscribers below 12" is crossed already (Paying subscribers is 11 (Company brief)), so its check would fire today. The kill line stays as it was. Say "replace the kill signal: Paying subscribers below 11 by 2026-10-17", or a line under 11, and I will set it.');
+    expect(JSON.parse(await readFile(join(deps.workspace, 'partner.json'), 'utf8')).call.signal).toEqual({ what: 'Paying subscribers below 9', by: '2026-10-17' });
+    expect((await deps.attention.list()).some((one) => one.title.startsWith('Check now:'))).toBe(false);
+    expect((await deps.seams.run('turn:answer', { roomId: 'p1', query: 'replace the kill signal: Paying subscribers below 11 by 2026-10-17' })).answer).toContain('right on the line: losing one trips it.');
     // Not a kill ask, and not the partner's room: the turn goes on to a model.
     expect((await deps.seams.run('turn:answer', { roomId: 'p1', query: 'What should we post this week?' })).answer).toBeUndefined();
     expect((await deps.seams.run('turn:answer', { roomId: 'marketing', query: 'replace the kill with <9 paying' })).answer).toBeUndefined();

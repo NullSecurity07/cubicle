@@ -20,7 +20,7 @@ import { gatherSince, metricsOnDisk, sinceHeadline } from '../partner/since.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import { createReviews, granted } from '../partner/review.ts';
 import { FAKE_REFRESH, holdStop, keepCall, loosens, readRefresh, refreshAsk, refreshDue, refreshOpening, refreshText, staleOf } from '../partner/refresh.ts';
-import { killAskIn, killMovedLine, pastLine } from '../partner/kill.ts';
+import { crossedRefusal, killAskIn, killMovedLine, pastLine } from '../partner/kill.ts';
 import { goalsIn } from '../partner/goal.ts';
 import { correctionLines, correctionsIn, fixesLine, inputFixesIn, keepCorrections, keepFixes, unitFix, unitsFix } from '../partner/corrections.ts';
 import { markClaims } from '../tools/evidence.ts';
@@ -830,7 +830,13 @@ export function createPartner(options: PartnerOptions = {}) {
         if (!asked) return next(payload);
         const old = held.call?.signal;
         if (old && old.what === asked.signal.what && old.by === asked.signal.by) return next({ ...payload, answer: `The kill signal is already "${old.what}" by ${old.by}: nothing to change.` });
+        // A line crossed already is refused, as the partner's own is, with the line that would be taken.
+        const refused = crossedRefusal(asked.signal, await readingOf(stage, asked.signal).catch(() => null));
+        if (refused) return next({ ...payload, answer: refused });
         const at = now();
+        // The partner's proposal to move the line the founder just replaced is answered by this: it leaves Needs you.
+        const proposal = held.killProposal;
+        if (proposal && (await deps.decisions.list().catch(() => [])).some((one) => one.id === proposal.decisionId && one.status === 'proposed')) await deps.decisions.remove(proposal.decisionId).catch(() => {});
         await state.change((draft) => { draft.call = { ...(draft.call ?? { day: today, roomId: me.id, at }), signal: asked.signal, signalBy: 'founder' }; delete draft.killProposal; });
         const line = await keepSignal(old, asked.signal, me.id, stage);
         standing = null;
