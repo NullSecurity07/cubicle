@@ -114,6 +114,16 @@ describe('a film ends on the product, never the problem', () => {
     expect(spec.scenes.at(-1)!.say).toBe('FixSlot is a pop-up repair café booking tool for neighbourhoods.');
   });
 
+  it('closes on the product\'s own line, not the model\'s shorthand for it', () => {
+    // Journey 20's live rerun: the director closed on "Neighborhood repair booking tool".
+    const scenes: Scene[] = [
+      { layout: 'hook', text: 'FixSlot lets a visitor book a slot', say: 'FixSlot lets a visitor book a slot and say what is broken.', source: 'FixSlot lets a visitor book a slot and say what is broken' },
+      { layout: 'statement', text: 'The café gets a list per volunteer', say: 'Volunteers fix toasters, bikes and clothes.', source: 'volunteers fix toasters, bikes and clothes' },
+      { layout: 'cta', text: 'Neighborhood repair booking tool', say: 'Neighborhood repair booking tool.' },
+    ];
+    expect(repair({ title: 'FixSlot', scenes }, want()).spec.scenes.at(-1)!.say).toBe('FixSlot is a pop-up repair café booking tool for neighbourhoods.');
+  });
+
   it('tells the director the order', () => {
     const prompt = planPrompt({ seconds: 20, purpose: 'explainer', audience: 'repair cafés', platform: 'the web', tone: 'calm', pace: 'calm', captions: true, pack: 'documentary' } as never, { brief: ASK } as never, material);
     expect(prompt).toMatch(/problem first, then what the product does about it, then the close/);

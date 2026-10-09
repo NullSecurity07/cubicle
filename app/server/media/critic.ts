@@ -876,7 +876,11 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
     const title = spec.title && countWords(spec.title) <= HEADING_WORDS ? spec.title.trim() : undefined;
     // A close on the problem names the brief and still leaves the viewer holding the problem: it is the product's line.
     const onProblem = problemLine(closing.say ?? closing.text, product) && !!want.close?.line;
-    const plain = !asked && want.sources && (onProblem || !namesTheBrief(closing, want.sources, want.reel)) ? (want.close?.line ?? firstHeadline(scenes, product) ?? title) : undefined;
+    // And a film that is not a reel ends on the product's own line, not the model's shorthand for it: journey 20's
+    // live run closed on "Neighborhood repair booking tool". A close that opens a real door keeps it.
+    const offPitch = !want.reel && !!want.close?.line && !opensADoor(`${closing.text ?? ''} ${closing.say ?? ''}`)
+      && !saysMostOf(closing.say ?? closing.text ?? '', want.close.line) && !(want.sources && fromBrief(closing.say ?? closing.text ?? '', want.sources));
+    const plain = !asked && want.sources && (onProblem || offPitch || !namesTheBrief(closing, want.sources, want.reel)) ? (want.close?.line ?? firstHeadline(scenes, product) ?? title) : undefined;
     // The founder's call to action is the whole close: no heading of the model's own ("Get started today") beside it.
     const line = asked && (!sameLine(closing.text, asked) || !!closing.heading) ? asked : plain;
     if (line) {
