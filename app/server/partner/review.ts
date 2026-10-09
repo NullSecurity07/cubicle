@@ -6,7 +6,7 @@ import { readableDocIds } from '../prompt.ts';
 import { readBook } from '../rescue.ts';
 import type { Handler } from '../seams.ts';
 import { calculate } from '../tools/calc.ts';
-import { markUnbacked, markUnworked, unbackedClaims } from '../tools/evidence.ts';
+import { markUnbacked, markUnworked, SPEC, unbackedClaims } from '../tools/evidence.ts';
 import { leadRecords, listed, unheardSayings, unrecordedNames } from '../tools/named.ts';
 import { unsourcedIn } from './call.ts';
 import { sectionText } from './company.ts';
@@ -281,10 +281,13 @@ export function reviewDoc(input: { text: string; before?: string; numbers: strin
   // (c) claims of what customers said or did, or that it works, with nothing on record: as written, or kept as the
   // writer's assumption, which is still nothing the founder can act on.
   const claims: string[] = [];
+  // Journey 21: Pia's "Booking flow spec" was flagged for "The café organiser views a consolidated dashboard": a spec
+  // says what is to be built, not what a customer did.
+  const spec = SPEC.test(input.title ?? '');
   for (const { line } of added) {
     for (const sentence of line.split(/(?<=[.!?])\s+/)) {
       const assumed = sentence.includes(MARK);
-      const hits = unbackedClaims(assumed ? sentence.replace(MARK, '') : sentence, input.said);
+      const hits = unbackedClaims(assumed ? sentence.replace(MARK, '') : sentence, input.said, { spec });
       if (hits.length) claims.push(clip(sentence.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, '').replace(/\s*\(assumption\)/, ''), 80));
     }
   }

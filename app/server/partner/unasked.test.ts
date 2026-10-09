@@ -130,3 +130,28 @@ describe('the name under a draft, journey 20', () => {
     expect(companyOf('# Company\n\nEveryone on the stage reads this.\n\nCustomers are repair cafés.')).toBeNull();
   });
 });
+
+// Journey 21: Ines's ready reply had "To answer your questions:" over "Let me know if you would like to test it", the
+// answers after that, and "Best," over nothing.
+describe('the reply to a lead keeps its answers under the lead-in and is signed', () => {
+  const BRIEF = 'What the company does: FixSlot is a pop-up repair café booking tool for neighbourhoods: visitors book a repair slot online.';
+  const INES = 'Our Thursday evenings are chaos. Is there an iOS app for our volunteers? If a visitor cancels, do they get the €4 back?';
+  it('puts the answers right under "To answer your questions:", in the order asked', () => {
+    const body = 'Hi Ines,\n\nThanks for getting back to me. To answer your questions:\n\nLet me know if you would like to test it at your next evening.\n\nBest,';
+    const built = answerQuestions(body, INES, { name: 'Ines Vogel', today: '2026-10-10' }).body;
+    expect(built).toBe('Hi Ines,\n\nThanks for getting back to me. To answer your questions:\n\nI will check whether there is an iOS app for your volunteers and come back to you by Tuesday.\nI will check our refund policy and come back to you by Tuesday.\n\nLet me know if you would like to test it at your next evening.\n\nBest,');
+  });
+
+  it('puts them before the close when nothing leads into them, and after an opening thanks', () => {
+    const body = 'Hi Clara,\n\nThanks for getting back to me.\n\nLooking forward to hearing from you.\n\nBest,';
+    const built = answerQuestions(body, 'What happens to our data if we stop paying?', { name: 'Clara Meier', today: '2026-10-12' }).body;
+    expect(built).toBe('Hi Clara,\n\nThanks for getting back to me.\n\nI will check what happens to your data and come back to you by Wednesday.\n\nLooking forward to hearing from you.\n\nBest,');
+  });
+
+  it('signs a "Best," left over nothing with the founder and the company, and never leaves "[Founder]"', () => {
+    expect(filledIn('Hi Ines,\n\nThanks.\n\nBest,\n[Founder]', BRIEF)).toBe('Hi Ines,\n\nThanks.\n\nBest,\nFixSlot');
+    expect(filledIn('Hi Ines,\n\nThanks.\n\nBest,', `Founder: Maya Roth\n${BRIEF}`)).toBe('Hi Ines,\n\nThanks.\n\nBest,\nMaya Roth / FixSlot');
+    expect(filledIn('Hi Ines,\n\nThanks.\n\nBest,\n[Your Name]', 'Nothing here.')).toBe('Hi Ines,\n\nThanks.\n\nBest,');
+  });
+});
+

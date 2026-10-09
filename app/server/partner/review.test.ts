@@ -295,3 +295,23 @@ describe('a review of a doc that names customers (journey 21)', () => {
     }
   });
 });
+
+// Journey 21: Pia's "Booking flow spec" was flagged "a claim has no record behind it" for what the app is to do.
+describe('a spec is a plan, not a claim (journey 21)', () => {
+  const SPEC_DOC = `# Booking flow spec
+
+## Volunteer list generation
+1. **Categorisation:** As bookings are submitted, FixSlot automatically assigns items to matching volunteer skill sets.
+2. **Café dashboard view:** The café organiser views a consolidated dashboard showing all confirmed bookings for the session, sorted by time slot and volunteer category.
+3. **Reminders:** The app will send each visitor a reminder the day before, and it works offline at the café.`;
+  it('calls Pia\'s spec fit, in present or future tense', () => {
+    expect(reviewDoc({ text: SPEC_DOC, numbers: '', read: [], said: [], title: 'Booking flow spec' }).verdict).toBe('Fit for the founder.');
+  });
+
+  it('still flags what customers said, a count nothing gives, and a claim of evidence outside a spec', () => {
+    const said = `${SPEC_DOC}\n4. Organisers told us they love the dashboard.`;
+    expect(reviewDoc({ text: said, numbers: '', read: [], said: [], title: 'Booking flow spec' }).verdict).toMatch(/^Fix first: a claim has no record/);
+    expect(reviewDoc({ text: `${SPEC_DOC}\n5. We have 14 cafés waiting for it.`, numbers: '', read: [], said: [], title: 'Booking flow spec' }).verdict).toMatch(/no source or calc/);
+    expect(reviewDoc({ text: '# Notes\n\nThe pain is validated.', numbers: '', read: [], said: [], title: 'Notes' }).verdict).toMatch(/^Fix first: a claim has no record/);
+  });
+});

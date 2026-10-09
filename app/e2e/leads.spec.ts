@@ -95,6 +95,38 @@ test('Draft first message asks the wired person for one', async ({ page }) => {
   for (const message of all.slice(from)) await page.request.delete(`/api/rooms/marketing/chat/${message.id}`);
 });
 
+// Journey 21: Lea wrote the first message in chat, signed "[Founder]", and made no draft until asked. With an address
+// on record the turn makes the draft from her words: the chip and Needs you have it, and no placeholder is shown.
+test('Draft first message makes an email draft at once, with no placeholder', async ({ page }) => {
+  test.setTimeout(60_000);
+  const card = node(page, ID);
+  const made = await page.request.post(`/api/leads/${ID}`, { data: { name: 'Ines Vogel', company: 'Repair Café Kreuzberg', email: 'ines@repaircafe.example' } });
+  expect(made.status(), await made.text()).toBe(200);
+  await card.locator('.lead', { hasText: 'Ines Vogel' }).click();
+  await card.getByRole('button', { name: 'Draft first message' }).click();
+  try {
+    const focused = page.locator('.card--focused');
+    await expect(focused.locator('.msg--user').last()).toContainText('Their address: ines@repaircafe.example.');
+    await expect(focused.locator('.status--idle')).toBeVisible({ timeout: 20_000 });
+    const reply = focused.locator('.msg--assistant').last();
+    await expect(reply.locator('.chip--ok summary')).toHaveText('Drafted email to ines@repaircafe.example');
+    await expect(reply).not.toContainText('[Founder]');
+    const rows = (await (await page.request.get('/api/attention')).json()) as { kind: string; title: string; url?: string }[];
+    const row = rows.find((one) => one.kind === 'mail-draft');
+    expect(row?.title).toBe('Email to ines@repaircafe.example ready to send');
+    expect(decodeURIComponent(row?.url ?? '')).not.toContain('[Founder]');
+  } finally {
+    const chat = async () => (await (await page.request.get('/api/rooms/marketing/chat')).json()) as { id: string; role: string; text: string }[];
+    await expect.poll(async () => (await chat()).at(-1)?.role, { timeout: 20_000 }).toBe('assistant').catch(() => {});
+    for (const entry of (await (await page.request.get('/api/attention')).json()) as { id: string; kind: string }[]) {
+      if (entry.kind === 'mail-draft') await page.request.post(`/api/attention/${encodeURIComponent(entry.id)}/dismiss`, { data: { opened: false } });
+    }
+    const all = await chat();
+    const from = all.findIndex((message) => message.text.startsWith('Draft a first message'));
+    if (from >= 0) for (const message of all.slice(from)) await page.request.delete(`/api/rooms/marketing/chat/${message.id}`);
+  }
+});
+
 // Journey 18: Lea's first message to Tom opened "I saw your comment on Reddit" with nothing read. A detail about the
 // person nothing on record gives is refused; one their row gives is drafted, and Needs you says what it rests on.
 test('a first message says about the lead only what their row or a read gives, and shows where it came from', async ({ page }) => {

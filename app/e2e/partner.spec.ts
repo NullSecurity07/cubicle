@@ -18,6 +18,17 @@ async function bar(page: Page, words: string, pick: string) {
   await input.press('Enter');
 }
 
+// A doc a tool put on the stage is kept until a stage sent back has it once (server/store.ts), so a check that made one
+// sends the stage back with it first, then without it.
+async function takeAway(page: Page, title: string) {
+  const stage = await stageOf(page);
+  const made = new Set(stage.docs.filter((one) => one.title === title).map((one) => one.id));
+  if (!made.size) return;
+  await page.request.put('/api/stage', { data: stage });
+  await page.request.put('/api/stage', { data: { ...stage, docs: stage.docs.filter((one) => !made.has(one.id)), wires: stage.wires.filter((wire) => !made.has(wire.from) && !made.has(wire.to)) } });
+  expect((await stageOf(page)).docs.some((one) => made.has(one.id))).toBe(false);
+}
+
 const broke: string[] = [];
 let brief = '';
 // The lines each team room held before the check: what a check or Sam's review adds to Maya's or Dev's thread is cut
@@ -203,9 +214,7 @@ test('the partner reviews a colleague\'s doc unasked, and Fix sends the colleagu
 
   // The doc the check made goes with it.
   await page.goto('about:blank');
-  const stage = await stageOf(page);
-  const made = new Set(stage.docs.filter((one) => one.title === 'Unit Economics').map((one) => one.id));
-  await page.request.put('/api/stage', { data: { ...stage, docs: stage.docs.filter((one) => !made.has(one.id)), wires: stage.wires.filter((wire) => !made.has(wire.from) && !made.has(wire.to)) } });
+  await takeAway(page, 'Unit Economics');
 });
 
 // Journey 21: Lea's "Customer notes" named six cafés nobody on record had heard of; Sam flagged one line and, on the
@@ -235,10 +244,12 @@ test('a doc that names customers nobody has on record is marked, flagged, and st
     await expect(page.getByRole('dialog', { name: 'Needs you' }).locator('.needs__item--review-flag')).toContainText('Sam flagged: Maya\'s "Customer notes". Fix first: 3 named customers are not on record');
     await page.keyboard.press('Escape');
   } finally {
+    // Ignore on the flag: the row goes, so no later check finds Needs you waiting.
+    for (const row of ((await (await page.request.get('/api/attention')).json()) as { id: string; kind: string }[]).filter((one) => one.kind === 'review-flag')) {
+      await page.request.post(`/api/partner/reviews/${row.id.replace(/^review-flag:/, '')}`, { data: { fix: false } });
+    }
     await page.goto('about:blank');
-    const stage = await stageOf(page);
-    const made = new Set(stage.docs.filter((one) => one.title === 'Customer notes').map((one) => one.id));
-    await page.request.put('/api/stage', { data: { ...stage, docs: stage.docs.filter((one) => !made.has(one.id)), wires: stage.wires.filter((wire) => !made.has(wire.from) && !made.has(wire.to)) } });
+    await takeAway(page, 'Customer notes');
   }
 });
 
@@ -363,6 +374,8 @@ test('a lead\'s question about a policy gets "I will check our refund policy", n
   await expect(page.getByRole('status').filter({ hasText: 'Sam is your partner' })).toBeVisible({ timeout: 15_000 });
   const stage = await (await page.request.get('/api/stage')).json();
   await page.request.put('/api/stage', { data: { ...stage, cards: [...(stage.cards ?? []), { id: LEADS, kind: 'leads', x: 2400, y: 0, w: 900, h: 460 }] } });
+  // The watch's own three unasked outputs a day are spent by the checks before this one: a new day has its own.
+  await advanceDay(page, 1, '09:00');
   try {
     const lead = (await (await page.request.post(`/api/leads/${LEADS}`, { data: { name: 'Ines Vogel', company: 'Repair Café Kreuzberg', email: 'ines@repaircafe.example' } })).json()) as { id: string };
     await page.request.patch(`/api/leads/${LEADS}/${lead.id}`, { data: { stage: 'contacted' } });
@@ -381,6 +394,7 @@ test('a lead\'s question about a policy gets "I will check our refund policy", n
     await expect(row).toContainText(/I will check whether there is an iOS app for your volunteers and come back to you by \w+day\./);
     await expect(row).toContainText(/I will check our refund policy and come back to you by \w+day\./);
   } finally {
+    await resetClock(page);
     const held = ((await (await page.request.get('/api/partner/watch')).json()) as { proposals: { id: string; cardId?: string; status: string }[] }).proposals;
     for (const one of held.filter((each) => each.cardId === LEADS && each.status === 'open')) await page.request.post(`/api/partner/proposals/${one.id}`, { data: { run: false } });
     for (const one of ((await (await page.request.get(`/api/leads/${LEADS}`)).json()) as { leads: { id: string }[] }).leads ?? []) await page.request.delete(`/api/leads/${LEADS}/${one.id}`);
@@ -398,6 +412,8 @@ test('a lead\'s question about a language or their data gets "I will check", nev
   await expect(page.getByRole('status').filter({ hasText: 'Sam is your partner' })).toBeVisible({ timeout: 15_000 });
   const stage = await (await page.request.get('/api/stage')).json();
   await page.request.put('/api/stage', { data: { ...stage, cards: [...(stage.cards ?? []), { id: LEADS, kind: 'leads', x: 2400, y: 0, w: 900, h: 460 }] } });
+  // The watch's own three unasked outputs a day are spent by the checks before this one: a new day has its own.
+  await advanceDay(page, 1, '09:00');
   try {
     const asked = [['Jonas Brandt', 'Repair Café Wedding', 'jonas@repaircafe.example', 'Looks useful. Do you have a German version of the booking page?'], ['Clara Meier', 'Repair Café Pankow', 'clara@repaircafe.example', 'Sounds good. What happens to our data if we stop paying?']];
     for (const [name, company, email, text] of asked) {
@@ -419,6 +435,7 @@ test('a lead\'s question about a language or their data gets "I will check", nev
     for (const made of ['secure and accessible', 'We export', 'account archive active']) await expect(clara).not.toContainText(made);
     await expect(clara).toContainText(/I will check what happens to your data and come back to you by \w+day\./);
   } finally {
+    await resetClock(page);
     const held = ((await (await page.request.get('/api/partner/watch')).json()) as { proposals: { id: string; cardId?: string; status: string }[] }).proposals;
     for (const one of held.filter((each) => each.cardId === LEADS && each.status === 'open')) await page.request.post(`/api/partner/proposals/${one.id}`, { data: { run: false } });
     for (const one of ((await (await page.request.get(`/api/leads/${LEADS}`)).json()) as { leads: { id: string }[] }).leads ?? []) await page.request.delete(`/api/leads/${LEADS}/${one.id}`);

@@ -140,7 +140,7 @@ export const leftOutLine = (left: string[]) => (left.length ? `(left out: nothin
 const NAME_SLOT = /\[(?:(?:your|the|founder'?s?|my|sender'?s?)\s+)?(?:full\s+)?(?:name|founder)\]/gi;
 const SLOT = /\[[\p{L}][\p{L}' ]{0,30}\]/u;
 export function founderOf(brief: string): string | null {
-  const hit = /^\s*(?:[-*]\s*)?(?:\*\*)?(?:founder(?:'s name)?|founded by|founders?)(?:\*\*)?\s*:\s*(?:\*\*)?\s*(\p{Lu}[\p{L}'-]+(?:\s+\p{Lu}[\p{L}'-]+){0,2})/imu.exec(brief);
+  const hit = /^\s*(?:[-*]\s*)?(?:\*\*)?(?:founder(?:'s name)?|founded by|founders?)(?:\*\*)?\s*:\s*(?:\*\*)?\s*(\p{Lu}[\p{L}'-]+(?:[ \t]+\p{Lu}[\p{L}'-]+){0,2})/imu.exec(brief);
   return hit ? hit[1] : null;
 }
 export function filledIn(body: string, brief: string, colleagues: string[] = []): string {
@@ -188,8 +188,11 @@ function signedAs(body: string, brief: string, founder: string | null, colleague
   };
   const parts = tail.flatMap((line) => line.split(/\s*(?:\/|\||,|–|—|\bfrom\b|\bat\b)\s*/i)).map((one) => one.trim()).filter(Boolean);
   const keep = parts.filter(ours);
-  if (keep.length === parts.length && (!founder || keep.some((one) => same(one, founder)))) return body;
   const company = companyOf(brief) ?? keep.find((one) => !same(one, founder)) ?? null;
+  // Journey 21: Ines's ready reply ended "Best," over nothing: its "[Founder]" line had gone, and nothing took its
+  // place. A sign-off with no name under it is signed by the founder and the company, when the brief gives either.
+  if (!parts.length && (founder || company)) return [...lines.slice(0, at), `${head[1]}${head[2] || ','}`, [founder, company].filter(Boolean).join(' / ')].join('\n').trim();
+  if (keep.length === parts.length && (!founder || keep.some((one) => same(one, founder)))) return body;
   const sign = [founder, company].filter((one): one is string => !!one);
   const closing = `${head[1]}${head[2] || ','}`;
   return [...lines.slice(0, at), closing, ...(sign.length ? [sign.join(' / ')] : [])].join('\n').trim();
@@ -232,6 +235,9 @@ export function topicOf(question: string): { name: string; keys: RegExp } | null
 // Lines that say nothing: a greeting, thanks, a sign-off, "let me know", "hope this helps", a name on its own.
 const PLEASANTRY = /^(?:hi|hello|dear|hey|good (?:morning|afternoon|evening))\b|^(?:many\s+)?(?:thanks|thank you)\b|^(?:best|regards|kind regards|warm regards|best regards|cheers|sincerely|all the best)\b[\p{L}\s,.!]*$|\blet me know\b|\breaching out\b|\bhope (?:this|you|that)\b|\blook(?:ing)? forward\b|\bgreat to hear\b|\bhappy to help\b|^\p{Lu}[\p{L}'-]+(?:\s+\p{Lu}[\p{L}'-]+){0,2}[,.]?$/iu;
 const SIGN_OFF = /^(?:best|regards|kind regards|warm regards|best regards|cheers|sincerely|all the best|thanks|thank you)\b[\p{L}\s]*[,.!]?$/iu;
+// A line that leads into the answers, and a line that closes an email.
+const INTRO = /(?:\b(?:to answer|answering|regarding|as for|on)\s+your\s+questions?\b|\bhere (?:are|is) (?:the |my )?answers?\b|\byour questions?\b)[^.!?]*:\s*$/i;
+const CLOSER = /^(?:let me know\b|please let me know\b|look(?:ing)? forward\b|happy to (?:help|answer|chat)\b|hope (?:this|that) helps\b|feel free\b|don['’]t hesitate\b|(?:talk|speak) soon\b|if you (?:would like|want|have any)\b)/i;
 const sentencesIn = (body: string) => body.split('\n').flatMap((line) => line.split(/(?<=[.!?])\s+/)).map((one) => one.trim()).filter(Boolean);
 export const substantive = (body: string) => sentencesIn(body).filter((one) => !PLEASANTRY.test(one));
 
@@ -263,11 +269,19 @@ export function answerQuestions(body: string, said: string, given: { name: strin
   }
   if (lines.length) {
     const rows = text.split('\n');
-    let end = rows.length;
-    while (end > 0 && (!rows[end - 1].trim() || SIGN_OFF.test(rows[end - 1].trim()) || /^\p{Lu}[\p{L}'-]+(?:\s+\p{Lu}[\p{L}'-]+){0,2}$/u.test(rows[end - 1].trim()))) end -= 1;
-    // A sign-off at the very end stays there, under the new lines.
-    const tail = rows.slice(end).join('\n').trim();
-    text = [rows.slice(0, end).join('\n').trim(), lines.join('\n'), tail].filter(Boolean).join('\n\n');
+    // Journey 21: "To answer your questions:" stood over "Let me know if you would like to test it", and the answers came
+    // after that. The answers go right under a line that leads into them; else after what the email says, before its
+    // close ("Let me know ...", "Looking forward ...") and its sign-off.
+    const lead = rows.findIndex((row) => INTRO.test(row.trim()));
+    if (lead >= 0) {
+      text = [rows.slice(0, lead + 1).join('\n').trim(), lines.join('\n'), rows.slice(lead + 1).join('\n').trim()].filter(Boolean).join('\n\n');
+    } else {
+      let end = rows.length;
+      while (end > 0 && (!rows[end - 1].trim() || CLOSER.test(rows[end - 1].trim()) || (SIGN_OFF.test(rows[end - 1].trim()) && rows[end - 1].trim().split(/\s+/).length <= 3) || /^\p{Lu}[\p{L}'-]+(?:\s*[/|]?\s+\p{Lu}[\p{L}'-]+){0,2}$/u.test(rows[end - 1].trim()))) end -= 1;
+      // The close and a sign-off at the very end stay there, under the new lines.
+      const tail = rows.slice(end).join('\n').trim();
+      text = [rows.slice(0, end).join('\n').trim(), lines.join('\n'), tail].filter(Boolean).join('\n\n');
+    }
   }
   const hollow = !said_.length && !lines.length;
   if (hollow) {

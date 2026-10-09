@@ -642,6 +642,14 @@ export const fakeClient: ModelClient = {
     if (wanted && tools?.some((tool) => tool.name === wanted[1])) {
       return { text: '', calls: [{ id: callId(), name: wanted[1], args: wanted[2] }], usage: { input: 10, output: 5 } };
     }
+    // Journey 21: Lea wrote a first message in chat, signed "[Founder]", and called no draft_email. A fake person does
+    // the same, so a browser test can watch the turn make the draft from the words (server/firstdraft.ts).
+    const first = /^Draft a first message to (\S+)[^\n]* at (.+?) using the evidence-outreach skill\./.exec(heard);
+    if (first && !messages.slice(messages.findLastIndex((message) => message.role === 'user')).some((message) => message.role === 'tool')) {
+      const text = `Here is a first message:\n\nSubject: Pop-up repair evenings at ${first[2]}\n\nHi ${first[1]},\n\nWe built a booking tool so repair cafés know who is coming with what before the evening starts.\n\nWould a short call next week suit you?\n\nBest,\n[Founder]`;
+      onToken(text);
+      return { text: '', calls: [], usage: { input: 10, output: 40 } };
+    }
     // Work handed over ends in a shape the asker can read, and nothing else goes back. A fake person can write one,
     // so a browser test can watch a whole piece of work be given away without a key to a real model.
     if (/Finish with one json object and nothing after it/.test(heard)) {

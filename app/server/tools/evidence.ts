@@ -365,7 +365,9 @@ export function markUnworked(input: { before: string; after: string; read: strin
 const CLAIMS: { said: RegExp; keys: RegExp }[] = [
   { said: /\bretention\b[^.;!?]{0,30}?\b(?:ok|okay|good|fine|strong|high|solid|great|healthy)\b/i, keys: /\b(?:retention|retain|retained|churn|renew|came back|come back|returning|stayed)\b/i },
   { said: /\b(?:customers?|users?|hosts?|clients?|designers?|people|they|everyone)\s+(?:really\s+|all\s+)?(?:love|loves|loved|like|likes|want|wants|need|needs|rave|begged|asked for)\b/i, keys: /\b(?:love|loves|loved|like|likes|liked|want|wants|wanted|need|needs|needed|rave|raved|begged|asked for)\b/i },
-  { said: /\b(?:validated|confirmed|proven|verified)\b/i, keys: /\b(?:validat\w*|confirm\w*|prov\w*|verif\w*)\b/i },
+  // Journey 21: Pia's spec said "a consolidated dashboard showing all confirmed bookings" and was flagged as a claim:
+  // "confirmed" before a noun names a kind of booking. Validated is a claim said of something, or opening a line.
+  { said: /(?<=\b(?:is|are|was|were|be|been|being|has|have|had|we|I|they|it|demand|idea|pain|market|need)\s+(?:(?:now|already|fully|clearly|been)\s+)*)(?:validated|confirmed|proven|verified)\b|\b(?:validated|confirmed|proven|verified)(?=\s+(?:that|the|by|our|it|demand|with|in|this)\b)|(?<=^\s*(?:[-*+]\s+)?)(?:validated|confirmed|proven|verified)\b/i, keys: /\b(?:validat\w*|confirm\w*|prov\w*|verif\w*)\b/i },
   // Journey 12: "The product itself works" stood in the partner's verdict with nothing behind it.
   { said: /\b(?:(?:the\s+)?(?:product|app|tool|platform|prototype|mvp|beta|it)\s+(?:itself\s+|really\s+|clearly\s+)?(?:works|is working|does work)|proven to work|validated the (?:product|idea|market|demand))\b/i, keys: /\b(?:works?|working|worked|validat\w*|proven|bugs?|crash\w*|broken|uptime)\b/i },
   { said: /\b(?:we(?:'ve| have)|I(?:'ve| have)|the founder has|they(?:'ve| have))\s+(?:had|done|held|run|conducted|completed)\s+[\w-]+\s+(?:real\s+)?(?:customer\s+|user\s+)?(?:conversations?|interviews?|calls?)\b/i, keys: /\b(?:conversations?|interview\w*|calls?|called|talk\w*|spoke|spoken)\b/i },
@@ -464,11 +466,17 @@ function added(before: string, after: string): { line: number; heading: string }
 
 // The claims of evidence in a text that no sentence of `said` backs, each as written: for a verdict's reason, where an
 // unbacked one is kept and marked "(assumption)" rather than refused.
-export function unbackedClaims(text: string, said: string[]): string[] {
+// What a plan says the product will do is a plan, not a claim: "the app will send reminders", "we plan to add SMS".
+// `spec`: a spec, a plan or a flow describes what is to be built, so what it says the product does ("the organiser
+// views a dashboard", "it works offline") is a plan in any tense; what customers said is still a claim there.
+export const PLANNED = /\b(?:will|shall|should|would|is\s+going\s+to|are\s+going\s+to|plan(?:s|ned)?\s+to|aims?\s+to|intends?\s+to|to\s+be\s+built|must)\b/i;
+export const SPEC = /\b(?:spec|specs|specification|requirements?|prd|flow|flows|roadmap|plan|plans|design|wireframes?|user stor(?:y|ies)|mvp scope|feature list|backlog)\b/i;
+export function unbackedClaims(text: string, said: string[], options: { spec?: boolean } = {}): string[] {
   const heard = sentencesOf(said);
   return text.split(/(?<=[.!?])\s+/).flatMap((sentence) => {
     if (sentence.includes(MARK) || VIEW.test(sentence)) return [];
-    const claimed = CLAIMS.flatMap(({ said: claim, keys }) => {
+    if (PLANNED.test(sentence) && !RECORD.test(sentence)) return [];
+    const claimed = (options.spec ? [] : CLAIMS).flatMap(({ said: claim, keys }) => {
       const hit = claim.exec(sentence);
       return !hit || DENIED.test(sentence.slice(0, hit.index)) || heard.some((one) => keys.test(one)) ? [] : [hit[0]];
     });
