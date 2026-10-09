@@ -63,5 +63,13 @@ export function killMovedLine(old: KillSignal | undefined, fresh: KillSignal, re
   const said = thresholdOf(fresh.what);
   const crossed = !!reading && !!said && pastLine(reading.value, said.value, said.below);
   const moved = old ? `Kill signal moved: "${old.what}" by ${old.by} → "${fresh.what}" by ${fresh.by}.` : `Kill signal set: "${fresh.what}" by ${fresh.by}.`;
-  return `${moved}${crossed ? ` ${reading!.said}: already past the new line, so the check is in Needs you now.` : ` It is the check in Needs you on ${fresh.by}.`}`;
+  return `${moved}${crossed ? ` ${reading!.said}: already past the new line, so the check is in Needs you now.` : ` It is the check in Needs you on ${fresh.by}.${onLine(fresh, reading)}`}`;
+}
+
+// A line set at today's value ("below 11" with 11 paying) is allowed, and the founder is told how close it sits: one
+// lost customer trips it.
+export function onLine(signal: KillSignal, reading?: { value: number; said: string } | null): string {
+  const said = thresholdOf(signal.what);
+  if (!reading || !said || reading.value !== said.value) return '';
+  return ` ${reading.said}, right on the line: ${said.below ? 'losing one trips it' : 'any rise trips it'}.`;
 }

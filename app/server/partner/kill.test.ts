@@ -22,4 +22,10 @@ describe('the founder moves the kill signal, in code', () => {
       .toBe('Kill signal moved: "Paying subscribers drop below 8" by 2026-10-17 → "Paying subscribers below 11" by 2026-10-17. Paying subscribers is 9.5 (Metrics, 2026-10-07): already past the new line, so the check is in Needs you now.');
     expect(killMovedLine(given.signal, { what: 'Paying subscribers below 9', by: '2026-10-17' }, { value: 9.5, said: 'x' })).toMatch(/It is the check in Needs you on 2026-10-17\.$/);
   });
+
+  it('takes a line at today\'s value and says one lost customer trips it', () => {
+    const at = { value: 11, said: 'Paying subscribers is 11 (Company brief)' };
+    expect(killMovedLine(undefined, { what: 'paying subscribers below 11', by: '2026-10-17' }, at)).toBe('Kill signal set: "paying subscribers below 11" by 2026-10-17. It is the check in Needs you on 2026-10-17. Paying subscribers is 11 (Company brief), right on the line: losing one trips it.');
+    expect(killMovedLine(undefined, { what: 'paying subscribers below 9', by: '2026-10-17' }, at)).toBe('Kill signal set: "paying subscribers below 9" by 2026-10-17. It is the check in Needs you on 2026-10-17.');
+  });
 });
