@@ -18,13 +18,17 @@ import type { Pace } from './templates/looks.ts';
 // once, never so long that a frame sits still waiting for the film to be over.
 export const CLOSE_TAIL = 1.2;
 export const MOST_TAIL = 1.5;
+// The least the close runs past the end of the recording itself. The words' times are measured or, on a machine
+// that cannot listen, guessed from the sentences, and a guess that ends early would end the film under the last
+// words: the close holds until the voice file is over, and a breath after it, whatever the words said.
+export const VOICE_TAIL = 0.4;
 
 // Settles the takes' ends in place, and hands back the one line the card says about it, if there is one.
-export function settleLength(takes: Take[], words: Word[], target: number): string | undefined {
+export function settleLength(takes: Take[], words: Word[], target: number, voiced = 0): string | undefined {
   const last = takes.at(-1);
   if (!last) return undefined;
   if (words.length) {
-    const spoken = words.at(-1)!.at + words.at(-1)!.seconds;
+    const spoken = Math.max(words.at(-1)!.at + words.at(-1)!.seconds, voiced + VOICE_TAIL - CLOSE_TAIL);
     // The close ends a short, fixed beat after the last word — never earlier than the word itself, never later than
     // the tail. Whatever the takes had asked for beyond that was padding.
     if (last.to >= spoken) last.to = Math.round(Math.min(Math.max(last.to, spoken + CLOSE_TAIL), spoken + MOST_TAIL) * 1000) / 1000;

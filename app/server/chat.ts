@@ -19,6 +19,8 @@ import type { Payloads, Seams } from './seams.ts';
 import type { Store } from './store.ts';
 import type { Consult } from './tools/team.ts';
 import type { Tool } from './tools/registry.ts';
+import { studioFor } from './media/studio-on-ask.ts';
+import { wiredCards } from './prompt.ts';
 import { ANSWER_IN_WORDS, HELD_BACK, holdVerdict, proseToolCall, turnSources } from './truth.ts';
 import type { PromptFor } from './turn-prompt.ts';
 import type { UsageBook } from './usage.ts';
@@ -85,7 +87,7 @@ export function createChat(deps: Deps) {
   };
 
   async function chat(roomId: string, text: string, res: ServerResponse, extra: { replace?: string; attachments?: Attachment[]; via?: ChatVia } = {}) {
-    const stage = await store.loadStage();
+    let stage = await store.loadStage();
     if (!stage.rooms.some((room) => room.id === roomId)) return json(res, 404, { error: 'unknown room' });
     if (busy.has(roomId)) return json(res, 409, { error: 'this person is still replying' });
     busy.add(roomId);
@@ -126,6 +128,19 @@ export function createChat(deps: Deps) {
         send({ done: true, message });
         return;
       }
+      // A film asked of somebody with no video studio: one is put beside them and wired before the tools are chosen,
+      // so this same turn can make it, and the reply opens by saying so (`media/studio-on-ask.ts`).
+      const studio = studioFor(stage, roomId, text);
+      if (studio) {
+        await store.patchStage(studio.edit);
+        stage = await store.loadStage();
+        if (wiredCards(stage, roomId, 'videogen').length) {
+          kept.text = `${studio.added.line}\n\n`;
+          send({ token: kept.text });
+          roomFeed.tell({ roomId, turn, token: kept.text });
+        }
+      }
+      const opened = kept.text;
       // The names in the prompt are the narrowed list too: a person is never told about a tool they are not offered.
       const mine = deps.toolsFor(stage, roomId);
       let messages = await promptFor(stage, roomId, mine.map((tool) => tool.name));
@@ -222,6 +237,8 @@ export function createChat(deps: Deps) {
       }
       // A verdict the doc refused or does not hold yet is never kept in the words: the judge's own, or a colleague's
       // who relays what a consult brought back. The founder reads "[not written]" where "PIVOT REQUIRED 6/10" was.
+      // The studio's line stays at the head of the kept reply, whatever the model's own words were.
+      if (opened && !reply.text.startsWith(opened.trim())) reply = { ...reply, text: `${opened}${reply.text}` };
       const outcomes = [...new Set(stage.docs.flatMap((doc) => doc.rules?.outcomes ?? []))];
       const held = holdVerdict(reply.text, reply.tools, turnSources(messages), outcomes);
       if (held !== reply.text) reply = { ...reply, text: held };

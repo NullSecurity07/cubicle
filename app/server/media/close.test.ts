@@ -138,3 +138,16 @@ describe('whether the brief asked for footage', () => {
     expect(briefWants({ lines: [] }, 'A 20 second documentary clip about a pottery class, with real photographs.').footage).toBeUndefined();
   });
 });
+
+// Journey 19: the close was cut to "QuoteSnap turns a plumber's WhatsApp photos", said and shown.
+describe('a positioning close is never cut mid-thought', () => {
+  it('drops what hangs off the end and the small asides before it cuts a sentence', () => {
+    const pitch = "QuoteSnap turns a plumber's WhatsApp photos of a job into a written quote they can send the customer.";
+    expect(closeLineOf('a 20 s explainer', { lines: [], pitch })).toEqual({ line: "QuoteSnap turns a plumber's WhatsApp photos into a written quote", asked: false });
+  });
+
+  it('has no positioning close rather than half a sentence', () => {
+    const pitch = 'Our platform automatically reconciles every supplier invoice against purchase orders and delivery notes across warehouses overnight.';
+    expect(closeLineOf('a film', { lines: [], pitch })).toBeUndefined();
+  });
+});

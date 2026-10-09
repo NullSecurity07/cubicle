@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   afforded, aboutTheLine, criticiseVisuals, drawnAs, fillerShot, kindFor, lineUnder, photoOfTheLine, repairVisuals, sceneLine, stockQueries, thingsOf, topicOf,
   shareOut, shares, slotsFor, somebodyIn, unlettered, visualFrom, visualsOf, visualsPrompt, type Visual, shotKey,
-  closeHolds, settingOf, standInOf, worldOf, worldRule, worldScore, nounsOf, packOf, packedFor, liesDown,
+  closeHolds, settingOf, standInOf, worldOf, worldRule, worldScore, nounsOf, packOf, packedFor, liesDown, surfaceIn,
 } from './visuals.ts';
 import { productFacts } from './gather.ts';
 import { foreignIn } from './places.ts';
@@ -701,5 +701,24 @@ describe('a film about a product nobody can photograph draws its users and what 
   it('leaves a film with a real product alone', () => {
     expect(worldOf('20 s explainer about our meal-prep delivery', productFacts('ShiftMeals is a weekly meal-prep delivery for night-shift nurses. Five ready meals in a labelled box are delivered on Sunday.')).cast).toBeUndefined();
     expect(worldOf('a 20 s explainer about our app').cast).toBeUndefined();
+  });
+});
+
+describe('a screen or a page in a drawn picture (journey 19)', () => {
+  const bible = 'Clean digital photograph, natural daylight';
+  const phone: Visual = { at: 0, scene: 1, take: 0, line: 'QuoteSnap turns WhatsApp photos into a quote', subject: "a close-up of a smartphone in a plumber's hand showing a photo of a leaking pipe", kind: 'detail', room: 'foot' };
+
+  it('says the screen shows only a photo, after the lettering is scrubbed', () => {
+    const asked = drawnAs(phone, bible);
+    expect(asked).toContain('smartphone');
+    expect(asked).toContain('the screen shows only a photo, no text, no letters');
+    expect(drawnAs({ ...phone, plain: true }, bible)).toContain('one photo fills the whole screen edge to edge');
+  });
+
+  it('says a page shows only faint lines, and says nothing on a picture with neither', () => {
+    expect(drawnAs({ ...phone, subject: 'a close-up of a printed quote on a clipboard' }, bible)).toContain('the page shows only faint grey lines, no text, no letters');
+    expect(drawnAs({ ...phone, subject: 'a plumber at work beside a van' }, bible)).not.toContain('no text');
+    expect(surfaceIn('a laptop on a desk')).toBe('screen');
+    expect(surfaceIn('a copper pipe')).toBeNull();
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CLOSE_TAIL, MOST_TAIL, settleLength } from './length.ts';
+import { CLOSE_TAIL, MOST_TAIL, settleLength, VOICE_TAIL } from './length.ts';
 import type { Take } from './editor.ts';
 import type { Word } from './timings.ts';
 
@@ -33,5 +33,23 @@ describe('the length of a narrated film', () => {
     const takes = takesOf();
     settleLength(takes, [], 20);
     expect(takes.at(-1)!.to).toBeGreaterThan(19);
+  });
+});
+
+// Journey 18 and 19: the close line stopped mid-thought. A long close read past where its words were guessed to end
+// must never be cut: the film runs until the recording is over, and a breath after.
+describe('the close of a narrated film', () => {
+  it('covers the whole recording of a long close line, whatever the word times said', () => {
+    const takes = takesOf();
+    // The words were guessed to end at 14.65 s; the voice file of the long last line runs to 17.9 s.
+    const voiced = 17.9;
+    settleLength(takes, words, 15, voiced);
+    expect(takes.at(-1)!.to).toBeGreaterThanOrEqual(voiced + VOICE_TAIL);
+  });
+
+  it('leaves a close alone that already outlasts the recording', () => {
+    const takes = takesOf();
+    settleLength(takes, words, 15, lastWord - 0.5);
+    expect(takes.at(-1)!.to).toBeCloseTo(Math.min(Math.max(15, lastWord + CLOSE_TAIL), lastWord + MOST_TAIL), 3);
   });
 });

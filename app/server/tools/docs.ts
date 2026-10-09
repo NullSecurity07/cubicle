@@ -18,7 +18,8 @@ import { filled, guardWrite, sectionBody, standingVerdict, unmarked, verdictStat
 const [WIDTH, HEIGHT, GAP] = [340, 300, 40];
 
 // Where a doc made by a person lands: beside them, in the nearest place nothing else is standing.
-function besideRoom(stage: Stage, room: Box): { x: number; y: number } {
+// A card of another size (a studio put there for a film ask) is placed by the same rule.
+export function besideRoom(stage: Stage, room: Box, [WIDTH, HEIGHT]: [number, number] = [340, 300]): { x: number; y: number } {
   const boxes: Box[] = [...stage.rooms, ...stage.docs, ...(stage.cards ?? [])];
   const hits = (x: number, y: number) => boxes.some((one) => x < one.x + one.w + GAP && x + WIDTH + GAP > one.x && y < one.y + one.h + GAP && y + HEIGHT + GAP > one.y);
   const start = { x: room.x + (room.w || 380) + 80, y: room.y };

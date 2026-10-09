@@ -44,6 +44,15 @@ describe('command bar', () => {
     expect(first('add leads').action).toEqual({ do: 'add', kind: 'leads' });
   });
 
+  it('adds a studio named on its own, without the word add (journey 19)', () => {
+    expect(first('video studio').action).toEqual({ do: 'add', kind: 'videogen' });
+    expect(first('a video studio').action).toEqual({ do: 'add', kind: 'videogen' });
+    expect(first('image studio').action).toEqual({ do: 'add', kind: 'imagegen' });
+    expect(first('site studio').action).toEqual({ do: 'add', kind: 'site' });
+    // A bare card word that is not a studio still searches rather than adding a card.
+    expect(suggest('pitch', { cards: [] }).some((one) => one.action.do === 'add')).toBe(false);
+  });
+
   it('adds each of the newer cards by its own words, and never hires a person called "Survey"', () => {
     const want: [string, string][] = [
       ['add metrics', 'metrics'], ['add a runway card', 'runway'], ['add a pitch deck', 'deck'], ['new deck', 'deck'], ['add a site studio', 'site'], ['add a landing page', 'site'],

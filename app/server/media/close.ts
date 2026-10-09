@@ -39,11 +39,35 @@ export function ctaInMaterial(material: Pick<Material, 'lines'>): string | undef
 }
 
 // The line a film closes on when the founder named none: what the product says it is, cut to a headline.
+//
+// Journey 19 closed on "QuoteSnap turns a plumber's WhatsApp photos", said and shown: the pitch was eighteen words and
+// the headline cut stopped on the sixth, before saying what the photos are turned into. A close is the line a viewer
+// is left holding, so it is never cut mid-thought. A long sentence loses what hangs off its end ("they can send the
+// customer") and its small "of a job" asides first; if it still does not fit, it is cut only at a clause the writer
+// ended, and otherwise there is no positioning close and the film ends on its first headline.
+const HANGS_OFF = /\s+(?:that|which|who|they|so|so that|ready to|for you to|so you can|and then)\s.*$/i;
+const ASIDE = /\s+(?:of|for|from)\s+(?:an?|the|your|their|each|every)\s+[\p{L}-]+(?=\s)/giu;
+function wholeLine(sentence: string): string | undefined {
+  const said = tidy(sentence);
+  // One word more than a headline may have: the close is set large and alone, and a whole sentence of ten words
+  // ("QuoteSnap turns a plumber's WhatsApp photos into a written quote") is a close, where its first six are not.
+  const room = HEADING_WORDS + 3;
+  if (countWords(said) <= room) return said;
+  const short = said.replace(HANGS_OFF, '');
+  for (const one of [short, short.replace(ASIDE, ''), said.replace(ASIDE, '')]) {
+    const line = tidy(one);
+    if (countWords(line) <= room && countWords(line) >= 3 && content(line).length >= 3) return line;
+  }
+  // A headline the cutter made is kept only where the writer ended a clause; a cut in the middle of one is not a close.
+  const cut = headlineOf(said, HEADING_WORDS);
+  const rest = cut && said.startsWith(cut) ? said.slice(cut.length) : null;
+  return cut && rest !== null && /^\s*(?:[,;:\u2013\u2014-]|$)/.test(rest) ? cut : undefined;
+}
 export function positioningOf(material: Pick<Material, 'pitch'>): string | undefined {
   const pitch = material.pitch?.trim();
   if (!pitch) return undefined;
   const first = pitch.split(/(?<=[.!?])\s+/)[0] ?? pitch;
-  const line = countWords(first) <= HEADING_WORDS ? tidy(first) : headlineOf(first, HEADING_WORDS);
+  const line = wholeLine(first);
   return line && countWords(line) >= 2 ? line : undefined;
 }
 
