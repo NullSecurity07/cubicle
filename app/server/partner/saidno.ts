@@ -77,6 +77,9 @@ export function sameProposal(entry: Pick<SaidNoEntry, 'tool' | 'subject' | 'key'
   // referrals", and the partner said the new title "bypasses the duplicate block". A decision is the same decision when
   // it does the same thing: the same effect and most of the same words in its title, options and pick.
   if (DECIDES.has(proposal.tool) && DECIDES.has(entry.tool)) return sameDecision(entry, proposal);
+  // Journey 18: the standing no "discounts" let "20% discount for trial user conversion" through. A no said in chat
+  // stands against a decision, bet or task that does what it ruled out.
+  if (entry.tool === 'chat' && DECIDES.has(proposal.tool)) return againstNo(entry.subject, proposal.subject) || ruledEffect(entry.subject, proposal);
   return false;
 }
 
@@ -112,6 +115,13 @@ export function sameDecision(entry: Pick<Proposal, 'subject' | 'options' | 'pick
   const now = effectsOf(`${proposal.subject}\n${proposal.pick ?? ''}`);
   if (!was.size || was.size !== now.size || [...was].some((one) => !now.has(one))) return false;
   return shareOf(entry.subject, proposal.subject) >= DECISION_SHARE || shareOf(decisionText(entry), decisionText(proposal)) >= DECISION_SHARE;
+}
+// A standing no on a kind of move ("discounts", "free months") stands against any proposal of that kind.
+function ruledEffect(no: string, proposal: Pick<Proposal, 'subject' | 'pick'>): boolean {
+  const ruled = effectsOf(no);
+  if (!ruled.size) return false;
+  const doing = effectsOf(`${proposal.subject}\n${proposal.pick ?? ''}`);
+  return [...ruled].every((one) => doing.has(one));
 }
 
 const short = (text: string, most: number) => { const one = text.replace(/\s+/g, ' ').trim(); return one.length > most ? `${one.slice(0, most - 1)}…` : one; };
@@ -287,12 +297,12 @@ export function standingNosIn(text: string): { subject: string; reason?: string 
 const SAME_ACT: Record<string, string> = {
   contact: 'reach', contacting: 'reach', contacted: 'reach', outreach: 'reach', reach: 'reach', reaching: 'reach', email: 'reach', emailing: 'reach',
   message: 'reach', messaging: 'reach', ping: 'reach', dm: 'reach', call: 'call', calls: 'call', calling: 'call', meeting: 'call', meet: 'call',
-  discount: 'discount', discounts: 'discount', discounting: 'discount',
+  discount: 'discount', discounts: 'discount', discounting: 'discount', discounted: 'discount',
   refer: 'refer', refers: 'refer', referred: 'refer', referring: 'refer', referral: 'refer', referrals: 'refer', month: 'month', months: 'month', cut: 'cut', cutting: 'cut', lower: 'cut', lowering: 'cut',
 };
 const NOT_THE_ACT = new Set(['propose', 'suggest', 'task', 'tasks', 'week', 'today', 'again', 'move', 'moves', 'idea', 'thing', 'things']);
 const canon = (word: string) => SAME_ACT[word] ?? SAME_ACT[word.replace(/s$/, '')] ?? (word.length > 4 ? word.replace(/(?:ing|s)$/, '') : word);
-const actWords = (text: string) => new Set(subjectWords(text).filter((word) => !NOT_THE_ACT.has(word) && !/^\d/.test(word)).map(canon));
+const actWords = (text: string) => new Set(subjectWords(text.replace(/\d+(?:[.,]\d+)?\s*%\s*(?:off\b)?|\bpercent\s+off\b/gi, ' discount ')).filter((word) => !NOT_THE_ACT.has(word) && !/^\d/.test(word)).map(canon));
 const WITHOUT = /\b(?:without|instead of|rather than|not|no|never|avoid(?:ing)?|skip(?:ping)?|stop(?:ping)?)\b[^.,;]*/gi;
 export function againstNo(no: string, move: string): boolean {
   const ruled = actWords(no);

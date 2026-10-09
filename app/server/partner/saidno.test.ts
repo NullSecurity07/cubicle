@@ -219,4 +219,14 @@ describe('a decision said no to (journey 18)', () => {
     expect(sameProposal(declined, third)).toBe(true);
   });
 
+  it('holds a "20% discount" decision against the standing no on discounts, and keeps a decision that does without', () => {
+    const no = { id: 'n', tool: 'chat', subject: 'discounts', reason: 'it trains customers to wait', at: OCT_3, asked: 0 } as SaidNoEntry;
+    const discount = proposalOf('propose_decision', { title: '20% discount for trial user conversion', options: ['Offer 20% off the first month', 'Convert without a discount'], recommendation: 'Convert trial users without discounts' })!;
+    expect(sameProposal(no, discount)).toBe(true);
+    expect(checkAgainst([no], discount, OCT_3 + DAY).verdict).toBe('reask');
+    expect(sameProposal(no, proposalOf('propose_decision', { title: 'Give trial users 15% off the first month', options: ['Yes', 'No'] })!)).toBe(true);
+    expect(sameProposal(no, proposalOf('propose_decision', { title: 'Call the 22 trial users this week', options: ['Call all', 'Call five'] })!)).toBe(false);
+    const trials = { ...no, subject: 'count the trials as customers' };
+    expect(sameProposal(trials, discount)).toBe(false);
+  });
 });
