@@ -5,7 +5,7 @@ import {
 import type { Pace } from './templates/looks.ts';
 import type { Pack } from './templates/packs.ts';
 import { contradictions, factLine, factsIn, factSteps } from './against-brief.ts';
-import { claimsOf, figureSaid, fillerIn, flat, fromBrief, madeUpNames, preciseFigures, realLine, saysMostOf, unfill, ungrounded, unscripted, type Sources } from './grounding.ts';
+import { claimsOf, figureSaid, spellOut, fillerIn, flat, fromBrief, madeUpNames, preciseFigures, realLine, saysMostOf, unfill, ungrounded, unscripted, type Sources } from './grounding.ts';
 import { inStyle, offStyle, photographic } from './style.ts';
 import { closeScene, firstHeadline, namesTheBrief, type Close } from './close.ts';
 import { freshHeadlines, phraseFor, repeatsCaptions, type Phrases } from './headlines.ts';
@@ -14,6 +14,7 @@ import {
   kickerOf, listable, listy, NEEDS_TEXT, noFace, opensADoor, plainClose, shorten, stockHeading, subjectOf, trimTo, trimWhole, wholeBullet, worthAStat,
 } from './wording.ts';
 import { withoutFigures } from '../figures.ts';
+import { unaskedCounts } from '../tools/evidence.ts';
 
 // What a creator says to an audience on a platform, never a film's close anywhere else.
 const SIGN_OFF = /\b(?:follow (?:for more|us|me|along)|like and (?:share|subscribe)|smash (?:that|the) \w+|hit (?:the )?(?:like|follow|subscribe)|link in (?:the )?bio)\b/i;
@@ -335,6 +336,29 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
     }
   }
 
+  // 1a2. A count nothing read gives. Journey 18's film about a quote tool said and showed "9 parts in every kit": the
+  //     9 was the paying plumbers, and no kit was in the brief. The figure check lets small counts through, so a
+  //     count is held to the brief and the ask the way a team doc's are (`tools/evidence.ts`): the same number beside
+  //     the word for what it counts. One that is not loses its number, before anything is voiced or set.
+  if (want.sources) {
+    const read = [want.sources.read ?? want.sources.corpus, want.sources.brief].filter(Boolean);
+    let counted = false;
+    scenes = scenes.map((scene) => {
+      const say = uncounted(scene.say, read);
+      const text = uncounted(scene.text, read);
+      const bullets = scene.bullets?.map((one) => uncounted(one, read) ?? one);
+      let made: Scene = { ...scene, say, text, bullets };
+      // A figure set the size of the frame counts what the words under it count: "9" over "parts in every kit".
+      const figure = /^\s*(\d[\d,]*)\+?\s*$/.exec(scene.heading ?? '')?.[1];
+      if (figure && unaskedCounts(`${figure} ${withoutFigures(scene.text ?? scene.say ?? '', [figure], ' ')}`, read).length) {
+        made = recast({ ...made, heading: undefined }, 'statement') ?? { ...made, layout: made.layout === 'stat' ? 'statement' : made.layout, heading: undefined };
+      }
+      if (made.say !== scene.say || made.text !== scene.text || made.heading !== scene.heading || bullets?.some((one, at) => one !== scene.bullets?.[at])) counted = true;
+      return made;
+    });
+    if (counted) note('a count in the film is in neither your brief nor your ask, so it is said without the number');
+  }
+
   // 1b. The truth, before any of the shape is decided: a scene built on a claim nobody can point at is cut, and a scene
   //    that is only a little wrong is put right with the founder's own words. Nothing invented is dressed up.
   if (want.sources) {
@@ -477,7 +501,8 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
     let made = scene;
     if (made.layout === 'stat' && made.heading && !worthAStat(made.heading, `${made.text ?? ''} ${made.say ?? ''}`)) {
       note(`"${made.heading}" counts this product's own parts rather than anything the viewer gets, so it is said rather than set the size of the frame`);
-      const line = [made.heading, made.text].filter(Boolean).join(' ');
+      // The line under the figure often says it already: "9" over "9 parts in every kit" was set as "9 9 parts".
+      const line = made.text && hasFigure(made.text, made.heading) ? made.text : [made.heading, made.text].filter(Boolean).join(' ');
       made = recast({ ...made, text: line, heading: undefined }, 'statement')
         ?? { ...made, layout: 'statement', heading: undefined, text: headlineOf(line, TEXT_WORDS) || undefined };
     }
@@ -943,10 +968,41 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
   // 15. Nothing is said twice, once more: the close and the promise above may have put a line back.
   sayOnce();
 
+  // 16. A figure is set once. A stat scene shows its figure large and the line under it; a line that holds the same
+  //     figure again read "9 9 parts in every kit" (Journey 18), so the line under it loses it.
+  scenes = scenes.map((scene) => {
+    if (scene.layout !== 'stat' || !scene.heading?.trim() || !scene.text || !hasFigure(scene.text, scene.heading)) return scene;
+    const rest = withoutFigures(scene.text, [scene.heading.trim()], ' ').replace(/\s{2,}/g, ' ').replace(/^[\s,;:–—-]+/, '').trim();
+    return { ...scene, text: rest ? rest[0].toUpperCase() + rest.slice(1) : undefined };
+  });
+
   return { spec: { ...spec, scenes }, notes };
 }
 
 // Whether two spoken lines are the same line: each has nearly all of the other's words.
+// Whether a line already holds a figure: "9 parts" holds "9", "19 parts" does not.
+const hasFigure = (line: string, figure: string): boolean =>
+  new RegExp(`(?<![\\d.,])${figure.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\d]|[.,]\\d)`).test(line);
+
+// A line without the counts nothing read gives: "9 parts in every kit" is "Parts in every kit". Said in digits or in
+// words, the number goes and what it counted stays.
+function uncounted(line: string | undefined, read: string[]): string | undefined {
+  if (!line) return line;
+  let out = line;
+  for (const label of unaskedCounts(line, read)) {
+    const [number, next, ...more] = label.split(/\s+/);
+    // Read beside any word of what it counts: "9 paying plumbers already" counts paying plumbers, as the brief does.
+    if ([next, ...more].some((word) => word && !unaskedCounts(`${number} ${word}`, read).length)) continue;
+    const value = Number(number.replace(/[+,]/g, ''));
+    const forms = [number.replace(/[+]/g, '').replace(/,/g, ',?'), ...spellOut(value)].map((one) => one.replace(/-/g, '[- ]'));
+    const lead = new RegExp(`\\b(?:${forms.join('|')})\\+?\\s+(?=${(next ?? '').replace(/[^\\p{L}'-]/gu, '')})`, 'iu');
+    out = out.replace(lead, '');
+  }
+  if (out === line) return line;
+  out = out.replace(/\s{2,}/g, ' ').trim();
+  return /^\p{Ll}/u.test(out) && !/^\p{Ll}/u.test(line.trim()) ? out[0].toUpperCase() + out.slice(1) : out;
+}
+
 export const saidAgain = (one: string, other: string): boolean => echoes(one, other) >= 0.8 && echoes(other, one) >= 0.8;
 
 const LISTS = new Set<Layout>(['checklist', 'steps', 'bullets', 'compare', 'chart']);
