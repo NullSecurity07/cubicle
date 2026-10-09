@@ -95,7 +95,11 @@ export function groundedFor(visual: Visual, world?: World): Visual {
   const cast = castFor(visual, world);
   if (cast) {
     const where = world?.setting && !cast.includes(world.setting) ? `, ${world.setting}` : '';
-    return { ...visual, subject: onABareSurface(visual.subject ?? '') || !(visual.subject ?? '').trim() ? `${cast}${where}` : `${cast}, ${visual.subject}${where}` };
+    // The director's subject stays beside it only when it has a thing of the film's world in it: journey 20's
+    // booking film kept "a man standing at a window in a dim room" beside its cast, and drew the man and the room.
+    const words = new Set((world?.words ?? []).map(THING_STEM));
+    const ofTheWorld = thingsOf(visual.subject ?? '').some((word) => words.has(THING_STEM(word)));
+    return { ...visual, subject: onABareSurface(visual.subject ?? '') || !(visual.subject ?? '').trim() || !ofTheWorld ? `${cast}${where}` : `${cast}, ${visual.subject}${where}` };
   }
   // Drawn as one of the cast already: nothing more is put in front of it, least of all another person.
   if (world?.cast?.length) return visual;

@@ -204,6 +204,8 @@ export function planPrompt(understanding: Understanding, asked: Asked, material:
     `Write ${least} to ${most} beats. ${PURPOSE[understanding.purpose].shape}`,
     `All the "say" lines together must come to about ${budget} words — that is what makes the film ${understanding.seconds} seconds long, and it is a hard number. Count them.`,
     'Each beat says one thing. No beat says two things. Nothing is repeated in a later beat.',
+    // Journey 20 went back to the queue at the door after saying what the product is, and ended there.
+    'The beats run in one order: the problem first, then what the product does about it, then the close. Once the product is on screen the film never goes back to the problem, and the last beat is never the problem.',
     // A model handed a repository writes a film about the repository. What a stranger needs is the thing the
     // product is for, said as a whole thought — which is why the pitch goes above the material and not inside it.
     material.pitch ? `What this product is, in its own words. The whole film argues this, and everything else below is only there to keep it honest:\n${material.pitch}` : '',

@@ -435,7 +435,7 @@ export type World = {
 // phone and a document, so the film was a toy van, an empty window, a box of fittings and "a tool, on a linen
 // cloth": no plumber, no phone, no quote. Software is never in a picture. Its users are, and so is what they hold
 // before it (the phone with the photo on it) and what it hands them (the quote on paper).
-const KIND_WORDS = /\b(?:our|my|their|the|this|a|an)\s+(?:[\p{L}-]+\s+){0,2}?(tools?|apps?|software|services?|platforms?|bots?|assistants?|systems?|products?|solutions?|websites?|portals?)\b/iu;
+const KIND_WORDS = /\b(?:our|my|their|the|this|a|an)\s+(?:[\p{L}-]+\s+){0,4}?(tools?|apps?|software|services?|platforms?|bots?|assistants?|systems?|products?|solutions?|websites?|portals?)\b/iu;
 // What a product's input arrives on: a phone, by what the brief says it is sent as.
 const ON_A_PHONE = /\b(?:whats\s?app|sms|text messages?|texts|imessage|telegram|signal|phones?|mobiles?|smartphones?|voice notes?|photos?|pictures?|snaps?)\b/i;
 const PHOTOS = /\b(?:photos?|pictures?|snaps?|images?)\b/i;
@@ -464,22 +464,84 @@ function workOf(facts: string): string[] {
     .map((one) => one.trim().toLowerCase()).filter((one) => /^(?:an?|the)\s+[a-z]/.test(one) && one.split(/\s+/).length <= 4);
   return [...new Set(listed)];
 }
+// What the product does, by the word the brief sells it with: a booking tool, a delivery app, a quote tool. Each
+// kind has the pictures a stranger reads it by (`castOf`).
+const BOOKS = /\b(?:book(?:s|ed|ing|ings)?|reserv\w*|appointments?|schedul\w*)\b/i;
+const DELIVERS = /\b(?:deliver(?:s|ed|y|ies)?|parcels?|couriers?|dispatch\w*)\b/i;
+const QUOTES = /\b(?:quot(?:e|es|ing)|estimates?|invoices?)\b/i;
+// The place a tool is for, as the brief writes it before the kind: "a pop-up repair café booking tool" is for "a
+// pop-up repair café". Not a place when it is only the product's own words ("a booking tool", "our quote app").
+function placeOf(line: string): string | undefined {
+  const hit = KIND_WORDS.exec(line ?? '');
+  if (!hit) return undefined;
+  const words = hit[0].split(/\s+/).slice(1, -1).filter((word) => !BOOKS.test(word) && !DELIVERS.test(word) && !QUOTES.test(word)
+    && !/^(?:online|digital|simple|smart|free|new|small|own|ai|web|mobile)$/i.test(word));
+  const nouns = words.filter((word) => !/-/.test(word));
+  if (!nouns.length || !thingsOf(nouns.join(' ')).length) return undefined;
+  return `a ${words.join(' ').toLowerCase()}`;
+}
+// Who the product serves at the door, by who the brief says books or orders: "visitors book a repair slot", "lets a
+// visitor book a slot". The customer, where the user is who works there.
+const CUSTOMER = /\b(?:lets?\s+(?:an?\s+|the\s+)?)?(visitors?|customers?|clients?|patients?|guests?|neighbou?rs?|diners?|parents?|students?|members?|tenants?|owners?)\s+(?:can\s+)?(?:book|reserve|order|schedule|get|receive)\b/i;
+const customerOf = (facts: string): string | undefined => CUSTOMER.exec(facts)?.[1]?.toLowerCase().replace(/s$/, '');
+// What the user's hands are on, when the brief says they fix or make it: "volunteers fix toasters, bikes and clothes".
+// Said by somebody ("volunteers fix", "who repair"), so "repair cafés" is not a list of things mended.
+const MENDS = /\b(?:[a-z]+s|who|they|we|that)\s+(?:fix|repair|mend|service)\s+([a-z]+(?:,\s*[a-z]+)*(?:,?\s+and\s+[a-z]+)?)(?![\p{L}-])/iu;
+function mendedOf(facts: string): string[] {
+  const list = MENDS.exec(facts)?.[1];
+  if (!list) return [];
+  return list.split(/,|\band\b/).map((one) => one.trim().toLowerCase()).filter((one) => one && !NOT_CONCRETE.has(one) && !ABSTRACT.has(one) && !FILM_WORDS.has(one))
+    .map((one) => (/(?:ss|us)$/.test(one) || !/s$/.test(one) || ONLY_MANY.test(one) ? one : one.replace(/(?:ie)?s$/, (end) => (end === 'ies' ? 'y' : ''))));
+}
+// Things only ever written as many: "clothes" is never "a clothe".
+const ONLY_MANY = /^(?:clothes|trousers|jeans|shorts|glasses|scissors|tights|pyjamas|pajamas|headphones|earphones|shoes|boots)$/;
+const broken = (thing: string): string => (ONLY_MANY.test(thing) ? `torn ${thing}` : `a broken ${thing}`);
+// A phone a stranger holds, wordless: a picture model writes nonsense on any screen it is asked to fill.
+const BLANK_PHONE = 'a smartphone with a plain blank glowing screen';
 export function castOf(ask: string, facts: string): string[] {
   const said = facts ?? '';
-  if (!said.trim() || !(KIND_WORDS.test(ask ?? '') || KIND_WORDS.test(said.split(/\n|(?<=\.)\s/)[0] ?? ''))) return [];
+  const first = said.split(/\n|(?<=\.)\s/)[0] ?? '';
+  if (!said.trim() || !(KIND_WORDS.test(ask ?? '') || KIND_WORDS.test(first))) return [];
   const user = userOf(said);
   const out = outputOf(said);
   const work = workOf(said);
   const van = /\bvans?\b/i.test(said) ? ' beside a van' : '';
+  // What the product is sold as, read off the product's own line (and the ask's): a booking tool is cast as the
+  // place, the phone it is booked on, the person at the door and the booking itself; a delivery as the box and the
+  // door; a quote as the phone and the paper. A tool none of these fit is somebody using a phone where it is used.
+  const line = `${first} ${KIND_WORDS.exec(ask ?? '')?.[0] ?? ''}`;
+  const kind = BOOKS.test(line) ? 'booking' : DELIVERS.test(line) ? 'delivery' : QUOTES.test(line) ? 'quote' : undefined;
+  const place = placeOf(first) ?? placeOf(ask);
+  const at = place ? ` in ${place}` : '';
+  const hand = user ? ` in a ${user}'s hand` : ' in somebody\'s hand';
+  const mended = mendedOf(said);
   const cast: string[] = [];
-  if (user) cast.push(`a ${user} at work${van}, turned away from the camera`);
+  if (user) cast.push(`a ${user} at work${van || at}, turned away from the camera`);
+  if (kind === 'booking') {
+    cast.push(`a close-up of ${BLANK_PHONE}${hand}${at}`);
+    if (place && mended[0]) cast.push(`a workbench${at} with ${broken(mended[0])} on it, tools beside it`);
+    const customer = customerOf(said);
+    if (customer || place) cast.push(`a ${customer ?? 'neighbour'} at the door of ${place ?? 'the place'}${mended[0] ? `, carrying ${broken(mended[0])}` : ''}`);
+    // The booking itself, the way it arrives: a plain card, never a screen with a form on it.
+    cast.push('a close-up of a plain white card with nothing on it, held in a hand');
+    for (const thing of mended.slice(1, 3)) cast.push(`a close-up of ${broken(thing)}`);
+    return cast;
+  }
+  if (kind === 'delivery') {
+    cast.push(`a close-up of a sealed cardboard box${hand}`);
+    cast.push(`a ${customerOf(said) ?? 'neighbour'} at a front door receiving a cardboard box`);
+    return cast;
+  }
   // Close, so the thing is the picture: "a phone on a van dashboard" came back as an empty van with a phone in a corner.
   if (ON_A_PHONE.test(said)) cast.push(`a close-up of a smartphone in a${user ? ` ${user}'s` : ''} hand showing a photo of ${PHOTOS.test(said) && work[0] ? work[0] : 'a job'}`);
+  else if (kind === 'quote') cast.push(`a close-up of ${BLANK_PHONE}${hand}`);
   // Folded in an envelope: journey 19's quote sheets came back headed "EVINATE" and "Cebsis lafad antiaf Plumming",
   // and a page asked to face away from the camera was still drawn as a full form headed "Choctice". An envelope is
   // the quote on its way to the customer, and drawn plain white every time it was tried.
   if (out) cast.push(`a close-up of a printed ${out} folded inside a plain white envelope${user ? ` in a ${user}'s hand` : ''}`);
   for (const thing of work.slice(0, 3)) cast.push(`a close-up of ${thing}`);
+  // Software none of the kinds fit: somebody using a phone where it is used.
+  if (!cast.some((one) => /phone\b/.test(one))) cast.push(`a close-up of ${BLANK_PHONE}${hand}${at}`);
   return cast;
 }
 // The cast picture a shot is drawn as when its subject has none of the cast in it: the one its line names (the
@@ -496,8 +558,16 @@ export function castFor(visual: Pick<Visual, 'line' | 'about' | 'subject' | 'sce
   const line = `${visual.line ?? ''} ${visual.about ?? ''}`;
   const named = heads.findIndex((words) => words.some((word) => hasNoun(line, [word])));
   // What arrives on a phone is pictured on it first: "turns your WhatsApp photos into a written quote" is the photo.
-  const phone = PHOTOS.test(line) || ON_A_PHONE.test(line) ? cast.findIndex((one) => /phone\b/.test(one)) : -1;
-  const pick = phone >= 0 ? phone : named;
+  // So is a booking made: "visitors book a repair slot online" is the phone it is booked on.
+  const phone = PHOTOS.test(line) || ON_A_PHONE.test(line) || (BOOKS.test(line) || /\bonline\b/i.test(line))
+    ? cast.findIndex((one) => /phone\b/.test(one)) : -1;
+  // And what it hands back, a list or a confirmation, is the plain card.
+  // A line about the work is the bench, and one about the queue is the door: "Volunteers fix toasters" drew the
+  // volunteer again, and "people queue at the door" a man at a window.
+  const cue = (said: RegExp, drawn: RegExp) => (said.test(line) ? cast.findIndex((one) => drawn.test(one)) : -1);
+  const pick = [phone, cue(/\b(?:lists?|confirm\w*|tickets?|receipts?)\b/i, /plain white card/),
+    cue(/\b(?:fix\w*|repair(?:s|ed|ing)?|mend\w*|broken)\b(?!\s+(?:slots?|caf))/i, /\bworkbench\b/),
+    cue(/\b(?:doors?|queue\w*|arriv\w*|waits?|waiting)\b/i, /\bat (?:the|a) (?:front )?door\b/), named].find((one) => one >= 0) ?? -1;
   // Somebody only where the line names them: a film has one person in it.
   const round = cast.filter((one) => !/turned away/.test(one));
   return pick >= 0 ? cast[pick] : round.length ? round[(visual.scene ?? 0) % round.length] : cast[0];
