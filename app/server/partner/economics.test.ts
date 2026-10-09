@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { breakEvenFix, breakEvenLine, derivedRows, economicsBlock, economicsOf, figuresFix, saysGap, stateOf, wideGap, workingTools } from './economics.ts';
+import { breakEvenFix, breakEvenLine, derivedRows, economicsBlock, economicsOf, figuresFix, gapFix, gapLine, saysGap, stateOf, wideGap, workingTools } from './economics.ts';
 import { inputFixesIn } from './corrections.ts';
 
 // The Numbers of journey 13's Company brief, as the founder wrote them.
@@ -189,5 +189,34 @@ describe('one state of the numbers, from journeys 13 to 16', () => {
     // Not a correction: a goal, a what-if, a question.
     expect(inputFixesIn('Our goal is 30 paying by 2026-10-17. If 20 pay we are fine. Should we stop?', stateOf(monthly), 'd')).toEqual([]);
     expect(inputFixesIn('burn is not €1,900 but €2,100 a month', stateOf(monthly), 'd').map((one) => [one.field, one.value, one.period])).toEqual([['burn', 2100, 'month']]);
+  });
+});
+
+// Journey 19: 9 paying, 22 trials, break-even 38, and "closing just 16 of them will bridge the gap to break-even".
+describe('arithmetic on the gap to break-even, held to the state', () => {
+  const QUOTESNAP = '- Price: €29 a month per plumber\n- Trial users: 22\n- Paying plumbers: 9\n- Cash: €3,200\n- Burn: €1,100 a month\n- Plumbers contacted: 80';
+  const state = stateOf(QUOTESNAP);
+  const line = 'Break-even is 38 paying plumbers; 9 pay now, gap 29; the 22 trials cannot close it alone.';
+  it('reads the gap and the trials', () => {
+    expect(state.breakEven()).toBe(38);
+    expect(state.gap()).toBe(29);
+    expect(gapLine(state)).toBe(line);
+  });
+  it('puts the state\'s line in place of a sentence whose numbers contradict it, once', () => {
+    expect(gapFix('My call: keep going. With 22 trial users, closing just 16 of them will bridge the gap to break-even. Runway is 3.8 months.', state))
+      .toBe(`My call: keep going. ${line} Runway is 3.8 months.`);
+    expect(gapFix('Convert the 16 needed to reach break-even (38 paying plumbers total).', state)).toBe(line);
+    expect(gapFix('The 22 trial users provide the pipeline needed to reach 38. Closing 16 of them bridges the gap to break-even.', state)).toBe(line);
+    expect(breakEvenFix('Closing just 16 of them will bridge the gap to break-even.', state)).toBe(line);
+  });
+  it('leaves a sentence that agrees with the state, the working, and a sum on another price', () => {
+    for (const ok of [
+      'We need 29 more paying plumbers to reach break-even at 38.',
+      'Even if all 22 trials convert, we are still short of break-even.',
+      'Break-even: ceil(1100 / 29) = 38 paying plumbers (calc).',
+      'At €39 a month, break-even would be 29 paying plumbers.',
+      'Convert 5 trial users this week.',
+      'Sign 3 more plumbers this week as a step toward break-even.',
+    ]) expect(gapFix(ok, state)).toBe(ok);
   });
 });
