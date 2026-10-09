@@ -1,6 +1,6 @@
 import type { Stage } from '../../shared/model.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
-import { answerNos, asksSaidNo, chatNo, promptLine, proposalOf, recallNos, saidNoFor, standingNosIn, suggestionIn, type Proposal } from '../partner/saidno.ts';
+import { againstNo, answerNos, asksSaidNo, chatNo, promptLine, proposalOf, recallNos, saidNoFor, standingNosIn, suggestionIn, type Proposal } from '../partner/saidno.ts';
 import { now as clockNow } from '../clock.ts';
 import { withSystem, type Handler } from '../seams.ts';
 import { leadAddresses } from '../tools/outward.ts';
@@ -114,6 +114,11 @@ export default {
           }
           const words = last && !proposed.length ? suggestionIn(last.text) : '';
           if (words) proposed.push({ tool: 'chat', subject: words });
+          // Journey 20: "No paid ads, because …" also kept a no on the open "Referral discount" decision, and "No to that
+          // reply for Ines, because …" a no on the morning note's question. A no that names what it rules out is that
+          // standing no alone: it is a no to the last proposal only when that is what it names.
+          const named = standingNosIn(payload.query);
+          if (named.length) proposed.splice(0, proposed.length, ...proposed.filter((one) => named.some((no) => againstNo(no.subject, one.subject))));
           for (const one of proposed) { await book.record({ ...one, who: room.name, ...said }); wrote += 1; }
           // Nothing proposed to say no to, and a reason given: it is why the Don't just pressed was pressed. A message
           // that is a standing no of its own is not (journey 19: "Don't count the trials as customers." was kept as the
