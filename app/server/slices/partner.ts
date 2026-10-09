@@ -18,6 +18,7 @@ import { breakEvenFix, changedLine, economicsBlock, figuresFix, sameMetric, stat
 import { chaseLine, keptPromiseLine, promiseLine, promisesAttention, promisesBook, promisesIn } from '../partner/promises.ts';
 import { gatherSince, metricsOnDisk, sinceHeadline } from '../partner/since.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
+import { fixRows, movedLine } from '../partner/fixrows.ts';
 import { briefChangeLine, briefRows, MOST_CHANGES, rowChanges } from '../partner/briefrows.ts';
 import { createReviews, granted } from '../partner/review.ts';
 import { FAKE_REFRESH, holdStop, keepCall, loosens, readRefresh, refreshAsk, refreshDue, refreshOpening, refreshText, staleOf } from '../partner/refresh.ts';
@@ -562,8 +563,18 @@ export function createPartner(options: PartnerOptions = {}) {
       if (!fresh.length) { fixedNow.delete(roomId); return; }
       const held = await state.change((draft) => { draft.fixes = keepFixes(draft.fixes ?? [], fresh); return draft.call; });
       standing = null;
+      // Journey 21: the founder's correction goes on its brief row at once, so every colleague works from it too.
+      let briefLine = '';
+      const before = await deps.store.readDoc(doc.id).catch(() => '');
+      const put = fixRows(before, fresh, economics, localDay(now()));
+      if (put.moved.length && wired(stage, roomId, [doc.id]).length) {
+        await deps.store.writeDoc(doc.id, put.text);
+        await noteBrief(put.text, 'you, in chat').catch(() => {});
+        changed(doc.id);
+        briefLine = ` ${movedLine(put.moved, doc.title)}`;
+      } else if (put.moved.length) briefLine = ` Not in the "${doc.title}": it is not wired to me, so its rows still say the old figures.`;
       const stale = held?.decision ? ` My verdict of ${held.day} was made on the numbers before, so it is stale: ${asksVerdict(query) || pushesBack(query) ? 'it is made again here' : 'I make it again on the next look'}.` : '';
-      fixedNow.set(roomId, { query, line: `${fixesLine(fresh, economics.currency ?? '', Object.fromEntries(Object.entries(economics.inputs).map(([field, one]) => [field, one!.label]))).replace(/\*$/, '')}${stale}*` });
+      fixedNow.set(roomId, { query, line: `${fixesLine(fresh, economics.currency ?? '', Object.fromEntries(Object.entries(economics.inputs).map(([field, one]) => [field, one!.label]))).replace(/\*$/, '')}${briefLine}${stale}*` });
     }
     const beforeTurn: Handler<'turn:before'> = async (payload, next) => {
       const system = payload.messages[0];

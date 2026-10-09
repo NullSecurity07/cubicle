@@ -1125,7 +1125,9 @@ describe('the partner slice: one picture of the numbers (journey 16)', () => {
     expect(prompt).toContain('- Paying subscribers: 11 (founder, 2026-10-06: "No, 14 subscribers is not 14 paying, 11 pay")');
     expect(prompt).toContain('That verdict is stale: made on numbers that changed since (price €59 a month → €59 a week');
     const reply = (await deps.seams.run('turn:reply', { roomId: 'p1', query, reply: turn('You are right, break-even is 8.') })).reply.text;
-    expect(reply).toContain('*Taken as the numbers: paying subscribers 11; price a week (your words). Break-even, runway and the verdict are worked from these now. My verdict of 2026-10-06 was made on the numbers before, so it is stale: I make it again on the next look.*');
+    expect(reply).toContain('*Taken as the numbers: paying subscribers 11; price a week (your words). Break-even, runway and the verdict are worked from these now. Company brief: Paying subscribers 14 → 11; Price a month → a week. My verdict of 2026-10-06 was made on the numbers before, so it is stale: I make it again on the next look.*');
+    // Journey 21: the correction is on the brief's rows at once, for every colleague to work from.
+    expect(await deps.store.readDoc(company.id)).toContain('- Price: €59 a week per subscriber (founder, 2026-10-06)\n- Subscribers: 14\n- Paying subscribers: 11 (founder, 2026-10-06)');
     // Next morning: the stale call is refreshed, quoting the changed inputs, and may not reach stop.
     clock = new Date('2026-10-07T06:30').getTime();
     await part.tick!();

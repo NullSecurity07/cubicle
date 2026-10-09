@@ -191,7 +191,9 @@ export function stateOf(numbers: string, given: { fixes?: InputFix[]; readings?:
   // The founder's corrections, latest last: each stands unless the brief changed that figure since.
   for (const fix of given.fixes ?? []) {
     const had = inputs[fix.field];
-    if (fix.over && had && ((fix.over.value !== undefined && fix.over.value !== had.value) || (fix.over.period !== undefined && had.period !== undefined && fix.over.period !== had.period))) continue;
+    // A brief row the correction itself was written to (journey 21) still carries the founder's words.
+    const wrote = had && (fix.value === undefined || fix.value === had.value) && (!fix.period || (had.period ?? 'month') === fix.period);
+    if (!wrote && fix.over && had && ((fix.over.value !== undefined && fix.over.value !== had.value) || (fix.over.period !== undefined && had.period !== undefined && fix.over.period !== had.period))) continue;
     const base = had ?? { value: fix.value ?? NaN, label: LABELS[fix.field], source: 'founder' as const, said: '' };
     const next: Input = { ...base, ...(fix.value !== undefined ? { value: fix.value } : {}), ...(fix.period ? { period: fix.period } : {}), source: 'founder', said: fix.said, day: fix.day };
     if (Number.isFinite(next.value)) inputs[fix.field] = next;
