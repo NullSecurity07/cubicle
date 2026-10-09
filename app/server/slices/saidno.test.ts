@@ -1,4 +1,4 @@
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -128,6 +128,35 @@ describe('the founder asks what they said no to', () => {
     const out = await deps.seams.run('turn:reply', { roomId, query, reply });
     expect(out.reply.text).toMatch(/^What you said no to in the last 30 days, by the record \(3\):/);
     for (const one of ['discounts', 'count the trials as customers', 'promise a feature we have not shipped']) expect(out.reply.text).toContain(one);
+    await part.close?.();
+  });
+});
+
+// Journey 21: "Everything you said no to, with your reasons: None on record" with five nos in said-no.json.
+describe('a recall that asks for the nos among other things', () => {
+  it('reads said-no.json and answers with every no, and the reply\'s "None on record" goes', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'saidno-slice-'));
+    const at = Date.now() - 3 * 86_400_000;
+    const entries = [
+      { id: 'n1', tool: 'chat', subject: 'that reply for Ines', reason: 'it promises a refund policy', at, asked: 0 },
+      { id: 'n2', tool: 'chat', subject: 'state a policy we have not decided', reason: 'we have none yet', at: at + 1, asked: 0 },
+      { id: 'n3', tool: 'draft_email', subject: 'Re: FixSlot for Repair Café Kreuzberg', at: at + 2, asked: 0 },
+      { id: 'n4', tool: 'propose_decision', subject: 'Free months for new cafés', options: ['3 months free', 'no'], reason: 'we cannot carry it', at: at + 3, asked: 0 },
+      { id: 'n5', tool: 'chat', subject: 'paid ads', reason: 'they did not pay back', at: at + 4, asked: 0 },
+    ];
+    await writeFile(join(workspace, 'said-no.json'), JSON.stringify({ entries }));
+    const deps = stubDeps(workspace, ROOT);
+    const part = (await saidno.install(deps)) as Installed;
+    const roomId = (await deps.store.loadStage()).rooms[0].id;
+    const query = 'Exact recall: what was your day-one call? What kill line did you set then? What is today\'s number against it? And everything I said no to, with my reasons.';
+    await deps.seams.run('turn:before', { roomId, source: 'chat', query, messages: [] });
+    const reply = { text: 'Day one: keep going.\nEverything you said no to, with your reasons: None on record.', tools: [], provider: 'fake', model: 'fake', usage: { inputTokens: 0, outputTokens: 0 }, stopped: false } as never;
+    const out = await deps.seams.run('turn:reply', { roomId, query, reply });
+    expect(out.reply.text).not.toContain('None on record');
+    expect(out.reply.text).toContain('Day one: keep going.');
+    expect(out.reply.text).toContain('by the record (5):');
+    for (const one of entries) expect(out.reply.text).toContain(one.subject);
+    expect(out.reply.text).toContain('they did not pay back');
     await part.close?.();
   });
 });

@@ -207,7 +207,7 @@ export const promptLine = (entries: SaidNoEntry[]) => (entries.length
 // recalled two of five: the discounts and the free months, without the no on Tom's reply, "promise a feature we have
 // not shipped" or "count the trials as customers". Every no of the last thirty days, newest first.
 export const RECALL_DAYS = 30;
-const ASKS_NOS = /\b(?:what|which)\b[^?.!\n]*\b(?:have|did|had)\s+i\s+(?:said|say|told you|answered)\s+no\b|\b(?:what|which)\b[^?.!\n]*\bi(?:'ve|\s+have|\s+had)?\s+(?:said no|declined|turned down|rejected|refused|ruled out|vetoed)\b|\b(?:list|show|recall|remind me of|tell me)\b[^?.!\n]*\b(?:my|the)\s+(?:nos|no's|noes|vetoes|declines)\b|\bsaid[- ]no list\b/i;
+const ASKS_NOS = /\b(?:what|which)\b[^?.!\n]*\b(?:have|did|had)\s+i\s+(?:said|say|told you|answered)\s+no\b|\b(?:what|which)\b[^?.!\n]*\bi(?:'ve|\s+have|\s+had)?\s+(?:said no|declined|turned down|rejected|refused|ruled out|vetoed)\b|\b(?:list|show|recall|remind me of|tell me)\b[^?.!\n]*\b(?:my|the)\s+(?:nos|no's|noes|vetoes|declines)\b|\bsaid[- ]no list\b|\b(?:everything|all|anything|whatever|each thing|things)\b(?:\s+(?:that|which))?\s+i(?:'ve|\s+have|\s+had)?\s+(?:ever\s+|already\s+)?(?:said no|declined|turned down|rejected|refused|ruled out|vetoed)\b/i;
 export const asksSaidNo = (query: string) => ASKS_NOS.test(query);
 export function recallNos(entries: SaidNoEntry[], now: number): string {
   const since = now - RECALL_DAYS * DAY;
@@ -220,7 +220,10 @@ export function recallNos(entries: SaidNoEntry[], now: number): string {
 export function answerNos(reply: string, query: string, recall: string): string {
   const asks = query.split(/(?<=[?.!])\s+/).filter((one) => /\?\s*$/.test(one) || /^\s*(?:list|show|tell|remind|recall)\b/i.test(one));
   if (asks.length <= 1 && !/\b(?:and|also|plus)\s+(?:what|which|how|when|where|who|why|is|are|was|did|do|tell|remind|give)\b/i.test(query)) return recall;
-  return `${reply.replace(/\s+$/, '')}\n\n${recall}`;
+  // Journey 21: "Everything you said no to: None on record" stood above the record. What the reply said of the nos
+  // goes; the record says it.
+  const kept = reply.split('\n').filter((line) => !/\b(?:said no|no to|turned down|declined|ruled out|vetoe?d?s?|none on record|nothing on record)\b/i.test(line)).join('\n').replace(/\n{3,}/g, '\n\n');
+  return `${kept.replace(/\s+$/, '')}\n\n${recall}`;
 }
 
 // The check itself, on a list: the latest no inside the window that matches. Its first match is asked again; after
@@ -260,8 +263,10 @@ export function createSaidNo(workspace: string, now: () => number = clockNow) {
     // A no to something already said no to inside the window is the same no, said again: it keeps its count of
     // asks, so a re-ask turned down is not asked a third time.
     record(proposal: Proposal & { reason?: string }): Promise<SaidNoEntry> {
-      const at = now();
       return change((entries) => {
+        // Two nos in the same millisecond still read newest first.
+        let at = now();
+        while (entries.some((one) => one.at === at)) at += 1;
         const reason = proposal.reason?.trim() ? short(proposal.reason, 300) : undefined;
         const held = entries.find((one) => one.at >= at - SAID_NO_WINDOW_DAYS * DAY && sameProposal(one, proposal));
         if (held) {

@@ -19,6 +19,7 @@ import { chaseLine, keptPromiseLine, promiseLine, promisesAttention, promisesBoo
 import { gatherSince, metricsOnDisk, sinceHeadline } from '../partner/since.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import { fixRows, movedLine } from '../partner/fixrows.ts';
+import { asksRecall, callRecord, holdFirstLine } from '../partner/calllog.ts';
 import { briefChangeLine, briefRows, MOST_CHANGES, rowChanges } from '../partner/briefrows.ts';
 import { createReviews, granted } from '../partner/review.ts';
 import { FAKE_REFRESH, holdStop, keepCall, loosens, readRefresh, refreshAsk, refreshDue, refreshOpening, refreshText, staleOf } from '../partner/refresh.ts';
@@ -592,6 +593,8 @@ export function createPartner(options: PartnerOptions = {}) {
         await takeFixes(stage, payload.roomId, payload.query).catch((error: Error) => console.error(`partner numbers: ${error.message}`));
         const block = await standingFor(stage, payload.roomId).catch((error: Error) => { console.error(`partner standing facts: ${error.message}`); return ''; });
         out = withSystem(out, block);
+        // Asked what was called or set before: the record of calls, never the chat's memory of them (journey 21).
+        if (asksRecall(payload.query)) out = withSystem(out, callRecord((await state.read()).callLog ?? []));
         // The state's own figures, a source for what the partner says (journey 19's false footers).
         const figures = stateFigures(await stateNow(stage).catch(() => null));
         if (figures) out = withSystem(out, figures);
@@ -740,6 +743,8 @@ export function createPartner(options: PartnerOptions = {}) {
         if (doc) text = holdDocClaims(text, payload.reply.tools, { title: doc.title, wrote: wroteBrief });
         const numbersNow = await stateFrom(stage, company);
         text = breakEvenFix(unitsFix(runwayFix(figuresFix(text, numbersNow.economics()), numbers), fixes), numbersNow);
+        // A kill line recalled as day one's is day one's own, from the record (journey 21).
+        if (asksRecall(payload.query)) text = holdFirstLine(text, (await state.read()).callLog ?? []);
         // The inputs the founder put right this turn, said under the reply.
         const fixed = fixedNow.get(me.id);
         if (fixed?.query === payload.query) { receipt = receipt ? `${receipt}\n\n${fixed.line}` : fixed.line; fixedNow.delete(me.id); }
