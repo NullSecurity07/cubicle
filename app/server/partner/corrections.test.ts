@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { correctionLines, correctionsIn, inUnits, keepCorrections, saysWrong, unitFix, unitsFix } from './corrections.ts';
-import { economicsOf } from './economics.ts';
+import { correctionLines, correctionsIn, inputFixesIn, inUnits, keepCorrections, saysWrong, unitFix, unitsFix } from './corrections.ts';
+import { economicsOf, stateOf } from './economics.ts';
+import { companyFacts, keepFacts } from './keep.ts';
 
 // Journey 15, day 1: the founder's pushback on the verdict, word for word.
 export const PUSHBACK = "I don't buy it. You gave me no kill signal at all, and break-even is 50 print jobs a month, not 50 paying hosts: one host is not €12 a month of revenue. "
@@ -44,5 +45,37 @@ describe('a founder correction', () => {
     const old = { unit: 'paying hosts', working: [{ line: 'Break-even: ceil(600 / 12) = 50 paying hosts to cover the burn' }] };
     expect(inUnits(old, fixes)).toEqual({ unit: 'print jobs', working: [{ line: 'Break-even: ceil(600 / 12) = 50 print jobs to cover the burn' }] });
     expect(inUnits(economicsOf(PRINTNEAR), fixes)?.unit).toBe('print jobs a month');
+  });
+});
+
+// Journey 20: "6 cafés pay €39 a month" went into the brief's Cash row as "€39 a month".
+describe('a correction lands on the row its unit names (journey 20)', () => {
+  const NUMBERS = '- Price: €4 per booking\n- Bookings last month: 310\n- Paying cafés: 5 at €35 a month\n- Cash: €5,400\n- Burn: €1,300 a month\n- Cafés contacted: 40';
+  const SAID = 'Correction: bookings last month were 280, not 310. And you left out the café subscriptions: 6 cafés pay €39 a month too.';
+  it('reads paying cafés 6 and €39 a month each, bookings 280, and never cash', () => {
+    const fixes = inputFixesIn(SAID, stateOf(NUMBERS), '2026-10-09');
+    expect(fixes.map(({ field, value, period }) => ({ field, value, ...(period ? { period } : {}) }))).toEqual([
+      { field: 'volume', value: 280 }, { field: 'paying', value: 6 }, { field: 'plan', value: 39, period: 'month' },
+    ]);
+    const state = stateOf(NUMBERS, { fixes });
+    expect(state.inputs.cash?.value).toBe(5400);
+    expect(state.mrr()).toBe(280 * 4 + 6 * 39);
+  });
+
+  it('writes the brief on the cafés row, leaves Cash as it is, and asks back what no row counts', () => {
+    const brief = `# Company brief\n\n## Numbers\n\n${NUMBERS}\n\n## Decisions\n`;
+    const kept = keepFacts(brief, companyFacts(SAID), '2026-10-09');
+    expect(kept.text).toContain('- Paying cafés: 6 at €39 a month (founder, 2026-10-09)');
+    expect(kept.text).toContain('- Cash: €5,400\n');
+    expect(kept.text).not.toMatch(/Cash: €39/);
+    const vans = keepFacts(brief, companyFacts('3 vans pay €20 a month.'), '2026-10-09');
+    expect(vans.text).toBe(brief);
+    expect(vans.asks?.[0]).toMatch(/no row of Numbers counts vans, so it is not written/);
+    expect(inputFixesIn('3 vans pay €20 a month.', stateOf(NUMBERS), '2026-10-09')).toEqual([]);
+  });
+
+  it('"left" before a figure is cash only when it says what is left', () => {
+    expect(companyFacts('We have €5,000 left in the bank.').numbers).toEqual([{ label: 'Cash', value: '€5,000' }]);
+    expect(companyFacts('You left out that we charge €39 a month.').numbers.find((one) => one.label === 'Cash')).toBeUndefined();
   });
 });

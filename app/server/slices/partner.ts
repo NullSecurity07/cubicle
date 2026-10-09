@@ -673,7 +673,7 @@ export function createPartner(options: PartnerOptions = {}) {
       try {
         const doc = await companyNow(stage);
         let company = doc ? await deps.store.readDoc(doc.id) : '';
-        if (doc && (facts.numbers.length || facts.idea || facts.customer || facts.denied?.length)) {
+        if (doc && (facts.numbers.length || facts.idea || facts.customer || facts.denied?.length || facts.priced?.length)) {
           const kept = keepFacts(company, facts, localDay(now()));
           let line = '';
           if (kept.kept.length && wired(stage, me.id, [doc.id]).length) {
@@ -684,6 +684,8 @@ export function createPartner(options: PartnerOptions = {}) {
             company = kept.text;
             line = keptLine(kept.kept);
           } else if (kept.kept.length) line = `*Not kept: the "${doc.title}" document is not wired to ${me.name}, so ${kept.kept.join(', ')} are not in it. Wire it to ${me.name} to keep it current.*`;
+          // Said but on no row: asked back, never written (journey 20).
+          if (kept.asks?.length) line = [line, ...kept.asks.map((one) => `*Not written: ${one}*`)].filter(Boolean).join('\n\n');
           if (line) receipt = line;
         }
         const numbers = `${sectionText(company, 'Numbers')}\n${payload.query}`;
