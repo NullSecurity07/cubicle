@@ -3,7 +3,8 @@ import { join } from 'node:path';
 import type { MorningNote, PlanProposal } from '../../shared/partner.ts';
 import type { KillSignal, PartnerCall } from './call.ts';
 import type { Correction } from './corrections.ts';
-import type { InputFix, Inputs, Snapshot } from './economics.ts';
+import type { InputFix, Inputs, LastGood, Snapshot } from './economics.ts';
+import type { BriefChange, BriefRows } from './briefrows.ts';
 import type { Crossing } from './refresh.ts';
 import { writeAtomic } from '../fsx.ts';
 import { readBook } from '../rescue.ts';
@@ -54,6 +55,11 @@ export type PartnerState = {
   corrections?: Correction[];
   // The founder's corrections of the numbers' inputs ("11 pay", "€59 is per week"), latest of each last (corrections.ts).
   fixes?: InputFix[];
+  // Journey 21: the last figure the brief gave for each money row, read in its place while the row is gone.
+  lastGood?: LastGood;
+  // The brief's Numbers rows as last seen, and each change to them since with who made it, for the morning note.
+  briefRows?: BriefRows;
+  briefLog?: BriefChange[];
 };
 
 export function partnerState(workspace: string) {

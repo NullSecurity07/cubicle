@@ -1274,3 +1274,23 @@ describe('the partner slice: the founder\'s kill line is theirs', () => {
     await part.close!();
   });
 });
+
+// Journey 21: Maya rewrote the brief's Burn row and the morning note said nothing of it.
+describe('the partner slice: a change to the brief\'s Numbers', () => {
+  it('is said in the morning note with who made it, and a row gone is read from the last figure on record', async () => {
+    const answers: [number, unknown][] = [];
+    const { deps, part } = await installed({ json: (_res, status, body) => { answers.push([status, body]); } }, { now: () => NINE, ask: async () => SHAPED });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true }), room('maya', 'Maya')]);
+    const id = companyDocOf(await deps.store.loadStage())!.id;
+    const brief = (burn: string) => `# Company brief\n\n## Numbers\n\n- Price: €29 a month\n- Paying users: 9\n- Cash: €3,200\n- Burn: ${burn}\n`;
+    await deps.store.replaceDoc(id, brief('€1,100 a month'));
+    await part.route!({ method: 'POST' } as never, {} as never, '/api/partner/morning');
+    await deps.store.replaceDoc(id, brief('-€54 a month (cash-positive), 1,100 − 9 × 29 = −54 (calc)'));
+    await deps.seams.run('tool:after', { roomId: 'maya', event: { id: 'e', name: 'replace_section', args: {}, ok: true, effect: { kind: 'doc-changed', id } } });
+    await part.route!({ method: 'POST' } as never, {} as never, '/api/partner/morning');
+    const note = answers.at(-1)?.[1] as { since: string[] };
+    expect(note.since).toContain('Company brief: Burn €1,100 a month → -€54 a month (cash-positive), 1,100 − 9 × 29 = −54 (calc) (by Maya).');
+    expect(note.since).toContain('The Company brief has no Burn row it can read now, so the last figure on record is used: Burn €1,100 a month. Put the row back in the brief.');
+    await part.close!();
+  });
+});
