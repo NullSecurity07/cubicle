@@ -10,6 +10,7 @@ import { createSeams } from '../seams.ts';
 import { createStore } from '../store.ts';
 import type { Tool, ToolContext } from '../tools/registry.ts';
 import deck, { DECK_TOOLS, gatherDeck, metricsOf } from './deck.ts';
+import { tractionLines, type Material } from '../deck/critic.ts';
 
 // The slice in fake mode on a throwaway workspace: a real store, a Deck card wired to Maya, the brand doc wired to it.
 async function setup() {
@@ -67,6 +68,29 @@ describe('the Deck card', { timeout: 60_000 }, () => {
     await mkdir(join(workspace, 'metrics'), { recursive: true });
     await writeFile(join(workspace, 'metrics', 'metrics-1.json'), JSON.stringify({ block: 'MRR 12,400 (Sep 24)' }));
     expect(await metricsOf(workspace, stage, 'deck-1')).toEqual({ name: 'Metrics card', text: 'MRR 12,400 (Sep 24)' });
+  });
+
+  // Journey 18: the card's sidecar holds no block, and slide 5 printed its raw json as a bullet.
+  it('reads a Metrics card with no block as rows (label, latest value, unit, day, source), never json', async () => {
+    const { part, store, workspace } = await setup();
+    closing = part.close;
+    const stage = await store.loadStage();
+    stage.cards!.push({ id: 'metrics-1', kind: 'metrics' } as never);
+    stage.wires.push({ id: 'm', from: 'metrics-1', fromHandle: 'r', to: 'deck-1', toHandle: 'l' });
+    await mkdir(join(workspace, 'metrics'), { recursive: true });
+    await writeFile(join(workspace, 'metrics', 'metrics-1.json'), JSON.stringify({ metrics: [
+      { key: 'paying-plumbers', label: 'Paying plumbers', better: 'up', northStar: true, points: [{ at: '2026-10-09', value: 9, from: 'founder' }, { at: '2026-10-11', value: 14, from: 'founder' }] },
+      { key: 'mrr', label: 'MRR', unit: '€', better: 'up', points: [{ at: '2026-10-11', value: 466.9, from: 'Otto' }] },
+      { key: 'empty', label: 'Churned', better: 'down', points: [] },
+    ], updatedAt: 1 }));
+    const metrics = await metricsOf(workspace, stage, 'deck-1');
+    expect(metrics).toEqual({ name: 'Metrics card', text: '- Paying plumbers: 14 on 2026-10-11 (from founder)\n- MRR: €466.9 on 2026-10-11 (from Otto)' });
+    const material = { brief: '', sources: [], metrics } as unknown as Material;
+    expect(tractionLines(material)).toEqual(['Paying plumbers: 14 on 2026-10-11 (from founder)', 'MRR: €466.9 on 2026-10-11 (from Otto)']);
+    // A shape it does not know gives no rows, and a json line from any source never reaches a slide.
+    await writeFile(join(workspace, 'metrics', 'metrics-1.json'), JSON.stringify({ rows: [{ n: 3 }] }));
+    expect(await metricsOf(workspace, stage, 'deck-1')).toBeUndefined();
+    expect(tractionLines({ ...material, metrics: { name: 'Metrics card', text: '{"metrics":[{"key":"a","points":[1]}]}' } })).toEqual([]);
   });
 
   // Journey 13: no Metrics card wired, the Company brief holding Numbers, and the traction slide said "No numbers yet."
