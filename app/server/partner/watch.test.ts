@@ -335,7 +335,7 @@ describe('the partner watch', () => {
     expect(waiting[0].why).toBe('budget used today: 3 of 3 unasked turns');
     // The turns are the shared budget's, each under the watch's reason, as Health's "Unasked work today" row says them.
     expect(unasked.left()).toBe(9);
-    expect(unaskedRow({ cap: unasked.cap, used: unasked.used() }).detail).toBe('3 of 12 used: watch: kill:signups, watch: promise:promise-a, watch: page:w1');
+    expect(unaskedRow({ cap: unasked.cap, used: unasked.used() }).detail).toBe('3 of 12 used: watch: kill:signups, watch: promise:promise-a, watch: page:w1. The watch\'s own 3 are used: a lead reply or a trend waits for tomorrow, and a crossed kill line still comes to Needs you in plain words');
     // A restart keeps the count: the shared book is on disk.
     await unasked.settled();
     const again = sharedBudget(workspace, () => NOON);
@@ -350,7 +350,8 @@ describe('the partner watch', () => {
   it('takes whatever budget it is handed, and a said-no check may hold a proposal back', async () => {
     const refusing: Budget = { take: () => ({ ok: false, why: 'unasked budget used today' }) };
     const { watch, world, writeMetrics, asked } = await rig({ budget: refusing });
-    world.metrics = [signups(['2026-09-30', 6], ['2026-10-06', 4])];
+    // Trending to the line (6 to 5.4 over "below 5"): held for the budget. A crossing never is (below).
+    world.metrics = [signups(['2026-09-30', 6], ['2026-10-06', 5.4])];
     await writeMetrics();
     expect((await watch.look()).waiting).toEqual([expect.objectContaining({ why: 'unasked budget used today' })]);
     expect(asked).toHaveLength(0);
@@ -361,6 +362,23 @@ describe('the partner watch', () => {
     await held.watch.look();
     expect(vetted).toHaveLength(1);
     expect(await held.watch.rows()).toHaveLength(0);
+  });
+
+  it('a crossed kill line is raised with the budget spent, in the state\'s own words and with no model turn (journey 20)', async () => {
+    const { watch, world, writeMetrics, asked, unasked } = await rig({ cap: 1 });
+    expect(unasked.take('verdict refresh').ok).toBe(true);
+    world.metrics = [signups(['2026-09-30', 6], ['2026-10-06', 4])];
+    await writeMetrics();
+    const { made, waiting } = await watch.look();
+    expect(waiting).toEqual([]);
+    expect(asked).toHaveLength(0);
+    expect(made).toHaveLength(1);
+    expect(made[0]).toMatchObject({ why: 'Signups crossed the kill line', draft: { kind: 'decision', title: 'Signups crossed the kill line: keep going, change course or stop?' } });
+    expect(made[0].number).toContain('Signups: 4 on 2026-10-06, from 6 on 2026-09-30; the kill line is 5');
+    expect(unasked.used()).toHaveLength(1);
+    // Raised once: the next look does not raise it again.
+    expect((await watch.look()).made).toHaveLength(0);
+    expect(await watch.rows()).toHaveLength(1);
   });
 
   it('never goes past the day\'s shared budget, and a turn that said nothing goes back to it', async () => {
@@ -377,7 +395,7 @@ describe('the partner watch', () => {
     // With the shared day used up by other work, the watch waits with the shared budget's words.
     const busy = await rig({ cap: 1 });
     expect(busy.unasked.take('morning digest').ok).toBe(true);
-    busy.world.metrics = world.metrics;
+    busy.world.metrics = [signups(['2026-09-30', 6], ['2026-10-06', 5.4])];
     await busy.writeMetrics();
     expect((await busy.watch.look()).waiting).toEqual([expect.objectContaining({ why: 'budget used today: 1 of 1 unasked turns' })]);
     expect(busy.asked).toHaveLength(0);
