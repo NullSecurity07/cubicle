@@ -289,10 +289,11 @@ describe('a partner\'s turn', () => {
 });
 
 describe('a turn when models fail', () => {
-  async function turnChat(clients: ModelClient[], roomId = 'build', text = 'Critique the idea.', partner = false) {
+  async function turnChat(clients: ModelClient[], roomId = 'build', text = 'Critique the idea.', partner = false, model?: string) {
     const dir = await mkdtemp(join(tmpdir(), 'chat-'));
     const store = createStore(dir);
-    const stage = await store.loadStage();
+    let stage = await store.loadStage();
+    if (model) { stage = { ...stage, rooms: stage.rooms.map((one) => (one.id === roomId ? { ...one, model } : one)) }; await store.saveStage(stage); }
     if (partner) await store.saveStage({ ...stage, rooms: [...stage.rooms, { id: roomId, name: 'Sam', role: 'Partner', accent: '#fff', brief: '', partner: true, x: 0, y: 0, w: 1, h: 1 }] });
     const feed = createRoomFeed();
     const heard: string[] = [];
@@ -333,6 +334,16 @@ describe('a turn when models fail', () => {
     expect(heard).toEqual(['feed restart']);
     const saved = (await store.readChat('build')).at(-1)!;
     expect(saved).toMatchObject({ role: 'assistant', text: 'The whole critique.', provider: 'openrouter' });
+  });
+
+  // Journey 17: the notice that a pinned model was passed over showed while the reply streamed and was gone on reload.
+  it('keeps why a pinned model was passed over in the saved reply', async () => {
+    const { store, events } = await turnChat([down('gemini'), answering('openrouter', 'The critique.')], 'build', 'Critique the idea.', false, 'gemini');
+    const said = events.filter((one) => 'notice' in one).map((one) => String(one.notice)).at(-1)!;
+    expect(said).toMatch(/Gemini/);
+    expect((await store.readChat('build')).at(-1)).toMatchObject({ text: 'The critique.', notice: said });
+    const { store: plain } = await turnChat([down('gemini'), answering('openrouter', 'The critique.')]);
+    expect((await plain.readChat('build')).at(-1)!.notice).toBeUndefined();
   });
 
   it('saves the error as the reply when no model answers, so a reload shows it', async () => {

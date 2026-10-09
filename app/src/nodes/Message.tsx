@@ -173,6 +173,7 @@ export function Message({ message, live = false, roomId, ...actions }: { message
       {message.text && <div className="md"><Words text={message.text} /></div>}
       {!live && message.provider && (
         <div className="msg__foot">
+          {message.notice && <span className="msg__notice">{message.notice}</span>}
           {modelTitle(message.provider)} · {message.model}{tokens ? ` · ${compact(tokens)} tokens` : ''}{message.stopped ? ' · stopped' : ''}
           <Tools {...actions} />
           {/* What a slice offers to do with this finished reply, where the reply's own actions are. */}
