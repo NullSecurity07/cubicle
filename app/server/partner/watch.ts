@@ -13,7 +13,7 @@ import { plusDays, thresholdOf } from './call.ts';
 import type { FounderPromise } from './promises.ts';
 import { breakEvenFix, breakEvenLine, sameMetric, type EconomicsState } from './economics.ts';
 import { saidNoFor, type Proposal as SaidNoProposal } from './saidno.ts';
-import { filledIn, guardUnasked, leftOutLine } from './unasked.ts';
+import { answerQuestions, filledIn, guardUnasked, leftOutLine } from './unasked.ts';
 
 // The partner watch (gap audit 2026-10-06, A. Initiative). The partner wrote one morning note a day and nothing else
 // woke them: a number sliding toward the kill line, a lead who replied, a competitor's page that changed and a promise
@@ -216,7 +216,9 @@ export function promiseSparks(promises: FounderPromise[], at: number): Spark[] {
 
 // ---------------------------------------------------------------- the turn and what it ends in
 
-export type Draft = { kind: 'email'; to: string; subject: string; body: string } | { kind: 'task'; title: string; due: string }
+// `asks`: the lead's questions nothing on record answers, for the founder; `hollow`: no line of the reply answers anything,
+// so the row offers the questions, not an email (server/partner/unasked.ts).
+export type Draft = { kind: 'email'; to: string; subject: string; body: string; asks?: string[]; hollow?: true } | { kind: 'task'; title: string; due: string }
   | { kind: 'decision'; title: string } | { kind: 'drop'; promiseId: string; what: string };
 export type Proposal = {
   id: string; key: string; trigger: string; at: number; who: string; roomId: string; sparkKind: Spark['kind'];
@@ -305,7 +307,7 @@ export function fakeWatchReply(messages: ModelMessage[]): string {
 // The proposal held to the record: a sentence of the move, the read or the ready thing that promises, counts or quotes
 // what no source gives is taken out, and the row says what was left out. The sources are the brief and the facts the
 // turn was given, the lead's own words among them. A part left empty falls back to the plain one.
-export function guardProposal(spark: Spark, shaped: Pick<Proposal, 'move' | 'read' | 'draft'>, sources: string[]): Pick<Proposal, 'move' | 'read' | 'draft' | 'left'> {
+export function guardProposal(spark: Spark, shaped: Pick<Proposal, 'move' | 'read' | 'draft'>, sources: string[], today?: string): Pick<Proposal, 'move' | 'read' | 'draft' | 'left'> {
   const read = [...sources, spark.facts, spark.number ?? ''].filter(Boolean);
   const left: string[] = [];
   const hold = (text: string) => { const held = guardUnasked(text, read); left.push(...held.left); return held.text; };
@@ -314,7 +316,13 @@ export function guardProposal(spark: Spark, shaped: Pick<Proposal, 'move' | 'rea
   let draft = shaped.draft;
   if (draft.kind === 'email') {
     const name = spark.out.kind === 'email' ? spark.out.name.split(' ')[0] : '';
-    draft = { ...draft, subject: hold(draft.subject) || 'Thanks for getting back to me', body: filledIn(hold(draft.body), sources.join('\n')) || `Hi ${name},\n\nThanks for your reply.\n\nBest,` };
+    const body = filledIn(hold(draft.body), sources.join('\n')) || `Hi ${name},\n\nThanks for your reply.\n\nBest,`;
+    draft = { ...draft, subject: hold(draft.subject) || 'Thanks for getting back to me', body };
+    // A reply to what the lead wrote answers each of their questions, from the record or honestly (journey 17).
+    if (spark.out.kind === 'email' && spark.out.said) {
+      const built = answerQuestions(body, spark.out.said, { name: spark.out.name, ...(today ? { today } : {}) });
+      draft = { ...draft, body: built.body, ...(built.asks.length ? { asks: built.asks } : {}), ...(built.hollow ? { hollow: true as const } : {}) };
+    }
   } else if (draft.kind === 'task') draft = { ...draft, title: hold(draft.title) || move.replace(/[.]+$/, '').slice(0, 140) };
   else if (draft.kind === 'decision') draft = { ...draft, title: hold(draft.title) || move.replace(/[.]+$/, '').slice(0, 160) };
   return { move, ...(seen ? { read: seen } : {}), draft, ...(left.length ? { left: [...new Set(left)] } : {}) };
@@ -323,7 +331,11 @@ export function guardProposal(spark: Spark, shaped: Pick<Proposal, 'move' | 'rea
 // What a row says: who proposes what, then that nobody asked and why the partner spoke, the number, the read, and
 // the ready thing itself.
 export function draftLine(draft: Draft): string {
-  if (draft.kind === 'email') return `Ready: an email to ${draft.to}, "${draft.subject}"\n${draft.body}`;
+  if (draft.kind === 'email' && draft.hollow) {
+    const first = /^Hi ([^,\n]+),/.exec(draft.body)?.[1] ?? draft.to;
+    return [`Nothing on record to answer ${first}${draft.asks?.length ? "'s questions" : ''}; draft needs the founder.`, ...(draft.asks ?? []).map((one) => `☐ ${one}`)].join('\n');
+  }
+  if (draft.kind === 'email') return [`Ready: an email to ${draft.to}, "${draft.subject}"\n${draft.body}`, ...(draft.asks?.length ? ['Still for you to answer:', ...draft.asks.map((one) => `☐ ${one}`)] : [])].join('\n');
   if (draft.kind === 'task') return `Ready: the task "${draft.title}", due ${draft.due}`;
   if (draft.kind === 'decision') return `Ready: the decision "${draft.title}"`;
   return `Ready: drop the promise "${draft.what}"`;
@@ -474,7 +486,7 @@ export function createWatch(given: WatchDeps) {
         if (!reply?.text.trim()) taken.release?.();
         const raw = proposalOf(spark, reply?.text ?? '', today);
         const fixed = { ...raw, move: breakEvenFix(raw.move, numbers), draft: raw.draft.kind === 'task' || raw.draft.kind === 'decision' ? { ...raw.draft, title: breakEvenFix(raw.draft.title, numbers) } : raw.draft };
-        const shaped = guardProposal(spark, fixed, await deps.sources?.(stage).catch(() => []) ?? []);
+        const shaped = guardProposal(spark, fixed, await deps.sources?.(stage).catch(() => []) ?? [], today);
         let proposal: Proposal | null = {
           id: `${spark.kind}-${at.toString(36)}-${made.length}`, key: spark.key, trigger: spark.trigger, at, who: partner.name, roomId: partner.id, sparkKind: spark.kind,
           why: spark.why, ...(spark.number ? { number: spark.number } : {}), ...(spark.cardId ? { cardId: spark.cardId } : {}), ...(spark.leadId ? { leadId: spark.leadId } : {}), ...shaped, status: 'open',

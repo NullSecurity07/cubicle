@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { holdDocClaims, holdDraftClaims, notDone, NO_DRAFT } from './draftclaim.ts';
+import { holdDocClaims, holdDraftClaims, holdFileLinks, notDone, NO_DRAFT, NO_FILE } from './draftclaim.ts';
 
 const refused = { name: 'draft_email', ok: false, result: notDone('draft_email', 'Already declined: the founder said no to "Intro" on 7 Oct and again when it was put to them once more, so it was not raised. Do not propose it again.') };
 
@@ -77,5 +77,21 @@ describe('a claim to have written a document', () => {
     // A failed write backs nothing; a colleague's write said in the third person is not this turn's claim.
     expect(holdDocClaims(said, [{ name: 'write_doc', ok: false }], { title: 'Company brief' })).toContain('Nothing was written');
     expect(holdDocClaims('Otto updated the Runway doc yesterday.', [], { title: 'Company brief' })).toBe('Otto updated the Runway doc yesterday.');
+  });
+});
+
+// Journey 17: "![chart](/api/files/chart.png)" with no chart made; the picture 404'd.
+describe('a link to a file nothing made', () => {
+  const none = async () => false;
+  it('drops a picture no tool made and says no file was made', async () => {
+    expect(await holdFileLinks('![chart](/api/files/chart.png)\nPaying went from 9.5 to 12.5.', [], none)).toBe(`${NO_FILE}\nPaying went from 9.5 to 12.5.`);
+    expect(await holdFileLinks('See [the runway sheet](/api/files/runway.xlsx) for the months.', [], none)).toBe(`See the runway sheet ${NO_FILE} for the months.`);
+  });
+  it('keeps a file a tool made this turn, or one that is there', async () => {
+    const made = [{ name: 'generate_image', ok: true, result: 'Saved the picture as media/chart-1.png: ![chart](/api/files/media/chart-1.png)' }];
+    expect(await holdFileLinks('![chart](/api/files/media/chart-1.png)', made, none)).toBe('![chart](/api/files/media/chart-1.png)');
+    expect(await holdFileLinks('![deck](/api/files/decks/a%20b.pptx)', [], async (path) => path === 'decks/a b.pptx')).toBe('![deck](/api/files/decks/a%20b.pptx)');
+    // A failed tool that named it made nothing.
+    expect(await holdFileLinks('![chart](/api/files/chart.png)', [{ name: 'generate_image', ok: false, result: 'could not make chart.png' }], none)).toBe(NO_FILE);
   });
 });

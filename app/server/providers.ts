@@ -672,6 +672,8 @@ export const fakeClient: ModelClient = {
       ? 'My call: keep going\nWhy: the Company brief\'s numbers, as worked out below.\nThis week: ask the subscribers who do not pay yet what would make them pay.' : undefined;
     const reply = verdict ?? (last?.role === 'tool'
       ? scripted ?? `Tool said: ${last.content}`
+      // With no tool run, `/say` is still the whole reply: a check of a reply's own words, a link or a claim, needs no tool.
+      : scripted && last?.role === 'user' && /^\/say /m.test(last.content ?? '') ? scripted
       : heard.startsWith('/markdown') ? '**Bold plan**\n\n- one\n- two'
       : heard.startsWith('/rich') ? 'A flow:\n\n```mermaid\ngraph TD; Idea-->Build; Build-->Launch;\n```\n\nA page:\n\n```html\n<!doctype html><html><body><h1 id="t">Landing</h1><script>document.getElementById("t").textContent += " page";</script></body></html>\n```'
       : last?.role === 'user' && last.images?.length ? `I can see ${last.images.length} picture: ${last.images[0].name.split('/').pop()}.`

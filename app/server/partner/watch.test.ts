@@ -365,7 +365,8 @@ describe('the reply to a lead who wrote back', () => {
     const [spark] = leadSparks([anna], { 'lead-anna': 'contacted' }, NOON);
     const reply = 'Move: Answer Anna today.\nSubject: Thursday and nut-free\nBody: Hi Anna,\n\nYes, we can definitely deliver on Thursday instead of Sunday, and all our meals are completely nut-free, so you can eat safely.\n\nBest,';
     const held = guardProposal(spark, proposalOf(spark, reply, '2026-10-07'), ['Meals are delivered on Sunday.']);
-    expect(held.draft).toMatchObject({ kind: 'email', body: 'Hi Anna,\n\nBest,' });
+    // Journey 17: what the guard leaves is not a hollow "Hi Anna, Best,": each question gets an honest line.
+    expect(held.draft).toMatchObject({ kind: 'email', body: 'Hi Anna,\n\nI will check Thursday delivery and come back to you.\nI will check nut-free meals and come back to you.\n\nBest,' });
     expect([...held.left!].sort()).toEqual(['allergen safety', 'delivery on Thursday', 'nut-free']);
 
     // On the row: the fake partner says yes to both questions, and Needs you shows neither, with the left-out line.
@@ -378,6 +379,8 @@ describe('the reply to a lead who wrote back', () => {
     const [row] = await watch.rows();
     expect(row.detail).toContain('(left out: nothing on record about delivery on Thursday, nut-free)');
     expect(row.detail).not.toMatch(/deliver on Thursday|are nut-free/);
+    expect(row.detail).toMatch(/I will check Thursday delivery and come back to you by \w+day\./);
+    expect(row.detail).toMatch(/I will check nut-free meals and come back to you by \w+day\./);
   });
 
   it('keeps the partner\'s own lines out of the email', () => {

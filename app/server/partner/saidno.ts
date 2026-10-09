@@ -210,12 +210,17 @@ const RULES_OUT = [
   /\b(?:don'?t|do not|never|stop)\s+(?:propose|proposing|suggest|suggesting|recommend|recommending|raise|raising|bring(?:ing)? up|push(?:ing)?|plan(?:ning)?)\s+(.+)/i,
   /^\s*no\s+to\s+(.+)/i,
   /^\s*no\s+more\s+(.+)/i,
+  // Journey 17: "No cold outreach to nurses we have not met, because nurses hate it." was answered "I have recorded
+  // that rule" and nothing was kept. "No X", "Never X", "Don't X", "Stop X" at the head of a sentence, with or without
+  // ", because …", is a standing no too; "No problem", "No, too early", "Don't worry" and a question are not.
+  /^\s*(?:no|never|don'?t|do not|stop)\s+(?!(?:problem|problems|worries|worry|thanks|thank|idea|doubt|rush|need|way|one|matter|sure|longer|later|wait|kidding|biggie|big deal|chance|clue|offen[cs]e|pressure|hurry|know|think|have|forget|mind|understand|see|get|care|want|be|go|it|that|this|them|there|here|now|yet|i|we|you)\b)([a-z].+)/i,
 ];
 const WHEN_SAID = /\s+(?:this|next)\s+(?:week|month)$|\s+(?:today|tomorrow|again|anymore|any more|for now|from now on|until further notice)$/i;
 export function standingNosIn(text: string): { subject: string; reason?: string }[] {
   const because = /\b(?:because|since)\s+([^.!?\n]+)/i.exec(text)?.[1]?.trim();
   const found: { subject: string; reason?: string }[] = [];
   for (const sentence of text.split(/(?<=[.!?\n])\s*/)) {
+    if (/\?\s*$/.test(sentence)) continue;
     for (const rule of RULES_OUT) {
       const said = rule.exec(sentence)?.[1];
       if (!said) continue;

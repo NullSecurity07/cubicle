@@ -271,6 +271,10 @@ test('a lead\'s reply wakes the partner, and the ready answer promises nothing t
     await expect(page.getByRole('dialog', { name: 'Needs you' }).locator('.needs__item--lead-replied')).toHaveCount(0);
     await expect(row).not.toContainText('we can deliver on Thursday');
     await expect(row).not.toContainText('are nut-free');
+    // Journey 17: what is left is not a hollow "Thanks ... Best,": each of Anna's questions gets an honest line.
+    await expect(row).toContainText(/I will check Thursday delivery and come back to you by \w+day\./);
+    await expect(row).toContainText(/I will check nut-free meals and come back to you by \w+day\./);
+    await expect(row).not.toContainText('reaching out');
   } finally {
     // The ready answer is let go: the watch keeps its proposals in memory, so an open one would wait in every later
     // spec's Needs you.
