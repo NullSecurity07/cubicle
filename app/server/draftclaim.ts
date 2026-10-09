@@ -104,3 +104,26 @@ export function holdDocClaims(reply: string, receipts: Receipt[], given: { title
     return `${lead}Nothing was written to the ${given.title} this turn.`;
   }).replace(/[ \t]{2,}/g, ' ');
 }
+
+// Journey 17: a colleague's reply opened with "![chart](/api/files/chart.png)"; no chart was made and the picture
+// 404'd. A link into the shared files stands only when a tool that worked this turn named the file, or the file is
+// there; else the link goes and the words say no file was made.
+export const NO_FILE = '(no file was made)';
+const FILE_LINK = /(!?)\[([^\]\n]*)\]\(\/api\/files\/([^\s)]+)\)/g;
+export async function holdFileLinks(reply: string, receipts: Receipt[], exists: (path: string) => Promise<boolean>): Promise<string> {
+  const links = [...reply.matchAll(FILE_LINK)];
+  if (!links.length) return reply;
+  const made = receipts.filter((one) => one.ok !== false).map((one) => one.result ?? '').join('\n');
+  const real = new Map<string, boolean>();
+  for (const [, , , link] of links) {
+    if (real.has(link)) continue;
+    let path = link;
+    try { path = decodeURIComponent(link); } catch { /* kept as written */ }
+    real.set(link, made.includes(path) || made.includes(link) || await exists(path).catch(() => false));
+  }
+  return reply.replace(FILE_LINK, (whole, bang: string, label: string, link: string) => {
+    if (real.get(link)) return whole;
+    const said = label.trim();
+    return bang || !said ? NO_FILE : `${said} ${NO_FILE}`;
+  }).replace(/[ \t]{2,}/g, ' ');
+}

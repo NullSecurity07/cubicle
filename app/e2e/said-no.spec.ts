@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import type { Attention } from '../shared/model';
 
@@ -92,4 +94,25 @@ test('a refused decision is never said to wait in the list', async ({ page }) =>
   const chat = (await (await page.request.get('/api/rooms/marketing/chat')).json()) as { id: string; text: string }[];
   const from = chat.findIndex((message) => message.text.includes('refused-decision check'));
   if (from >= 0) for (const message of chat.slice(from)) await page.request.delete(`/api/rooms/marketing/chat/${message.id}`);
+});
+
+const saidNo = async () => ((JSON.parse(await readFile(join(process.env.STAGE_WORKSPACE!, 'said-no.json'), 'utf8').catch(() => '{}')) as { entries?: { subject: string; reason?: string }[] }).entries ?? []);
+const clearFrom = async (page: Page, room: string, marker: string) => {
+  const chat = (await (await page.request.get(`/api/rooms/${room}/chat`)).json()) as { id: string; text: string }[];
+  const from = chat.findIndex((message) => message.text.includes(marker));
+  if (from >= 0) for (const message of chat.slice(from)) await page.request.delete(`/api/rooms/${room}/chat/${message.id}`);
+};
+
+// Journey 17: a colleague's reply opened with "![chart](/api/files/chart.png)"; no chart was made, and it 404'd.
+test('a reply that said it made a chart links no file nothing made', async ({ page }) => {
+  await page.goto('/');
+  const room = node(page, 'marketing');
+  await expect(room).toBeVisible();
+  try {
+    await send(page, 'marketing', '/say ![chart](/api/files/chart.png) Paying went from 9.5 to 12.5.');
+    const said = room.locator('.msg--assistant').last();
+    await expect(said).toContainText('(no file was made)');
+    await expect(said).toContainText('Paying went from 9.5 to 12.5.');
+    await expect(said.locator('img')).toHaveCount(0);
+  } finally { await clearFrom(page, 'marketing', '/api/files/chart.png'); }
 });
