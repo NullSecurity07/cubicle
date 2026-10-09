@@ -117,6 +117,31 @@ test('a first message says about the lead only what their row or a read gives, a
   }
 });
 
+// Journey 20: Lea's first message to Ines opened "I saw Repair Café Kreuzberg's work running community repair evenings"
+// with nothing read: the café's name on her row backed the whole detail. The guard holds it from the wired room and
+// from a room the card is not wired to, and a plain line about who she is still drafts.
+test('a first message dressed in the lead\'s own name is refused from any room', async ({ page }) => {
+  const made = await page.request.post(`/api/leads/${ID}`, { data: { name: 'Ines Vogel', company: 'Repair Café Kreuzberg', email: 'ines@repaircafe.example' } });
+  expect(made.status(), await made.text()).toBe(200);
+  const body = "Hi Ines,\\n\\nI saw Repair Café Kreuzberg's work running community repair evenings.\\n\\nBest,";
+  for (const room of ['marketing', 'build']) {
+    const invented = await send(page, room, `/tool draft_email {"to":"ines@repaircafe.example","subject":"Bookings","body":"${body}"}`);
+    await expect(invented.locator('.chip--fail summary')).toBeVisible();
+    // The Leads card may lie over a room it is not wired to: the chip opens without a pointer.
+    await invented.locator('.chip summary').dispatchEvent('click');
+    await expect(invented.locator('.chip pre')).toContainText("I saw Repair Café Kreuzberg's work");
+    await expect(invented.locator('.chip pre')).toContainText('open with what we do');
+  }
+  const plain = await send(page, 'marketing', '/tool draft_email {"to":"ines@repaircafe.example","subject":"Bookings","body":"Hi Ines,\\n\\nI noticed you run Repair Café Kreuzberg.\\n\\nBest,"}');
+  await expect(plain.locator('.chip--ok summary')).toHaveText('Drafted email to ines@repaircafe.example');
+  for (const entry of (await (await page.request.get('/api/attention')).json()) as { id: string; kind: string }[]) {
+    if (entry.kind === 'mail-draft') await page.request.post(`/api/attention/${encodeURIComponent(entry.id)}/dismiss`, { data: { opened: true } });
+  }
+  const chat = (await (await page.request.get('/api/rooms/build/chat')).json()) as { id: string; text: string }[];
+  const from = chat.findIndex((message) => /^\/tool draft_email/.test(message.text));
+  if (from >= 0) for (const message of chat.slice(from)) await page.request.delete(`/api/rooms/build/chat/${message.id}`);
+});
+
 test('a pasted spreadsheet becomes leads, read before it lands, and a dropped CSV file opens the same sheet', async ({ page }) => {
   const card = node(page, ID);
   await card.getByLabel('Lead name').fill('Grace Hopper');

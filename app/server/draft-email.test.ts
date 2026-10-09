@@ -210,20 +210,20 @@ describe('an address on the Leads card the person reaches', () => {
 
 // Journey 18: "Draft first message" on Tom Becker opened "I saw your comment on Reddit ..." with nothing read.
 describe('draft_email: what the email says about the person', () => {
-  async function tom(note?: string) {
+  async function tom(note?: string, lead: { name: string; company: string; email: string } = { name: 'Tom Becker', company: 'Becker Sanitär', email: 'tom@becker.example' }, wired = true) {
     const dir = await mkdtemp(join(tmpdir(), 'draft-about-'));
     const store = createStore(dir);
     const attention = createAttention(dir, () => 1000);
     const stage = await store.loadStage();
     const roomId = stage.rooms[0].id;
     stage.cards = [{ id: 'leads-1', kind: 'leads', x: 0, y: 0, w: 1, h: 1 } as Card];
-    stage.wires.push({ id: 'w1', from: roomId, fromHandle: 'r', to: 'leads-1', toHandle: 'l' } as Stage['wires'][number]);
-    const lead = await leadsFor(dir).add('leads-1', { name: 'Tom Becker', company: 'Becker Sanitär', source: 'founder', email: 'tom@becker.example' });
-    if (note) await leadsFor(dir).note('leads-1', lead.lead.id, 'founder', note);
+    if (wired) stage.wires.push({ id: 'w1', from: roomId, fromHandle: 'r', to: 'leads-1', toHandle: 'l' } as Stage['wires'][number]);
+    const added = await leadsFor(dir).add('leads-1', { ...lead, source: 'founder' });
+    if (note) await leadsFor(dir).note('leads-1', added.lead.id, 'founder', note);
     await store.saveStage(stage);
     const tools = outwardTools(createMail({}, (async () => new Response('{}')) as typeof fetch), store.filesDir, { raise: attention.raise, onRecord: leadAddresses(dir), contacts: leadContacts(dir) }, () => 1000);
-    const context = { stage: await store.loadStage(), roomId, store, granted: new Map(), sources: () => [] as string[], query: 'Draft a first message to Tom Becker at Becker Sanitär using the evidence-outreach skill.' };
-    return { attention, colleague: stage.rooms[0].name, run: (body: string) => runTool(tools, 'draft_email', JSON.stringify({ to: 'tom@becker.example', subject: 'Quotes from photos', body }), context) };
+    const context = { stage: await store.loadStage(), roomId: wired ? roomId : stage.rooms.at(-1)!.id, store, granted: new Map(), sources: () => [] as string[], query: `Draft a first message to ${lead.name} at ${lead.company} using the evidence-outreach skill.` };
+    return { attention, colleague: stage.rooms[0].name, run: (body: string) => runTool(tools, 'draft_email', JSON.stringify({ to: lead.email, subject: 'Quotes from photos', body }), context) };
   }
   const REDDIT = 'Hi Tom,\n\nI saw your comment on Reddit about spending your evenings after jobs writing up quotes in the van.\n\nBest,';
 
@@ -253,6 +253,22 @@ describe('draft_email: what the email says about the person', () => {
     expect(body).not.toContain(colleague);
     expect(body).toMatch(/Best,(?:\n[^\n]+)?$/);
     expect(out.text).toContain('The sign-off was put right');
+  });
+
+  // Journey 20: "I saw Repair Café Kreuzberg's work running community repair evenings" with nothing read: their café's
+  // name on the row backed a whole made-up detail.
+  it('refuses a detail dressed in their own name, on the Leads path and from a room the card is not wired to', async () => {
+    const ines = { name: 'Ines Vogel', company: 'Repair Café Kreuzberg', email: 'ines@repaircafe.example' };
+    const body = "Hi Ines,\n\nI saw Repair Café Kreuzberg's work running community repair evenings.\n\nBest,";
+    for (const wired of [true, false]) {
+      const { run } = await tom(undefined, ines, wired);
+      const out = await run(body);
+      expect(out.ok, `wired: ${wired}`).toBe(false);
+      expect(out.text).toContain('the email says "I saw Repair Café Kreuzberg');
+      expect((await run('Hi Ines,\n\nI noticed you run Repair Café Kreuzberg.\n\nBest,')).ok).toBe(true);
+    }
+    const { run } = await tom('Runs community repair evenings every Thursday.', ines);
+    expect((await run(body)).ok).toBe(true);
   });
 
   it('takes what their row gives, and a plain opener about us needs nothing about them', async () => {

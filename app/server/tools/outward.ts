@@ -7,7 +7,7 @@ import { wired, wiredCards } from '../prompt.ts';
 import { findCompanyDoc } from '../../shared/partner.ts';
 import { leadsCardIds, leadsFor } from '../leads/store.ts';
 import { leadRecord } from '../../shared/leads.ts';
-import { productLine, unbackedPersonal, usedSources, type Labelled } from '../opener.ts';
+import { namesIn, productLine, unbackedPersonal, usedSources, type Labelled } from '../opener.ts';
 import { filledIn } from '../partner/unasked.ts';
 import { productClaimsIn } from '../productclaim.ts';
 import { runCode } from '../sandbox.ts';
@@ -178,13 +178,14 @@ export function outwardTools(mail: Mail, filesDir: string, drafting?: Drafting, 
           ...(context.query && !/^\/tool\s/.test(context.query) ? [{ label: 'your message', text: context.query }] : []),
           ...(evidence?.said ?? []).filter((one) => one !== context.query && !/^\/tool\s/.test(one)).map((text) => ({ label: 'what was read this turn', text })),
         ];
-        const invented = unbackedPersonal(draft.body, about);
+        const names = [...them.flatMap((one) => [one.name, one.company]), ...(context.query ? namesIn(context.query) : [])];
+        const invented = unbackedPersonal(draft.body, about, names);
         if (invented.length) {
           const ours = productLine(brief);
           throw new Error(`the email says "${invented[0].slice(0, 160)}" about them, and nothing on record says it (not their row on the Leads card, `
             + `nothing read this turn, no founder message). Take it out and open with what we do${ours ? `, from the Company brief: "${ours}"` : ' from the Company brief'}, then draft again.`);
         }
-        const used = usedSources(draft.body, about, brief ? { label: 'Company brief', text: brief } : null);
+        const used = usedSources(draft.body, about, brief ? { label: 'Company brief', text: brief } : null, names);
         const room = speaker(context);
         const url = gmailLink(draft);
         const cardId = drafting?.open ? await drafting.open(context.stage, context.roomId, url).catch(() => null) : null;
