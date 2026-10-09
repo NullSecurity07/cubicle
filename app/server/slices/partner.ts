@@ -629,7 +629,7 @@ export function createPartner(options: PartnerOptions = {}) {
               // whether the number already sits past the new line.
               const moved = before?.signal && (before.signal.what !== call.signal.what || before.signal.by !== call.signal.by);
               const line = await keepSignal(moved ? before!.signal : undefined, call.signal, me.id, stage);
-              checkLine = moved || /already past/.test(line) ? `*${line}*` : `*Kept as a check: it comes to Needs you on ${call.signal.by}.*`;
+              checkLine = moved || /already past|right on the line/.test(line) ? `*${line}*` : `*Kept as a check: it comes to Needs you on ${call.signal.by}.*`;
             }
             if (guarded.line) checkLine = `*${guarded.line}*`;
           }
