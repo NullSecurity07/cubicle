@@ -373,7 +373,7 @@ test('the founder\'s correction makes the verdict stale, and the next morning\'s
     await page.request.post(`/api/rooms/${sam.id}/chat`, { data: { text: 'Your verdict: keep going, pivot or stop?' } });
     await expect.poll(said, { timeout: 30_000 }).toContain('My call: **keep going**.');
     await page.request.post(`/api/rooms/${sam.id}/chat`, { data: { text: 'No, 14 subscribers is not 14 paying, 11 pay. And €59 is per week, not per month.' } });
-    await expect.poll(said, { timeout: 30_000 }).toContain('*Taken as the numbers: paying 11; price a week (your words).');
+    await expect.poll(said, { timeout: 30_000 }).toContain('*Taken as the numbers: paying subscribers 11; price a week (your words).');
     expect(await said()).toContain('so it is stale: I make it again on the next look.*');
     // The next morning: the stale call is looked at again, unasked.
     await advanceDay(page, 1);

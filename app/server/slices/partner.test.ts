@@ -1125,7 +1125,7 @@ describe('the partner slice: one picture of the numbers (journey 16)', () => {
     expect(prompt).toContain('- Paying subscribers: 11 (founder, 2026-10-06: "No, 14 subscribers is not 14 paying, 11 pay")');
     expect(prompt).toContain('That verdict is stale: made on numbers that changed since (price €59 a month → €59 a week');
     const reply = (await deps.seams.run('turn:reply', { roomId: 'p1', query, reply: turn('You are right, break-even is 8.') })).reply.text;
-    expect(reply).toContain('*Taken as the numbers: paying 11; price a week (your words). Break-even, runway and the verdict are worked from these now. My verdict of 2026-10-06 was made on the numbers before, so it is stale: I make it again on the next look.*');
+    expect(reply).toContain('*Taken as the numbers: paying subscribers 11; price a week (your words). Break-even, runway and the verdict are worked from these now. My verdict of 2026-10-06 was made on the numbers before, so it is stale: I make it again on the next look.*');
     // Next morning: the stale call is refreshed, quoting the changed inputs, and may not reach stop.
     clock = new Date('2026-10-07T06:30').getTime();
     await part.tick!();

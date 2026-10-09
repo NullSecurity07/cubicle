@@ -118,6 +118,20 @@ const HYPOTHETICAL = /\b(?:if|would|could|might|suppose|imagine|goal|target|aim|
 const PAYING = /(?<![\d.,])(\d[\d,]*(?:\.\d+)?)\s+(?:(?:of (?:them|those|the \w+)|subscribers|customers|users|clients|members|people|offices|practices)\s+)?(?:(?:are|actually|now|really|only|do)\s+)*(?:pay|paying|paid)\b(?!\s+(?:for|per)\b)/gi;
 const MONEY_FIELD = /\b(net burn|burn|cash|price|cost(?:\s+per\s+[a-z]+)?)\b((?:\s+(?:is|are|was|of|at|now|actually|really|only|in the bank|a month|per month))*\s*[:=]?\s*)(?:not\s+[$€£]?\s?\d[\d,.]*\s*k?(?:\s+(?:a|per)\s+\w+)?\s*,?\s*(?:but|it'?s|it is)?\s*)?([$€£])\s?(\d[\d,]*(?:\.\d+)?)(\s?k\b)?/gi;
 const PERIODS = /(not\s+)?(?:(?:per|a|an|each|every)\s+|\/\s*)(week|month|year|day)\b|(not\s+)?\b(weekly|monthly|yearly|annually)\b/gi;
+// Journey 20: "6 cafés pay €39 a month" put €39 in the Cash row. A count of payers named by any unit, with what each
+// pays: the count goes to the input whose row counts that unit, the price to the paying customers' own price.
+const PAYS_AT = /(?<![\d.,])(\d[\d,]*)\s+((?:paying\s+)?\p{L}[\p{L}-]*)\s+(?:(?:each|all|now|also|already|actually|only|do)\s+)*(?:pay|pays|paying|paid)\b(?!\s+(?:for|per)\b)(?:\s+(?:us\s+)?[$€£]\s?(\d[\d,]*(?:\.\d+)?)\s*(?:(?:a|an|per|each)\s+|\/\s*)(month|week|year))?/giu;
+const PEOPLE = /^(?:of|subscribers?|customers?|users?|clients?|members?|people|offices?|practices?)$/i;
+// A row's words as stems, any language's letters whole ("Paying cafés" is café; "Bookings last month" is booking).
+const stemsOf = (text: string) => (text.toLowerCase().match(/\p{L}{3,}/gu) ?? []).filter((word) => !/^(?:paying|paid|last|this|month|week|year|total|number|done|now)$/.test(word)).map((word) => word.replace(/s$/, ''));
+const COUNTS: Field[] = ['paying', 'volume', 'subscribers'];
+// The count input a unit names, when exactly one does.
+function countFieldOf(unit: string, state: EconomicsState): Field | undefined {
+  const want = stemsOf(unit);
+  if (!want.length) return undefined;
+  const fits = COUNTS.filter((field) => { const had = state.inputs[field]; return !!had && want.every((stem) => stemsOf(had.label).includes(stem)); });
+  return fits.length === 1 ? fits[0] : undefined;
+}
 const periodWord = (word: string): Period => (/^week/i.test(word) ? 'week' : /^month/i.test(word) ? 'month' : /^(?:year|annual)/i.test(word) ? 'year' : 'day');
 const fieldOf = (word: string): Field => (/^net/i.test(word) ? 'net' : /^burn/i.test(word) ? 'burn' : /^cash/i.test(word) ? 'cash' : /^price/i.test(word) ? 'price' : 'cost');
 
@@ -139,6 +153,23 @@ export function inputFixesIn(said: string, state: EconomicsState, day: string): 
     for (const found of sentence.matchAll(PAYING)) {
       if (/\bnot\s+$|\bisn'?t\s+$/i.test(sentence.slice(0, found.index))) continue;
       add({ field: 'paying', value: Number(found[1].replace(/,/g, '')), said: words, day, ...over('paying') });
+    }
+    // "6 cafés pay €39 a month": the cafés row's count and what each café pays.
+    for (const found of sentence.matchAll(PAYS_AT)) {
+      if (PEOPLE.test(found[2]) || /\bnot\s+$|\bisn'?t\s+$/i.test(sentence.slice(0, found.index))) continue;
+      const field = countFieldOf(found[2], state);
+      if (field !== 'paying') continue;
+      add({ field, value: Number(found[1].replace(/,/g, '')), said: words, day, ...over(field) });
+      if (found[3]) { const priced: Field = state.inputs.plan ? 'plan' : 'price'; add({ field: priced, value: Number(found[3].replace(/,/g, '')), period: periodWord(found[4]), said: words, day, ...over(priced) }); }
+    }
+    // A count put right by the words of its row: "bookings last month were 280, not 310".
+    for (const field of COUNTS) {
+      const had = state.inputs[field];
+      const stems = had ? stemsOf(had.label) : [];
+      if (!had || !stems.length) continue;
+      const said = new RegExp(`(?<!\\p{L})(?:${stems.map((one) => one.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\p{L}*(?:\\s+\\p{L}+){0,3}?\\s*(?:is|are|was|were|:)\\s+(?:actually\\s+|only\\s+|now\\s+|really\\s+)?(\\d[\\d,]*)(?![\\d.,]*\\s*%)`, 'iu').exec(sentence);
+      if (!said || countFieldOf(said[0].replace(/\s*(?:is|are|was|were|:).*$/i, ''), state) !== field) continue;
+      add({ field, value: Number(said[1].replace(/,/g, '')), said: words, day, ...over(field) });
     }
     // A money input given or put right: "burn is €2,100 a month", "cash is not €6k but €5,200".
     for (const found of sentence.matchAll(MONEY_FIELD)) {
@@ -166,4 +197,5 @@ export function inputFixesIn(said: string, state: EconomicsState, day: string): 
 export const MOST_FIXES = 12;
 export const keepFixes = (held: InputFix[], fresh: InputFix[]) => [...held.filter((old) => !fresh.some((one) => one.field === old.field)), ...fresh].slice(-MOST_FIXES);
 // The line under the reply that heard them.
-export const fixesLine = (fixes: InputFix[], currency = '') => `*Taken as the numbers: ${fixes.map((one) => `${one.field === 'paying' ? 'paying' : one.field} ${one.value !== undefined ? `${['price', 'cost', 'burn', 'net', 'cash'].includes(one.field) ? currency : ''}${one.value.toLocaleString('en-US')}` : ''}${one.period ? `${one.value !== undefined ? ' ' : ''}${periodName(one.period)}` : ''}`.trim()).join('; ')} (your words). Break-even, runway and the verdict are worked from these now.*`;
+// `labels`: each input's own row name, so "volume 280" reads "bookings last month 280".
+export const fixesLine = (fixes: InputFix[], currency = '', labels: Partial<Record<Field, string>> = {}) => `*Taken as the numbers: ${fixes.map((one) => `${labels[one.field]?.toLowerCase() ?? (one.field === 'plan' ? 'price per paying customer' : one.field)} ${one.value !== undefined ? `${['price', 'cost', 'burn', 'net', 'cash', 'plan'].includes(one.field) ? currency : ''}${one.value.toLocaleString('en-US')}` : ''}${one.period ? `${one.value !== undefined ? ' ' : ''}${periodName(one.period)}` : ''}`.trim()).join('; ')} (your words). Break-even, runway and the verdict are worked from these now.*`;

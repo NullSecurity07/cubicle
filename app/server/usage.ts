@@ -6,7 +6,7 @@ import { createBreaker, limitWords, planless, refused, unpaid } from './breaker.
 import { fromCache, onCache } from './cache.ts';
 import { neuronPoolOf, PICTURE_POOL, poolOf, providerOf, type ModelClient, type Quota } from './providers.ts';
 import { writeAtomic } from './fsx.ts';
-import { localDay } from './clock.ts';
+import { localDay, now as clockNow } from './clock.ts';
 
 // What one key check with a model came to, from how its one word failed: a refusal says which kind, a 404 that the
 // model is gone, a 5xx that the provider is down, an abort at the cap that it is slow; anything else simply failed.
@@ -389,7 +389,9 @@ export const unaskedAllowed = (client: ModelClient, usage: Pick<UsageBook, 'left
   !client.partnerOnly && !client.side && !usage.spent(client) && !usage.blocked(client.name) && usage.left(client) >= UNASKED_FLOOR;
 
 export function createUnasked(options: { path: string | null; usage: Pick<UsageBook, 'left' | 'spent' | 'blocked'>; clients: () => ModelClient[]; cap?: number; now?: () => number }) {
-  const now = options.now ?? Date.now;
+  // The founder's clock (clock.ts), so a day moved on in a check is a new day for the budget too (journey 20 had four
+  // test days share one budget dated by the machine's clock).
+  const now = options.now ?? clockNow;
   const cap = Math.max(0, Math.floor(options.cap ?? UNASKED_CAP));
   let book: UnaskedDay = { day: localDay(now()), used: [] };
   let next = 1;

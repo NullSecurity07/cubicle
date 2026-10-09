@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { Check } from '../../shared/openends.ts';
 import { checkWords, type CheckOutcome } from '../../shared/model.ts';
 import { outcomeOf } from '../usage.ts';
+import { UNASKED_A_DAY, WATCH_REASON } from '../partner/watch.ts';
 import { fallbackList, PROVIDERS } from '../keys-file/catalogue.ts';
 import { planless, PLANLESS, unpaid, UNPAID } from '../breaker.ts';
 import { ENTRIES, providerOf, unset, type ModelClient } from '../providers.ts';
@@ -388,9 +389,12 @@ export function unaskedRow(state: { cap: number; used: { reason: string }[] }): 
   for (const one of state.used) counts.set(one.reason, (counts.get(one.reason) ?? 0) + 1);
   const reasons = [...counts].map(([reason, times]) => (times > 1 ? `${reason} (${times})` : reason)).join(', ');
   const full = state.used.length >= state.cap;
+  // The watch takes at most its own three of the day's turns: said when they are used, with what that means (journey 20).
+  const watch = state.used.filter((one) => one.reason.startsWith(WATCH_REASON)).length;
+  const watchFull = watch >= UNASKED_A_DAY ? `. The watch's own ${UNASKED_A_DAY} are used: a lead reply or a trend waits for tomorrow, and a crossed kill line still comes to Needs you in plain words` : '';
   return {
-    name: 'Unasked work today', ok: true, ...(full ? { warn: true } : {}),
-    detail: `${state.used.length} of ${state.cap} used${reasons ? `: ${reasons}` : ''}`,
+    name: 'Unasked work today', ok: true, ...(full || watchFull ? { warn: true } : {}),
+    detail: `${state.used.length} of ${state.cap} used${reasons ? `: ${reasons}` : ''}${watchFull}`,
     fix: full ? 'Nothing to do: what was left waits for tomorrow, and anything you ask still gets an answer today.' : '',
   };
 }

@@ -12,7 +12,9 @@ import { addToSection, sectionText } from './company.ts';
 export type CompanyFact = { label: string; value: string; sure?: boolean };
 // `denied`: a figure the founder said is not so ("one host is not €12 a month of revenue"): never written, and a row
 // that holds it is taken out (journey 15 wrote that very figure in as the founder's MRR).
-export type CompanyFacts = { numbers: CompanyFact[]; idea?: string; customer?: string; denied?: CompanyFact[] };
+// `priced`: a count of payers with what each pays ("6 cafés pay €39 a month"), put on the row its unit names.
+export type PricedFact = { count: number; unit: string; price: string; period: string; said: string };
+export type CompanyFacts = { numbers: CompanyFact[]; idea?: string; customer?: string; denied?: CompanyFact[]; priced?: PricedFact[] };
 // Said right after a "not": "is not €12", "isn't 50 users", "and not €900".
 const DENIED = /\b(?:not|never|isn'?t|aren'?t|wasn'?t|weren'?t)\s+(?:even\s+|really\s+|actually\s+)?$/i;
 
@@ -25,6 +27,11 @@ const NOT_NOW = /\b(?:if|would|could|should|plan(?:ning|s)?\s+(?:to|how)|planned
 // is not it, and never takes its place.
 const BURN = /\b(?:burn\w*|expenses?|total\s+(?:spend\w*|costs?)|monthly\s+spend\w*|spend\w*\s+in\s+total)\b/i;
 const CASH = /\b(?:bank|cash|savings|saved|left|runway)\b/i;
+// Before a figure, "left" is cash only when it says what is left ("left: €5,400", "we have left €5k"), never "you left
+// out the café subscriptions: 6 cafés pay €39 a month" (journey 20 wrote that €39 into the Cash row).
+const CASH_BEFORE = /\b(?:bank|cash|savings|saved|runway)\b|\bleft\b(?!\s+(?:out|off|over|behind|aside)\b)(?=[^\p{L}]*$)/iu;
+// "6 cafés pay €39 a month", "six cafés each paying €39/month": a count of payers and what each one pays.
+const PAYS = new RegExp(`\\b(\\d[\\d,]*|${WORD_COUNTS.join('|')})\\s+((?:paying\\s+)?\\p{L}[\\p{L}-]*)\\s+(?:(?:each|all|now|also|already)\\s+)?(?:pay|pays|paying|paid)\\s+(?:us\\s+)?([$€£]\\s?\\d[\\d,]*(?:\\.\\d+)?)\\s*(?:(?:a|an|per|each)\\s+|\\/\\s*)(month|week|year)\\b`, 'giu');
 const MRR = /\b(?:mrr|revenue|making|bringing in)\b/i;
 // A request to the partner ("draft an update about what we are building") says what the founder wants, not what the company does.
 const ASKING = /^(?:please\s+)?(?:draft|write|help|make|create|send|give|tell|show|plan|prepare|put|email|can you|could you|would you)\b|\b(?:what|how|why)\s+(?:i'?m|i am|we'?re|we are)\s+building\b/i;
@@ -73,6 +80,7 @@ const capital = (text: string) => `${text.charAt(0).toUpperCase()}${text.slice(1
 export function companyFacts(said: string): CompanyFacts {
   const numbers: CompanyFact[] = [];
   const denied: CompanyFact[] = [];
+  let priced: PricedFact[] | undefined;
   const put = (label: string, value: string) => { if (!numbers.some((one) => one.label === label)) numbers.push({ label, value }); };
   let idea: string | undefined;
   let named: string | undefined;
@@ -86,7 +94,14 @@ export function companyFacts(said: string): CompanyFacts {
     if (!idea && !sentence.endsWith('?') && !ASKING.test(plain) && isIdea(plain)) idea = plain.slice(0, 200);
     if (!named && !sentence.endsWith('?') && NAMED.test(plain)) named = plain.slice(0, 200);
     if (NOT_NOW.test(plain) || sentence.endsWith('?')) continue;
+    const pays = [...plain.matchAll(PAYS)].filter((one) => !DENIED.test(plain.slice(0, one.index)));
+    for (const one of pays) {
+      const count = WORD_COUNTS.includes(one[1].toLowerCase()) ? WORD_COUNTS.indexOf(one[1].toLowerCase()) : Number(one[1].replace(/,/g, ''));
+      (priced ??= []).push({ count, unit: one[2].toLowerCase(), price: one[3].replace(/\s+/g, ''), period: one[4].toLowerCase(), said: plain.slice(0, 200) });
+    }
     for (const match of plain.matchAll(MONEY)) {
+      // A price each payer pays is theirs ("6 cafés pay €39 a month"): never cash, burn, MRR or the price row.
+      if (pays.some((one) => match.index >= one.index! && match.index < one.index! + one[0].length)) continue;
       // What the figure is: the words before it back to a comma, a colon or an "and", and the few words after it.
       const before = plain.slice(0, match.index).split(/[,;]|\band\b|\bbut\b/).at(-1) ?? '';
       const after = plain.slice(match.index + match[0].length).split(/[,;]|\band\b|\bbut\b|[$€£]/)[0].slice(0, 24);
@@ -98,7 +113,7 @@ export function companyFacts(said: string): CompanyFacts {
         continue;
       }
       if (BURN.test(before) && period) { if (!/^\s*(?:on|for)\b/i.test(after)) put('Burn', value); }
-      else if (CASH.test(before) || CASH.test(after)) put('Cash', value);
+      else if (CASH_BEFORE.test(before) || CASH.test(after)) put('Cash', value);
       else if (MRR.test(before) || MRR.test(after)) put('MRR', value);
       else if (ours(plain, match.index, match[0].length)) put('Price', value);
     }
@@ -121,7 +136,7 @@ export function companyFacts(said: string): CompanyFacts {
   }
   idea ??= named;
   const customer = idea ? /\bfor\s+(.+?)(?=\s+(?:that|who|which|to|so|by|with|from)\b|[,;:.]|$)/i.exec(idea.replace(/^[^:]*:\s*/, (head) => (/\bfor\b/i.test(head) ? head : '')))?.[1] : undefined;
-  return { numbers, ...(denied.length ? { denied } : {}), ...(idea ? { idea } : {}), ...(customer && !TIME.test(customer) ? { customer: customer.trim() } : {}) };
+  return { numbers, ...(denied.length ? { denied } : {}), ...(priced ? { priced } : {}), ...(idea ? { idea } : {}), ...(customer && !TIME.test(customer) ? { customer: customer.trim() } : {}) };
 }
 
 // Where a Numbers line for one label is: "- Cash: €4,200 (founder, 2026-09-27)".
@@ -139,11 +154,28 @@ const countFamily = (text: string) => (!/\b(?:users|customers|subscribers|client
 // The document with the facts in it, and what went in, for the receipt. A figure goes in place of the one it
 // updates and is left alone when it has not changed; Idea and Customer are written only while they are empty, since
 // what the founder wrote there is theirs.
-export function keepFacts(text: string, facts: CompanyFacts, day: string): { text: string; kept: string[] } {
+// `asks`: what was said that no Numbers row names, put back to the founder rather than written anywhere.
+export function keepFacts(text: string, facts: CompanyFacts, day: string): { text: string; kept: string[]; asks?: string[] } {
   let next = text;
   const kept: string[] = [];
+  const asks: string[] = [];
   const stamp = ` (founder, ${day})`;
   const changed: CompanyFact[] = [];
+  // Journey 20: "6 cafés pay €39 a month" goes on the row its unit names ("- Paying cafés: 6 at €39 a month"), never
+  // on Cash. One whose unit no row names is asked back, never written.
+  for (const one of facts.priced ?? []) {
+    const rows = sectionText(next, 'Numbers').split('\n');
+    const want = unitStems(one.unit);
+    const at = rows.findIndex((row) => { const label = /^\s*[-*]\s+([^:]{1,60}):/.exec(row)?.[1]; return !!label && !/\b(?:goal|target|contacted)\b/i.test(label) && want.every((stem) => unitStems(label).includes(stem)); });
+    if (at < 0) { asks.push(`"${one.count} ${one.unit} pay ${one.price} a ${one.period}": no row of Numbers counts ${one.unit}, so it is not written. Which row is it?`); continue; }
+    const label = /^\s*[-*]\s+([^:]{1,60}):/.exec(rows[at])![1];
+    const value = `${one.count} at ${one.price} a ${one.period}`;
+    const was = /^\s*[-*]\s+[^:]{1,60}:\s*(.+?)(?:\s+\(founder, [\d-]+\))?\s*$/.exec(rows[at])?.[1] ?? '';
+    if (was.replace(/,/g, '').toLowerCase() === value.replace(/,/g, '').toLowerCase()) continue;
+    rows[at] = `- ${label}: ${value}${stamp}`;
+    const swapped = replaceSection(next, 'Numbers', rows.join('\n').trim());
+    if ('text' in swapped) { next = swapped.text; kept.push(`Numbers (${label} ${value})`); }
+  }
   // A figure the founder said is not so leaves its row: "MRR: €12 a month" goes when they say it is not €12 a month,
   // unless the same message gives the figure that is.
   if (facts.denied?.length) {
@@ -207,8 +239,10 @@ export function keepFacts(text: string, facts: CompanyFacts, day: string): { tex
     next = addToSection(next, heading, [`- ${line}${stamp}`]);
     kept.push(heading);
   }
-  return { text: next, kept };
+  return { text: next, kept, ...(asks.length ? { asks } : {}) };
 }
+// A unit's words as stems, letters of any language kept whole ("cafés" is "café", never "caf").
+const unitStems = (text: string) => (text.toLowerCase().match(/\p{L}{3,}/gu) ?? []).filter((word) => !/^(?:paying|paid|last|this|month|week|year|total|number)$/.test(word)).map((word) => word.replace(/s$/, ''));
 
 export const keptLine = (kept: string[]) => `*Kept in the Company document: ${kept.join(', ')}.*`;
 

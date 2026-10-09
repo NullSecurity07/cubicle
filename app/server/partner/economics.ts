@@ -18,11 +18,13 @@ import { calculate as calc } from '../tools/calc.ts';
 // the review, the watch, the morning note and the brief's own rows all read this one.
 
 export type Period = 'week' | 'month' | 'year' | 'day';
-export type Field = 'price' | 'cost' | 'burn' | 'net' | 'cash' | 'subscribers' | 'paying';
+// `volume`: the count a per-job price is paid on ("Bookings last month: 310" beside "€4 per booking"); `plan`: what
+// each paying customer pays when the paying row carries its own price ("Paying cafés: 6 at €39 a month").
+export type Field = 'price' | 'cost' | 'burn' | 'net' | 'cash' | 'subscribers' | 'paying' | 'volume' | 'plan';
 // Where an input came from: the Company brief, the founder in chat, or a Metrics reading.
 export type Source = 'brief' | 'founder' | 'reading';
-// `per`: what the brief's row says the money is paid per ("booking"), kept under a founder's correction.
-export type Input = { value: number; period?: Period; label: string; source: Source; said: string; day?: string; per?: string };
+// `per`: the one thing a price is paid for, when it is not a period ("booking" for "€4 per booking").
+export type Input = { value: number; period?: Period; per?: string; label: string; source: Source; said: string; day?: string };
 // A founder's correction of one input: a value, a period or both. `over`: what the brief said when they corrected it,
 // so a brief edited since (a new figure) stands over the older correction.
 export type InputFix = { field: Field; value?: number; period?: Period; said: string; day: string; over?: { value?: number; period?: Period } };
@@ -37,7 +39,7 @@ const TO_MONTH: Record<Period, string> = { week: ' * 52 / 12', month: '', year: 
 const PERIOD_NAME: Record<Period, string> = { week: 'a week', month: 'a month', year: 'a year', day: 'a day' };
 export const periodName = (period?: Period) => PERIOD_NAME[period ?? 'month'];
 
-type Amount = { value: number; at: number; period?: Period };
+type Amount = { value: number; at: number; period?: Period; money?: boolean };
 type Row = { label: string; line: string; amounts: Amount[] };
 export type Working = { label: 'Break-even' | 'Runway' | 'MRR' | 'Net burn'; expression: string; values: string; result: string; line: string };
 // `inputs`: the monthly figures, for a review that works a colleague's sums out again.
@@ -62,7 +64,7 @@ function rowsOf(numbers: string): Row[] {
       // What follows this amount up to the next one, without asides: "€240 a month per office (one box a week)".
       const after = found[2].slice(from, hits[index + 1]?.index ?? found[2].length).replace(/\([^)]*\)?/g, ' ');
       const period = periodIn(after);
-      return { value: Number(hit[1].replace(/,/g, '')) * (hit[2] ? 1000 : 1), at: hit.index ?? 0, ...(period ? { period } : {}) };
+      return { value: Number(hit[1].replace(/,/g, '')) * (hit[2] ? 1000 : 1), at: hit.index ?? 0, ...(period ? { period } : {}), ...(/[$€£]/.test(hit[0]) ? { money: true } : {}) };
     });
     return amounts.length ? [{ label: found[1].trim(), line: found[2], amounts }] : [];
   });
@@ -92,8 +94,11 @@ const words = (text: string) => (text.toLowerCase().match(/[a-z]{3,}/g) ?? []).m
 // A Metrics row and a brief row are the same number when one's words hold the other's ("Paying subscribers", "paying").
 export const sameMetric = (a: string, b: string) => { const x = words(a); const y = words(b); return !!x.length && !!y.length && (x.every((one) => y.includes(one)) || y.every((one) => x.includes(one))); };
 
-const LABELS: Record<Field, string> = { price: 'price', cost: 'cost per unit', burn: 'burn', net: 'net burn', cash: 'cash', subscribers: 'subscribers', paying: 'paying' };
-const isMoney = (field: Field) => field === 'price' || field === 'cost' || field === 'burn' || field === 'net';
+const LABELS: Record<Field, string> = { price: 'price', cost: 'cost per unit', burn: 'burn', net: 'net burn', cash: 'cash', subscribers: 'subscribers', paying: 'paying', volume: 'volume', plan: 'price per paying customer' };
+const isMoney = (field: Field) => field === 'price' || field === 'cost' || field === 'burn' || field === 'net' || field === 'plan';
+const singular = (word: string) => word.replace(/ies$/, 'y').replace(/(?<=(?:x|ch|sh))es$/, '').replace(/s$/, '');
+// The period a count is had in: "Bookings last month", "Bookings a week"; a month when it does not say.
+const countPeriod = (text: string): Period => { const found = /\b(?:last|this|per|a|an|each|every)\s+(week|month|year|day)\b|\b(weekly|monthly|yearly|daily)\b/i.exec(text); const word = (found?.[1] ?? found?.[2] ?? 'month').toLowerCase(); return /^week/.test(word) ? 'week' : /^year/.test(word) ? 'year' : /^(?:day|daily)/.test(word) ? 'day' : 'month'; };
 
 export type EconomicsState = {
   inputs: Partial<Record<Field, Input>>;
@@ -102,6 +107,11 @@ export type EconomicsState = {
   currency?: string;
   // A price per job: what is counted is that thing, never the paying people beside it.
   perJob: boolean;
+  // Journey 20: more than one revenue stream (€4 per booking on 310 bookings, and 6 cafés paying €39 a month). The
+  // paying count is the customers', the jobs are volume, MRR is both, and break-even is said in paying customers with
+  // the other stream held where it is: `held` says so ("at 310 bookings a month").
+  streams: number;
+  held?: string;
   monthly(field: Field): number | undefined;
   snapshot(): Snapshot;
   // Derived, worked with calc on every call.
@@ -138,7 +148,11 @@ export function stateOf(numbers: string, given: { fixes?: InputFix[]; readings?:
   const said = priceRow ? perUnit(priceRow.line) : undefined;
   const per = said && !(payersRow && new RegExp(`\\b${stem(said.split(' ').at(-1)!)}`, 'i').test(payersRow.label)) ? said : undefined;
   const counted = per ? find(rows, new RegExp(`\\b${stem(per.split(' ').at(-1)!)}`, 'i'), /\bprice\b|\bcost\b/i) : undefined;
-  const payingRow = per ? counted : payersRow;
+  // The paying row's own price ("Paying cafés: 6 at €39 a month"): beside a price per job, a second stream.
+  const planAt = payersRow?.amounts.find((one) => one.money && one.period);
+  const countAt = payersRow?.amounts.find((one) => !one.money);
+  const mixed = !!(per && payersRow && planAt && countAt);
+  const payingRow = mixed ? payersRow : per ? counted : payersRow;
   const currency = /[$€£]/.exec(numbers)?.[0];
   const inputs: Partial<Record<Field, Input>> = {};
   const fromRow = (field: Field, row: Row | undefined, money = true) => {
@@ -148,8 +162,15 @@ export function stateOf(numbers: string, given: { fixes?: InputFix[]; readings?:
     inputs[field] = { value: one.value, ...('period' in one && one.period ? { period: one.period } : {}), label: row.label, source: 'brief', said: `${row.label}: ${row.line}`, ...(per ? { per } : {}) };
   };
   fromRow('price', priceRow); fromRow('cost', costRow); fromRow('burn', burnRow); fromRow('net', netRow);
-  fromRow('cash', cashRow, false); fromRow('paying', payingRow, false);
-  if (subsRow && subsRow !== payingRow) fromRow('subscribers', subsRow, false);
+  fromRow('cash', cashRow, false);
+  if (mixed) {
+    const said = `${payersRow!.label}: ${payersRow!.line}`;
+    inputs.paying = { value: countAt!.value, label: payersRow!.label, source: 'brief', said };
+    inputs.plan = { value: planAt!.value, period: planAt!.period, label: `price per ${singular(unitOf(payersRow!.label))}`, source: 'brief', said };
+    if (counted) inputs.volume = { value: counted.amounts[0].value, period: countPeriod(`${counted.label} ${counted.line}`), label: counted.label, source: 'brief', said: `${counted.label}: ${counted.line}` };
+  } else fromRow('paying', payingRow, false);
+  if (per && inputs.price) inputs.price = { ...inputs.price, per: singular(per.split(' ').at(-1)!) };
+  if (subsRow && subsRow !== payingRow && subsRow !== counted) fromRow('subscribers', subsRow, false);
   // The founder's corrections, latest last: each stands unless the brief changed that figure since.
   for (const fix of given.fixes ?? []) {
     const had = inputs[fix.field];
@@ -164,9 +185,12 @@ export function stateOf(numbers: string, given: { fixes?: InputFix[]; readings?:
     const reading = (given.readings ?? []).filter((one) => sameMetric(one.label, paying.label) && Number.isFinite(one.value)).sort((a, b) => a.day.localeCompare(b.day)).at(-1);
     if (reading && !(paying.source === 'founder' && paying.day && paying.day > reading.day)) inputs.paying = { ...paying, value: reading.value, source: 'reading', said: `${reading.label}: ${reading.value} on ${reading.day} (Metrics)`, day: reading.day };
   }
-  let unit = per ? `${per} a month` : payingRow ? unitOf(payingRow.label) : 'paying customers';
+  let unit = mixed ? unitOf(payersRow!.label) : per ? `${per} a month` : payingRow ? unitOf(payingRow.label) : 'paying customers';
   for (const fix of given.unitFixes ?? []) if (unit.toLowerCase().includes(fix.wrong)) unit = unit.toLowerCase().replace(fix.wrong, fix.right);
-  const nets = !per;
+  const nets = !per || mixed;
+  // The jobs' stream, in calc words and in the founder's: "volume * price" on "310 bookings a month at €4".
+  const volumeTerm = () => `volume${TO_MONTH[inputs.volume?.period ?? 'month']} * price`;
+  const heldSaid = () => (inputs.volume && inputs.price ? `${inputs.volume.value.toLocaleString('en-US')} ${per} ${periodName(inputs.volume.period)}` : undefined);
 
   const monthly = (field: Field) => { const one = inputs[field]; return one ? one.value * (isMoney(field) ? FACTOR[one.period ?? 'month'] : 1) : undefined; };
   const priceTerm = () => `price${TO_MONTH[inputs.price?.period ?? 'month']}`;
@@ -177,14 +201,22 @@ export function stateOf(numbers: string, given: { fixes?: InputFix[]; readings?:
   // A sum with a week or a year turned into a month is rounded to the cent; a plain month's sum is shown as it is.
   const cents = (expression: string) => (/ \* 52 \/ 12| \/ 12| \* 365 \/ 12/.test(expression) ? `round(${expression}, 2)` : expression);
   const burnName = () => (inputs.cost ? 'fixed' : 'burn');
+  // Every stream's monthly revenue as one sum, with its values: the jobs' (when the brief counts them) and the plan's.
+  const revenue = () => {
+    const terms = [...(inputs.volume && inputs.price ? [volumeTerm()] : []), `paying * plan${TO_MONTH[inputs.plan?.period ?? 'month']}`];
+    const values = [...(inputs.volume && inputs.price ? [`volume=${v('volume')}`, `price=${v('price')}`] : []), `paying=${v('paying')}`, `plan=${v('plan')}`];
+    return { expression: terms.join(' + '), values: values.join(', ') };
+  };
   // Each derived figure with its calc working, worked again on every call.
   const work = {
     mrr() {
+      if (mixed) { const r = revenue(); return calculate(cents(r.expression), r.values); }
       if (!inputs.price || !inputs.paying || !nets) return undefined;
       return calculate(cents(`paying * ${priceTerm()}`), `paying=${v('paying')}, price=${v('price')}`);
     },
     net() {
       if (inputs.net) return calculate(`net${TO_MONTH[inputs.net.period ?? 'month']}`, `net=${v('net')}`);
+      if (mixed && inputs.burn) { const r = revenue(); return calculate(cents(`${burnTerm('burn')} - (${r.expression})`), `burn=${v('burn')}, ${r.values}`); }
       if (!inputs.burn || !inputs.price || !inputs.paying || !nets) return undefined;
       const b = burnName();
       return inputs.cost
@@ -199,6 +231,7 @@ export function stateOf(numbers: string, given: { fixes?: InputFix[]; readings?:
       if (!inputs.cash) return undefined;
       if (inputs.net) return calculate(`round(cash / net${TO_MONTH[inputs.net.period ?? 'month']}, 1)`, `cash=${v('cash')}, net=${v('net')}`);
       if (!inputs.burn) return undefined;
+      if (mixed) { const r = revenue(); return calculate(`round(cash / (${burnTerm('burn')} - (${r.expression})), 1)`, `cash=${v('cash')}, burn=${v('burn')}, ${r.values}`); }
       if (!nets || !inputs.price || !inputs.paying) return calculate(`round(cash / ${wrap(burnTerm('burn'))}, 1)`, `cash=${v('cash')}, burn=${v('burn')}`);
       const b = burnName();
       return inputs.cost
@@ -206,10 +239,18 @@ export function stateOf(numbers: string, given: { fixes?: InputFix[]; readings?:
         : calculate(`round(cash / (${burnTerm(b)} - paying * ${priceTerm()}), 1)`, `cash=${v('cash')}, ${b}=${v('burn')}, paying=${v('paying')}, price=${v('price')}`);
     },
     contribution() {
+      if (mixed) return calculate(`plan${TO_MONTH[inputs.plan!.period ?? 'month']}`, `plan=${v('plan')}`);
       if (!inputs.price) return undefined;
       return inputs.cost ? calculate(`${priceTerm()} - ${costTerm()}`, `price=${v('price')}, cost=${v('cost')}`) : calculate(priceTerm(), `price=${v('price')}`);
     },
     breakEven() {
+      // In paying customers on the plan, the jobs' stream held where it stands: never under none.
+      if (mixed && inputs.burn) {
+        const plan = `plan${TO_MONTH[inputs.plan!.period ?? 'month']}`;
+        return inputs.volume && inputs.price
+          ? calculate(`max(0, ceil((${burnTerm('burn')} - ${volumeTerm()}) / ${wrap(plan)}))`, `burn=${v('burn')}, volume=${v('volume')}, price=${v('price')}, plan=${v('plan')}`)
+          : calculate(`ceil(${burnTerm('burn')} / ${wrap(plan)})`, `burn=${v('burn')}, plan=${v('plan')}`);
+      }
       if (!inputs.price || !inputs.burn) return undefined;
       const b = burnName();
       if (inputs.cost) {
@@ -223,7 +264,7 @@ export function stateOf(numbers: string, given: { fixes?: InputFix[]; readings?:
   const netValue = () => { const n = work.net(); return n?.value; };
   const cashPositive = () => { const n = netValue(); return n !== undefined && n <= 0 && !inputs.net; };
   const state: EconomicsState = {
-    inputs, unit, ...(currency ? { currency } : {}), perJob: !!per,
+    inputs, unit, ...(currency ? { currency } : {}), perJob: !!per && !mixed, streams: mixed ? 2 : 1, ...(mixed && heldSaid() ? { held: `at ${heldSaid()}` } : {}),
     monthly,
     snapshot: () => Object.fromEntries(Object.entries(inputs).map(([field, one]) => [field, { value: one!.value, ...(one!.period ? { period: one!.period } : {}) }])) as Snapshot,
     mrr: () => work.mrr()?.value,
@@ -241,7 +282,7 @@ export function stateOf(numbers: string, given: { fixes?: InputFix[]; readings?:
     killDistance(line, below, value = state.current()) { return value === undefined ? undefined : below ? value - line : line - value; },
     side(value = state.current()) {
       const even = state.breakEven();
-      if (even === undefined || value === undefined || !Number.isFinite(even) || per) return undefined;
+      if (even === undefined || value === undefined || !Number.isFinite(even) || (per && !mixed)) return undefined;
       return value > even ? 'above' : value < even ? 'below' : 'at';
     },
     explain: () => state.economics()?.working.map((one) => one.line) ?? [],
@@ -258,22 +299,24 @@ export function stateOf(numbers: string, given: { fixes?: InputFix[]; readings?:
       if (n !== undefined && inputs.paying) { out.current = n; out.unit = unit; }
       if (per) out.unit = unit;
       const units = out.unit ?? 'paying customers';
-      const have = n === undefined ? '' : per ? `; the brief has ${n} (${inputs.paying!.label.toLowerCase()})` : `; we have ${n}`;
+      const have = n === undefined ? '' : per && !mixed ? `; the brief has ${n} (${inputs.paying!.label.toLowerCase()})` : `; we have ${n}`;
       const p = inputs.price?.period ?? 'month';
       const converted = p !== 'month' || cashPositive();
       const mrr = work.mrr();
-      if (mrr && converted) push('MRR', mrr, (result) => `${result} a month from ${n} ${units} at ${money(v('price'), currency)} ${periodName(p)}`);
+      if (mrr && mixed) push('MRR', mrr, (result) => `${result} a month from ${[heldSaid() ? `${heldSaid()} at ${money(v('price'), currency)}` : '', `${n} ${units} at ${money(v('plan'), currency)} ${periodName(inputs.plan!.period)}`].filter(Boolean).join(' and ')}`);
+      else if (mrr && converted) push('MRR', mrr, (result) => `${result} a month from ${n} ${units} at ${money(v('price'), currency)} ${periodName(p)}`);
       const even = work.breakEven();
       if (even && 'losing' in even) {
         push('Break-even', even, (result) => `${result} a month on each of the ${units}: each one loses money, so no count breaks even`);
         out.breakEven = Infinity;
       } else if (even) {
-        push('Break-even', even, (result) => `${result} ${units} to cover ${inputs.cost ? 'fixed costs' : `the burn (the brief gives no cost per unit)`}${have}`);
+        if (mixed) push('Break-even', even, (result) => `${result} ${units} to cover the burn${heldSaid() ? ` with ${heldSaid()} at ${money(v('price'), currency)} held where they are` : ` (the brief gives no ${per} a month)`}${have}`);
+        else push('Break-even', even, (result) => `${result} ${units} to cover ${inputs.cost ? 'fixed costs' : `the burn (the brief gives no cost per unit)`}${have}`);
         out.breakEven = even.value;
       }
       const net = work.net();
       if (net && cashPositive()) push('Net burn', net, (result) => `${result} a month: more comes in than goes out, so the company is cash-positive`);
-      else if (net && p !== 'month' && !inputs.net) push('Net burn', net, (result) => `${result} a month`);
+      else if (net && (p !== 'month' || mixed) && !inputs.net) push('Net burn', net, (result) => `${result} a month`);
       const gross = work.gross();
       if (cashPositive() && gross) {
         push('Runway', gross, (result) => `cash-positive, so the cash does not run down at the net; at the gross burn alone ${result} months`);
@@ -313,7 +356,7 @@ const money = (value: number, currency = '') => `${value < 0 ? '-' : ''}${curren
 const PER_SAID = /\d[\d,]*(?:\.\d+)?\s*k?\s*(?:[$€£])?\s*(?:per|each|\/)\s*([a-z][a-z-]*)/i;
 export function perOf(one: { period?: Period; said?: string; per?: string } | undefined): string | undefined {
   if (!one || one.period) return undefined;
-  if (one.per) return one.per;
+  if (one.per) return one.per.startsWith('per ') ? one.per : `per ${one.per}`;
   const word = PER_SAID.exec((one.said ?? '').replace(/\([^)]*\)/g, ' '))?.[1].toLowerCase();
   return word && !PERIOD_OR_PAYER.test(word) ? `per ${word}` : undefined;
 }
@@ -375,7 +418,7 @@ export function gapLine(state: EconomicsState): string | undefined {
   if (even === undefined || now === undefined || gap === undefined || !Number.isFinite(even)) return undefined;
   const trials = trialsOf(state);
   const tail = trials === undefined ? '' : trials < gap ? `; the ${trials} trials cannot close it alone` : `; ${gap} of the ${trials} trials would have to convert to close it`;
-  return `Break-even is ${even} ${state.unit}; ${now} pay now, gap ${gap}${tail}.`;
+  return `Break-even is ${even} ${state.unit}${state.held ? ` ${state.held}` : ''}; ${now} pay now, gap ${gap}${tail}.`;
 }
 const trialsOf = (state: EconomicsState) => { const one = state.inputs.subscribers; return one && TRIAL.test(one.label) ? one.value : undefined; };
 export function gapFix(text: string, state: EconomicsState | null | undefined): string {
@@ -408,7 +451,7 @@ export function breakEvenLine(state: EconomicsState | null | undefined, value?: 
   const side = state.side(value);
   if (even === undefined || !side) return undefined;
   const now = value ?? state.current();
-  return `Break-even is ${even} ${state.unit}; ${now} is ${side === 'at' ? 'right at it' : `${side} it`}${state.cashPositive() && value === undefined ? ', and the company is cash-positive' : ''}.`;
+  return `Break-even is ${even} ${state.unit}${state.held ? ` ${state.held}` : ''}; ${now} is ${side === 'at' ? 'right at it' : `${side} it`}${state.cashPositive() && value === undefined ? ', and the company is cash-positive' : ''}.`;
 }
 
 // Journey 19: "Unsourced figures: €839" under the verdict for the net burn worked out on the line before it, and "Not
@@ -428,7 +471,7 @@ export function stateFigures(state: EconomicsState | null | undefined): string {
   if (mrr !== undefined) said.push(`MRR ${money(mrr, currency)} a month`);
   if (net !== undefined) said.push(`net burn ${money(net, currency)} a month`);
   if (runway) said.push(`runway ${runway.display}${Number.isFinite(runway.value) ? ' months' : ''}`);
-  if (even !== undefined && Number.isFinite(even)) said.push(`break-even ${even} ${state.unit}`);
+  if (even !== undefined && Number.isFinite(even)) said.push(`break-even ${even} ${state.unit}${state.held ? ` ${state.held}` : ''}`);
   if (now !== undefined) said.push(`${now} ${state.unit} now`);
   if (gap !== undefined && gap > 0) said.push(`gap to break-even ${gap}`);
   return said.length ? `The company's figures, worked with calc from the Company brief: ${said.join('; ')}.` : '';

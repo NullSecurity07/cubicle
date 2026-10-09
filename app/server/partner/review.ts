@@ -53,13 +53,13 @@ export function rightFigures(state: EconomicsState): Derived[] {
   const fixed = state.monthly('burn');
   const paying = state.current();
   if (net !== undefined) {
-    const working = state.inputs.net ? `the Company brief gives ${money(net, currency)} a month` : `${calculate(state.inputs.cost ? 'fixed - paying * (price - cost)' : 'burn - paying * price', state.inputs.cost ? `fixed=${fixed}, paying=${paying}, price=${round(price!)}, cost=${round(cost!)}` : `burn=${fixed}, paying=${paying}, price=${round(price!)}`).worked} = ${money(net)} (calc)`;
+    const working = state.streams > 1 ? `${sumOf(state, 'Net burn')} (calc)` : state.inputs.net ? `the Company brief gives ${money(net, currency)} a month` : `${calculate(state.inputs.cost ? 'fixed - paying * (price - cost)' : 'burn - paying * price', state.inputs.cost ? `fixed=${fixed}, paying=${paying}, price=${round(price!)}, cost=${round(cost!)}` : `burn=${fixed}, paying=${paying}, price=${round(price!)}`).worked} = ${money(net)} (calc)`;
     const positive = state.cashPositive();
     out.push({
       name: 'net burn', right: net, working, shown: positive ? `${money(net, currency)} a month (cash-positive)` : `${money(net, currency)} a month`,
       // Cash-positive, the surplus may be written as a plus: its size is what is checked.
       near: (claimed) => near(net, 1)(claimed) || (positive && near(Math.abs(net), 1)(Math.abs(claimed))),
-      hint: (claimed) => (cost !== undefined && paying !== undefined && price !== undefined && fixed !== undefined && near(fixed - paying * price, 1)(claimed) ? `it leaves out what the ${paying} ${unit} cost (${money(paying * cost, currency)} a month)`
+      hint: (claimed) => (state.streams > 1 ? (fixed !== undefined && near(fixed, 1)(claimed) ? 'it is the burn before anything the paying ones bring in' : '') : cost !== undefined && paying !== undefined && price !== undefined && fixed !== undefined && near(fixed - paying * price, 1)(claimed) ? `it leaves out what the ${paying} ${unit} cost (${money(paying * cost, currency)} a month)`
         : fixed !== undefined && near(fixed, 1)(claimed) ? 'it is the burn before anything the paying ones bring in' : ''),
     });
   }
@@ -83,6 +83,14 @@ export function rightFigures(state: EconomicsState): Derived[] {
   return out;
 }
 const round = (value: number) => Math.round(value * 100) / 100;
+// Break-even on the paying customers' plan alone, the other stream at nothing: a sum a colleague may rightly give.
+function aloneEven(state: EconomicsState): { value: number; result: string } | undefined {
+  const fixed = state.monthly('burn');
+  const plan = state.monthly('plan');
+  if (state.streams < 2 || fixed === undefined || !plan) return undefined;
+  const one = calculate('ceil(burn / plan)', `burn=${round(fixed)}, plan=${round(plan)}`);
+  return { value: one.value, result: `${one.worked} = ${one.display}` };
+}
 
 const FIGURE = /(?<![\p{L}\d.,])([$€£]\s?)?(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?(\s?k\b)?(\s?%)?/gu;
 type Figure = { text: string; value: number; at: number; money: boolean; share: boolean; months: boolean };
@@ -160,10 +168,14 @@ export function senseFlags(text: string, given: string | EconomicsState): { flag
       const claimed = claimedOn(line, even, (one) => !one.money && !one.share && !one.months);
       const noun = state.unit.split(' ').find((word) => !/^(?:paying|a|per|month)$/.test(word))?.replace(/s$/, '') ?? '';
       const after = claimed ? line.slice(claimed.at + claimed.text.length, claimed.at + claimed.text.length + 40) : '';
-      const unitWrong = !!claimed && /^\s*[a-z]/i.test(after) && !new RegExp(`^\\s*(?:[a-z-]+\\s+){0,2}${noun}`, 'i').test(after);
-      if (claimed && ((claimed.value !== right && !roundedRight(line, claimed, right, worked('Break-even')!)) || unitWrong)) {
+      const unitWrong = !!claimed && /^\s*\p{L}/iu.test(after) && !new RegExp(`^\\s*(?:[\\p{L}-]+\\s+){0,2}${noun}`, 'iu').test(after);
+      // Journey 20: with two streams, break-even on the plan alone ("34 paying cafés if bookings stopped") is a right
+      // sum too: Otto's right doc was flagged "325 bookings, not 34 paying caf".
+      const alone = aloneEven(state);
+      const aloneRight = !!claimed && !!alone && (claimed.value === alone.value || roundedRight(line, claimed, alone.value, { result: alone.result }));
+      if (claimed && !aloneRight && ((claimed.value !== right && !roundedRight(line, claimed, right, worked('Break-even')!)) || unitWrong)) {
         const shown = `${right} ${state.unit}`;
-        const wrongAs = `${claimed.text}${unitWrong ? ` ${/^\s*((?:[a-z-]+\s?){1,3})/i.exec(after)?.[1].trim() ?? ''}` : ''}`;
+        const wrongAs = `${claimed.text}${unitWrong ? ` ${/^\s*((?:[\p{L}-]+\s?){1,3})/iu.exec(after)?.[1].trim() ?? ''}` : ''}`;
         found = { derived: { name: 'break-even', right, working: `${worked('Break-even')!.result} (calc)`, shown, near: () => false }, claimed: { ...claimed, text: wrongAs } };
       }
     }
@@ -234,7 +246,8 @@ export function reviewDoc(input: { text: string; before?: string; numbers: strin
   flags.push(...sense.flags.filter((flag) => flag.line !== undefined && addedAt.has(flag.line)).map(({ line: _line, ...flag }) => flag));
   // (a) the guard's own checks, on the added lines only: a count nothing read gives, and a derived figure no calc
   // worked out. The working of the right figures is read too, so a figure that matches it stands.
-  const sums = [...rightFigures(state).flatMap((one) => (/ = /.test(one.working) ? [one.working.replace(/ \(calc\)$/, '')] : [])), ...state.explain()];
+  const alone = aloneEven(state);
+  const sums = [...(alone ? [alone.result] : []), ...rightFigures(state).flatMap((one) => (/ = /.test(one.working) ? [one.working.replace(/ \(calc\)$/, '')] : [])), ...state.explain()];
   const read = [input.numbers, ...input.read, ...sums];
   const bare = input.text.split('\n').map((line, index) => (sense.lines.has(index) ? '' : line)).join('\n');
   const marks = [...markUnworked({ before, after: bare, read }).marked, ...markUnbacked({ before, after: bare, read }).marked];
@@ -250,6 +263,8 @@ export function reviewDoc(input: { text: string; before?: string; numbers: strin
     if (sense.lines.has(index)) continue;
     const label = /\b(?:runway|break[- ]?even|net\s+burn|(?:gross\s+|unit\s+|contribution\s+)?margin)\b/i.exec(line);
     if (!label) continue;
+    // Cash-positive, a runway said as not running down is the state's own: no months to work out.
+    if (/^runway$/i.test(label[0]) && state.cashPositive() && /\b(?:infinite|unlimited|not limited|cash[- ]positive|profitable|does not run (?:down|out))\b|∞/i.test(line)) continue;
     const claimed = claimedOn(line, label, (one) => one.months || one.share || one.money || !/^\s*(?:%|months?)/i.test(line.slice(one.at + one.text.length)));
     if (!claimed || isWorked(claimed, worked) || figures.some((one) => one.includes(claimed.text))) continue;
     unworked.push(clip(line.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, ''), 60));

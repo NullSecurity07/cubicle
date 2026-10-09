@@ -1,4 +1,4 @@
-import { leadName, type Lead, type LeadStage, type ThreadEvent, type ThreadKind } from './leads.ts';
+import { leadName, type Lead, type LeadStage, type ThreadEvent, type ThreadKind, type ThreadReading } from './leads.ts';
 
 // A lead's thread: drafted, sent or opened in Gmail, replied, meeting set, notes taken. The stage follows the thread in
 // code, never a person's say-so: these rules are the only road from one to the next, and they only ever move forward.
@@ -76,6 +76,7 @@ const NUMBER = `\\d{1,3}|${Object.keys(NUMBERS).filter((one) => one !== 'both').
 const valueOf = (word: string) => NUMBERS[word.toLowerCase()] ?? Number(word);
 const WHOLE = new RegExp(`\\b(${NUMBER}|all|both)\\s+of\\s+(?:us|them|you|the\\s+[\\p{L}-]+)\\b`, 'iu');
 const MORE = new RegExp(`\\b(${NUMBER})\\s+(?:more\\s+|other\\s+)?(?:(?:of\\s+)?(?:her|his|their|my|our|the)\\s+)?((?:[\\p{L}-]+\\s+){0,2}?(?:[\\p{L}-]+s|people|staff|others))\\b`, 'giu');
+const ROLE = /\b(?:the|her|his|their|our|its)\s+(?:own\s+)?(?:owner|manager|founder|co-founder|director|organi[sz]er|coordinator|host|head|chair|boss|lead|treasurer|secretary|leader|chef|landlord|landlady)\b/giu;
 // Capitalised words that name nobody.
 const NOBODY = /^(?:she|he|they|we|i|you|the|and|but|both|all|also|after|before|then|today|yesterday|good|great|meeting|call|notes?|monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december|st|saint|hospital|clinic|ward|team|so|on|in|at|it|this|that|there|our|my|her|his|their)$/i;
 export function payingPeople(notes: string): { count: number; working?: string } | null {
@@ -92,6 +93,12 @@ export function payingPeople(notes: string): { count: number; working?: string }
     const parts: string[] = [];
     let count = 0;
     let rest = who;
+    // "The owner and two volunteers paid": a person named by their role is one (journey 20 counted the volunteers alone).
+    for (const role of who.matchAll(ROLE)) {
+      count += 1;
+      parts.push(role[0].trim());
+      rest = rest.replace(role[0], ' ');
+    }
     for (const more of who.matchAll(MORE)) {
       count += valueOf(more[1]);
       parts.push(more[0].trim());
@@ -112,9 +119,18 @@ export function payingPeople(notes: string): { count: number; working?: string }
   }
   return null;
 }
-export const readingOf = (notes: string): { conversations: number; paying: number; working?: string } => {
+// What the paying count counts. People ("Paying customers", "Paying subscribers") are counted one by one; a place
+// ("Paying cafés", "Paying offices") is one whatever number of its people paid.
+const PEOPLE_UNIT = /\b(?:customers?|users?|subscribers?|people|persons?|members?|clients?|buyers?|nurses?|patients?|parents?|students?|seats?|volunteers?|families|family|individuals?)\b/i;
+export const countsPlaces = (label: string | undefined) => !!label && !PEOPLE_UNIT.test(label);
+export const readingOf = (notes: string, unit?: string): ThreadReading => {
   const paying = payingPeople(notes);
-  return { conversations: 1, paying: paying?.count ?? 0, ...(paying?.working ? { working: paying.working } : {}) };
+  const label = unit?.toLowerCase();
+  if (paying && countsPlaces(label)) {
+    const place = label!.replace(/^(?:paying|paid)\s+/, '').replace(/ies$/, 'y').replace(/s$/, '');
+    return { conversations: 1, paying: 1, unit: label!, people: paying.count, working: `${paying.count === 1 ? '1 person' : `${paying.count} people`} paid at this ${place}${paying.working ? ` (${paying.working})` : ''}; it is one ${label!.replace(/s$/, '')}` };
+  }
+  return { conversations: 1, paying: paying?.count ?? 0, ...(paying?.working ? { working: paying.working } : {}), ...(label ? { unit: label } : {}) };
 };
 
 // The address in a From line, "Ana Ruiz <ana@example.com>" or just the address.
@@ -160,8 +176,8 @@ export const replyTitle = (lead: Pick<Lead, 'person' | 'company'>) => `${leadNam
 export const replyDetail = (reply: ThreadEvent) => `"${short(reply.text ?? '', 200)}"`;
 export const notesTitle = (lead: Pick<Lead, 'person'>) => `How did the meeting with ${lead.person.name} go?`;
 export const notesDetail = (meeting: ThreadEvent) => `You met ${meeting.day ? `on ${dayWords(meeting.day)}` : 'them'}. A few lines of notes keep what they said, and count the conversation.`;
-export function readingTitle(lead: Pick<Lead, 'person'>, reading: { conversations: number; paying: number }): string {
-  const parts = [`conversations +${reading.conversations}`, ...(reading.paying ? [`paying customers +${reading.paying}`] : [])];
+export function readingTitle(lead: Pick<Lead, 'person'>, reading: { conversations: number; paying: number; unit?: string }): string {
+  const parts = [`conversations +${reading.conversations}`, ...(reading.paying ? [`${reading.unit ?? 'paying customers'} +${reading.paying}`] : [])];
   return `Log ${parts.join(' and ')} from the meeting with ${lead.person.name}?`;
 }
 export const readingDetail = (notes: ThreadEvent) => `From your notes: "${short(notes.text ?? '', 160)}"${notes.reading?.working ? `\nPaying counted: ${notes.reading.working}` : ''}`;

@@ -78,7 +78,10 @@ export function killToward(start: number, latest: number, line: number, below: b
   if (!worse) return null;
   const losing = below ? start < line : start > line;
   if (losing) return { start, latest, line, share: 1, crossed: false, away: true };
-  return towardLine(start, latest, line);
+  // Journey 20: "8 ... the kill line is 8 (Paying cafés below 8)" was raised as crossed. A line is crossed only past
+  // it: 8 is on "below 8", not under it.
+  const toward = towardLine(start, latest, line);
+  return toward && { ...toward, crossed: below ? latest < line : latest > line };
 }
 // Which side of a kill signal's line loses: "fewer than 10", "below 5" and a bare count to reach lose under it.
 export const losesBelow = (what: string) => thresholdOf(what)?.below ?? !/\b(?:above|over|more than|greater than|higher than|exceeds?)\b|>/i.test(what);
@@ -143,12 +146,13 @@ export function metricSparks(cards: MetricsCard[], kill: FounderPromise | undefi
     const toward = read && killToward(read.start.value, read.latest.value, lineOf!.line, losesBelow(kill.what));
     if (lineOf && read && trending(toward)) {
       const { metric } = lineOf;
+      const onIt = !toward.crossed && !toward.away && read.latest.value === lineOf.line;
       const said = (value: number) => formatValue(value, metric.unit);
       const number = `${metric.label}: ${said(read.latest.value)} on ${read.latest.at}, from ${said(read.start.value)} on ${read.start.at}; the kill line is ${said(lineOf.line)} (${kill.what}, checked on ${kill.due}).`;
       found.push({
-        key: `kill:${kill.id}:${metric.key}:${toward.crossed ? 'crossed' : toward.away ? 'away' : 'trending'}`, trigger: `kill:${kill.id}:${metric.key}`, kind: 'metric', at, money: 100, cardId: card!.cardId, number,
-        why: toward.crossed ? `${metric.label} crossed the kill line` : toward.away ? `${metric.label} is moving away from the kill line it has to clear` : `${metric.label} is trending to the kill line`,
-        facts: `${toward.crossed ? 'The number has crossed the kill line' : toward.away ? 'The number has not cleared the kill line yet and moved the wrong way since your verdict' : `The number is trending to the kill line: ${Math.round(toward.share * 100)}% of the way from where it stood at your verdict`}.\n${number}\n${kill.due >= localDay(at) ? `The verdict's check is on ${kill.due}.` : `The verdict's check day, ${kill.due}, has passed.`}`,
+        key: `kill:${kill.id}:${metric.key}:${toward.crossed ? 'crossed' : toward.away ? 'away' : onIt ? 'on-line' : 'trending'}`, trigger: `kill:${kill.id}:${metric.key}`, kind: 'metric', at, money: 100, cardId: card!.cardId, number,
+        why: toward.crossed ? `${metric.label} crossed the kill line` : toward.away ? `${metric.label} is moving away from the kill line it has to clear` : onIt ? `${metric.label} is right on the kill line, not past it` : `${metric.label} is trending to the kill line`,
+        facts: `${toward.crossed ? 'The number has crossed the kill line' : toward.away ? 'The number has not cleared the kill line yet and moved the wrong way since your verdict' : onIt ? 'The number is right on the kill line, not past it: one more step the wrong way crosses it' : `The number is trending to the kill line: ${Math.round(toward.share * 100)}% of the way from where it stood at your verdict`}.\n${number}\n${kill.due >= localDay(at) ? `The verdict's check is on ${kill.due}.` : `The verdict's check day, ${kill.due}, has passed.`}`,
         out: { kind: 'task-or-decision' },
         kill: { label: metric.label, start: read.start.value, latest: read.latest.value, line: lineOf.line, below: losesBelow(kill.what) },
       });
@@ -278,6 +282,17 @@ export function proposalOf(spark: Spark, reply: string, today: string): Pick<Pro
 // to Mira today ...". A line labelled as the verdict's, or as the watch's own Move, Task or Due, is not the email's.
 const NOT_EMAIL = /^\s*(?:\*\*)?(?:my call|the call|verdict|why|kill signal|this week|move|task|due|decision|drop|read)(?:\*\*)?\s*:/i;
 export const emailBody = (body: string) => body.split('\n').filter((one) => !NOT_EMAIL.test(one)).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+
+// A kill line crossed: an alert of the founder's, raised whether or not an unasked turn is left.
+export const isCrossing = (spark: Spark) => spark.kind === 'metric' && !!spark.kill && spark.key.endsWith(':crossed');
+// The crossing in the state's own words, with no model turn: what crossed, and the call it asks for.
+export function crossedProposal(spark: Spark): Pick<Proposal, 'move' | 'draft'> {
+  const label = spark.kill?.label ?? 'The number';
+  return {
+    move: `${label} is past the kill line: make the call this week, keep going, change course or stop.`,
+    draft: { kind: 'decision', title: `${label} crossed the kill line: keep going, change course or stop?` },
+  };
+}
 
 const fallbackMove = (spark: Spark) => spark.kind === 'metric' ? 'Find out this week what is moving the number, before the check day.'
   : spark.kind === 'lead' ? 'Reply today and propose a short call.'
@@ -511,13 +526,20 @@ export function createWatch(given: WatchDeps) {
       const held = new Set<string>();
       for (const spark of sparks) {
         if (open.has(spark.trigger) || fired.has(spark.key)) continue;
+        // Journey 20: a crossing waited behind the three-a-day budget and the founder saw nothing. A kill line crossed is
+        // the founder's alert, never held: the budget buys only the partner's phrasing of it, and with the budget spent
+        // the row says it in the state's own words with no model turn.
+        const crossing = isCrossing(spark);
         const taken = await deps.budget.take(spark.trigger.replace(/^kill:[^:]+:/, 'kill:'));
-        if (!taken.ok) { waiting.push({ key: spark.key, what: spark.why, why: taken.why ?? 'no unasked turns left today', at }); held.add(spark.key); continue; }
-        const messages: ModelMessage[] = [...await deps.promptFor(stage, partner.id), { role: 'user', content: watchAsk(spark, today) }];
-        const reply = await deps.ask(messages).catch((error: Error) => { console.error(`partner watch: ${error.message}`); return null; });
-        // No answer: the turn said nothing, so it goes back to the day's budget.
-        if (!reply?.text.trim()) taken.release?.();
-        const raw = proposalOf(spark, reply?.text ?? '', today);
+        if (!taken.ok && !crossing) { waiting.push({ key: spark.key, what: spark.why, why: taken.why ?? 'no unasked turns left today', at }); held.add(spark.key); continue; }
+        let reply: { text: string; provider?: string; model?: string } | null = null;
+        if (taken.ok) {
+          const messages: ModelMessage[] = [...await deps.promptFor(stage, partner.id), { role: 'user', content: watchAsk(spark, today) }];
+          reply = await deps.ask(messages).catch((error: Error) => { console.error(`partner watch: ${error.message}`); return null; });
+          // No answer: the turn said nothing, so it goes back to the day's budget.
+          if (!reply?.text.trim()) taken.release?.();
+        }
+        const raw = taken.ok && reply?.text.trim() ? proposalOf(spark, reply.text, today) : crossing ? crossedProposal(spark) : proposalOf(spark, reply?.text ?? '', today);
         const fixed = { ...raw, move: breakEvenFix(raw.move, numbers), draft: raw.draft.kind === 'task' || raw.draft.kind === 'decision' ? { ...raw.draft, title: breakEvenFix(raw.draft.title, numbers) } : raw.draft };
         const shaped = guardProposal(spark, fixed, await deps.sources?.(stage).catch(() => []) ?? [], today);
         let proposal: Proposal | null = {

@@ -223,3 +223,27 @@ describe('a break-even written with its rounding', () => {
     expect(review('- Break-even: 37.9, rounded to 37 paying plumbers')).toHaveLength(1);
   });
 });
+
+// Journey 20: Otto's Runway doc was the one right picture on the stage (both streams, cash-positive, 34 cafés on the
+// subscriptions alone), and the review flagged it "break-even is 325 bookings a month, not 34 paying caf".
+describe('a review of a doc on two revenue streams (journey 20)', () => {
+  const FIXSLOT = '- Price: €4 per booking\n- Bookings last month: 280\n- Paying cafés: 6 at €39 a month\n- Cash: €5,400\n- Burn: €1,300 a month\n- Cafés contacted: 40';
+  const OTTO = [
+    '# Runway',
+    '',
+    '- Revenue: 280 * 4 + 6 * 39 = €1,354 a month (calc)',
+    '- Net burn: 1300 - 1354 = -€54 a month (calc)',
+    '- Runway: Infinite, we are cash-positive',
+    '- Break-even on subscriptions alone: 1300 / 39 = 33.33, so 34 paying cafés if bookings stopped',
+  ].join('\n');
+  it('is Fit for the founder', () => {
+    const review = reviewDoc({ text: OTTO, numbers: FIXSLOT, read: ['280 * 4 + 6 * 39 = 1354', '1300 - 1354 = -54', '1300 / 39 = 33.33333333'], said: [] });
+    expect(review.verdict).toBe('Fit for the founder.');
+  });
+  it('a break-even in bookings is flagged with the unit whole, never "caf"', () => {
+    const review = reviewDoc({ text: '# Runway\n\n- Break-even: 325 bookings a month', numbers: FIXSLOT, read: [], said: [] });
+    expect(review.verdict).toMatch(/^Fix first: break-even is 5 paying cafés, not 325 bookings/);
+    const sense = senseFlags('- Break-even: 34 paying cafés', stateOf(FIXSLOT));
+    expect(sense.flags).toEqual([]);
+  });
+});

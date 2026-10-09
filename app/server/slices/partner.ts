@@ -20,7 +20,7 @@ import { gatherSince, metricsOnDisk, sinceHeadline } from '../partner/since.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import { createReviews, granted } from '../partner/review.ts';
 import { FAKE_REFRESH, holdStop, keepCall, loosens, readRefresh, refreshAsk, refreshDue, refreshOpening, refreshText, staleOf } from '../partner/refresh.ts';
-import { crossedRefusal, killAskIn, killMovedLine, pastLine } from '../partner/kill.ts';
+import { crossedRefusal, killAskIn, killMovedLine, killStandLine, pastLine } from '../partner/kill.ts';
 import { goalsIn } from '../partner/goal.ts';
 import { correctionLines, correctionsIn, fixesLine, inputFixesIn, keepCorrections, keepFixes, unitFix, unitsFix } from '../partner/corrections.ts';
 import { markClaims } from '../tools/evidence.ts';
@@ -429,6 +429,11 @@ export function createPartner(options: PartnerOptions = {}) {
       // A verdict made on inputs that changed since is said to be stale, with what changed (journey 16).
       const stale = staleOf(held?.call, economics);
       const call = [...verdictLines(held?.call), ...(stale.length && held?.call?.decision ? [`That verdict is stale: made on numbers that changed since (${stale.map((one) => changedLine(one, economics?.currency ?? '')).join('; ')}). Work from the numbers now, never from the figures said then.`] : [])];
+      // The kill line standing now and today's number against it, read at this turn (journey 20).
+      const check = promised.filter((one) => one.check && one.status === 'open').at(-1);
+      const signal = check ? { what: check.what, by: check.due } : held?.call?.signal;
+      const stand = signal ? killStandLine(signal, await readingOf(stage, signal).catch(() => null)) : null;
+      if (stand) call.push(stand);
       return { ...parts, promised: promised.filter((one) => one.status === 'open').map(promiseLine), declined, call, corrected: [...(economics?.founderLines() ?? []), ...correctionLines(held?.corrections ?? [])] };
     }
     async function standingFor(stage: Stage, partnerId: string) {
@@ -531,7 +536,7 @@ export function createPartner(options: PartnerOptions = {}) {
       const held = await state.change((draft) => { draft.fixes = keepFixes(draft.fixes ?? [], fresh); return draft.call; });
       standing = null;
       const stale = held?.decision ? ` My verdict of ${held.day} was made on the numbers before, so it is stale: ${asksVerdict(query) || pushesBack(query) ? 'it is made again here' : 'I make it again on the next look'}.` : '';
-      fixedNow.set(roomId, { query, line: `${fixesLine(fresh, economics.currency ?? '').replace(/\*$/, '')}${stale}*` });
+      fixedNow.set(roomId, { query, line: `${fixesLine(fresh, economics.currency ?? '', Object.fromEntries(Object.entries(economics.inputs).map(([field, one]) => [field, one!.label]))).replace(/\*$/, '')}${stale}*` });
     }
     const beforeTurn: Handler<'turn:before'> = async (payload, next) => {
       const system = payload.messages[0];
@@ -673,7 +678,7 @@ export function createPartner(options: PartnerOptions = {}) {
       try {
         const doc = await companyNow(stage);
         let company = doc ? await deps.store.readDoc(doc.id) : '';
-        if (doc && (facts.numbers.length || facts.idea || facts.customer || facts.denied?.length)) {
+        if (doc && (facts.numbers.length || facts.idea || facts.customer || facts.denied?.length || facts.priced?.length)) {
           const kept = keepFacts(company, facts, localDay(now()));
           let line = '';
           if (kept.kept.length && wired(stage, me.id, [doc.id]).length) {
@@ -684,6 +689,8 @@ export function createPartner(options: PartnerOptions = {}) {
             company = kept.text;
             line = keptLine(kept.kept);
           } else if (kept.kept.length) line = `*Not kept: the "${doc.title}" document is not wired to ${me.name}, so ${kept.kept.join(', ')} are not in it. Wire it to ${me.name} to keep it current.*`;
+          // Said but on no row: asked back, never written (journey 20).
+          if (kept.asks?.length) line = [line, ...kept.asks.map((one) => `*Not written: ${one}*`)].filter(Boolean).join('\n\n');
           if (line) receipt = line;
         }
         const numbers = `${sectionText(company, 'Numbers')}\n${payload.query}`;

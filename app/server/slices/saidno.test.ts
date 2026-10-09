@@ -28,6 +28,26 @@ describe('a no said in chat', () => {
   });
 });
 
+// Journey 20: "No paid ads, because …" also kept a no on the open "Referral discount" decision proposed just before,
+// and "No to that reply for Ines, because …" a no on the morning note's question.
+describe('a no that names its own subject', () => {
+  it('keeps only that standing no, never a no on what was proposed just before it', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'saidno-slice-'));
+    const deps = stubDeps(workspace, ROOT);
+    const part = (await saidno.install(deps)) as Installed;
+    const roomId = (await deps.store.loadStage()).rooms[0].id;
+    await deps.store.appendChat(roomId, { id: 'q', role: 'user', text: 'a café gets two months at no charge if it brings in another café', at: 1 } as never);
+    await deps.store.appendChat(roomId, { id: 'a', role: 'assistant', text: 'Should we update the Company Numbers to include booking and subscription revenue?', at: 2,
+      tools: [{ id: 't', name: 'propose_decision', args: { title: 'Referral discount for new cafés', options: ['yes', 'no'] }, ok: true, result: 'proposed' }] } as never);
+    await deps.seams.run('turn:before', { roomId, source: 'chat', query: 'No paid ads, because repair cafés find tools through other cafés, not through ads.', messages: [] });
+    expect((await saidNoFor(workspace).list()).map((one) => [one.tool, one.subject, one.reason])).toEqual([['chat', 'paid ads', 'repair cafés find tools through other cafés, not through ads']]);
+    // A plain "No, too early" right after a proposal is still a no to it.
+    await deps.seams.run('turn:before', { roomId, source: 'chat', query: 'No, too early.', messages: [] });
+    expect((await saidNoFor(workspace).list()).map((one) => one.subject)).toEqual(expect.arrayContaining(['paid ads', 'Referral discount for new cafés']));
+    await part.close?.();
+  });
+});
+
 // Journey 17: "No cold outreach to nurses we have not met, because nurses hate it." Sam: "I have recorded that rule",
 // and nothing was kept.
 describe('a reply that says a no was recorded', () => {

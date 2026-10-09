@@ -387,7 +387,10 @@ describe('journey 17\'s morning notes', () => {
 
   it('never ships an empty section: no moves is said in words, an empty risk or question is left out', () => {
     expect(morningText({ things: [], risk: '', question: 'Which count is right?' })).toBe('No moves today.\n\nQuestion: Which count is right?');
-    expect(morningText({ things: ['Call Anna.'], risk: 'r', question: '' })).toBe('Three moves for today:\n1. Call Anna.\n\nRisk: r');
+    expect(morningText({ things: ['Call Anna.'], risk: 'r', question: '' })).toBe('One move for today:\n1. Call Anna.\n\nRisk: r');
+    // Journey 20: "Three moves" over one move, then two; numbered 1, 2, 3 in order whatever the moves carried.
+    expect(morningText({ things: ['2. Call Anna.', 'Send the draft.'], risk: 'r', question: 'q?' })).toBe('Two moves for today:\n1. Call Anna.\n2. Send the draft.\n\nRisk: r\n\nQuestion: q?');
+    expect(morningText({ things: ['a', '3) b', 'c'], risk: '', question: '' })).toBe('Three moves for today:\n1. a\n2. b\n3. c');
   });
 
   it('day 2: never puts the partner\'s own €2,556.67 on Otto, whose Runway never had it', async () => {

@@ -111,7 +111,12 @@ export function createThread(deps: ThreadDeps) {
       const words = text.trim().slice(0, 2000);
       if (!words) throw new Error('a few words on how it went');
       await leadOf(cardId, leadId);
-      return leads.thread(cardId, leadId, { kind: 'notes', text: words, reading: readingOf(words) }, null, { by: 'Founder', text: `Meeting notes: ${words}` });
+      // The paying count is read in the Metrics card's own unit: a café is one paying café however many of its people
+      // paid (journey 20 logged "two volunteers" as two cafés).
+      const stage = await deps.loadStage().catch(() => null);
+      const metricsId = stage ? nearest(stage, cardId, metricsOn(stage)) : undefined;
+      const unit = metricsId ? metricFor((await deps.metrics().load(metricsId).catch(() => ({ metrics: [] as Metric[] }))).metrics, PAYING)?.label : undefined;
+      return leads.thread(cardId, leadId, { kind: 'notes', text: words, reading: readingOf(words, unit) }, null, { by: 'Founder', text: `Meeting notes: ${words}` });
     },
     // The founder's answer to a reading. Yes logs it on the Metrics card (each number one up from its last reading),
     // and a paying customer moves the lead to Customer.
