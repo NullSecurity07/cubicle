@@ -1,4 +1,5 @@
 import { unaskedCounts, unaskedFeedback } from '../tools/evidence.ts';
+import { productTopic, unbackedProductClaims } from '../productclaim.ts';
 
 // What the partner writes when nobody asked: a watch proposal and its ready email to a lead, the morning note, a
 // review line. Journey 16: a lead asked "Can you deliver on Thursday instead of Sunday? And are the meals nut-free?"
@@ -69,7 +70,7 @@ export function unbackedPromises(sentence: string, sources: string[]): string[] 
     const before = sentence.slice(0, hit.index);
     if (DENIED.test(before) || LEARNING.test(before)) return [];
     return backedBy(backs(hit), said) ? [] : [about(hit)];
-  });
+  }).concat(unbackedProductClaims(sentence, sources));
 }
 
 // What one sentence says that nothing on record backs: a promise, a count, a customer's words.
@@ -177,7 +178,9 @@ export function topicOf(question: string): { name: string; keys: RegExp } | null
     const named = what && !/^(?:they|it|those|these|them)$/i.test(what) ? ` ${what.toLowerCase()}` : '';
     return { name: `${free[1].toLowerCase()}-free${named}`, keys: new RegExp(`\\b${word(free[1])}[-\\s]?free\\b|\\ballerg`, 'i') };
   }
-  return null;
+  // Journey 18: "Does it work with photos from my old Android phone?" gets "I will check whether it works with photos
+  // from your old Android phone", never a yes nothing on record gives (server/productclaim.ts).
+  return productTopic(question);
 }
 
 // Lines that say nothing: a greeting, thanks, a sign-off, "let me know", "hope this helps", a name on its own.

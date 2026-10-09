@@ -289,6 +289,12 @@ const yesTo = (said: string) => said.split(/(?<=[.!?])\s+/).filter((one) => one.
   const plain = question.trim().replace(/^(?:and|also|so)\s+/i, '').replace(/\?$/, '');
   const can = /^(?:can|could|will|would) you (.+)$/i.exec(plain);
   if (can) return `Yes, we can ${can[1]}.`;
+  // "Does it work with photos from my old Android phone?" → "Yes, it works with photos from any Android phone."
+  const does = /^does it (\p{L}+) (.+)$/iu.exec(plain);
+  if (does) return `Yes, it ${does[1]}s ${does[2].replace(/\bmy(?: old)?\b/gi, 'any')}.`;
+  // "Can the quote show VAT separately?" → "Yes, the quote can show VAT separately."
+  const may = /^(can|will) (the [\p{L}]+) (.+)$/iu.exec(plain);
+  if (may) return `Yes, ${may[2]} ${may[1].toLowerCase()} ${may[3]}.`;
   const be = /^(are|is) (the [\p{L}\s]+?|they|it) ([\p{L}-]+)$/iu.exec(plain);
   return be ? `Yes, ${be[2]} ${be[1].toLowerCase()} ${be[3]}.` : '';
 }).filter(Boolean).join(' ') || 'Thanks for your questions.';

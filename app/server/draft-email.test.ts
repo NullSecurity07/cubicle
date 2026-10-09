@@ -76,6 +76,16 @@ describe('draft_email', () => {
     expect(bad.text).toContain('not an email address');
   });
 
+  // Journey 18: a reply to a lead said yes to Android and VAT with nothing on record.
+  it('refuses a claim about the product nothing on record states, and drafts the honest line', async () => {
+    const { run } = await setup({});
+    const said = await run({ ...draft, body: 'Hi Tom,\n\nYes, it works with photos from any Android phone, VAT charged separately.\n\nBest,' });
+    expect(said.ok).toBe(false);
+    expect(said.text).toContain('the email says something about Android, VAT that nothing on record states');
+    const honest = await run({ ...draft, body: 'Hi Tom,\n\nI will check whether it works with photos from your old Android phone and come back to you by Friday.\n\nBest,' });
+    expect(honest.ok).toBe(true);
+  });
+
   it("opens in the founder's Gmail card when one is wired to the person", async () => {
     const { attention, run } = await setup({}, async () => 'gmail-card');
     const done = await run(draft);

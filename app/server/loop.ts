@@ -11,6 +11,7 @@ import { runTool, type Tool, type ToolContext } from './tools/registry.ts';
 import { readsOf } from './tools/unread.ts';
 import { calcTagsHeld } from './calctag.ts';
 import { holdDraftClaims, holdFileLinks, notDone } from './draftclaim.ts';
+import { holdProductClaims } from './productclaim.ts';
 import { ANSWER_IN_WORDS, CALL_THE_TOOL, checkReply, HELD_BACK, proseToolCall, turnEvidence, turnSources } from './truth.ts';
 import type { UsageBook } from './usage.ts';
 import { needsSlim, slimNotice } from './slim.ts';
@@ -349,6 +350,8 @@ export async function runTurn(input: {
   let flags: string[] = [];
   // No "drafted" without a draft, and no "open it in Gmail" without one to open (server/draftclaim.ts).
   if (!signal?.aborted && !summarised && text.trim()) text = holdDraftClaims(text, done);
+  // No "works on Android" or "VAT shown separately" the brief, a read or the founder never said (server/productclaim.ts).
+  if (!signal?.aborted && !summarised && text.trim()) text = holdProductClaims(text, [...turnEvidence(inputs).read, ...worked, ...heard, query]).text;
   // No link to a file nothing made: the link goes and the words say so (server/draftclaim.ts).
   if (!signal?.aborted && !summarised && text.trim()) text = await holdFileLinks(text, done, async (path) => (typeof context.store?.fileSize === 'function' ? (await context.store.fileSize(path)) !== null : true));
   // "(calc)" only beside a figure a calc working this turn gave (server/calctag.ts).

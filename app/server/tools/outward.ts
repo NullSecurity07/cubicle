@@ -7,6 +7,7 @@ import { wired, wiredCards } from '../prompt.ts';
 import { findCompanyDoc } from '../../shared/partner.ts';
 import { leadsCardIds, leadsFor } from '../leads/store.ts';
 import { filledIn } from '../partner/unasked.ts';
+import { productClaimsIn } from '../productclaim.ts';
 import { runCode } from '../sandbox.ts';
 import { browserSession } from './web.ts';
 import { speaker, text, type Tool, type ToolContext } from './registry.ts';
@@ -114,6 +115,14 @@ export function outwardTools(mail: Mail, filesDir: string, drafting?: Drafting, 
         const bad = to.filter((address) => !ADDRESS.test(address));
         if (bad.length) throw new Error(`not an email address: ${bad.join(', ')}`);
         if (to.length > 5) throw new Error('at most 5 recipients');
+        // Journey 18: "Yes, it works with any Android phone ... VAT charged separately" with nothing on record. A claim
+        // about what the product does, runs on or charges stands only when the brief, a read or the founder states it.
+        const evidence = context.evidence?.();
+        const claimed = productClaimsIn(draft.body, [brief, ...(evidence?.read ?? []), ...(context.query ? [context.query] : [])]);
+        if (claimed.length) {
+          throw new Error(`the email says something about ${claimed.join(', ')} that nothing on record states (not the Company brief, `
+            + 'nothing read this turn, no founder message). Write "I will check ... and come back to you by <day>" in its place, or ask the founder, then draft again.');
+        }
         const known = await onRecord(context, drafting);
         const unknown = known ? to.filter((address) => !known.has(address.toLowerCase())) : [];
         if (unknown.length) {
