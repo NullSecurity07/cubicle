@@ -1,5 +1,10 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { dailyBudget, fixAsk, granted, phrasingHolds, reviewDoc, reviewLine } from './review.ts';
+import type { Stage } from '../../shared/model.ts';
+import { calculate } from '../tools/calc.ts';
+import { createReviews, dailyBudget, fixAsk, granted, phrasingHolds, reviewDoc, reviewLine } from './review.ts';
 import { stateOf } from './economics.ts';
 
 // The Numbers of journey 13's Company brief, as the founder wrote them.
@@ -124,5 +129,76 @@ describe('the review of journey 16\'s docs', () => {
     expect(reviewDoc({ text: OTTO, numbers: monthly, read: [ASKED, ...CALCS], said: [ASKED], state: fixed }).verdict).toBe('Fit for the founder.');
     // Without them the same doc reads wrong: the flag is the state's, never the brief's alone.
     expect(reviewDoc({ text: OTTO, numbers: monthly, read: [ASKED, ...CALCS], said: [ASKED] }).verdict).toMatch(/^Fix first: /);
+  });
+});
+
+// Journey 17: Otto's Runway, rewritten on Sam's ask with nine calc calls, every figure right. The review read the doc's
+// words ("burn - mrr") against the calc's ("1900 - 11 * 59 * 52 / 12"), lost the minus of "-€912.33" and held "3.16"
+// against 3.157894737: "Fix first: 2 derived figures have no calc." for four days.
+const SHIFTMEALS = `- Subscribers: 14
+- Paying subscribers: 11
+- Price: €59 per week
+- Cash: €6,000
+- Burn: €1,900 a month
+- Nurses contacted: 120
+- Goal: 30 paying subscribers by 2026-10-17`;
+const OTTO_CALCS = ['59 * 52 / 12', 'round(59 * 52 / 12, 2)', '11 * 59 * 52 / 12', 'round(11 * 59 * 52 / 12, 2)', '1900 - 11 * 59 * 52 / 12', '6000 / 1900', 'round(6000 / 1900, 1)', 'ceil(1900 / (59 * 52 / 12))', '30 - 11']
+  .map((expression) => { const result = calculate(expression); return `${result.worked} = ${result.display}${Number(result.display.replace(/,/g, '')) !== result.value ? ` (exact: ${result.value})` : ''}`; });
+const OTTO_RUNWAY = `# Runway
+
+## Inputs (Company brief)
+- Price: €59 per week
+- Paying subscribers: 11
+- Cash: €6,000
+- Burn: €1,900 a month
+
+## Workings
+- Revenue per subscriber a month: price * 52 / 12 = €255.67 (calc)
+- MRR: mrr = paying * price * 52 / 12 = €2,812.33 (calc)
+- Net burn: net_burn = burn - mrr = -€912.33 a month (calc), so the company is cash-positive
+- Gross runway: cash / burn = 6000 / 1900 = 3.16 months (calc), 3.2 months rounded
+- Break-even: ceil(burn / revenue per subscriber) = 8 paying subscribers (calc)
+- Gap to the goal: 19 paying subscribers (calc)
+`;
+const REDO = 'Please fix "Runway" before I act on it: work every figure out with calc from the Company brief\'s Numbers.';
+
+describe('a figure is worked by its value, never by its words', () => {
+  it('holds journey 17\'s right Runway fit: every derived figure is a calc result, the words around it aside', () => {
+    expect(OTTO_CALCS).toHaveLength(9);
+    const review = reviewDoc({ text: OTTO_RUNWAY, numbers: SHIFTMEALS, read: [REDO, ...OTTO_CALCS], said: [REDO] });
+    expect(review.flags).toEqual([]);
+    expect(review.verdict).toBe('Fit for the founder.');
+  });
+
+  it('still names a runway no calc and no state figure gives', () => {
+    const doc = OTTO_RUNWAY.replace('= 3.16 months (calc), 3.2 months rounded', '= 3.4 months');
+    const review = reviewDoc({ text: doc, numbers: SHIFTMEALS, read: [REDO, ...OTTO_CALCS], said: [REDO] });
+    expect(review.verdict).toMatch(/^Fix first: /);
+  });
+
+  it('withdraws the flag on the doc\'s next review when the doc no longer bears it out', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'review-'));
+    try {
+      const docs: Record<string, string> = { runway: OTTO_RUNWAY.replace(/= 3\.16 months \(calc\), 3\.2 months rounded/, '= 3.4 months') };
+      const stage = { rooms: [{ id: 'otto', name: 'Otto' }, { id: 'sam', name: 'Sam', partner: true }], docs: [{ id: 'runway', title: 'Runway' }], wires: [] } as unknown as Stage;
+      let refreshed = 0;
+      const reviews = createReviews({
+        workspace, busy: new Set(), now: () => Date.now(), budget: dailyBudget(0),
+        store: { loadStage: async () => stage, readDoc: async (id) => docs[id] ?? '', appendChat: async () => undefined },
+        attention: { refresh: async () => { refreshed += 1; } },
+        company: async () => ({ id: 'brief', text: `# ShiftMeals\n\n## Numbers\n${SHIFTMEALS}\n` }),
+      });
+      const turn = (read: string[]) => reviews.heard({ roomId: 'otto', query: REDO, reply: { tools: [{ name: 'create_doc', ok: true, result: read.join('\n'), effect: { kind: 'doc-changed', id: 'runway' } }] } } as never, async () => undefined as never);
+      await turn([]);
+      await reviews.tick({ id: 'sam', name: 'Sam' });
+      expect((await reviews.rows()).map((row) => row.title)).toEqual([expect.stringMatching(/^Sam flagged: Otto's "Runway"\. Fix first: /)]);
+      docs.runway = OTTO_RUNWAY;
+      await turn(OTTO_CALCS);
+      await reviews.tick({ id: 'sam', name: 'Sam' });
+      expect(await reviews.rows()).toEqual([]);
+      expect(refreshed).toBeGreaterThanOrEqual(2);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
   });
 });

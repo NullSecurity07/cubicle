@@ -853,32 +853,32 @@ describe('the partner slice: pushback on the verdict', () => {
     const company = companyDocOf(await deps.store.loadStage())!;
     await deps.store.writeDoc(company.id, `${await deps.store.readDoc(company.id)}`.replace('## Numbers', CALLBACK.trim()));
     const base = { tools: [], provider: 'p', model: 'm', usage: { input: 1, output: 1 }, stopped: false };
-    // The first verdict's "< 2" cannot fail with 2 paying; asked again, the partner keeps it, so none is named yet.
+    // The first verdict's "< 10" is crossed with 2 paying (journey 17); asked again, the partner keeps it, so none is named yet.
     await deps.seams.run('turn:reply', { roomId: 'p1', query: 'Give me your verdict: keep going, pivot, or stop?',
-      reply: { ...base, text: 'My call: keep going.\nWhy: 2 paying practices out of 40 contacted.\nKill signal: paying practices < 2 by 2026-11-03.\nThis week: convert the 3 pilots.' },
-      again: async () => ({ ...base, text: 'Kill signal: paying practices < 2 by 2026-11-03.' }) });
+      reply: { ...base, text: 'My call: keep going.\nWhy: 2 paying practices out of 40 contacted.\nKill signal: paying practices < 10 by 2026-11-03.\nThis week: convert the 3 pilots.' },
+      again: async () => ({ ...base, text: 'Kill signal: paying practices < 10 by 2026-11-03.' }) });
     expect((await partnerState(workspace).read()).call?.signal).toBeUndefined();
     // Asked again, a kill signal that can fail is kept as the check.
     await deps.seams.run('turn:reply', { roomId: 'p1', query: 'Your verdict again: keep going or stop?',
-      reply: { ...base, text: 'My call: keep going.\nWhy: 2 paying practices out of 40 contacted.\nKill signal: paying practices < 3 by 2026-11-03.\nThis week: convert the 3 pilots.' } });
-    expect((await partnerState(workspace).read()).call?.signal).toEqual({ what: 'paying practices < 3', by: '2026-11-03' });
+      reply: { ...base, text: 'My call: keep going.\nWhy: 2 paying practices out of 40 contacted.\nKill signal: paying practices < 2 by 2026-11-03.\nThis week: convert the 3 pilots.' } });
+    expect((await partnerState(workspace).read()).call?.signal).toEqual({ what: 'paying practices < 2', by: '2026-11-03' });
     const system = (await deps.seams.run('turn:before', { roomId: 'p1', source: 'chat', query: PUSH, messages: [{ role: 'system', content: 'You are someone.' }] })).messages[0].content as string;
     expect(system).toContain('The founder is pushing back on your verdict.');
     expect(system).toContain('Kill signal: one number the founder can measure');
     const nudges: string[] = [];
     const out = (await deps.seams.run('turn:reply', { roomId: 'p1', query: PUSH,
-      reply: { ...base, text: 'Fair. Here is a sharper one.\n\n### New Kill Signal\n- **Metric:** Paying practices < 10\n- **Check Date:** 2026-11-03' },
-      again: async (_first, nudge) => { nudges.push(nudge); return { ...base, text: 'My call: keep going.\nWhy: 2 paying practices out of 40 contacted.\nKill signal: paying practices < 10 by 2026-11-03.\nThis week: convert the 3 pilots.' }; } })).reply.text;
+      reply: { ...base, text: 'Fair. Here is a sharper one.\n\n### New Kill Signal\n- **Metric:** Monthly burn above €1,200\n- **Check Date:** 2026-11-03' },
+      again: async (_first, nudge) => { nudges.push(nudge); return { ...base, text: 'My call: keep going.\nWhy: 2 paying practices out of 40 contacted.\nKill signal: monthly burn above €1,200 by 2026-11-03.\nThis week: convert the 3 pilots.' }; } })).reply.text;
     expect(nudges).toHaveLength(1);
-    expect(out).toContain('Kill signal: paying practices < 10 by 2026-11-03.');
-    expect(out).toContain('*Kill signal moved: "paying practices < 3" by 2026-11-03 → "paying practices < 10" by 2026-11-03.');
-    expect((await partnerState(workspace).read()).call?.signal).toEqual({ what: 'paying practices < 10', by: '2026-11-03' });
+    expect(out).toContain('Kill signal: monthly burn above €1,200 by 2026-11-03.');
+    expect(out).toContain('*Kill signal moved: "paying practices < 2" by 2026-11-03 → "monthly burn above €1,200" by 2026-11-03.');
+    expect((await partnerState(workspace).read()).call?.signal).toEqual({ what: 'monthly burn above €1,200', by: '2026-11-03' });
     const open = (await promisesBook(workspace).list()).filter((one) => one.check && one.status === 'open');
-    expect(open.map((one) => one.what)).toEqual(['paying practices < 10']);
-    expect(promisesAttention(open, '2026-11-03')[0].title).toBe('Check: paying practices < 10 by 2026-11-03?');
+    expect(open.map((one) => one.what)).toEqual(['monthly burn above €1,200']);
+    expect(promisesAttention(open, '2026-11-03')[0].title).toBe('Check: monthly burn above €1,200 by 2026-11-03?');
     // Day 2, no model on this machine: the verdict and the kill signal as they stand are in the partner's next turn.
     const recall = (await deps.seams.run('turn:before', { roomId: 'p1', source: 'chat', query: 'Remind me: what did we decide yesterday, and what is the kill signal we hold ourselves to?', messages: [{ role: 'system', content: 'You are someone.' }] })).messages[0].content as string;
-    expect(recall).toContain('Your own verdict on record (quote it as it stands when asked what was decided; never make up another):\nYour verdict on 2026-10-06: keep going. Why: 2 paying practices out of 40 contacted.\nKill signal: paying practices < 10 by 2026-11-03. This week: convert the 3 pilots.');
+    expect(recall).toContain('Your own verdict on record (quote it as it stands when asked what was decided; never make up another):\nYour verdict on 2026-10-06: keep going. Why: 2 paying practices out of 40 contacted.\nKill signal: monthly burn above €1,200 by 2026-11-03. This week: convert the 3 pilots.');
     // An ordinary question in the room is not held to the four lines.
     const plain = (await deps.seams.run('turn:reply', { roomId: 'p1', query: 'What should the text to patients say?', reply: { ...base, text: 'Short and friendly.' } })).reply.text;
     expect(plain).toBe('Short and friendly.');
@@ -932,8 +932,8 @@ describe('the partner slice: reviewing colleagues and refreshing the verdict', (
   it('makes the call again unasked when the paying count moved, quoting the old one, and moves the kill signal', async () => {
     let clock = new Date('2026-10-01T10:00').getTime();
     const asks: string[] = [];
-    const replies = ['My call: keep going\nWhy: three offices pay.\nKill signal: paying offices below 5 by 2026-10-29\nThis week: call the two pilot offices.\nGap: we reach 34 by raising the price and signing two a month.',
-      'My call: change course\nWhy: break-even is 34 paying offices and we have 4.\nKill signal: paying offices below 8 by 2026-11-10\nThis week: raise the price for new offices.'];
+    const replies = ['My call: keep going\nWhy: three offices pay.\nKill signal: paying offices below 2 by 2026-10-29\nThis week: call the two pilot offices.\nGap: we reach 34 by raising the price and signing two a month.',
+      'My call: change course\nWhy: break-even is 34 paying offices and we have 4.\nKill signal: paying offices below 3 by 2026-11-10\nThis week: raise the price for new offices.'];
     let taken = 0;
     const { deps, part } = await installed({}, { now: () => clock, ask: async (messages) => { asks.push(String(messages.at(-1)?.content)); return SHAPED; }, budget: { take: () => { taken += 1; return { ok: true }; } } });
     await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
@@ -958,7 +958,7 @@ describe('the partner slice: reviewing colleagues and refreshing the verdict', (
     expect(refresh).toContain('On 1 Oct I said keep going at 3 paying offices; now break-even is 34 paying offices and the company has 4. Since then: paying offices 3 → 4.');
     const posted = (await deps.store.readChat('p1')).slice(before).at(-1)!;
     expect(posted.text).toMatch(/^On 1 Oct I said keep going at 3 paying offices; now break-even is 34 paying offices and the company has 4: now change course\. Since then: paying offices 3 → 4\.\n\nMy call: \*\*change course\*\*\./);
-    expect(posted.text).toContain('*Kill signal moved: "paying offices below 5" by 2026-10-29 → "paying offices below 8" by 2026-11-10. Paying offices is 4 (Company brief): already past the new line, so the check is in Needs you now.*');
+    expect(posted.text).toContain('*Kill signal moved: "paying offices below 2" by 2026-10-29 → "paying offices below 3" by 2026-11-10. It is the check in Needs you on 2026-11-10.*');
     expect(taken).toBe(1);
     // Said once: the next tick, and the next day with nothing moved, say nothing.
     await again.tick!();

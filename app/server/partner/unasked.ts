@@ -95,6 +95,41 @@ export function guardUnasked(text: string, sources: string[]): Guarded {
   return { text: lines.join('\n').replace(/\n{3,}/g, '\n\n').trim(), left: [...new Set(left)] };
 }
 
+// Journey 17: the day-3 note's three moves were all taken out ("(left out: nothing on record about 2 New leads, 11 to,
+// 1 Meeting lead, 120 nurses contacted, 9 threshold, 11)") and "Three moves for today:" stood over nothing; the day-4
+// risk was replaced by "Nothing on record backs the risk the note named." A move is a plan, not a claim: it is never
+// taken out, and only a count or a promise inside it is checked, a count nothing gives marked "(unsourced)" and a
+// promise nothing states marked after the move. A risk is the partner's view: it stays as written, marked "(view)"
+// when it names a fact nothing on record backs.
+export function guardMove(move: string, sources: string[], numbers = ''): string {
+  // A plan may cite any figure on record ("the 120 nurses contacted"): only a count whose number is nowhere on record
+  // is named, once, after the move, never inside it.
+  // A count the move sets out to reach ("contact 50 new nurses", "win 4 more") is the plan itself, and a gap worked
+  // in one step from two figures on record ("the 19 still needed", 30 - 11) is the record's: neither is named.
+  const record = [...new Set([...sources.join('\n').replace(/(?<=\d),(?=\d{3}\b)/g, '').matchAll(/\d+(?:\.\d+)?/g)].map((hit) => Number(hit[0])))];
+  const onRecord = new Set(record);
+  // The gap is worked from the Company Numbers alone: from every figure the facts hold, almost any count is one step.
+  const own = [...new Set([...numbers.replace(/(?<=\d),(?=\d{3}\b)/g, '').matchAll(/\d+(?:\.\d+)?/g)].map((hit) => Number(hit[0])))].filter((one) => one < 1900 || one > 2099);
+  const oneStep = (value: number) => own.some((a) => own.some((b) => Math.abs(a - b - value) < 1e-9));
+  const AIMED = /\b(?:contact|reach|call|email|message|ask|invite|sign(?:\s+up)?|win|get|add|acquire|recruit|book|land|convert|secure|find|target|aim(?:\s+for)?|close|send|visit|meet|onboard|interview|pitch)\b(?:\s+(?:the|our|another|at\s+least|up\s+to|a|of))*\s*$/i;
+  const counts = unaskedCounts(move, sources).filter((label) => {
+    const first = /\d[\d,]*(?:\.\d+)?/.exec(label);
+    if (!first) return true;
+    const value = Number(first[0].replace(/,/g, ''));
+    const at = move.indexOf(label);
+    return value !== 0 && !onRecord.has(value) && !oneStep(value) && !(at >= 0 && AIMED.test(move.slice(Math.max(0, at - 40), at)));
+  });
+  const promised = move.split(/(?<=[.!?])\s+/).flatMap((sentence) => unbackedPromises(sentence, sources));
+  const missing = [...new Set([...counts, ...promised])];
+  return missing.length ? `${move.replace(/\s+$/, '')} (not on record: ${missing.join(', ')})` : move;
+}
+export function guardView(view: string, sources: string[]): string {
+  const said = view.trim();
+  if (!said) return said;
+  const unbacked = said.split(/(?<=[.!?])\s+/).some((sentence) => unbackedIn(sentence, sources).length > 0);
+  return unbacked && !/\(view\)\s*$/.test(said) ? `${said} (view)` : said;
+}
+
 // The line a row or a note carries for what was taken out.
 export const leftOutLine = (left: string[]) => (left.length ? `(left out: nothing on record about ${left.join(', ')})` : '');
 

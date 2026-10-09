@@ -22,9 +22,9 @@ export function BetsPanel() {
       {note && (
         <section className="bets__morning">
           <h3>Morning note, {note.day}{view?.partner && <button type="button" className="playbook__act" onClick={toPartner}>Talk it over</button>}</h3>
-          <ol>{note.things.map((thing) => <li key={thing}>{thing}</li>)}</ol>
-          <p><b>Risk:</b> {note.risk}</p>
-          <p><b>Question:</b> {note.question}</p>
+          {note.things.length ? <ol>{note.things.map((thing) => <li key={thing}>{thing}</li>)}</ol> : <p>No moves today.</p>}
+          {note.risk.trim() && <p><b>Risk:</b> {note.risk}</p>}
+          {note.question.trim() && <p><b>Question:</b> {note.question}</p>}
         </section>
       )}
       {view && !bets.length && (

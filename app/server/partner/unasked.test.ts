@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { answerQuestions, guardUnasked, leftOutLine, questionsIn, unbackedPromises } from './unasked.ts';
+import { answerQuestions, guardMove, guardUnasked, guardView, leftOutLine, questionsIn, unbackedPromises } from './unasked.ts';
 import { draftLine } from './watch.ts';
 
 // Journey 16: Anna asked "Can you deliver on Thursday instead of Sunday? And are the meals nut-free?" and the ready
@@ -52,6 +52,23 @@ describe('a count nothing on record gives, in an unasked output', () => {
     expect(guardUnasked('Call all 11 paying subscribers.', [FACTS, BRIEF]).left).toEqual([]);
     expect(guardUnasked('Contact 30 more night-shift nurses this week.', [FACTS, BRIEF]).left).toEqual([]);
     expect(guardUnasked('Call five lapsed signups this week and ask what stopped them.', [FACTS]).left).toEqual([]);
+  });
+});
+
+// Journey 17: a move is a plan and a risk is a view; neither is taken out.
+describe('a move and a risk, held as what they are', () => {
+  const brief = '- Paying subscribers: 11\n- Nurses contacted: 120';
+  it('keeps a move whole, naming after it only a count whose number is nowhere on record, or a promise', () => {
+    expect(guardMove('Follow up with the 120 nurses contacted.', [brief])).toBe('Follow up with the 120 nurses contacted.');
+    expect(guardMove('Call back the 37 nurses who cancelled.', [brief])).toBe('Call back the 37 nurses who cancelled. (not on record: 37 nurses who)');
+    // A count the move sets out to reach, and a gap worked from two figures on record, are the plan's.
+    expect(guardMove('Contact 50 new nurses today.', [brief])).toBe('Contact 50 new nurses today.');
+    expect(guardMove('Ask the 11 paying for referrals to find the 109 nurses still to reach.', [brief], brief)).toBe('Ask the 11 paying for referrals to find the 109 nurses still to reach.');
+    expect(guardMove('Tell Anna we deliver on Thursday.', [brief])).toBe('Tell Anna we deliver on Thursday. (not on record: delivery on Thursday)');
+  });
+  it('keeps a risk as written, marked as the partner\'s view when it names what nothing backs', () => {
+    expect(guardView('Paying subscribers are 11, near the line.', [brief])).toBe('Paying subscribers are 11, near the line.');
+    expect(guardView('37 nurses cancelled last week.', [brief])).toBe('37 nurses cancelled last week. (view)');
   });
 });
 

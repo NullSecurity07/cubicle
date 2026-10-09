@@ -89,7 +89,13 @@ export function readMorning(reply: string): Morning | null {
   return { things, risk, question };
 }
 
-export const morningText = (note: Morning) => ['Three moves for today:', ...note.things.map((thing, index) => `${index + 1}. ${thing}`), '', `Risk: ${note.risk}`, '', `Question: ${note.question}`].join('\n');
+// Journey 17: a day-3 note read "Three moves for today:" and nothing under it. A section never ships empty: no moves is
+// said in words, and a risk or question that came to nothing is left out.
+export const morningText = (note: Morning) => [
+  ...(note.things.length ? ['Three moves for today:', ...note.things.map((thing, index) => `${index + 1}. ${thing}`)] : ['No moves today.']),
+  ...(note.risk.trim() ? ['', `Risk: ${note.risk}`] : []),
+  ...(note.question.trim() ? ['', `Question: ${note.question}`] : []),
+].join('\n');
 
 // ---------------------------------------------------------------- a plan read as steps
 

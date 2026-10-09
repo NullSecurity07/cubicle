@@ -183,6 +183,21 @@ function addedLines(before: string, after: string): { index: number; line: strin
   return after.split('\n').map((line, index) => ({ index, line })).filter(({ line }) => line.trim() && !had.has(line.trim()) && !/^\s*#/.test(line));
 }
 
+// Every value a calc this turn gave (as shown and exact) and every figure the one state works out, signs dropped: the
+// sense check, not this one, says when a net burn has the wrong sign.
+export function workedValues(read: string, state: EconomicsState): number[] {
+  const out = [...read.matchAll(/(?:=|\(exact:)\s*(-?\d[\d,]*(?:\.\d+)?(?:e[-+]?\d+)?)/g)].map((hit) => Number(hit[1].replace(/,/g, '')));
+  for (const one of state.economics()?.working ?? []) out.push(Number(one.result.split(' = ').at(-1)!.replace(/,/g, '')));
+  for (const one of rightFigures(state)) out.push(one.right);
+  return out.filter(Number.isFinite).map(Math.abs);
+}
+// As exact as it is written: "3.16" is any value from 3.155 to 3.165, "€2,812" one from 2,811.5 to 2,812.5.
+function isWorked(claimed: Figure, worked: number[]): boolean {
+  const decimals = /\.(\d+)/.exec(claimed.text.replace(/\s?k$/i, ''))?.[1].length ?? 0;
+  const half = 0.5 * 10 ** -decimals * (/k$/i.test(claimed.text) ? 1000 : 1);
+  return worked.some((one) => Math.abs(one - Math.abs(claimed.value)) <= half + 1e-9);
+}
+
 const CLAIMISH = /\b(?:customers?|users?|clients?|managers?|offices?|staff|people|they|feedback|works|validated|proven|love|loved|report\w*|say|said|demand|popular)\b/i;
 
 // One doc, reviewed. `read` is everything the writer's turn read (tool results, the founder's ask) and what they could
@@ -210,17 +225,19 @@ export function reviewDoc(input: { text: string; before?: string; numbers: strin
   const bare = input.text.split('\n').map((line, index) => (sense.lines.has(index) ? '' : line)).join('\n');
   const marks = [...markUnworked({ before, after: bare, read }).marked, ...markUnbacked({ before, after: bare, read }).marked];
   const figures = [...new Set(marks.map((mark) => mark.label))];
-  // A runway, break-even, net burn or margin is a sum: its figure comes from a calc this turn ran or the brief's own
-  // working, never from the writer's head, even when it sits near the right one.
-  const calcs = new Set([...read.join('\n').matchAll(/=\s*(-?\d[\d,]*(?:\.\d+)?)/g)].map((hit) => Number(hit[1].replace(/,/g, ''))));
-  for (const one of state.economics()?.working ?? []) calcs.add(Number(one.result.split(' = ').at(-1)!.replace(/,/g, '')));
+  // A runway, break-even, net burn or margin is a sum: its figure comes from a calc this turn ran or the one state's
+  // own working, never from the writer's head, even when it sits near the right one. Journey 17: Otto worked every
+  // figure of Runway with calc and wrote "net_burn = burn - mrr = -€912.33"; the check lost the minus and held 3.16
+  // against calc's 3.157894737, and the right doc was flagged "no calc" four days. A figure is worked when its VALUE,
+  // as exact as it is written, is a calc result or a figure of the one state, whatever words surround it.
+  const worked = workedValues(read.join('\n'), state);
   const unworked: string[] = [];
   for (const { line, index } of added) {
     if (sense.lines.has(index)) continue;
     const label = /\b(?:runway|break[- ]?even|net\s+burn|(?:gross\s+|unit\s+|contribution\s+)?margin)\b/i.exec(line);
     if (!label) continue;
     const claimed = claimedOn(line, label, (one) => one.months || one.share || one.money || !/^\s*(?:%|months?)/i.test(line.slice(one.at + one.text.length)));
-    if (!claimed || calcs.has(claimed.value) || figures.some((one) => one.includes(claimed.text))) continue;
+    if (!claimed || isWorked(claimed, worked) || figures.some((one) => one.includes(claimed.text))) continue;
     unworked.push(clip(line.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, ''), 60));
   }
   if (unworked.length) {
@@ -377,7 +394,12 @@ export function createReviews(deps: ReviewDeps) {
     }
     const at = deps.now();
     await deps.store.appendChat(room.id, { id: newMessageId(), role: 'user', from: partner.name, text: line, at });
-    if (!review.flags.length) return;
+    if (!review.flags.length) {
+      // A flag already raised on this doc that the doc no longer bears out is withdrawn on its next review.
+      const dropped = await change((state) => { const had = state.open.length; state.open = state.open.filter((one) => one.docId !== doc.id); return had !== state.open.length; });
+      if (dropped) await deps.attention.refresh().catch(() => {});
+      return;
+    }
     const flagged: Flagged = { id: `${doc.id}-${at.toString(36)}`, docId: doc.id, roomId: room.id, who: room.name, title: doc.title, flags: review.flags.map((flag) => flag.said), verdict: review.verdict, ask: fixAsk(doc.title, review), at, by: partner.name, basis: JSON.stringify(state.snapshot()), kinds: review.flags.map((flag) => flag.kind) };
     await change((state) => { state.open = [...state.open.filter((one) => one.docId !== doc.id), flagged].slice(-50); });
     await deps.attention.refresh().catch(() => {});

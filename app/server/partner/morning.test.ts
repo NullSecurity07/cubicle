@@ -3,12 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { ChatMessage, Stage } from '../../shared/model.ts';
-import type { Bet } from '../../shared/partner.ts';
+import { morningText, type Bet } from '../../shared/partner.ts';
 import type { ModelMessage } from '../prompt.ts';
 import type { FounderPromise } from './promises.ts';
 import { saidNoFor } from './saidno.ts';
 import { NOTHING_CHANGED } from './since.ts';
-import { confirmedFix, gatherMorning, MORNING_ASK, morningDue, morningInputs, morningMessage, MOST_TRIES, RETRY_AFTER, writeMorning, type MorningSources } from './morning.ts';
+import { attributed, confirmedFix, gatherMorning, MORNING_ASK, morningDue, morningInputs, morningMessage, MOST_TRIES, RETRY_AFTER, writeMorning, type MorningSources } from './morning.ts';
 
 const at = (text: string) => new Date(text).getTime();
 const NINE = at('2026-09-27T09:00');
@@ -229,10 +229,11 @@ describe('one morning turn', () => {
   it('flags a figure again when yesterday\'s note was flagged for it and today\'s repeats it', async () => {
     const note = (price: string) => `Three moves for today:\n1. Set the price at ${price} on the landing page.\n2. Email the replied leads.\n3. Log signups.\nRisk: Maya priced it at $9\nQuestion: q?`;
     const first = await writeMorning({ sources: await sources({ chat: async () => [] }), name: 'Sam', promptFor: prompt, ask: async () => note('$29/month') });
-    expect(first?.flags).toEqual([expect.stringMatching(/^Unsourced figures: \$29/)]);
+    // Maya said nothing today, so "$9" is no figure of hers: the risk that puts it on her goes.
+    expect(first?.flags).toEqual([expect.stringMatching(/^Unsourced figures: \$29/), '(left out: nothing on record about $9, which Maya never gave)']);
     const posted: ChatMessage = { id: 'n1', role: 'assistant', text: morningMessage(first!), at: at('2026-09-26T09:00') };
     const second = await writeMorning({ sources: await sources({ chat: async (roomId) => (roomId === 'p1' ? [posted] : []) }), name: 'Sam', promptFor: prompt, ask: async () => note('$29/month') });
-    expect(second?.flags).toEqual([expect.stringMatching(/^Unsourced figures: \$29/)]);
+    expect(second?.flags).toEqual([expect.stringMatching(/^Unsourced figures: \$29/), '(left out: nothing on record about $9, which Maya never gave)']);
   });
 
   it('checks the note as it is posted, not the words around it the reshaping drops', async () => {
@@ -321,10 +322,10 @@ describe('the morning note\'s numbers', () => {
     });
     expect(heard).toContain('Worked with calc from the Company Numbers (the only runway and break-even to use; a figure said in a room is not one):\n- Break-even: ceil(900 / 49) = 19');
     expect(heard).toContain('- Runway: round(4000 / (900 - 2 * 49), 1) = 5 months at the net burn');
-    expect(note!.things).toEqual(['Update the Company document to reflect the confirmed 5-month runway calculated by Ops.']);
+    // A move is a plan, never taken out (journey 17): the 3 pilots and the 12 demos nothing read gives are marked.
+    expect(note!.things).toEqual(['Convert the 3 pilots.', 'Update the Company document to reflect the confirmed 5-month runway calculated by Ops.', 'Rosa said 12 demos booked; follow up. (not on record: 12 demos booked)']);
     expect(note!.risk).toBe('runway is 5 months at the gross burn of €900');
-    // Nobody asked for the note: the 3 pilots and the 12 demos nothing read gives are left out, and it says so.
-    expect(note!.flags).toContain('(left out: nothing on record about 3 pilots, 12 demos booked)');
+    expect(note!.flags?.some((one) => one.startsWith('(left out'))).toBeFalsy();
   });
 
   it('drops "confirmed" with no figure a read gives', () => {
@@ -347,5 +348,61 @@ describe('the morning note and the founder\'s no', () => {
     expect(String(asked[1].at(-1)!.content)).toMatch(/^You ruled out cold outreach to more makers on \d{1,2} \w{3,4} \('we are at 9 jobs'\), and a move proposes it/);
     expect(made!.things).toEqual(['Close the last print job without cold outreach.', 'Update the Company brief with the jobs done.']);
     expect(made!.flags).toContainEqual(expect.stringMatching(/^You ruled out cold outreach to more makers on \d{1,2} \w{3,4} \('we are at 9 jobs'\), so a move that proposed it was dropped\.$/));
+  });
+});
+
+// Journey 17: ShiftMeals, four days.
+describe('journey 17\'s morning notes', () => {
+  const company = '# ShiftMeals\n\n## Numbers\n\n- Subscribers: 14\n- Paying subscribers: 11\n- Price: €59 per week\n- Cash: €6,000\n- Burn: €1,900 a month\n- Nurses contacted: 120\n- Goal: 30 paying subscribers by 2026-10-17\n';
+  const prompt = async (): Promise<ModelMessage[]> => [{ role: 'system', content: 'You are Sam, Partner.' }];
+  const RUNWAY = '# Runway\n\n- MRR: €2,812.33 (calc)\n- Net burn: -€912.33 a month (calc)\n- Gross runway: 3.16 months (calc)\n- Break-even: 8 paying subscribers (calc)\n';
+  const stage: Stage = {
+    rooms: [{ id: 'p1', name: 'Sam', role: 'Partner', accent: '#fff', brief: '', partner: true, x: 0, y: 0, w: 1, h: 1 }, { id: 'o', name: 'Otto', role: 'Finance', accent: '#fff', brief: '', x: 0, y: 0, w: 1, h: 1 }],
+    docs: [{ id: 'runway', title: 'Runway', x: 0, y: 0, w: 1, h: 1 }], wires: [], cards: [],
+  };
+  const chats: Record<string, ChatMessage[]> = {
+    o: [{ id: 'o1', role: 'assistant', text: 'Runway is written, every figure with calc.', at: at('2026-10-06T22:30'), tools: [{ id: 't1', name: 'create_doc', args: {}, ok: true, result: 'Created "Runway".', effect: { kind: 'doc-created', id: 'runway' } as never }] }],
+    p1: [{ id: 's1', role: 'assistant', text: 'Ten more paying would add €2,556.67 a month.', at: at('2026-10-06T22:20') }],
+  };
+  const j17 = async (now: string): Promise<MorningSources> => ({
+    ...await sources(), stage, company, now: at(now), chat: async (roomId) => chats[roomId] ?? [], doc: async (id) => (id === 'runway' ? RUNWAY : ''),
+  });
+
+  it('day 3: keeps all three moves, plans and not claims, with no "(left out …)" line and an empty heading', async () => {
+    const note = await writeMorning({ sources: await j17('2026-10-08T06:30'), name: 'Sam', promptFor: prompt, ask: async () => 'Three moves for today:\n1. Follow up with the 120 nurses contacted to turn 2 New leads into trials.\n2. Prepare for the 1 Meeting lead with Anna Kowalski today.\n3. Watch paying subscribers: from 11 to 9.5 puts us near the 9 threshold.\nRisk: Paying subscribers fell from 11 to 9.5, nearing the kill line of 9 in Metrics\nQuestion: Is the drop to 9.5 one bad day, or churn?' });
+    expect(note!.things).toHaveLength(3);
+    // A plan that cites the brief's figures is kept as written, with nothing marked.
+    expect(note!.things).toEqual(['Follow up with the 120 nurses contacted to turn 2 New leads into trials.', 'Prepare for the 1 Meeting lead with Anna Kowalski today.', 'Watch paying subscribers: from 11 to 9.5 puts us near the 9 threshold.']);
+    expect(note!.risk).toMatch(/^Paying subscribers fell from 11 to 9\.5/);
+    expect(note!.flags?.some((one) => one.startsWith('(left out'))).toBeFalsy();
+    expect(morningMessage(note!)).toMatch(/Three moves for today:\n1\. Follow up/);
+  });
+
+  it('day 4: a risk that names a fact nothing backs stays the partner\'s view, never "Nothing on record"', async () => {
+    const note = await writeMorning({ sources: await j17('2026-10-09T06:30'), name: 'Sam', promptFor: prompt, ask: async () => 'Three moves for today:\n1. Call Anna about Thursday delivery.\n2. Log the meeting.\n3. Rebuild Runway at the new price.\nRisk: 3 nurses cancelled last week, so churn may be rising\nQuestion: Which count is right, 11 or 12.5?' });
+    expect(note!.risk).toBe('3 nurses cancelled last week, so churn may be rising (view)');
+    expect(morningText(note!)).not.toContain('Nothing on record');
+  });
+
+  it('never ships an empty section: no moves is said in words, an empty risk or question is left out', () => {
+    expect(morningText({ things: [], risk: '', question: 'Which count is right?' })).toBe('No moves today.\n\nQuestion: Which count is right?');
+    expect(morningText({ things: ['Call Anna.'], risk: 'r', question: '' })).toBe('Three moves for today:\n1. Call Anna.\n\nRisk: r');
+  });
+
+  it('day 2: never puts the partner\'s own €2,556.67 on Otto, whose Runway never had it', async () => {
+    const note = await writeMorning({ sources: await j17('2026-10-07T06:30'), name: 'Sam', promptFor: prompt, ask: async () => 'Three moves for today:\n1. Send the email to Anna.\n2. Read Otto\'s Runway: net burn is -€912.33 a month.\n3. Ask Pia for the spec.\nRisk: Otto\'s Runway doc listed unsourced figures (€2,556.67)\nQuestion: Otto, why did you save unsourced figures like €2,556.67?' });
+    expect(note!.things[1]).toBe('Read Otto\'s Runway: net burn is -€912.33 a month.');
+    expect(note!.risk).toBe('');
+    expect(note!.question).toBe('');
+    expect(note!.flags).toContain('(left out: nothing on record about €2,556.67, which Otto never gave)');
+    expect(morningText(note!)).not.toContain('2,556.67');
+  });
+
+  it('says "(calc)" or "(from the brief)" for a figure beside a colleague\'s name that came from neither of their own', () => {
+    const otto = [{ name: 'Otto', text: RUNWAY }];
+    expect(attributed('Otto has break-even at 8 and runway at 3.16 months.', otto, { brief: company, worked: [] }).text).toBe('Otto has break-even at 8 and runway at 3.16 months.');
+    expect(attributed('Otto says the cash is €6,000.', [{ name: 'Otto', text: '' }], { brief: company, worked: [] }).text).toBe('Otto says the cash is €6,000 (from the brief).');
+    expect(attributed('Otto put MRR at €2,812.33.', [{ name: 'Otto', text: '' }], { brief: company, worked: [2812.333333] }).text).toBe('Otto put MRR at €2,812.33 (calc).');
+    expect(attributed('Otto put MRR at €2,556.67.', [{ name: 'Otto', text: '' }], { brief: company, worked: [2812.333333] })).toEqual({ text: '', left: ['€2,556.67, which Otto never gave'] });
   });
 });

@@ -83,12 +83,15 @@ export function killToward(start: number, latest: number, line: number, below: b
 // Which side of a kill signal's line loses: "fewer than 10", "below 5" and a bare count to reach lose under it.
 export const losesBelow = (what: string) => thresholdOf(what)?.below ?? !/\b(?:above|over|more than|greater than|higher than|exceeds?)\b|>/i.test(what);
 
-// The reading a line is measured from (the last one on or before the day it was set, else the first one after) and the
-// latest one. Null while no newer reading has come in since: nothing has moved yet.
-export function readingsSince(points: MetricPoint[], since: string): { start: MetricPoint; latest: MetricPoint } | null {
+// The reading a line is measured from and the latest one. Null while no newer reading has come in since: nothing has
+// moved yet. `since` a day (a bet's): measured from the last reading on or before it, else the first one after. `since`
+// a moment (a kill line's): a reading is one day's, with no hour, so one dated the day the line was set may have come
+// after it; the line is measured from the last reading of an earlier day. Journey 17: the kill line was replaced on
+// 7 Oct and 9.5 logged for 7 Oct (from 11 on 6 Oct); measured from 7 Oct's own reading, the watch saw no move.
+export function readingsSince(points: MetricPoint[], since: string | number): { start: MetricPoint; latest: MetricPoint } | null {
   const sorted = [...points].sort((a, b) => a.at.localeCompare(b.at));
   if (sorted.length < 2) return null;
-  const before = sorted.filter((point) => point.at <= since);
+  const before = typeof since === 'number' ? sorted.filter((point) => point.at < localDay(since)) : sorted.filter((point) => point.at <= since);
   const start = before.at(-1) ?? sorted[0];
   const latest = sorted.at(-1)!;
   return sorted.indexOf(latest) > sorted.indexOf(start) ? { start, latest } : null;
@@ -136,7 +139,7 @@ export function metricSparks(cards: MetricsCard[], kill: FounderPromise | undefi
   if (kill && kill.status === 'open') {
     const lineOf = killLineOf(kill.what, all.map((one) => one.metric));
     const card = lineOf && all.find((one) => one.metric === lineOf.metric)!.card;
-    const read = lineOf && readingsSince(lineOf.metric.points, kill.said);
+    const read = lineOf && readingsSince(lineOf.metric.points, kill.at > 0 ? kill.at : kill.said);
     const toward = read && killToward(read.start.value, read.latest.value, lineOf!.line, losesBelow(kill.what));
     if (lineOf && read && trending(toward)) {
       const { metric } = lineOf;
