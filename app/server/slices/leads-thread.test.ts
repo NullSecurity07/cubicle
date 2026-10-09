@@ -251,6 +251,28 @@ describe('a lead\'s thread', () => {
     expect((await metricsFor(workspace).load('metrics-1')).metrics.find((one) => one.label === 'Paying customers')!.points.at(-1)).toMatchObject({ value: 3 });
   });
 
+  // Journey 20: "The owner and two volunteers paid on the spot" logged two paying cafés: the owner dropped, people
+  // counted as cafés. One café joined, and three of its people paid.
+  it('a paying count of places counts the place once and says how many of its people paid', async () => {
+    const { call, add, needs, workspace, close } = await setup();
+    closing = close;
+    await metricsFor(workspace).log('metrics-1', { ref: 'Paying cafés', value: 6, at: '2026-10-09', from: 'founder' });
+    const ines = await add('Ines', 'ines@repair.example');
+    await call(`/api/leads/leads-1/${ines.id}/meeting`, { day: '2026-10-11' });
+    await call(`/api/leads/leads-1/${ines.id}/meeting-notes`, { text: 'Met Ines at Repair Café Kreuzberg. The owner and two volunteers paid on the spot. They want the volunteer list printed.' });
+    const [reading] = (await needs()).filter((entry) => entry.kind === 'lead-reading');
+    expect(reading.title).toBe('Log conversations +1 and paying cafés +1 from the meeting with Ines?');
+    expect(reading.detail).toContain('Paying counted: 3 people paid at this café (The owner + two volunteers = 3); it is one paying café');
+    expect((await call('/api/leads-thread/answer', { id: reading.id, do: 'log' })).status).toBe(200);
+    expect((await metricsFor(workspace).load('metrics-1')).metrics.find((one) => one.label === 'Paying cafés')!.points.at(-1)).toMatchObject({ value: 7 });
+  });
+
+  it('a paying count of people counts every person, the owner too', () => {
+    expect(readingOf('The owner and two volunteers paid on the spot.', 'Paying customers')).toMatchObject({ paying: 3, working: 'The owner + two volunteers = 3' });
+    expect(readingOf('The owner and two volunteers paid on the spot.', 'Paying cafés')).toMatchObject({ paying: 1, people: 3 });
+    expect(readingOf('The owner and two volunteers paid on the spot.')).toMatchObject({ paying: 3 });
+  });
+
   it('a reading declined logs nothing, and none is offered without a Metrics card', async () => {
     const one = await setup();
     closing = one.close;

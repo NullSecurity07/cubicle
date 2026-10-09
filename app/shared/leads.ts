@@ -28,7 +28,9 @@ export type Lead = {
 // `closed`: the founder waved away the ask named by `of`.
 export type ThreadKind = 'drafted' | 'sent' | 'opened' | 'replied' | 'meeting' | 'notes' | 'closed';
 // `working`: how the paying people were counted from the notes, when more than one ("Anna + two colleagues = 3").
-export type ThreadReading = { conversations: number; paying: number; working?: string; answer?: 'logged' | 'declined' };
+// `unit`: what the paying count counts, as the Metrics card names it ("paying cafés"); `people`: when that is a place
+// and not a person, how many people the notes say paid there (journey 20: "the owner and two volunteers paid").
+export type ThreadReading = { conversations: number; paying: number; working?: string; unit?: string; people?: number; answer?: 'logged' | 'declined' };
 export type ThreadEvent = {
   at: number; kind: ThreadKind; text?: string; subject?: string; draft?: string; room?: string; via?: 'agentmail' | 'gmail';
   // `time`: a meeting's start, "HH:MM" where the founder is, when they gave one.
