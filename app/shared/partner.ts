@@ -92,8 +92,11 @@ export function readMorning(reply: string): Morning | null {
 
 // Journey 17: a day-3 note read "Three moves for today:" and nothing under it. A section never ships empty: no moves is
 // said in words, and a risk or question that came to nothing is left out.
+// Journey 20: "Three moves for today:" stood over one move, then two. The head says how many there are, and the moves
+// are numbered 1, 2, 3 in order, never with a number of their own left in front.
+const MOVES = ['', 'One move for today:', 'Two moves for today:', 'Three moves for today:'];
 export const morningText = (note: Morning) => [
-  ...(note.things.length ? ['Three moves for today:', ...note.things.map((thing, index) => `${index + 1}. ${thing}`)] : ['No moves today.']),
+  ...(note.things.length ? [MOVES[note.things.length] ?? `${note.things.length} moves for today:`, ...note.things.map((thing, index) => `${index + 1}. ${thing.replace(/^\s*(?:\d+[.)]\s*)+/, '')}`)] : ['No moves today.']),
   ...(note.risk.trim() ? ['', `Risk: ${note.risk}`] : []),
   ...(note.question.trim() ? ['', `Question: ${note.question}`] : []),
 ].join('\n');
