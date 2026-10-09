@@ -216,3 +216,20 @@ describe('a quote slide', () => {
     expect(mended.said).toContain('slide 2: dropped a quote slide, since "Paying plumbers: 14 on 2026-10-11" is not a quote anyone on record said');
   });
 });
+
+// Journey 20: the traction rows read "Paying cafés: 9 on 2026-10-11" and the big figure beside them said 6.
+describe('a traction figure and its rows', () => {
+  const metrics: Material = { brief: 'FixSlot books repair slots.', sources: [], metrics: { name: 'Metrics card', text: '- Paying cafés: 9 on 2026-10-11 (from meeting notes)\n- Customer conversations: 1 on 2026-10-11' } };
+  it('says the same reading in the figure, a line and the headline, and the critic names the gap', () => {
+    const given = slide('traction', '6 paying cafés so far', ['Paying cafés: 6 on 2026-10-09', 'Customer conversations: 1 on 2026-10-11'], { figure: { value: '6', label: 'paying cafés' } });
+    expect(faults([given], metrics).join('\n')).toContain('the figure says 6 paying cafés and Metrics card reads 9');
+    const { slides, said } = mend([given], metrics);
+    expect(slides[0].figure).toEqual({ value: '9', label: 'paying cafés' });
+    expect(slides[0].lines[0]).toMatch(/^Paying cafés: 9 on /);
+    expect(slides[0].headline).toBe('9 paying cafés so far');
+    expect(said.join('\n')).toContain('the figure now reads 9 paying cafés');
+    // A figure that already reads the rows is kept as it was.
+    const right = slide('traction', 'Paying cafés so far', ['Paying cafés: 9 on 2026-10-11 (from meeting notes)', 'Customer conversations: 1 on 2026-10-11'], { figure: { value: '9', label: 'paying cafés' } });
+    expect(mend([right], metrics).slides[0]).toEqual(right);
+  });
+});
