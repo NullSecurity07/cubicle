@@ -36,14 +36,82 @@ export function staleOf(call: Pick<Held, 'snapshot' | 'basis'> | undefined, stat
 
 export type Why = 'moved' | 'goal' | 'week';
 // `goal`: the Company brief's dated goal (server/partner/goal.ts), due a look once its day passed after the call.
-export type Due = { why: Why; changed: Changed[]; goal?: Goal };
-// Whether the call is due a fresh look today, and why: it is stale, the goal's day passed, or a week went by.
-export function refreshDue(call: Held | undefined, state: EconomicsState | null | undefined, today: string, on: { goal?: Goal } = {}): Due | null {
+// `wait`: a reading crossed a line the call stands on for the first time; it is kept and the call waits for it to hold.
+export type Due = { why: Why; changed: Changed[]; goal?: Goal; wait?: Crossing };
+
+// ---------------------------------------------------------------- a call that holds through one reading
+//
+// Journey 18: one reading of 8 against 9 the day before flipped "keep going" to "change course" with a €49 tier test,
+// and the next day's 10 flipped it back: three calls in three days on 9, 8, 10, three days into a 20-day test the
+// founder set. A reading alone remakes the call only when it crosses a line the call stands on (paying crossing
+// break-even, runway crossing three months), and only once that holds for a second reading or a second day. A reading
+// that crosses nothing raises the watch's trend row, never the call. An input the founder edits (price, burn, cost,
+// cash in the brief) remakes it on the next tick.
+export const KEEP_MONTHS = 3;
+export type Crossing = { what: string; since: string; seen: string };
+const PER_MONTH: Record<string, number> = { day: 365 / 12, week: 52 / 12, month: 1, year: 1 / 12 };
+const monthlyOf = (one?: { value: number; period?: string }) => (one ? one.value * (PER_MONTH[one.period ?? 'month'] ?? 1) : undefined);
+// Where a set of inputs stands: on which side of its own break-even, and how many months of runway it has.
+export function standingAt(snap: Snapshot): { even?: number; side?: 'above' | 'below'; runway?: number } {
+  const price = monthlyOf(snap.price);
+  const cost = monthlyOf(snap.cost) ?? 0;
+  const burn = monthlyOf(snap.burn);
+  const paying = snap.paying?.value;
+  const cash = snap.cash?.value;
+  const even = price !== undefined && burn !== undefined ? (price - cost > 0 ? Math.ceil(burn / (price - cost)) : Infinity) : undefined;
+  const side = paying !== undefined && even !== undefined && Number.isFinite(even) ? (paying >= even ? 'above' : 'below') : undefined;
+  const net = snap.net ? monthlyOf(snap.net) : burn !== undefined && price !== undefined && paying !== undefined ? burn - paying * (price - cost) : undefined;
+  const runway = cash !== undefined && net !== undefined ? (net <= 0 ? Infinity : cash / net) : undefined;
+  return { ...(even !== undefined ? { even } : {}), ...(side ? { side } : {}), ...(runway !== undefined ? { runway } : {}) };
+}
+// The line the numbers crossed since the call, in words; undefined when they crossed none.
+export function crossedLine(then: Snapshot, now: Snapshot): string | undefined {
+  const was = standingAt(then);
+  const is = standingAt(now);
+  if (was.side && is.side && was.side !== is.side) return `paying went ${is.side} break-even (${is.even})`;
+  if (was.runway !== undefined && is.runway !== undefined && (was.runway < KEEP_MONTHS) !== (is.runway < KEEP_MONTHS)) return is.runway < KEEP_MONTHS ? `runway fell under ${KEEP_MONTHS} months` : `runway rose past ${KEEP_MONTHS} months`;
+  return undefined;
+}
+const snapshotOf = (call: Pick<Held, 'snapshot' | 'basis'>) => call.snapshot ?? (call.basis ? snapshotOfBasis(call.basis) : null);
+// Every change since the call is a Metrics reading of the paying count: nothing the founder set moved.
+export const readingsOnly = (changed: Changed[], state: EconomicsState) => !!changed.length && changed.every((one) => one.field === 'paying' && state.inputs.paying?.source === 'reading');
+
+// Whether the call is due a fresh look today, and why: an input it was made on moved (a reading only when it crossed a
+// line and held), the goal's day passed, or a week went by.
+export function refreshDue(call: Held | undefined, state: EconomicsState | null | undefined, today: string, on: { goal?: Goal; crossing?: Crossing } = {}): Due | null {
   if (!call?.decision) return null;
   const changed = staleOf(call, state);
-  if (changed.length) return { why: 'moved', changed };
+  if (changed.length && !readingsOnly(changed, state!)) return { why: 'moved', changed };
+  if (changed.length) {
+    const then = snapshotOf(call);
+    const what = then ? crossedLine(then, state!.snapshot()) : undefined;
+    if (what) {
+      const seen = `${state!.current()}@${state!.inputs.paying?.day ?? ''}`;
+      const held = on.crossing?.what === what ? on.crossing : undefined;
+      if (held && (today > held.since || seen !== held.seen)) return { why: 'moved', changed };
+      return { why: 'moved', changed, wait: held ?? { what, since: today, seen } };
+    }
+  }
   if (on.goal && on.goal.by < today && call.day <= on.goal.by) return { why: 'goal', changed: [], goal: on.goal };
   return between(call.day, today) >= WEEK ? { why: 'week', changed: [] } : null;
+}
+
+// A call remade on numbers that crossed no line keeps its decision: the move may change, the call does not.
+export function keepCall(call: Pick<Held, 'snapshot' | 'basis' | 'decision'>, fresh: PartnerCall, state: EconomicsState | null | undefined, why: Why): { call: PartnerCall; note?: string } {
+  if (why !== 'moved' || !call.decision || !fresh.decision || fresh.decision === call.decision || !state) return { call: fresh };
+  const then = snapshotOf(call);
+  if (!then || crossedLine(then, state.snapshot())) return { call: fresh };
+  const { why: _why, ...rest } = fresh;
+  return { call: { ...rest, decision: call.decision }, note: `*The call stays "${call.decision}": the numbers moved, but none crossed break-even or ${KEEP_MONTHS} months of runway, so one move is not a new call.*` };
+}
+
+// A refresh never loosens a kill line the founder set to get away from a trend: a "below" line only moves up, an
+// "above" line only down.
+export function loosens(held: { what: string } | undefined, fresh: { what: string } | undefined, threshold: (what: string) => { metric: string; below: boolean; value: number } | null): boolean {
+  if (!held || !fresh) return false;
+  const was = threshold(held.what);
+  const is = threshold(fresh.what);
+  return !!was && !!is && was.below === is.below && (was.below ? is.value < was.value : is.value > was.value);
 }
 
 const shortDay = (day: string) => new Date(`${day}T12:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });

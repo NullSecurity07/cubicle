@@ -957,7 +957,9 @@ describe('the partner slice: reviewing colleagues and refreshing the verdict', (
     expect(refresh).toContain('The numbers behind your verdict changed since you made it.');
     expect(refresh).toContain('On 1 Oct I said keep going at 3 paying offices; now break-even is 34 paying offices and the company has 4. Since then: paying offices 3 → 4.');
     const posted = (await deps.store.readChat('p1')).slice(before).at(-1)!;
-    expect(posted.text).toMatch(/^On 1 Oct I said keep going at 3 paying offices; now break-even is 34 paying offices and the company has 4: now change course\. Since then: paying offices 3 → 4\.\n\nMy call: \*\*change course\*\*\./);
+    // Journey 18: a count that moved by one and crossed no line (break-even 34, months of runway) is not a new call.
+    expect(posted.text).toMatch(/^On 1 Oct I said keep going at 3 paying offices; now break-even is 34 paying offices and the company has 4: still keep going\. Since then: paying offices 3 → 4\.\n\nMy call: \*\*keep going\*\*\./);
+    expect(posted.text).toContain('*The call stays "keep going": the numbers moved, but none crossed break-even or 3 months of runway, so one move is not a new call.*');
     expect(posted.text).toContain('*Kill signal moved: "paying offices below 2" by 2026-10-29 → "paying offices below 3" by 2026-11-10. It is the check in Needs you on 2026-11-10.*');
     expect(taken).toBe(1);
     // Said once: the next tick, and the next day with nothing moved, say nothing.
@@ -1165,8 +1167,35 @@ describe('the partner slice: the founder\'s kill line is theirs', () => {
   const turn = (text: string) => ({ text, tools: [] as ToolEvent[], provider: 'p', model: 'm', usage: { input: 1, output: 1 }, stopped: false });
   const DAY1 = 'My call: keep going\nWhy: 11 pay.\nKill signal: Paying subscribers below 8 by 2026-10-17\nThis week: ask the 3 who do not pay why.';
   const MOVED = 'My call: keep going\nWhy: the price went up.\nKill signal: Paying subscribers below 7 by 2026-10-17\nThis week: ask the 3 who do not pay why.';
+  const TIGHTER = MOVED.replace('below 7', 'below 10');
 
   it('proposes moving a founder-set line as a decision, and moves it only when the founder chooses so', async () => {
+    let clock = new Date('2026-10-06T10:00').getTime();
+    const { deps, part } = await installed({}, { now: () => clock, ask: async () => TIGHTER, budget: { take: () => ({ ok: true }) } });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    const company = companyDocOf(await deps.store.loadStage())!;
+    await deps.store.writeDoc(company.id, BRIEF());
+    await deps.seams.run('turn:reply', { roomId: 'p1', query: 'Your verdict: keep going, pivot or stop?', reply: turn(DAY1) });
+    await deps.seams.run('turn:answer', { roomId: 'p1', query: 'replace the kill with <9 paying' });
+    await deps.store.writeDoc(company.id, BRIEF('€67.85'));
+    clock = new Date('2026-10-08T06:30').getTime();
+    await part.tick!();
+    const posted = (await deps.store.readChat('p1')).at(-1)!.text;
+    expect(posted).toContain('*Your kill line stays "Paying subscribers below 9" by 2026-10-17: you set it. Shall it move to "Paying subscribers below 10" by 2026-10-17? It waits in Needs you as your decision.*');
+    expect(posted).not.toContain('Kill signal moved');
+    const held = () => readFile(join(deps.workspace, 'partner.json'), 'utf8').then((text) => JSON.parse(text));
+    expect((await held()).call).toMatchObject({ signal: { what: 'Paying subscribers below 9', by: '2026-10-17' }, signalBy: 'founder' });
+    const proposed = (await deps.decisions.list()).find((one) => one.status === 'proposed')!;
+    expect(proposed.title).toBe('Move your kill line from "Paying subscribers below 9" to "Paying subscribers below 10"?');
+    await deps.decisions.decide(proposed.id, { chosen: proposed.options[0], why: 'The price went up.' });
+    await vi.waitFor(async () => expect((await held()).call.signal).toEqual({ what: 'Paying subscribers below 10', by: '2026-10-17' }));
+    expect((await deps.store.readChat('p1')).at(-1)!.text).toContain('Kill signal moved: "Paying subscribers below 9" by 2026-10-17 → "Paying subscribers below 10" by 2026-10-17.');
+    await part.close!();
+  });
+
+  // Journey 18: "Shall it move to below 6?" as paying fell toward the founder's line of 7.
+  it('never proposes loosening the founder\'s line unasked', async () => {
     let clock = new Date('2026-10-06T10:00').getTime();
     const { deps, part } = await installed({}, { now: () => clock, ask: async () => MOVED, budget: { take: () => ({ ok: true }) } });
     await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
@@ -1174,20 +1203,14 @@ describe('the partner slice: the founder\'s kill line is theirs', () => {
     const company = companyDocOf(await deps.store.loadStage())!;
     await deps.store.writeDoc(company.id, BRIEF());
     await deps.seams.run('turn:reply', { roomId: 'p1', query: 'Your verdict: keep going, pivot or stop?', reply: turn(DAY1) });
-    await deps.seams.run('turn:answer', { roomId: 'p1', query: 'replace the kill with <12 paying' });
+    await deps.seams.run('turn:answer', { roomId: 'p1', query: 'replace the kill with <9 paying' });
     await deps.store.writeDoc(company.id, BRIEF('€67.85'));
     clock = new Date('2026-10-08T06:30').getTime();
     await part.tick!();
     const posted = (await deps.store.readChat('p1')).at(-1)!.text;
-    expect(posted).toContain('*Your kill line stays "Paying subscribers below 12" by 2026-10-17: you set it. Shall it move to "Paying subscribers below 7" by 2026-10-17? It waits in Needs you as your decision.*');
-    expect(posted).not.toContain('Kill signal moved');
-    const held = () => readFile(join(deps.workspace, 'partner.json'), 'utf8').then((text) => JSON.parse(text));
-    expect((await held()).call).toMatchObject({ signal: { what: 'Paying subscribers below 12', by: '2026-10-17' }, signalBy: 'founder' });
-    const proposed = (await deps.decisions.list()).find((one) => one.status === 'proposed')!;
-    expect(proposed.title).toBe('Move your kill line from "Paying subscribers below 12" to "Paying subscribers below 7"?');
-    await deps.decisions.decide(proposed.id, { chosen: proposed.options[0], why: 'The price went up.' });
-    await vi.waitFor(async () => expect((await held()).call.signal).toEqual({ what: 'Paying subscribers below 7', by: '2026-10-17' }));
-    expect((await deps.store.readChat('p1')).at(-1)!.text).toContain('Kill signal moved: "Paying subscribers below 12" by 2026-10-17 → "Paying subscribers below 7" by 2026-10-17.');
+    expect(posted).toContain('Kill signal: Paying subscribers below 9 by 2026-10-17.');
+    expect(posted).not.toContain('Shall it move');
+    expect((await deps.decisions.list()).filter((one) => one.status === 'proposed')).toHaveLength(0);
     await part.close!();
   });
 
