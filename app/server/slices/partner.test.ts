@@ -841,6 +841,38 @@ describe('the partner slice: a verdict that commits', () => {
   });
 });
 
+// Journey 19: "Give me your verdict again, and this time make the kill signal 12" with 9 paying: the verdict kept
+// "below 7" and the reply never said why.
+describe('the partner slice: a kill line named in the verdict ask', () => {
+  const QUOTESNAP = '## Numbers\n\n- Price: €29 a month per plumber\n- Trial users: 22\n- Paying plumbers: 9\n- Cash: €3,200\n- Burn: €1,100 a month';
+  const base = { tools: [], provider: 'p', model: 'm', usage: { input: 1, output: 1 }, stopped: false };
+  const verdict = (line: string) => `My call: keep going.\nWhy: 9 paying plumbers, break-even 38.\nKill signal: ${line} by 2026-10-29.\nThis week: call the trials.`;
+  async function rig() {
+    const { deps, part, workspace } = await installed({}, { now: () => new Date('2026-10-09T10:00').getTime(), ask: async () => SHAPED });
+    await withRooms(deps, [room('p1', 'Sam', { partner: true })]);
+    await part.tick!();
+    const company = companyDocOf(await deps.store.loadStage())!;
+    await deps.store.writeDoc(company.id, `${await deps.store.readDoc(company.id)}`.replace('## Numbers', QUOTESNAP.trim()));
+    await deps.seams.run('turn:reply', { roomId: 'p1', query: 'Your verdict: keep going or stop?', reply: { ...base, text: verdict('Paying plumbers below 7') } });
+    return { deps, part, workspace };
+  }
+  it('a crossed line is refused under the verdict in so many words, and the verdict quotes the line kept', async () => {
+    const { deps, part, workspace } = await rig();
+    const out = (await deps.seams.run('turn:reply', { roomId: 'p1', query: 'Give me your verdict again, and this time make the kill signal 12.', reply: { ...base, text: verdict('Paying plumbers below 7') } })).reply.text;
+    expect(out).toContain('Kill signal: Paying plumbers below 7 by 2026-10-29.');
+    expect(out).toContain('Not set: "Paying plumbers below 12" is crossed already (Paying plumbers is 9');
+    expect((await partnerState(workspace).read()).call?.signal?.what).toBe('Paying plumbers below 7');
+    await part.close!();
+  });
+  it('a line not crossed is set as the founder\'s, and the verdict\'s line says it', async () => {
+    const { deps, part, workspace } = await rig();
+    const out = (await deps.seams.run('turn:reply', { roomId: 'p1', query: 'Give me your verdict again, and this time make the kill signal paying plumbers below 8.', reply: { ...base, text: verdict('Paying plumbers below 7') } })).reply.text;
+    expect(out).toContain('Kill signal: Paying plumbers below 8 by 2026-10-29.');
+    expect((await partnerState(workspace).read()).call).toMatchObject({ signal: { what: 'Paying plumbers below 8' }, signalBy: 'founder' });
+    await part.close!();
+  });
+});
+
 // Journey 14: the founder pushed back ("a kill signal that can actually fail"); the partner named "< 10" in loose prose,
 // nothing read it, and the check stayed on "< 2".
 describe('the partner slice: pushback on the verdict', () => {

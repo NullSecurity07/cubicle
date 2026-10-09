@@ -604,16 +604,30 @@ export function createPartner(options: PartnerOptions = {}) {
           const { reply, call: made, askedAgain } = await holdCall(payload.query, payload.reply, payload.again, today, evidence, said, economics, company ? sectionText(company, 'Numbers') : '', pushed, goalsIn(company, today));
           // No stop for a company that is not running out, unless the founder's own words asked for it (refresh.ts).
           const stopHeld = made ? holdStop(made, numbersState, [payload.query, ...await founderWords(me.id)], before?.decision) : null;
-          const unprotected = stopHeld?.call ?? made;
+          let unprotected = stopHeld?.call ?? made;
           // The founder naming the kill line in their own ask makes it theirs; else a line they set stays theirs.
           const labels = [...sectionText(company, 'Numbers').split('\n').flatMap((line) => { const found = /^\s*[-*]\s+([^:]{1,40}):\s*[$€£]?\s?\d/.exec(line); return found ? [found[1].trim()] : []; })];
           const named = unprotected?.signal ? killAskIn(payload.query, { today, labels, signal: before?.signal, loose: true }) : null;
-          const theirs = !!named && thresholdOf(unprotected!.signal!.what)?.value === named.line;
+          let theirs = !!named && thresholdOf(unprotected!.signal!.what)?.value === named.line;
+          // Journey 19: "your verdict again, and this time make the kill signal 12" with 9 paying: the verdict kept
+          // "below 7" and never said why. A line the founder named that is crossed already is refused in code, in the
+          // refusal's own words under the reply; one that is not is set as theirs, and the verdict's line says it.
+          let namedLine = '';
+          if (named && !theirs && unprotected?.signal) {
+            const refusal = crossedRefusal(named.signal, await readingOf(stage, named.signal).catch(() => null));
+            if (refusal) namedLine = refusal;
+            else {
+              unprotected = { ...unprotected, signal: { ...named.signal, ...(unprotected.signal.then ? { then: unprotected.signal.then } : {}) } };
+              theirs = true;
+            }
+          }
           const guarded = unprotected && !theirs ? await protectSignal(before, unprotected, me.id, me.name) : { call: unprotected, line: undefined as string | undefined };
           const call = guarded.call;
           const signalBy: 'founder' | 'partner' = theirs || (guarded.line && before?.signalBy === 'founder') || (call?.signal && before?.signalBy === 'founder' && before.signal?.what === call.signal.what && before.signal.by === call.signal.by) ? 'founder' : 'partner';
           if (call) {
             let said = reply.text;
+            // The verdict's kill line is the one kept, in its words.
+            if (call.signal) said = said.replace(/^(\**\s*Kill signal\s*:?\**\s*:?\s*).*$/im, (_whole, head: string) => `${head}${call.signal!.what} by ${call.signal!.by}${call.signal!.then ? `; ${call.signal!.then.replace(/[\s.]+$/, '')}` : ''}.`);
             if (stopHeld?.note) {
               said = said.replace(/^My call: \*\*stop\*\*\./m, `My call: **${call.decision}**.`);
               if (!call.move) said = said.replace(/^This week: .*\n?/m, '');
@@ -635,6 +649,7 @@ export function createPartner(options: PartnerOptions = {}) {
               checkLine = moved || /already past|right on the line/.test(line) ? `*${line}*` : `*Kept as a check: it comes to Needs you on ${call.signal.by}.*`;
             }
             if (guarded.line) checkLine = `*${guarded.line}*`;
+            if (namedLine) checkLine = `*${namedLine}*`;
           }
         } catch (error) { console.error(`partner verdict: ${(error as Error).message}`); }
       }
