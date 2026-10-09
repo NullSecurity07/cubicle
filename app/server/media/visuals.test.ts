@@ -674,7 +674,7 @@ describe('a film about a product nobody can photograph draws its users and what 
     expect(world.cast).toEqual([
       'a plumber at work beside a van, turned away from the camera',
       "a close-up of a smartphone in a plumber's hand showing a photo of a leaking pipe",
-      "a close-up of a printed quote on a clipboard in a plumber's hand",
+      "a close-up of a printed quote folded inside a plain white envelope in a plumber's hand",
       'a close-up of a leaking pipe', 'a close-up of a boiler', 'a close-up of a bathroom',
     ]);
     expect(concreteOf(world)).not.toContain('job');
@@ -692,7 +692,7 @@ describe('a film about a product nobody can photograph draws its users and what 
     for (const subject of drawn) expect(subject).toMatch(/\b(?:plumber|smartphone|printed quote|boiler|leaking pipe)\b/);
     expect(drawn[0]).toMatch(/^a plumber at work/);
     expect(drawn[1]).toMatch(/^a close-up of a smartphone in a plumber's hand showing a photo/);
-    expect(drawn[2]).toMatch(/^a close-up of a printed quote/);
+    expect(drawn[2]).toMatch(/^a close-up of a printed quote folded inside a plain white envelope/);
     expect(drawn[0]).not.toMatch(/wooden table/);
     // Nothing a picture rule takes out again: a phone is the film's own thing here, not filler.
     expect(repairVisuals([{ scene: 0, take: 0, at: 0, line: 'Forward the photos.', subject: 'a plumber holding a phone beside a boiler in a utility room', kind: 'medium', room: 'foot' } as Visual], world).notes.join(' ')).not.toMatch(/any sentence/);
@@ -716,7 +716,7 @@ describe('a screen or a page in a drawn picture (journey 19)', () => {
   });
 
   it('says a page shows only faint lines, and says nothing on a picture with neither', () => {
-    expect(drawnAs({ ...phone, subject: 'a close-up of a printed quote on a clipboard' }, bible)).toContain('the page shows only faint grey lines, no text, no letters');
+    expect(drawnAs({ ...phone, subject: 'a close-up of a printed quote on a clipboard' }, bible)).toContain('the page seen from behind or at a steep angle, no readable text, no letters');
     expect(drawnAs({ ...phone, subject: 'a plumber at work beside a van' }, bible)).not.toContain('no text');
     expect(surfaceIn('a laptop on a desk')).toBe('screen');
     expect(surfaceIn('a copper pipe')).toBeNull();

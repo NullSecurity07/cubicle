@@ -175,12 +175,12 @@ export const surfaceIn = (subject: string): Surface | null =>
   (SCREENS.test(subject ?? '') ? 'screen' : PAPERS.test(subject ?? '') ? 'paper' : null);
 export const WORDLESS: Record<Surface, string> = {
   screen: 'the screen shows only a photo, no text, no letters',
-  paper: 'the page shows only faint grey lines, no text, no letters',
+  paper: 'the page seen from behind or at a steep angle, no readable text, no letters',
 };
 // The second time, said as what is there rather than only what is not: a picture model reads a "no" loosely.
 export const WORDLESS_AGAIN: Record<Surface, string> = {
   screen: 'one photo fills the whole screen edge to edge with nothing written over it, the screen shows only a photo, no text, no letters',
-  paper: 'the page seen at a steep angle and softly out of focus, the page shows only faint grey lines, no text, no letters',
+  paper: 'only the plain blank back of the page is seen, its printed side facing away from the camera, no text, no letters',
 };
 // What a picture whose screen or page came back written on is drawn again from: the same picture, said harder.
 export const wordlessFor = (visual: Visual): Visual => ({ ...visual, plain: true });
@@ -475,7 +475,10 @@ export function castOf(ask: string, facts: string): string[] {
   if (user) cast.push(`a ${user} at work${van}, turned away from the camera`);
   // Close, so the thing is the picture: "a phone on a van dashboard" came back as an empty van with a phone in a corner.
   if (ON_A_PHONE.test(said)) cast.push(`a close-up of a smartphone in a${user ? ` ${user}'s` : ''} hand showing a photo of ${PHOTOS.test(said) && work[0] ? work[0] : 'a job'}`);
-  if (out) cast.push(`a close-up of a printed ${out} on a clipboard${user ? ` in a ${user}'s hand` : ''}`);
+  // Folded in an envelope: journey 19's quote sheets came back headed "EVINATE" and "Cebsis lafad antiaf Plumming",
+  // and a page asked to face away from the camera was still drawn as a full form headed "Choctice". An envelope is
+  // the quote on its way to the customer, and drawn plain white every time it was tried.
+  if (out) cast.push(`a close-up of a printed ${out} folded inside a plain white envelope${user ? ` in a ${user}'s hand` : ''}`);
   for (const thing of work.slice(0, 3)) cast.push(`a close-up of ${thing}`);
   return cast;
 }
