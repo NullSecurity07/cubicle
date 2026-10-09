@@ -6,7 +6,7 @@ import { createApprovals, putToFounder } from '../approvals.ts';
 import { standingBlock } from './standing.ts';
 import { citedFacts, standingFacts } from './synthesis.ts';
 import { saidNoProposal } from './watch.ts';
-import { againstNo, chatNo, checkAgainst, createSaidNo, ruledOutBy, ruledOutLine, standingNosIn, overlap, proposalOf, promptLine, sameProposal, SAID_NO_MOST, suggestionIn, type SaidNoEntry } from './saidno.ts';
+import { againstNo, answerNos, asksSaidNo, recallNos, chatNo, checkAgainst, createSaidNo, ruledOutBy, ruledOutLine, standingNosIn, overlap, proposalOf, promptLine, sameProposal, SAID_NO_MOST, suggestionIn, type SaidNoEntry } from './saidno.ts';
 
 const DAY = 86_400_000;
 const OCT_3 = Date.UTC(2026, 9, 3, 12);
@@ -262,5 +262,28 @@ describe('a no on a drafted email', () => {
     expect(sameProposal(no, proposalOf('draft_email', { to: tom, subject: 'Other', body: no.body }, [tom])!)).toBe(true);
     // An older no kept without a body still stands by its subject.
     expect(sameProposal(entry({ tool: 'draft_email', subject, to: tom, key: `lead:${tom}` }), proposalOf('draft_email', { to: tom, subject, body: leas }, [tom])!)).toBe(true);
+  });
+});
+
+// Journey 19: "what have I said no to" recalled two of five.
+describe('what the founder said no to, recalled from the record', () => {
+  it('hears the question and lists every no of the last thirty days, newest first', async () => {
+    let clock = OCT_3;
+    const book = createSaidNo(await mkdtemp(join(tmpdir(), 'saidno-')), () => clock);
+    await book.record({ tool: 'draft_email', subject: 'Re: QuoteSnap / WhatsApp to quotes', to: 'tom@becker.example', who: 'Sam', reason: 'never promise a feature we have not shipped' });
+    clock += 1000; await book.record({ tool: 'chat', subject: 'promise a feature we have not shipped', who: 'Sam' });
+    clock += 1000; await book.record({ tool: 'chat', subject: 'count the trials as customers', who: 'Sam' });
+    clock += 1000; await book.record({ tool: 'propose_decision', subject: 'Give trial users a free month', who: 'Sam', reason: 'no free months' });
+    clock += 1000; await book.record({ tool: 'chat', subject: 'discounts', who: 'Sam', reason: 'it trains customers to wait' });
+    clock -= 40 * DAY; await book.record({ tool: 'chat', subject: 'paid ads', who: 'Sam' });
+    for (const ask of ['What have I said no to?', 'which things did I say no to so far', 'Remind me what I have declined', 'List my nos']) expect(asksSaidNo(ask)).toBe(true);
+    for (const ask of ['No, too early', 'What did the lead say?', 'Should I say no to Tom?']) expect(asksSaidNo(ask)).toBe(false);
+    const recall = recallNos(await book.list(), OCT_3 + DAY);
+    expect(recall.split('\n')).toHaveLength(6);
+    expect(recall).toContain('(5)');
+    for (const one of ['discounts', 'free month', 'count the trials as customers', 'promise a feature we have not shipped', 'email to tom@becker.example']) expect(recall).toContain(one);
+    expect(recall).not.toContain('paid ads');
+    expect(answerNos('You said no to discounts and free months.', 'What have I said no to?', recall)).toBe(recall);
+    expect(answerNos('The kill line is below 11.', 'What is the kill line now, and what have I said no to?', recall)).toBe(`The kill line is below 11.\n\n${recall}`);
   });
 });

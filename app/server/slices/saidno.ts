@@ -1,6 +1,7 @@
 import type { Stage } from '../../shared/model.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
-import { chatNo, promptLine, proposalOf, saidNoFor, standingNosIn, suggestionIn, type Proposal } from '../partner/saidno.ts';
+import { answerNos, asksSaidNo, chatNo, promptLine, proposalOf, recallNos, saidNoFor, standingNosIn, suggestionIn, type Proposal } from '../partner/saidno.ts';
+import { now as clockNow } from '../clock.ts';
 import { withSystem, type Handler } from '../seams.ts';
 import { leadAddresses } from '../tools/outward.ts';
 
@@ -154,6 +155,8 @@ export default {
         }
       }
       if (count !== undefined && count === 0) text = holdRuleClaims(text, payload.query, count);
+      // "What have I said no to?": the record answers, all of it (journey 19).
+      if (asksSaidNo(payload.query) && !payload.reply.stopped) text = answerNos(text, payload.query, recallNos(await book.list().catch(() => []), clockNow()));
       return next(text === payload.reply.text ? payload : { ...payload, reply: { ...payload.reply, text } });
     };
 

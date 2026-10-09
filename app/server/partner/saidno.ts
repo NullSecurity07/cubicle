@@ -203,6 +203,26 @@ export const promptLine = (entries: SaidNoEntry[]) => (entries.length
   ? `The founder said no to:\n${entries.slice(0, SAID_NO_SHOWN).map(saidNoLine).join('\n')}\nDo not put these to the founder again unless something has changed, and then say what changed.`
   : '');
 
+// "What have I said no to?" is answered from the log in code, never from a model's memory. Journey 19's partner
+// recalled two of five: the discounts and the free months, without the no on Tom's reply, "promise a feature we have
+// not shipped" or "count the trials as customers". Every no of the last thirty days, newest first.
+export const RECALL_DAYS = 30;
+const ASKS_NOS = /\b(?:what|which)\b[^?.!\n]*\b(?:have|did|had)\s+i\s+(?:said|say|told you|answered)\s+no\b|\b(?:what|which)\b[^?.!\n]*\bi(?:'ve|\s+have|\s+had)?\s+(?:said no|declined|turned down|rejected|refused|ruled out|vetoed)\b|\b(?:list|show|recall|remind me of|tell me)\b[^?.!\n]*\b(?:my|the)\s+(?:nos|no's|noes|vetoes|declines)\b|\bsaid[- ]no list\b/i;
+export const asksSaidNo = (query: string) => ASKS_NOS.test(query);
+export function recallNos(entries: SaidNoEntry[], now: number): string {
+  const since = now - RECALL_DAYS * DAY;
+  const held = entries.filter((one) => one.at >= since).sort((a, b) => b.at - a.at);
+  if (!held.length) return `You have said no to nothing in the last ${RECALL_DAYS} days, by the record.`;
+  return `What you said no to in the last ${RECALL_DAYS} days, by the record (${held.length}):\n${held.map(saidNoLine).join('\n')}`;
+}
+// The answer itself: the record alone when that was all the founder asked, else the reply with the record under it in
+// place of whatever the reply said of it.
+export function answerNos(reply: string, query: string, recall: string): string {
+  const asks = query.split(/(?<=[?.!])\s+/).filter((one) => /\?\s*$/.test(one) || /^\s*(?:list|show|tell|remind|recall)\b/i.test(one));
+  if (asks.length <= 1 && !/\b(?:and|also|plus)\s+(?:what|which|how|when|where|who|why|is|are|was|did|do|tell|remind|give)\b/i.test(query)) return recall;
+  return `${reply.replace(/\s+$/, '')}\n\n${recall}`;
+}
+
 // The check itself, on a list: the latest no inside the window that matches. Its first match is asked again; after
 // that it is declined.
 export function checkAgainst(entries: SaidNoEntry[], proposal: Proposal, now: number): SaidNoCheck {
