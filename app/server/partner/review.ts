@@ -105,6 +105,20 @@ function claimedOn(line: string, label: RegExpExecArray, pick: (one: Figure) => 
   return figuresIn(line, from).find(pick) ?? (from !== end ? figuresIn(line, end).find(pick) : undefined);
 }
 
+// Journey 18: Otto wrote "1,100 / 29 = 37.9 (rounded up to 38 plumbers)" and the review said "38, not 37.9". A
+// break-even is right as the plain quotient to the places it is written in (37.9 for 37.93), or when the line says it
+// was rounded to the right count.
+function roundedRight(line: string, claimed: Figure, right: number, working: { result: string }): boolean {
+  const said = /\b(?:round(?:ed|s|ing)?(?:\s+(?:up|off))?\s+(?:up\s+)?to|rounds?\s+up\s+to|so|≈|~|about|i\.e\.)\s*(\d+)\b/i.exec(line.slice(claimed.at + claimed.text.length));
+  if (said) return Number(said[1]) === right;
+  const inner = /^\s*ceil\((.*)\)\s*=/.exec(working.result)?.[1];
+  if (!inner) return false;
+  let raw: number;
+  try { raw = calculate(inner.replace(/,(?=\d{3}\b)/g, '')).value; } catch { return false; }
+  const places = /\.(\d+)$/.exec(claimed.text.replace(/[^\d.]/g, ''))?.[1].length ?? 0;
+  return places > 0 && Math.abs(claimed.value - raw) <= 0.5 * 10 ** -places + 1e-9 && Math.ceil(raw) === right;
+}
+
 // Each derived figure the doc states that the one state does not give, with both workings: the state's and the doc's.
 export function senseFlags(text: string, given: string | EconomicsState): { flags: ReviewFlag[]; lines: Set<number> } {
   const state = typeof given === 'string' ? stateOf(given) : given;
@@ -147,7 +161,7 @@ export function senseFlags(text: string, given: string | EconomicsState): { flag
       const noun = state.unit.split(' ').find((word) => !/^(?:paying|a|per|month)$/.test(word))?.replace(/s$/, '') ?? '';
       const after = claimed ? line.slice(claimed.at + claimed.text.length, claimed.at + claimed.text.length + 40) : '';
       const unitWrong = !!claimed && /^\s*[a-z]/i.test(after) && !new RegExp(`^\\s*(?:[a-z-]+\\s+){0,2}${noun}`, 'i').test(after);
-      if (claimed && (claimed.value !== right || unitWrong)) {
+      if (claimed && ((claimed.value !== right && !roundedRight(line, claimed, right, worked('Break-even')!)) || unitWrong)) {
         const shown = `${right} ${state.unit}`;
         const wrongAs = `${claimed.text}${unitWrong ? ` ${/^\s*((?:[a-z-]+\s?){1,3})/i.exec(after)?.[1].trim() ?? ''}` : ''}`;
         found = { derived: { name: 'break-even', right, working: `${worked('Break-even')!.result} (calc)`, shown, near: () => false }, claimed: { ...claimed, text: wrongAs } };
