@@ -9,7 +9,7 @@ import { checkReply, FLAG_LINE, stripFlagged, turnSources } from '../truth.ts';
 import { gatherMonth } from '../slices/month.ts';
 import { cardOf } from './bets.ts';
 import { learnedSection, sectionText } from './company.ts';
-import { breakEvenFix, breakEvenLine, changedLine, changedSince, economicsOf, figuresFix, type EconomicsState, type Snapshot } from './economics.ts';
+import { breakEvenFix, breakEvenLine, changedLine, changedSince, economicsOf, figuresFix, stateFigures, type EconomicsState, type Snapshot } from './economics.ts';
 import { runwayFix } from './keep.ts';
 import type { FounderPromise } from './promises.ts';
 import { ruledOutBy, ruledOutLine, saidNoFor, type SaidNoEntry } from './saidno.ts';
@@ -132,6 +132,24 @@ export type CompanyGather = {
   numbers: string; open: Bet[]; closed: Bet[];
 };
 
+// Journey 19: the day-2 note's risk was "Truth net flagged €839 net burn as unsourced", a figure the state works out
+// from the brief (net burn). A flag line's figures that the one state holds are no flag: they go, and a line left with
+// none goes too.
+const FLAGGED_FIGURES = /^((?:Unsourced figures|Not worked out): )(.+?)( \((?:not found|worked out)[^)]*\)\.?)$/;
+export function heldByState(line: string, state: EconomicsState | null | undefined): string | null {
+  const found = FLAGGED_FIGURES.exec(line);
+  if (!found || !state) return line;
+  const held = stateValues(state);
+  const left = found[2].split(', ').filter((figure) => {
+    const value = Number(figure.replace(/[^\d.-]/g, ''));
+    return !Number.isFinite(value) || !held.some((one) => Math.abs(one - value) <= Math.max(0.05, Math.abs(one) * 0.001));
+  });
+  return left.length ? `${found[1]}${left.join(', ')}${found[3]}` : null;
+}
+const stateValues = (state: EconomicsState) => [state.mrr(), state.net(), state.runway()?.value, state.runway()?.gross?.value, state.breakEven(), state.current(), state.gap(),
+  ...Object.values(state.inputs).map((one) => one?.value), ...(['price', 'cost', 'burn'] as const).map((field) => state.monthly(field))]
+  .filter((one): one is number => typeof one === 'number' && Number.isFinite(one));
+
 export async function gatherCompany(from: MorningSources, options: { verdictChars?: number } = {}): Promise<CompanyGather> {
   const yesterday = localDay(from.now - DAY);
   const start = new Date(`${yesterday}T00:00:00`).getTime();
@@ -141,6 +159,7 @@ export async function gatherCompany(from: MorningSources, options: { verdictChar
   const changed = (await gatherMonth({ workspace: from.workspace, stage: seen, roomId: from.partnerId, decisions: from.decisions, boards: from.boards, leads: from.leads, now: from.now }, yesterday))
     .split('\n').map((line) => line.replace(/^Not wired to you: (.+)\. Say so in the update rather than guessing\.$/, 'Not on the stage: $1.')).join('\n');
 
+  const state = await from.economics?.().catch(() => null) ?? null;
   const talk: string[] = [];
   const flagged: string[] = [];
   const flagCounts: { room: string; count: number }[] = [];
@@ -150,7 +169,8 @@ export async function gatherCompany(from: MorningSources, options: { verdictChar
     if (said.length) talk.push(`${room.name} (${room.role}):`, ...said.map((message) => `  ${message.role === 'assistant' ? room.name : message.from ?? 'Founder'}: ${stripFlagged(message.text).replace(/\s+/g, ' ').trim().slice(0, CHAT_CHARS)}`));
     // What the truth net flagged since yesterday, each flag on a line of its own: the model reads it, and the net
     // itself still treats the figure it names as unsourced when the note repeats it.
-    const lines = all.filter((message) => message.role === 'assistant' && message.at >= start).flatMap((message) => message.text.match(FLAG_LINE) ?? []);
+    const lines = all.filter((message) => message.role === 'assistant' && message.at >= start).flatMap((message) => message.text.match(FLAG_LINE) ?? [])
+      .flatMap((line) => { const kept = heldByState(line, state); return kept ? [kept] : []; });
     if (lines.length) { flagged.push(`${room.name} (${room.role}):`, ...[...new Set(lines)].slice(-4)); flagCounts.push({ room: `${room.name} (${room.role})`, count: lines.length }); }
   }
   let chats = talk.join('\n');
@@ -208,7 +228,8 @@ const working = async (from: MorningSources): Promise<string[]> => {
   const state = await from.economics?.().catch(() => null);
   const lines = state ? state.explain() : (economicsOf(sectionText(from.company ?? '', 'Numbers'))?.working ?? []).map((one) => one.line);
   const side = breakEvenLine(state);
-  return [...lines, ...(side ? [side] : [])].map((line) => `- ${line}`);
+  const figures = stateFigures(state);
+  return [...lines, ...(side ? [side] : []), ...(figures ? [figures] : [])].map((line) => `- ${line}`);
 };
 
 // Journey 14's note: "the confirmed 4.4-month runway calculated by Ops". Ops had worked out 4.99; 4.4 was the partner's

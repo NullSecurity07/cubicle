@@ -9,7 +9,7 @@ import type { FounderPromise } from './promises.ts';
 import { saidNoFor } from './saidno.ts';
 import { stateOf } from './economics.ts';
 import { NOTHING_CHANGED } from './since.ts';
-import { attributed, briefMoves, confirmedFix, gatherMorning, MORNING_ASK, morningDue, morningInputs, morningMessage, MOST_TRIES, reachedFlags, RETRY_AFTER, writeMorning, type MorningSources } from './morning.ts';
+import { attributed, briefMoves, confirmedFix, heldByState, gatherMorning, MORNING_ASK, morningDue, morningInputs, morningMessage, MOST_TRIES, reachedFlags, RETRY_AFTER, writeMorning, type MorningSources } from './morning.ts';
 
 const at = (text: string) => new Date(text).getTime();
 const NINE = at('2026-09-27T09:00');
@@ -439,5 +439,16 @@ describe('what moved in the brief since the last note', () => {
     });
     expect(note?.since?.[0]).toBe('In the brief: price €29 a month → €33.35 a month.');
     expect(note?.snapshot?.price).toEqual({ value: 33.35, period: 'month' });
+  });
+});
+
+// Journey 19: the day-2 risk was the false "€839 unsourced" footer, a figure the state works out.
+describe('a flag on a figure the state holds', () => {
+  const state = stateOf('- Price: €29 a month per plumber\n- Trial users: 22\n- Paying plumbers: 9\n- Cash: €3,200\n- Burn: €1,100 a month');
+  it('is no flag: the state\'s figures go from the line, and a line left with none goes', () => {
+    expect(heldByState('Unsourced figures: €839 (not found in anything this turn read).', state)).toBeNull();
+    expect(heldByState('Unsourced figures: €839, 66% (not found in anything this turn read).', state)).toBe('Unsourced figures: 66% (not found in anything this turn read).');
+    expect(heldByState('Not worked out: €261 (worked out without calc and without the sum written out; check them).', state)).toBeNull();
+    expect(heldByState('Unconfirmed: this reply claims an action no tool confirmed (sent).', state)).toBe('Unconfirmed: this reply claims an action no tool confirmed (sent).');
   });
 });
