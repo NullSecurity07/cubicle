@@ -233,3 +233,21 @@ describe('a traction figure and its rows', () => {
     expect(mend([right], metrics).slides[0]).toEqual(right);
   });
 });
+
+// Journey 21: "Six cafés pay for FixSlot today" over rows of 8, and "Goal is 8" with the brief's goal of 12.
+describe('a traction headline in words and the goal slide', () => {
+  const material: Material = { brief: 'FixSlot books repair slots.\n\n## Goal\n\nGoal: 12 paying cafés by 30 November 2026.', sources: [], metrics: { name: 'Metrics card', text: '- Paying cafés: 8 on 2026-10-11 (from meeting notes)\n- Cafés contacted: 40 on 2026-10-10' } };
+  it('says the rows\' count and the brief\'s goal, from the same source as the rows', () => {
+    const traction = slide('traction', 'Six cafés pay for FixSlot today', ['Paying cafés: 8 on 2026-10-11', 'Cafés contacted: 40 on 2026-10-10'], { notes: 'We have six paying cafés today, from 40 cafés contacted.' });
+    const goal = slide('list', 'Goal is 8 paying cafés', ['Goal of 8 by 30 November'], { figure: { value: '8', label: 'goal' } });
+    const { slides, said } = mend([traction, goal], material);
+    expect(slides[0].headline).toBe('8 cafés pay for FixSlot today');
+    // The notes say 8 too, and are then held to the record as any notes are.
+    expect(slides[0].notes ?? '').not.toMatch(/\bsix\b/i);
+    expect(said.join('\n')).toContain('slide 1: the notes now say the count Metrics card reads');
+    expect(slides[1].headline).toBe('Goal is 12 paying cafés');
+    expect(slides[1].lines).toEqual(['Goal of 12 by 30 November']);
+    expect(slides[1].figure).toEqual({ value: '12', label: 'goal' });
+    expect(said.join('\n')).toContain('the goal figure now reads 12');
+  });
+});
