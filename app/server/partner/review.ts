@@ -7,6 +7,7 @@ import { readBook } from '../rescue.ts';
 import type { Handler } from '../seams.ts';
 import { calculate } from '../tools/calc.ts';
 import { markUnbacked, markUnworked, unbackedClaims } from '../tools/evidence.ts';
+import { leadRecords, listed, unheardSayings, unrecordedNames } from '../tools/named.ts';
 import { unsourcedIn } from './call.ts';
 import { sectionText } from './company.ts';
 import { stateOf, type EconomicsState } from './economics.ts';
@@ -291,6 +292,21 @@ export function reviewDoc(input: { text: string; before?: string; numbers: strin
     const first = claims.slice(0, 2).map((one) => `"${one}"`).join(' and ');
     flags.push({ kind: 'claim', said: `${first}${claims.length > 2 ? ` and ${claims.length - 2} more` : ''} ${claims.length > 1 ? 'say' : 'says'} what customers said or did, or that it works, with no notes or record behind it: take ${claims.length > 1 ? 'them' : 'it'} out, or write "no feedback on record".`, short: `${claims.length > 1 ? `${claims.length} claims have` : 'a claim has'} no record behind ${claims.length > 1 ? 'them' : 'it'}` });
   }
+  // Journey 21: Lea's "Customer notes" named six cafés nobody on record had heard of, with their organisers and their
+  // feedback, and the review called it fit. A customer by name is on record or the doc is not fit, marked or not;
+  // so is what a named one is said to have said with none of their own words on record.
+  const names = { after: input.text, before, read: [input.numbers, ...input.read], title: input.title };
+  const missing = unrecordedNames(names);
+  if (missing.length) {
+    const places = missing.filter((one) => one.kind === 'place');
+    const shown = (places.length ? places : missing).map((one) => one.name);
+    flags.push({ kind: 'claim', said: `${listed(shown)} ${shown.length > 1 ? 'are' : 'is'} named as ${shown.length > 1 ? 'customers' : 'a customer'}${places.length && missing.length > places.length ? `, with ${missing.length - places.length} people,` : ''} and no Leads card row, the Company brief, notes or the founder's words name ${shown.length > 1 ? 'them' : 'it'}: take ${shown.length > 1 ? 'them' : 'it'} out, or name only customers on record.`, short: `${shown.length > 1 ? `${shown.length} named customers are` : `"${shown[0]}" is`} not on record` });
+  }
+  const gone = new Set(missing.map((one) => one.name));
+  const unheard = unheardSayings(names).filter((one) => !gone.has(one.name));
+  if (unheard.length) {
+    flags.push({ kind: 'claim', said: `${unheard.slice(0, 2).map((one) => `"${clip(one.sentence, 80)}" (${one.name})`).join(' and ')}${unheard.length > 2 ? ` and ${unheard.length - 2} more` : ''} ${unheard.length > 1 ? 'say' : 'says'} what a named customer said or did, and nothing they said is on record: take ${unheard.length > 1 ? 'them' : 'it'} out, or write "no feedback on record".`, short: `${unheard.length > 1 ? `${unheard.length} lines put` : 'a line puts'} words in a named customer's mouth` });
+  }
   const verdict = flags.length ? `Fix first: ${flags.map((one) => one.short).join('; ')}.` : FIT;
   return { flags, verdict, checked: checked || flags.length > 0 };
 }
@@ -398,13 +414,17 @@ export function createReviews(deps: ReviewDeps) {
     if (!room || room.partner || !doc || doc.id === company?.id) return;
     const text = await deps.store.readDoc(doc.id).catch(() => null);
     if (text === null) return;
-    const { seen } = await read();
+    const { seen, open } = await read();
     const others = await Promise.all(readableDocIds(stage, room.id).filter((id) => id !== doc.id).map((id) => deps.store.readDoc(id).catch(() => '')));
-    const sources = [...job.read, ...others.map((one) => one.slice(0, MOST_SOURCE))];
+    const sources = [...job.read, ...others.map((one) => one.slice(0, MOST_SOURCE)), ...await leadRecords(stage, deps.workspace).catch(() => [])];
     const twins = stage.docs.filter((one) => one.id !== doc.id && one.title.trim().toLowerCase() === doc.title.trim().toLowerCase()).length;
     const numbers = company ? sectionText(company.text, 'Numbers') : '';
     const state = (await deps.economics?.(stage).catch(() => null)) ?? stateOf(numbers);
-    const review = reviewDoc({ text, before: seen[doc.id] ?? '', numbers, read: sources, said: sources, title: doc.title, twins, state });
+    // Journey 21: Sam flagged one line of Lea's notes; Lea marked that line, and the re-read, holding only what changed,
+    // found nothing new and said "Fit for the founder." with the five invented cafés still there. While a flag on the
+    // doc is open, the whole doc is read again: Fit follows only when the flagged lines are gone or backed.
+    const flaggedNow = open.some((one) => one.docId === doc.id);
+    const review = reviewDoc({ text, before: flaggedNow ? '' : seen[doc.id] ?? '', numbers, read: sources, said: sources, title: doc.title, twins, state });
     await change((state) => {
       state.seen[doc.id] = text.slice(0, MOST_SEEN);
       const keys = Object.keys(state.seen);

@@ -208,6 +208,40 @@ test('the partner reviews a colleague\'s doc unasked, and Fix sends the colleagu
   await page.request.put('/api/stage', { data: { ...stage, docs: stage.docs.filter((one) => !made.has(one.id)), wires: stage.wires.filter((wire) => !made.has(wire.from) && !made.has(wire.to)) } });
 });
 
+// Journey 21: Lea's "Customer notes" named six cafés nobody on record had heard of; Sam flagged one line and, on the
+// re-read, called the doc fit. The doc marks each name "(not on record)", the review flags all of them, and a re-read
+// with the same cafés keeps the flag.
+test('a doc that names customers nobody has on record is marked, flagged, and stays flagged on a re-read', async ({ page }) => {
+  test.setTimeout(120_000);
+  await bar(page, 'add a partner called Sam', 'Add Sam, your partner');
+  await expect(page.getByRole('status').filter({ hasText: 'Sam is your partner' })).toBeVisible({ timeout: 15_000 });
+  const notes = '# Customer notes\n\n## Paying cafés (6)\n\n- **Café Neukölln**: Organiser: Sarah. Feedback: Volunteers love seeing the item list ahead of time.\n- **Kreuzberg Repair Hub**: Organiser: Jan. Feedback: requested SMS reminders.\n- **Tempelhof Repair Club**: Organiser: Thomas. Feedback: Very happy with the booking page.';
+  const chat = async () => (await (await page.request.get('/api/rooms/marketing/chat')).json()) as { role: string; text: string; from?: string }[];
+  const fromSam = async () => (await chat()).filter((one) => one.from === 'Sam').map((one) => one.text);
+  try {
+    await page.request.post('/api/rooms/marketing/chat', { data: { text: `/tool create_doc ${JSON.stringify({ title: 'Customer notes', text: notes })}` } });
+    await expect.poll(async () => (await fromSam()).at(-1) ?? '', { timeout: 45_000 }).toMatch(/3 named customers are not on record/);
+    const id = (await stageOf(page)).docs.find((one) => one.title === 'Customer notes')!.id;
+    const saved = ((await (await page.request.get(`/api/docs/${id}`)).json()) as { text: string }).text;
+    expect(saved).toContain('- **Café Neukölln** (not on record): Organiser: Sarah (not on record).');
+    expect(saved).not.toMatch(/Tempelhof Repair Club\*\*: /);
+    // Lea answers the flag on one line only: the cafés stay, so the re-read keeps the flag and never says Fit.
+    const heard = (await fromSam()).length;
+    await page.request.post('/api/rooms/marketing/chat', { data: { text: `/tool write_doc ${JSON.stringify({ doc: 'Customer notes', text: saved.replace('Feedback: Very happy with the booking page.', 'Feedback: no feedback on record.') })}` } });
+    await expect.poll(async () => (await fromSam()).length, { timeout: 45_000 }).toBeGreaterThan(heard);
+    expect((await fromSam()).at(-1)).toMatch(/3 named customers are not on record/);
+    expect((await fromSam()).at(-1)).not.toContain('Fit for the founder');
+    await bar(page, 'needs', 'Needs you');
+    await expect(page.getByRole('dialog', { name: 'Needs you' }).locator('.needs__item--review-flag')).toContainText('Sam flagged: Maya\'s "Customer notes". Fix first: 3 named customers are not on record');
+    await page.keyboard.press('Escape');
+  } finally {
+    await page.goto('about:blank');
+    const stage = await stageOf(page);
+    const made = new Set(stage.docs.filter((one) => one.title === 'Customer notes').map((one) => one.id));
+    await page.request.put('/api/stage', { data: { ...stage, docs: stage.docs.filter((one) => !made.has(one.id)), wires: stage.wires.filter((wire) => !made.has(wire.from) && !made.has(wire.to)) } });
+  }
+});
+
 // The partner watch: the verdict's kill signal is "weekly signups below 5", kept as a check. A Signups reading of 4
 // comes in on the Metrics card, the watch looks (the tick does this on a real run), and Needs you shows Sam's own
 // proposal, unasked, with the number and a ready task; Run puts it on a board.
