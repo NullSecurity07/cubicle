@@ -98,7 +98,10 @@ describe('the founder asks what they said no to', () => {
     const deps = stubDeps(workspace, ROOT);
     const part = (await saidno.install(deps)) as Installed;
     const roomId = (await deps.store.loadStage()).rooms[0].id;
-    for (const subject of ['discounts', 'count the trials as customers', 'promise a feature we have not shipped']) await saidNoFor(workspace).record({ tool: 'chat', subject, who: 'Sam' });
+    for (const query of ['Never promise a feature we have not shipped.', "Don't count the trials as customers.", 'No discounts, because it trains customers to wait.']) await deps.seams.run('turn:before', { roomId, source: 'chat', query, messages: [] });
+    // Each no keeps its own reason or none: a standing no is never the reason of the one before it.
+    expect((await saidNoFor(workspace).list()).map((one) => [one.subject, one.reason])).toEqual([
+      ['discounts', 'it trains customers to wait'], ['count the trials as customers', undefined], ['promise a feature we have not shipped', undefined]]);
     const query = 'What have I said no to?';
     await deps.seams.run('turn:before', { roomId, source: 'chat', query, messages: [] });
     const reply = { text: 'You said no to discounts.', tools: [], provider: 'fake', model: 'fake', usage: { inputTokens: 0, outputTokens: 0 }, stopped: false } as never;

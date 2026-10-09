@@ -115,8 +115,10 @@ export default {
           const words = last && !proposed.length ? suggestionIn(last.text) : '';
           if (words) proposed.push({ tool: 'chat', subject: words });
           for (const one of proposed) { await book.record({ ...one, who: room.name, ...said }); wrote += 1; }
-          // Nothing proposed to say no to, and a reason given: it is why the Don't just pressed was pressed.
-          if (!proposed.length && said.reason && await book.explain(said.reason)) wrote += 1;
+          // Nothing proposed to say no to, and a reason given: it is why the Don't just pressed was pressed. A message
+          // that is a standing no of its own is not (journey 19: "Don't count the trials as customers." was kept as the
+          // reason for the no said just before it).
+          if (!proposed.length && said.reason && !standingNosIn(payload.query).length && await book.explain(said.reason)) wrote += 1;
         }
         // "Don't propose cold outreach to more makers", said anywhere in a message, stands with its reason; the
         // unasked refresh and the morning note are held to it (journey 15).
