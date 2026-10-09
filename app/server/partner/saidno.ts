@@ -226,7 +226,10 @@ export function answerNos(reply: string, query: string, recall: string): string 
   if (asks.length <= 1 && !/\b(?:and|also|plus)\s+(?:what|which|how|when|where|who|why|is|are|was|did|do|tell|remind|give)\b/i.test(query)) return recall;
   // Journey 21: "Everything you said no to: None on record" stood above the record. What the reply said of the nos
   // goes; the record says it.
-  const kept = reply.split('\n').filter((line) => !/\b(?:said no|no to|turned down|declined|ruled out|vetoe?d?s?|none on record|nothing on record)\b/i.test(line)).join('\n').replace(/\n{3,}/g, '\n\n');
+  // A line that says one of the record's nos again, in the model's words, goes too: the record says it once.
+  const subjects = [...recall.matchAll(/^- (?:email to \S+ about )?"([^"]{3,})"/gm)].map((hit) => hit[1].replace(/…$/, '').toLowerCase());
+  const kept = reply.split('\n').filter((line) => !/\b(?:said no|no to|turned down|declined|ruled out|vetoe?d?s?|none on record|nothing on record)\b/i.test(line)
+    && !subjects.some((one) => line.toLowerCase().includes(one))).join('\n').replace(/\n{3,}/g, '\n\n');
   return `${kept.replace(/\s+$/, '')}\n\n${recall}`;
 }
 

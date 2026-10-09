@@ -150,13 +150,14 @@ describe('a recall that asks for the nos among other things', () => {
     const roomId = (await deps.store.loadStage()).rooms[0].id;
     const query = 'Exact recall: what was your day-one call? What kill line did you set then? What is today\'s number against it? And everything I said no to, with my reasons.';
     await deps.seams.run('turn:before', { roomId, source: 'chat', query, messages: [] });
-    const reply = { text: 'Day one: keep going.\nEverything you said no to, with your reasons: None on record.', tools: [], provider: 'fake', model: 'fake', usage: { inputTokens: 0, outputTokens: 0 }, stopped: false } as never;
+    const reply = { text: 'Day one: keep going.\n- **"paid ads"** (Sam) — reason: founder instruction.\nEverything you said no to, with your reasons: None on record.', tools: [], provider: 'fake', model: 'fake', usage: { inputTokens: 0, outputTokens: 0 }, stopped: false } as never;
     const out = await deps.seams.run('turn:reply', { roomId, query, reply });
     expect(out.reply.text).not.toContain('None on record');
     expect(out.reply.text).toContain('Day one: keep going.');
     expect(out.reply.text).toContain('by the record (5):');
     for (const one of entries) expect(out.reply.text).toContain(one.subject);
     expect(out.reply.text).toContain('they did not pay back');
+    expect(out.reply.text).not.toContain('founder instruction');
     await part.close?.();
   });
 });
