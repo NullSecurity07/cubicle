@@ -455,3 +455,19 @@ describe('a flag on a figure the state holds', () => {
     expect(heldByState('Unconfirmed: this reply claims an action no tool confirmed (sent).', state)).toBe('Unconfirmed: this reply claims an action no tool confirmed (sent).');
   });
 });
+
+// Journey 21: Maya wrote a net burn over the brief's Burn row, the day-4 snapshot had no burn and the note said nothing.
+describe('a brief Numbers row a colleague changed', () => {
+  const brief = (burn: string) => `- Price: €29 a month per plumber\n- Paying plumbers: 14\n- Cash: €3,200\n- Burn: ${burn}`;
+  it('heads the note with who changed it, and a row gone is read from the last figure on record and said so', async () => {
+    const before = stateOf(brief('€1,100 a month'));
+    const broken = stateOf(brief('-€54 a month (cash-positive), calculated as 1,100 − 14 × 29 = −54 (calc)'), { lastGood: before.lastGood() });
+    expect(broken.inputs.burn?.value).toBe(1100);
+    expect(broken.missing).toEqual(['The Company brief has no Burn row it can read now, so the last figure on record is used: Burn €1,100 a month. Put the row back in the brief.']);
+    const note = await writeMorning({
+      sources: await sources({ seen: before.snapshot(), economics: async () => broken, briefChanges: ['Company brief: Burn €1,100 a month → -€54 a month (cash-positive) (by Maya).'] }), name: 'Sam', promptFor: async () => [{ role: 'system', content: 'You are Sam.' }],
+      ask: async () => 'Three things that matter today:\n1. a\n2. b\n3. c\nRisk: Maya priced it at $9\nQuestion: q?',
+    });
+    expect(note?.since?.slice(0, 2)).toEqual(['Company brief: Burn €1,100 a month → -€54 a month (cash-positive) (by Maya).', broken.missing[0]]);
+  });
+});

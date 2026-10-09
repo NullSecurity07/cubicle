@@ -229,6 +229,27 @@ export function mend(given: Slide[], material: Material): { slides: Slide[]; sai
         said.push(`${at}: the headline now reads ${one.value} ${one.label.toLowerCase()}, as ${tractionFrom(material)} does`);
       }
     }
+    // Journey 21: the headline "Six cafés pay for FixSlot today" over rows of 8, and the goal slide's "Goal is 8" with
+    // a goal of 12. A count said in words of a metric the rows read, and a goal said with another number than the
+    // brief's goal row, say what the source says.
+    const counted = (text: string, where: string) => {
+      const fixed = countFix(text, readings);
+      if (fixed !== text) said.push(`${at}: the ${where} now ${where === 'notes' ? 'say' : 'says'} the count ${tractionFrom(material)} reads`);
+      const goal = goalOf(material.brief);
+      const out = goal ? fixed.replace(GOAL_SAID, (whole, lead: string, figure: string) => (Number(figure.replace(/,/g, '')) === goal.value ? whole : `${lead}${goal.value}`)) : fixed;
+      if (out !== fixed) said.push(`${at}: the ${where} now ${where === 'notes' ? 'say' : 'says'} the brief's goal, ${goal!.value}`);
+      return out;
+    };
+    slide.headline = counted(slide.headline, 'headline');
+    slide.lines = slide.lines.map((line) => counted(line, 'line'));
+    if (slide.notes) slide.notes = counted(slide.notes, 'notes');
+    if (slide.figure && /\bgoal\b/i.test(slide.figure.label)) {
+      const goal = goalOf(material.brief);
+      if (goal && FIGURE.test(slide.figure.value) && !sameFigure(slide.figure.value, String(goal.value))) {
+        slide.figure = { ...slide.figure, value: slide.figure.value.replace(FIGURE, String(goal.value)) };
+        said.push(`${at}: the goal figure now reads ${goal.value}, as the brief's goal does`);
+      }
+    }
     if (!sourced(slide.headline)) {
       const kept = words(replaceOutsideCodes(slide.headline, NUMBER, (hit) => (claim(hit) ? ' ' : hit))).join(' ').replace(/^[^\p{L}\d]+|[\s,;:–-]+$/gu, '');
       aside.push(`Headline had a number with no source: "${slide.headline}"`);
@@ -329,4 +350,41 @@ export function parseSlide(one: unknown, index: number, id: string): Slide {
     ...(figure && typeof figure.value === 'string' && figure.value.trim() ? { figure: { value: figure.value.trim(), label: typeof figure.label === 'string' ? figure.label.trim() : '' } } : {}),
     ...(typeof slide.notes === 'string' && slide.notes.trim() ? { notes: slide.notes.trim() } : {}),
   };
+}
+
+// The brief's goal row's count: "Goal: 12 paying cafés by 30 November".
+export function goalOf(brief: string): { value: number; what: string } | null {
+  for (const line of brief.split('\n')) {
+    const at = /\bgoal\b[^:\d\n]{0,30}:?\s*(?:is\s+|to\s+(?:reach|get\s+to|hit)\s+)?(\d[\d,]*)\s+((?:\p{L}[\p{L}-]*\s?){1,3})/iu.exec(line);
+    if (at) return { value: Number(at[1].replace(/,/g, '')), what: at[2].trim() };
+  }
+  return null;
+}
+// "Goal is 8", "goal of 8", "the goal: 8": the number said as the goal.
+const GOAL_SAID = /(\bgoal\b(?:\s+(?:is|of|was|stays|remains|at))?\s*:?\s*(?:to\s+(?:reach|get\s+to|hit)\s+)?)(\d[\d,]*)(?![\d.,]*\s*%)/gi;
+const COUNT_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty'];
+const nounsOf = (label: string) => (label.toLowerCase().match(/\p{L}{3,}/gu) ?? []).filter((word) => !/^(?:paying|paid|active|total|last|this|month|week|year|customer|conversations?)$/.test(word)).map((word) => word.replace(/s$/, ''));
+// A count of a metric the rows read, in figures or in words ("Six cafés pay", "six paying cafés"), says the reading.
+export function countFix(text: string, readings: { label: string; value: string }[]): string {
+  let out = text;
+  for (const one of readings) {
+    const value = Number(one.value.replace(/[^\d.]/g, ''));
+    const nouns = nounsOf(one.label);
+    if (!nouns.length || !Number.isFinite(value) || /[$€£%]/.test(one.value)) continue;
+    const count = new RegExp(`(^|[^\\p{L}\\d.,])(\\d[\\d,]*|${COUNT_WORDS.join('|')})(\\s+(?:paying\\s+|paid\\s+|active\\s+)?)(\\p{L}+)`, 'giu');
+    const paying = /\b(?:paying|paid)\b/i.test(one.label);
+    out = out.replace(count, (whole, lead: string, said: string, gap: string, noun: string, at: number, all: string) => {
+      if (!nouns.includes(noun.toLowerCase().replace(/s$/, ''))) return whole;
+      // Only the metric the row counts: "6 cafés pay" for paying cafés, never "40 cafés waiting" or "contacted".
+      const next = all.slice(at + whole.length, at + whole.length + 30);
+      if (/^\s+(?:waiting|contacted|interviewed|on\b|in\s+(?:trial|the)|signed|lost|churned|left|free|trial|asked|reached|emailed|called|listed|nearby|in\s+berlin)\b/i.test(next)) return whole;
+      if (paying && !/\b(?:paying|paid)\b/i.test(gap) && !/^\s+(?:now\s+|already\s+|each\s+|all\s+)?(?:pay|pays|paying|paid)\b/i.test(next)) return whole;
+      // The row's other words are said too: "Cafés contacted" is never "8 cafés pay".
+      const rest = nouns.filter((word) => word !== noun.toLowerCase().replace(/s$/, ''));
+      if (rest.some((word) => !new RegExp(`\\b${word.slice(0, Math.max(4, word.length - 2))}`, 'i').test(`${gap} ${next}`))) return whole;
+      const n = /^\d/.test(said) ? Number(said.replace(/,/g, '')) : COUNT_WORDS.indexOf(said.toLowerCase());
+      return n === value ? whole : `${lead}${value}${gap}${noun}`;
+    });
+  }
+  return out;
 }

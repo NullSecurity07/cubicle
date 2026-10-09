@@ -131,6 +131,17 @@ describe('the name under a draft, journey 20', () => {
   });
 });
 
+// Journey 21: "Call every one of the 40 contacted cafés to find why the sixth cancelled", with no cancellation on record.
+describe('a move that says someone cancelled', () => {
+  it('is taken out unless the record says someone did', () => {
+    const facts = ['Paying cafés: 5 on 2026-10-10, from 6 on 2026-10-09; the kill line is 4', 'Cafés contacted: 40'];
+    const move = 'Call every one of the 40 contacted cafés to find why the sixth cancelled.';
+    expect(guardUnasked(move, facts)).toEqual({ text: '', left: ['why the sixth cancelled'] });
+    expect(guardUnasked(move, [...facts, 'Repair Café Mitte cancelled on 10 Oct.']).text).toBe(move);
+    expect(guardUnasked('Ask the five paying cafés what would make them stay.', facts).text).toBe('Ask the five paying cafés what would make them stay.');
+  });
+});
+
 // Journey 21: Ines's ready reply had "To answer your questions:" over "Let me know if you would like to test it", the
 // answers after that, and "Best," over nothing.
 describe('the reply to a lead keeps its answers under the lead-in and is signed', () => {
@@ -154,4 +165,3 @@ describe('the reply to a lead keeps its answers under the lead-in and is signed'
     expect(filledIn('Hi Ines,\n\nThanks.\n\nBest,\n[Your Name]', 'Nothing here.')).toBe('Hi Ines,\n\nThanks.\n\nBest,');
   });
 });
-

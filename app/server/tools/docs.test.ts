@@ -350,7 +350,9 @@ describe('the doc an ask names', () => {
   async function wiredTo(query: string) {
     const { store, context } = await setup();
     await store.replaceDoc('company-brief', brief);
-    const wired = { ...context, query, stage: { ...context.stage, wires: [...context.stage.wires, { id: 'w-brief', from: 'marketing', fromHandle: 'r', to: 'company-brief', toHandle: 'l' }] }, sources: () => [brief] };
+    // The partner writes here: a colleague's write to a Numbers row is refused whatever the ask (journey 21).
+    const rooms = context.stage.rooms.map((room) => (room.id === 'marketing' ? { ...room, partner: true } : room));
+    const wired = { ...context, query, stage: { ...context.stage, rooms, wires: [...context.stage.wires, { id: 'w-brief', from: 'marketing', fromHandle: 'r', to: 'company-brief', toHandle: 'l' }] }, sources: () => [brief] };
     return { store, call: (name: string, args: Record<string, unknown>) => runTool(docTools, name, JSON.stringify(args), wired as never) };
   }
 
@@ -375,6 +377,43 @@ describe('the doc an ask names', () => {
   it('writes the brief when the ask names it, or names no doc', async () => {
     expect((await (await wiredTo('Update the Numbers in the Company brief')).call('append_doc', { doc: 'Company brief', section: 'Numbers', text: '- Paying: 11' })).ok).toBe(true);
     expect((await (await wiredTo('We have 11 paying now')).call('append_doc', { doc: 'Company brief', section: 'Numbers', text: '- Paying: 11' })).ok).toBe(true);
+  });
+});
+
+// Journey 21: Maya wrote "Burn: -€54 a month (cash-positive) … (calc)" over the brief's gross burn, answering a flag.
+describe('the brief\'s Numbers rows', () => {
+  const BRIEF = '# Company brief\n\n## Idea\n\nFixSlot\n\n## Numbers\n\n- Price: €4 per booking\n- Bookings last month: 280\n- Paying cafés: 8 at €39 a month\n- Burn: €1,300 a month\n- Cash: €5,400\n';
+  async function onBrief(roomId: string, partner = false) {
+    const { store, context } = await setup();
+    await store.replaceDoc('company-brief', BRIEF);
+    const rooms = context.stage.rooms.map((room) => (room.id === roomId ? { ...room, partner } : room));
+    const has = rooms.some((room) => room.id === roomId) ? rooms : [...rooms, { ...context.stage.rooms[0], id: roomId, name: 'Sam', partner }];
+    const wired = { ...context, roomId, stage: { ...context.stage, rooms: has, wires: [...context.stage.wires, { id: 'w-brief', from: roomId, fromHandle: 'r', to: 'company-brief', toHandle: 'l' }] }, sources: () => [BRIEF, 'net burn = 1300 - (280 * 4 + 8 * 39) = -132'] };
+    return { store, wired: wired as never };
+  }
+  it('refuses a colleague\'s change to a row, and keeps the brief as it was', async () => {
+    const { store, wired } = await onBrief('marketing');
+    const text = '- Price: €4 per booking\n- Bookings last month: 280\n- Paying cafés: 8 at €39 a month\n- Burn: -€54 a month (cash-positive), calculated as 1,300 − (280 × 4 + 6 × 39) = −54 (calc)\n- Cash: €5,400';
+    const out = await runTool(docTools, 'replace_section', JSON.stringify({ doc: 'Company brief', heading: 'Numbers', text }), wired);
+    expect(out.ok).toBe(false);
+    expect(out.text).toContain('the brief\'s numbers are the founder\'s and the partner\'s');
+    expect(out.text).toContain('Burn €1,300 a month → -€54 a month');
+    expect(await store.readDoc('company-brief')).toBe(BRIEF);
+  });
+  it('lets a colleague write another section of the brief', async () => {
+    const { store, wired } = await onBrief('marketing');
+    const out = await runTool(docTools, 'replace_section', JSON.stringify({ doc: 'Company brief', heading: 'Idea', text: 'FixSlot books repair-café slots.' }), wired);
+    expect(out.ok).toBe(true);
+    expect(await store.readDoc('company-brief')).toContain('- Burn: €1,300 a month');
+  });
+  it('lets the partner change an input, never write a worked-out figure as one', async () => {
+    const { store, wired } = await onBrief('sam', true);
+    const net = await runTool(docTools, 'replace_section', JSON.stringify({ doc: 'Company brief', heading: 'Numbers', text: '- Price: €4 per booking\n- Bookings last month: 280\n- Paying cafés: 8 at €39 a month\n- Burn: -€132 a month (cash-positive)\n- Cash: €5,400' }), wired);
+    expect(net.ok).toBe(false);
+    expect(net.text).toContain('is a figure worked out from the others');
+    const cash = await runTool(docTools, 'replace_section', JSON.stringify({ doc: 'Company brief', heading: 'Numbers', text: '- Price: €4 per booking\n- Bookings last month: 280\n- Paying cafés: 8 at €39 a month\n- Burn: €1,300 a month\n- Cash: €5,100' }), wired);
+    expect(cash.ok).toBe(true);
+    expect(await store.readDoc('company-brief')).toContain('- Cash: €5,100');
   });
 });
 

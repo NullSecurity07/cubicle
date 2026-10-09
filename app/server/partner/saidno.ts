@@ -122,8 +122,9 @@ const DECIDES = new Set(['propose_decision', 'propose_bet', 'propose_task', 'pro
 // for bringing others is a referral.
 const EFFECTS: [string, RegExp][] = [
   ['discount', /\bdiscount\w*|\d+\s*%\s*(?:off|discount|cheaper|reduction)|\bpercent\s+off\b|\bcheaper\b|\bprice\s+cut|\b(?:cut|lower|reduce|drop)\w*\s+(?:the\s+|our\s+)?prices?\b|\bcoupon|\bpromo\s+code/i],
-  ['free', /\bfree\s+(?:month|months|week|weeks|period|plan|tier|access|seat|seats)\b|\bfor\s+free\b|\bcomplimentary\b|\bon\s+the\s+house\b/i],
-  ['referral', /\brefer(?:s|red|ring|ral|rals)?\b|\bword\s+of\s+mouth\b|\binvite\s+(?:friends|colleagues|others)\b/i],
+  // Journey 21: "two months at no charge" passed the no on "first three months free".
+  ['free', /\bfree\s+(?:month|months|week|weeks|period|plan|tier|access|seat|seats|of\s+charge)\b|\b(?:month|months|week|weeks)\s+(?:free|gratis|at\s+no\s+(?:charge|cost))\b|\bat\s+no\s+(?:charge|cost)\b|\bno[- ](?:charge|cost)\s+(?:month|months|period)\b|\bwaiv\w*\s+(?:the\s+|their\s+|its\s+)?(?:fee|fees|charge|subscription)\b|\bfor\s+free\b|\bcomplimentary\b|\bon\s+the\s+house\b/i],
+  ['referral', /\brefer(?:s|red|ring|ral|rals)?\b|\bword\s+of\s+mouth\b|\binvite\s+(?:friends|colleagues|others)\b|\bbrings?\s+in\s+(?:another|a\s+new|new|more|other)\b|\bbrought\s+in\b/i],
   ['raise', /\b(?:raise|increase|lift)\w*\s+(?:the\s+|our\s+)?prices?\b|\bprice\s+(?:rise|increase|hike)\b/i],
   ['outreach', /\boutreach\b|\bcold\s+(?:email|emails|call|calls|message|messages|dm)\b|\breach\s+out\b/i],
   ['ads', /\b(?:paid|google|facebook|meta|linkedin|instagram)\s+ads?\b|\bad\s+(?:spend|campaign)\b/i],
@@ -144,9 +145,12 @@ export function shareOf(a: string, b: string): number {
 }
 export const DECISION_SHARE = 0.5;
 export function sameDecision(entry: Pick<Proposal, 'subject' | 'options' | 'pick'>, proposal: Pick<Proposal, 'subject' | 'options' | 'pick'>): boolean {
-  const was = effectsOf(`${entry.subject}\n${entry.pick ?? ''}`);
-  const now = effectsOf(`${proposal.subject}\n${proposal.pick ?? ''}`);
-  if (!was.size || was.size !== now.size || [...was].some((one) => !now.has(one))) return false;
+  const was = effectsOf(decisionText(entry));
+  const now = effectsOf(decisionText(proposal));
+  if (!was.size || [...was].some((one) => !now.has(one))) return false;
+  // Journey 21: declined as free months, back as "Café Referral Incentive": two months at no charge for a referral.
+  // A decision that does all the declined one did and more is that decision with a condition put on it.
+  if (now.size > was.size) return true;
   return shareOf(entry.subject, proposal.subject) >= DECISION_SHARE || shareOf(decisionText(entry), decisionText(proposal)) >= DECISION_SHARE;
 }
 // A standing no on a kind of move ("discounts", "free months") stands against any proposal of that kind.
@@ -207,7 +211,7 @@ export const promptLine = (entries: SaidNoEntry[]) => (entries.length
 // recalled two of five: the discounts and the free months, without the no on Tom's reply, "promise a feature we have
 // not shipped" or "count the trials as customers". Every no of the last thirty days, newest first.
 export const RECALL_DAYS = 30;
-const ASKS_NOS = /\b(?:what|which)\b[^?.!\n]*\b(?:have|did|had)\s+i\s+(?:said|say|told you|answered)\s+no\b|\b(?:what|which)\b[^?.!\n]*\bi(?:'ve|\s+have|\s+had)?\s+(?:said no|declined|turned down|rejected|refused|ruled out|vetoed)\b|\b(?:list|show|recall|remind me of|tell me)\b[^?.!\n]*\b(?:my|the)\s+(?:nos|no's|noes|vetoes|declines)\b|\bsaid[- ]no list\b/i;
+const ASKS_NOS = /\b(?:what|which)\b[^?.!\n]*\b(?:have|did|had)\s+i\s+(?:said|say|told you|answered)\s+no\b|\b(?:what|which)\b[^?.!\n]*\bi(?:'ve|\s+have|\s+had)?\s+(?:said no|declined|turned down|rejected|refused|ruled out|vetoed)\b|\b(?:list|show|recall|remind me of|tell me)\b[^?.!\n]*\b(?:my|the)\s+(?:nos|no's|noes|vetoes|declines)\b|\bsaid[- ]no list\b|\b(?:everything|all|anything|whatever|each thing|things)\b(?:\s+(?:that|which))?\s+i(?:'ve|\s+have|\s+had)?\s+(?:ever\s+|already\s+)?(?:said no|declined|turned down|rejected|refused|ruled out|vetoed)\b/i;
 export const asksSaidNo = (query: string) => ASKS_NOS.test(query);
 export function recallNos(entries: SaidNoEntry[], now: number): string {
   const since = now - RECALL_DAYS * DAY;
@@ -220,7 +224,13 @@ export function recallNos(entries: SaidNoEntry[], now: number): string {
 export function answerNos(reply: string, query: string, recall: string): string {
   const asks = query.split(/(?<=[?.!])\s+/).filter((one) => /\?\s*$/.test(one) || /^\s*(?:list|show|tell|remind|recall)\b/i.test(one));
   if (asks.length <= 1 && !/\b(?:and|also|plus)\s+(?:what|which|how|when|where|who|why|is|are|was|did|do|tell|remind|give)\b/i.test(query)) return recall;
-  return `${reply.replace(/\s+$/, '')}\n\n${recall}`;
+  // Journey 21: "Everything you said no to: None on record" stood above the record. What the reply said of the nos
+  // goes; the record says it.
+  // A line that says one of the record's nos again, in the model's words, goes too: the record says it once.
+  const subjects = [...recall.matchAll(/^- (?:email to \S+ about )?"([^"]{3,})"/gm)].map((hit) => hit[1].replace(/…$/, '').toLowerCase());
+  const kept = reply.split('\n').filter((line) => !/\b(?:said no|no to|turned down|declined|ruled out|vetoe?d?s?|none on record|nothing on record)\b/i.test(line)
+    && !subjects.some((one) => line.toLowerCase().includes(one))).join('\n').replace(/\n{3,}/g, '\n\n');
+  return `${kept.replace(/\s+$/, '')}\n\n${recall}`;
 }
 
 // The check itself, on a list: the latest no inside the window that matches. Its first match is asked again; after
@@ -260,8 +270,10 @@ export function createSaidNo(workspace: string, now: () => number = clockNow) {
     // A no to something already said no to inside the window is the same no, said again: it keeps its count of
     // asks, so a re-ask turned down is not asked a third time.
     record(proposal: Proposal & { reason?: string }): Promise<SaidNoEntry> {
-      const at = now();
       return change((entries) => {
+        // Two nos in the same millisecond still read newest first.
+        let at = now();
+        while (entries.some((one) => one.at === at)) at += 1;
         const reason = proposal.reason?.trim() ? short(proposal.reason, 300) : undefined;
         const held = entries.find((one) => one.at >= at - SAID_NO_WINDOW_DAYS * DAY && sameProposal(one, proposal));
         if (held) {
@@ -358,7 +370,8 @@ const SAME_ACT: Record<string, string> = {
 const NOT_THE_ACT = new Set(['propose', 'suggest', 'task', 'tasks', 'week', 'today', 'again', 'move', 'moves', 'idea', 'thing', 'things']);
 const canon = (word: string) => SAME_ACT[word] ?? SAME_ACT[word.replace(/s$/, '')] ?? (word.length > 4 ? word.replace(/(?:ing|s)$/, '') : word);
 const actWords = (text: string) => new Set(subjectWords(text.replace(/\d+(?:[.,]\d+)?\s*%\s*(?:off\b)?|\bpercent\s+off\b/gi, ' discount ')).filter((word) => !NOT_THE_ACT.has(word) && !/^\d/.test(word)).map(canon));
-const WITHOUT = /\b(?:without|instead of|rather than|not|no|never|avoid(?:ing)?|skip(?:ping)?|stop(?:ping)?)\b[^.,;]*/gi;
+// "At no charge" is a price, not a without.
+const WITHOUT = /\b(?:without|instead of|rather than|not|no(?!\s+(?:charge|cost|extra\s+(?:charge|cost))\b)(?<!\bat\s+no)|never|avoid(?:ing)?|skip(?:ping)?|stop(?:ping)?)\b[^.,;]*/gi;
 export function againstNo(no: string, move: string): boolean {
   const ruled = actWords(no);
   if (!ruled.size) return false;
@@ -372,3 +385,26 @@ export function ruledOutBy(entries: SaidNoEntry[], move: string, now: number): S
 }
 // How the note says a move was dropped for it: "You ruled out cold outreach to more makers on 6 Oct."
 export const ruledOutLine = (entry: SaidNoEntry) => `You ruled out ${entry.tool === 'chat' ? short(entry.subject, 90) : `"${short(entry.subject, 90)}"`} on ${saidOn(entry.at)}${entry.reason ? ` ('${short(entry.reason, 100)}')` : ''}`;
+
+// Journey 21: the founder declined "First Three Months Free for New Cafés" in the panel and asked again; Sam called no
+// tool and said it "is already proposed and waiting in your list". A reply that says a decision waits in the founder's
+// list when none by that name does, or when this turn's proposal was held by their no, says the no instead.
+const WAITING = /\balready\s+(?:been\s+)?proposed\b|\b(?:is|it's|it is|now|still)\s+(?:already\s+)?(?:waiting|pending)\b|\bwaits?\s+(?:for\s+you\s+)?in\s+your\s+(?:list|decisions|needs you)\b|\bwaiting\s+(?:for\s+you\s+)?(?:in|on)\s+your\s+(?:list|decisions)\b|\bin\s+your\s+(?:list|decisions)\s+(?:now|already)\b/i;
+const QUOTED = /["“]([^"”\n]{3,120})["”]/;
+export const heldLine = (entry: SaidNoEntry, again = false) => `You declined "${short(entry.subject, 90)}" on ${saidOn(entry.at)}${entry.reason ? ` ('${short(entry.reason, 120)}')` : ''}, so it is not waiting in your list${again ? ' and was not put to you again' : ''}. Say so if something has changed and you want it back.`;
+export function holdWaiting(reply: string, open: string[], nos: SaidNoEntry[], gated: SaidNoEntry[]): string {
+  const waiting = new Set(open.map((one) => one.trim().toLowerCase()));
+  let said = false;
+  return reply.replace(/[^.!?\n]+[.!?]*/g, (sentence) => {
+    if (!WAITING.test(sentence)) return sentence;
+    const title = QUOTED.exec(sentence)?.[1].trim();
+    if (title && waiting.has(title.toLowerCase()) && !gated.length) return sentence;
+    const no = gated[0] ?? (title ? nos.find((one) => DECIDES.has(one.tool) && (one.subject.trim().toLowerCase() === title.toLowerCase() || sameProposal(one, { tool: 'propose_decision', subject: title }))) : undefined);
+    // A task or a draft in the founder's list is not a decision's to say.
+    if (!no && (!title || !/\bdecision/i.test(sentence))) return sentence;
+    const lead = /^\s*/.exec(sentence)![0];
+    if (said) return '';
+    said = true;
+    return `${lead}${no ? heldLine(no, gated.length > 0) : `"${title}" is not in your list.`}`;
+  }).replace(/[ \t]{2,}/g, ' ');
+}

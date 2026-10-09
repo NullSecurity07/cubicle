@@ -77,7 +77,19 @@ export function unbackedPromises(sentence: string, sources: string[]): string[] 
 export function unbackedIn(sentence: string, sources: string[]): string[] {
   // A count with no source is taken out too, not marked: "call the three nurses who cancelled" with no cancellation
   // on record. A plan's count stands ("contact 30 more nurses"); one said of people already there does not.
-  return [...unbackedPromises(sentence, sources), ...unaskedCounts(sentence, sources), ...unaskedFeedback(sentence, sources)];
+  const found = [...unbackedPromises(sentence, sources), ...unaskedCounts(sentence, sources), ...unaskedFeedback(sentence, sources)];
+  return found.length ? found : unaskedChurn(sentence, sources);
+}
+
+// Journey 21: a paying count fell from 6 to 5 and the move was "Call every one of the 40 contacted cafés to find why
+// the sixth cancelled": nothing on record says anyone cancelled. A fall in a count is a reading; that someone
+// cancelled, churned or stopped paying is a fact, said only when the record says it.
+const CHURN_SAID = /\b(?:why|who|whom|which|the|a|one|that|this|their)\s+(?:\w+\s+){0,2}?(?:cancel(?:l?ed|s)|churned|unsubscribed|stopped paying|dropped out|quit)\b|\b(?:cancel(?:l?ed)|churned|lost)\s+(?:\w+\s+)?(?:cafés?|customers?|users?|subscribers?|clients?|accounts?|members?)\b|\bthe\s+(?:\w+\s+)?(?:cancellation|churn)\b/i;
+const CHURN_ON_RECORD = /\b(?:cancel\w*|churn\w*|unsubscrib\w*|stopped paying|dropped out|quit)\b/i;
+export function unaskedChurn(sentence: string, sources: string[]): string[] {
+  const hit = CHURN_SAID.exec(sentence);
+  if (!hit || sources.some((one) => CHURN_ON_RECORD.test(one))) return [];
+  return [hit[0].trim()];
 }
 
 // The text with every sentence that says what nothing on record backs taken out, and what each was about. A line

@@ -1,6 +1,6 @@
 import type { Stage } from '../../shared/model.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
-import { againstNo, answerNos, asksSaidNo, chatNo, promptLine, proposalOf, recallNos, saidNoFor, standingNosIn, suggestionIn, type Proposal } from '../partner/saidno.ts';
+import { againstNo, answerNos, asksSaidNo, chatNo, holdWaiting, promptLine, proposalOf, recallNos, sameProposal, saidNoFor, standingNosIn, suggestionIn, type Proposal, type SaidNoEntry } from '../partner/saidno.ts';
 import { now as clockNow } from '../clock.ts';
 import { withSystem, type Handler } from '../seams.ts';
 import { leadAddresses } from '../tools/outward.ts';
@@ -53,6 +53,10 @@ export function holdBypassClaims(reply: string): { text: string; claimed: boolea
   return { text, claimed };
 }
 
+// What the founder says when they do want a choice put to them.
+const ASKS_DECISION = /\b(?:propose|decision|decide|options?|choices?|put (?:it|this|that) to me|what should (?:i|we))\b|\?/i;
+export const NO_TRIGGER = 'not raised: the founder\'s message was a no and asked for no decision, so a decision now has nothing that called for it. Answer the no in your reply; if a choice is needed, name it there and let the founder ask for it.';
+
 export default {
   name: 'saidno',
   install(deps: Deps): Installed {
@@ -78,6 +82,9 @@ export default {
     // then not raised at all, and the person told why.
     const beforeTool: Handler<'tool:before'> = async (payload, next) => {
       if (payload.refusal || payload.call.name === 'ask_founder') return next(payload);
+      // Journey 21: "No to that reply for Ines … Never state a policy we have not decided" and Sam proposed a "Booking
+      // Refund Policy" decision nobody asked for. A decision raised in a turn that is the founder's no has no trigger.
+      if (payload.call.name === 'propose_decision' && saidNoOnly.has(payload.roomId)) return next({ ...payload, refusal: NO_TRIGGER });
       const proposal = await proposalNow(payload.call.name, payload.call.args).catch(() => null);
       if (!proposal) return next(payload);
       const checked = await book.check(proposal).catch(() => ({ verdict: 'fresh' as const }));
@@ -91,6 +98,8 @@ export default {
 
     // How many standing nos the founder's last chat turn in each room kept, for the reply to be held to.
     const kept = new Map<string, number>();
+    // The rooms whose turn now is the founder saying no, and asking for nothing.
+    const saidNoOnly = new Set<string>();
 
     const beforeTurn: Handler<'turn:before'> = async (payload, next) => {
       let out = payload;
@@ -99,6 +108,8 @@ export default {
         const room = stage.rooms.find((one) => one.id === payload.roomId);
         if (!room) return next(out);
         let wrote = 0;
+        if (payload.source === 'chat' && (chatNo(payload.query) || standingNosIn(payload.query).length) && !ASKS_DECISION.test(payload.query)) saidNoOnly.add(room.id);
+        else saidNoOnly.delete(room.id);
         // "No, too early" right after a proposal is a no to it, with its reason.
         const said = payload.source === 'chat' ? chatNo(payload.query) : null;
         if (said) {
@@ -143,6 +154,7 @@ export default {
 
     // A reply says the rule was recorded only when a standing no was written this turn (journey 17).
     const onReply: Handler<'turn:reply'> = async (payload, next) => {
+      saidNoOnly.delete(payload.roomId);
       const count = kept.get(payload.roomId);
       kept.delete(payload.roomId);
       let text = payload.reply.text;
@@ -162,6 +174,20 @@ export default {
         }
       }
       if (count !== undefined && count === 0) text = holdRuleClaims(text, payload.query, count);
+      // "Already proposed and waiting in your list" said of a decision the founder declined, or of one this turn's
+      // proposal was held by: the no is said instead (journey 21).
+      try {
+        const nos = await book.list();
+        const gated: SaidNoEntry[] = [];
+        for (const tool of payload.reply.tools) {
+          if (tool.name !== 'propose_decision' || (tool.ok !== false && !/Already declined|You said no to this/.test(tool.result ?? ''))) continue;
+          const proposal = await proposalNow(tool.name, tool.args ?? {});
+          const no = proposal ? nos.find((one) => sameProposal(one, proposal)) : undefined;
+          if (no) gated.push(no);
+        }
+        const open = (await deps.decisions.list().catch(() => [])).filter((one) => one.status === 'proposed').map((one) => one.title);
+        text = holdWaiting(text, open, nos, gated);
+      } catch (error) { console.error(`said no: ${(error as Error).message}`); }
       // "What have I said no to?": the record answers, all of it (journey 19).
       if (asksSaidNo(payload.query) && !payload.reply.stopped) text = answerNos(text, payload.query, recallNos(await book.list().catch(() => []), clockNow()));
       return next(text === payload.reply.text ? payload : { ...payload, reply: { ...payload.reply, text } });

@@ -3,7 +3,9 @@ import { join } from 'node:path';
 import type { MorningNote, PlanProposal } from '../../shared/partner.ts';
 import type { KillSignal, PartnerCall } from './call.ts';
 import type { Correction } from './corrections.ts';
-import type { InputFix, Inputs, Snapshot } from './economics.ts';
+import type { InputFix, Inputs, LastGood, Snapshot } from './economics.ts';
+import type { BriefChange, BriefRows } from './briefrows.ts';
+import { logCall, type CallEntry } from './calllog.ts';
 import type { Crossing } from './refresh.ts';
 import { writeAtomic } from '../fsx.ts';
 import { readBook } from '../rescue.ts';
@@ -54,6 +56,13 @@ export type PartnerState = {
   corrections?: Correction[];
   // The founder's corrections of the numbers' inputs ("11 pay", "€59 is per week"), latest of each last (corrections.ts).
   fixes?: InputFix[];
+  // Journey 21: the last figure the brief gave for each money row, read in its place while the row is gone.
+  lastGood?: LastGood;
+  // The brief's Numbers rows as last seen, and each change to them since with who made it, for the morning note.
+  briefRows?: BriefRows;
+  briefLog?: BriefChange[];
+  // Every call and kill line in the order they were set, the first being day one's (journey 21, calllog.ts).
+  callLog?: CallEntry[];
 };
 
 export function partnerState(workspace: string) {
@@ -76,6 +85,10 @@ export function partnerState(workspace: string) {
     const job = queue.then(async () => {
       const state = await read();
       const out = await edit(state);
+      // However the call was set (a verdict, a refresh, the founder's own line), its record keeps up with it.
+      const had = state.callLog ?? [];
+      const logged = logCall(had, state.call);
+      if (logged !== had) state.callLog = logged;
       await writeAtomic(path, JSON.stringify(state, null, 2), { mkdir: true });
       onDisk = true;
       return out;

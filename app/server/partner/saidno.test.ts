@@ -6,7 +6,7 @@ import { createApprovals, putToFounder } from '../approvals.ts';
 import { standingBlock } from './standing.ts';
 import { citedFacts, standingFacts } from './synthesis.ts';
 import { saidNoProposal } from './watch.ts';
-import { againstNo, answerNos, asksSaidNo, recallNos, chatNo, checkAgainst, createSaidNo, ruledOutBy, ruledOutLine, standingNosIn, overlap, proposalOf, promptLine, sameProposal, SAID_NO_MOST, suggestionIn, type SaidNoEntry } from './saidno.ts';
+import { againstNo, answerNos, asksSaidNo, effectsOf, holdWaiting, recallNos, chatNo, checkAgainst, createSaidNo, ruledOutBy, ruledOutLine, standingNosIn, overlap, proposalOf, promptLine, sameProposal, SAID_NO_MOST, suggestionIn, type SaidNoEntry } from './saidno.ts';
 
 const DAY = 86_400_000;
 const OCT_3 = Date.UTC(2026, 9, 3, 12);
@@ -285,5 +285,23 @@ describe('what the founder said no to, recalled from the record', () => {
     expect(recall).not.toContain('paid ads');
     expect(answerNos('You said no to discounts and free months.', 'What have I said no to?', recall)).toBe(recall);
     expect(answerNos('The kill line is below 11.', 'What is the kill line now, and what have I said no to?', recall)).toBe(`The kill line is below 11.\n\n${recall}`);
+  });
+});
+
+// Journey 21: declined in the panel, re-asked ("already proposed and waiting"), then retitled as two months at no charge.
+describe('a decision declined in the panel and asked again', () => {
+  const declined = { id: 'd', tool: 'propose_decision', subject: 'First Three Months Free for New Cafés', options: ['Give new cafés their first three months free', 'Keep the full price from day one'], pick: 'Give the first three months free to grow from 6 to 12', reason: 'cafés that join for free leave when the free months end', at: OCT_3, asked: 0 } as SaidNoEntry;
+  it('holds the retitle that gives months at no charge for a referral', () => {
+    const retitle = proposalOf('propose_decision', { title: 'Café Referral Incentive', options: ['A café gets two months at no charge if it brings in another café', 'No referral reward'], recommendation: 'Two months at no charge for each café brought in' })!;
+    expect(effectsOf('A café gets two months at no charge if it brings in another café')).toEqual(new Set(['free', 'referral']));
+    expect(sameProposal(declined, retitle)).toBe(true);
+    expect(sameProposal(declined, proposalOf('propose_decision', { title: 'Referral reward', options: ['A €10 credit for each café brought in', 'Wait'] })!)).toBe(false);
+  });
+  it('says the no, never "waiting", when no such decision waits or the proposal was held', () => {
+    const reply = 'The decision "First Three Months Free for New Cafés" is already proposed and waiting in your list. Anything else?';
+    expect(holdWaiting(reply, [], [declined], [])).toBe('You declined "First Three Months Free for New Cafés" on 3 Oct (\'cafés that join for free leave when the free months end\'), so it is not waiting in your list. Say so if something has changed and you want it back. Anything else?');
+    expect(holdWaiting(reply, ['First Three Months Free for New Cafés'], [declined], [])).toBe(reply);
+    expect(holdWaiting('I have proposed "Café Referral Incentive"; it now waits in your list.', [], [declined], [declined])).toContain('was not put to you again');
+    expect(holdWaiting('The task "Call Ines" waits in your list.', [], [], [])).toBe('The task "Call Ines" waits in your list.');
   });
 });
