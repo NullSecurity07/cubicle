@@ -163,6 +163,42 @@ describe('the partner watch', () => {
     expect(asked).toHaveLength(1);
   });
 
+  // Journey 18: 8 against a line of 7 raised a row; the 8 was replaced by 10, the line by 11, and the row stayed four
+  // days quoting both, and blocked the row for 14 → 12 against the new line.
+  it('(a2) a kill row belongs to its line: it goes when the reading recovers or the line is replaced, and the new line is looked at at once', async () => {
+    const { watch, world, writeMetrics, at } = await rig();
+    const paying = (...values: [string, number][]): Metric => ({ key: 'paying-plumbers', label: 'Paying plumbers', better: 'up', points: values.map(([day, value]) => ({ at: day, value, from: 'founder' })) });
+    const line = (id: string, what: string, set: string): FounderPromise => ({ id, what, due: '2026-10-29', said: set, at: new Date(`${set}T09:00`).getTime(), status: 'open', check: true });
+    world.promises = [line('promise-7', 'Paying plumbers below 7', '2026-10-09')];
+    world.metrics = [paying(['2026-10-08', 9], ['2026-10-10', 8])];
+    await writeMetrics();
+    at(new Date('2026-10-10T10:00').getTime());
+    await watch.look();
+    expect((await watch.rows()).map((one) => one.detail)).toEqual([expect.stringContaining('Paying plumbers: 8 on 2026-10-10, from 9 on 2026-10-08; the kill line is 7')]);
+    // The 8 replaced by 10: no longer trending, the row goes.
+    world.metrics = [paying(['2026-10-08', 9], ['2026-10-10', 10])];
+    await writeMetrics();
+    await watch.look();
+    expect(await watch.rows()).toEqual([]);
+    // Trending again, then the line replaced: the old line's row goes and the new one's comes on the same look.
+    world.metrics = [paying(['2026-10-08', 9], ['2026-10-10', 8])];
+    await writeMetrics();
+    world.promises = [line('promise-7b', 'Paying plumbers below 7', '2026-10-10')];
+    at(new Date('2026-10-11T10:00').getTime());
+    world.metrics = [paying(['2026-10-09', 9], ['2026-10-11', 8])];
+    await writeMetrics();
+    await watch.look();
+    expect(await watch.rows()).toHaveLength(1);
+    world.promises = [line('promise-11', 'Paying plumbers below 11', '2026-10-12')];
+    world.metrics = [paying(['2026-10-09', 9], ['2026-10-11', 14], ['2026-10-12', 12])];
+    await writeMetrics();
+    at(new Date('2026-10-12T12:00').getTime());
+    await watch.look();
+    const rows = await watch.rows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].detail).toContain('Paying plumbers: 12 on 2026-10-12, from 14 on 2026-10-11; the kill line is 11');
+  });
+
   it('(b) a lead moved to Replied: a reply draft to the address on record; with no address, a task', async () => {
     const { watch, world, ran } = await rig();
     world.promises = [];

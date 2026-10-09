@@ -146,7 +146,7 @@ export function metricSparks(cards: MetricsCard[], kill: FounderPromise | undefi
       const said = (value: number) => formatValue(value, metric.unit);
       const number = `${metric.label}: ${said(read.latest.value)} on ${read.latest.at}, from ${said(read.start.value)} on ${read.start.at}; the kill line is ${said(lineOf.line)} (${kill.what}, checked on ${kill.due}).`;
       found.push({
-        key: `kill:${kill.id}:${metric.key}`, trigger: `kill:${metric.key}`, kind: 'metric', at, money: 100, cardId: card!.cardId, number,
+        key: `kill:${kill.id}:${metric.key}`, trigger: `kill:${kill.id}:${metric.key}`, kind: 'metric', at, money: 100, cardId: card!.cardId, number,
         why: toward.crossed ? `${metric.label} crossed the kill line` : toward.away ? `${metric.label} is moving away from the kill line it has to clear` : `${metric.label} is trending to the kill line`,
         facts: `${toward.crossed ? 'The number has crossed the kill line' : toward.away ? 'The number has not cleared the kill line yet and moved the wrong way since your verdict' : `The number is trending to the kill line: ${Math.round(toward.share * 100)}% of the way from where it stood at your verdict`}.\n${number}\n${kill.due >= localDay(at) ? `The verdict's check is on ${kill.due}.` : `The verdict's check day, ${kill.due}, has passed.`}`,
         out: { kind: 'task-or-decision' },
@@ -467,13 +467,20 @@ export function createWatch(given: WatchDeps) {
       const stage = await deps.stage();
       const partner = stage.rooms.find((room) => room.partner);
       if (!partner || deps.busy.has(partner.id)) return { made: [], waiting: (await read()).waiting };
-      const [promises, bets, rows, cards] = await Promise.all([deps.promises().catch(() => []), deps.bets().catch(() => []), deps.attention().catch(() => []), metricsCards(stage)]);
+      let promisesRead = true;
+      const [promises, bets, rows, cards] = await Promise.all([deps.promises().catch(() => { promisesRead = false; return []; }), deps.bets().catch(() => []), deps.attention().catch(() => []), metricsCards(stage)]);
       const leads = (await Promise.all((stage.cards ?? []).filter((card) => card.kind === 'leads').map(async (card) => (await deps.leads(card.id).catch(() => [])).map((lead) => ({ ...lead, cardId: card.id }))))).flat();
       const state = await read();
       const kill = promises.filter((one) => one.check && one.status === 'open').at(-1);
       const numbers = await deps.economics?.().catch(() => null) ?? null;
       const sparks = [...metricSparks(cards, kill, bets, at).flatMap((one) => heldToState(one, numbers) ?? []), ...leadSparks(leads, state.seenLeads, at), ...promiseSparks(promises, at), ...pageSparks(rows, at)]
         .sort((a, b) => b.money - a.money);
+      // Journey 18: a "trending" row stayed four days after its reading was replaced and its kill line dropped, quoting
+      // both, and blocked the new line's row (one open row per trigger). A kill row belongs to its line: once the line
+      // is replaced, or the numbers no longer trend to it, the row goes, and the line standing now is looked at at once.
+      const live = new Set(sparks.filter((one) => one.kill).map((one) => one.trigger));
+      const gone = promisesRead ? state.proposals.filter((one) => one.status === 'open' && (one.trigger ?? one.key).startsWith('kill:') && !live.has(one.trigger ?? one.key)).map((one) => one.id) : [];
+      if (gone.length) state.proposals = state.proposals.filter((one) => !gone.includes(one.id));
       const open = new Set(state.proposals.filter((one) => one.status === 'open').map((one) => one.trigger ?? one.key));
       const fired = new Set(state.fired);
       const made: Proposal[] = [];
@@ -481,7 +488,7 @@ export function createWatch(given: WatchDeps) {
       const held = new Set<string>();
       for (const spark of sparks) {
         if (open.has(spark.trigger) || fired.has(spark.key)) continue;
-        const taken = await deps.budget.take(spark.trigger);
+        const taken = await deps.budget.take(spark.trigger.replace(/^kill:[^:]+:/, 'kill:'));
         if (!taken.ok) { waiting.push({ key: spark.key, what: spark.why, why: taken.why ?? 'no unasked turns left today', at }); held.add(spark.key); continue; }
         const messages: ModelMessage[] = [...await deps.promptFor(stage, partner.id), { role: 'user', content: watchAsk(spark, today) }];
         const reply = await deps.ask(messages).catch((error: Error) => { console.error(`partner watch: ${error.message}`); return null; });
@@ -505,10 +512,11 @@ export function createWatch(given: WatchDeps) {
       const seen = Object.fromEntries(leads.map((lead) => [lead.id, later.has(`lead:${lead.id}`) ? (state.seenLeads?.[lead.id] ?? 'new') : lead.stage]));
       await change((draft) => {
         draft.fired = [...draft.fired, ...[...fired].filter((key) => !draft.fired.includes(key))];
-        draft.proposals = [...draft.proposals, ...made];
+        draft.proposals = [...draft.proposals.filter((one) => !gone.includes(one.id)), ...made];
         draft.seenLeads = seen;
         draft.waiting = waiting;
       });
+      if (gone.length && !made.length) await deps.changed().catch(() => {});
       if (made.length) {
         await deps.changed().catch(() => {});
         deps.notify?.(`${partner.name} proposes a move`, made[0].move);
