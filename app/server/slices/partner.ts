@@ -536,7 +536,7 @@ export function createPartner(options: PartnerOptions = {}) {
       const held = await state.change((draft) => { draft.fixes = keepFixes(draft.fixes ?? [], fresh); return draft.call; });
       standing = null;
       const stale = held?.decision ? ` My verdict of ${held.day} was made on the numbers before, so it is stale: ${asksVerdict(query) || pushesBack(query) ? 'it is made again here' : 'I make it again on the next look'}.` : '';
-      fixedNow.set(roomId, { query, line: `${fixesLine(fresh, economics.currency ?? '').replace(/\*$/, '')}${stale}*` });
+      fixedNow.set(roomId, { query, line: `${fixesLine(fresh, economics.currency ?? '', Object.fromEntries(Object.entries(economics.inputs).map(([field, one]) => [field, one!.label]))).replace(/\*$/, '')}${stale}*` });
     }
     const beforeTurn: Handler<'turn:before'> = async (payload, next) => {
       const system = payload.messages[0];
