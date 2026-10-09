@@ -14,7 +14,7 @@ import { FAKE_MORNING, MOST_TRIES, morningDue, morningInputs, morningMessage, wr
 import { addPlan, boardFor, boardForPlan, NO_BOARD, planAttention, stepsFrom } from '../partner/plans.ts';
 import { asksWhatNext, holdSynthesis, standingFacts } from '../partner/synthesis.ts';
 import { asksVerdict, callShape, holdCall, offVerdict, PUSHBACK_LINE, pushesBack, thresholdOf, type KillSignal, type PartnerCall } from '../partner/call.ts';
-import { breakEvenFix, changedLine, economicsBlock, figuresFix, sameMetric, stateOf, workingTools, type EconomicsState, type Reading } from '../partner/economics.ts';
+import { breakEvenFix, changedLine, economicsBlock, figuresFix, sameMetric, stateOf, workingTools, type EconomicsState, type Reading, type Snapshot } from '../partner/economics.ts';
 import { chaseLine, keptPromiseLine, promiseLine, promisesAttention, promisesBook, promisesIn } from '../partner/promises.ts';
 import { gatherSince, metricsOnDisk, sinceHeadline } from '../partner/since.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
@@ -467,7 +467,7 @@ export function createPartner(options: PartnerOptions = {}) {
           // The founder's own ask, or the day's last try, gets a note even when it is still at fault.
           name: partner.name, ask, last: asked || count + 1 >= MOST_TRIES,
           promptFor: (on, roomId) => deps.promptFor(on, roomId, [], true),
-          sources: { ...sourcesFor(stage, partner.id, inputs.company), now: at },
+          sources: { ...sourcesFor(stage, partner.id, inputs.company), now: at, ...(held.morning?.snapshot ? { seen: held.morning.snapshot as Snapshot } : {}) },
         }).catch((error: Error) => { console.error(`partner morning: ${error.message}`); return null; });
         if (!written) return null;
         const note = { ...written, inputs: inputs.key };

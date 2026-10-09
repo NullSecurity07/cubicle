@@ -7,8 +7,9 @@ import { morningText, type Bet } from '../../shared/partner.ts';
 import type { ModelMessage } from '../prompt.ts';
 import type { FounderPromise } from './promises.ts';
 import { saidNoFor } from './saidno.ts';
+import { stateOf } from './economics.ts';
 import { NOTHING_CHANGED } from './since.ts';
-import { attributed, confirmedFix, gatherMorning, MORNING_ASK, morningDue, morningInputs, morningMessage, MOST_TRIES, reachedFlags, RETRY_AFTER, writeMorning, type MorningSources } from './morning.ts';
+import { attributed, briefMoves, confirmedFix, gatherMorning, MORNING_ASK, morningDue, morningInputs, morningMessage, MOST_TRIES, reachedFlags, RETRY_AFTER, writeMorning, type MorningSources } from './morning.ts';
 
 const at = (text: string) => new Date(text).getTime();
 const NINE = at('2026-09-27T09:00');
@@ -416,5 +417,27 @@ describe('outreach in the note', () => {
     expect(reachedFlags([FLAG], '1. Tom Becker was contacted, so call him.', '', [tom])).toEqual(['Tom Becker: Contacted (opened in Gmail, 7 Oct).']);
     expect(reachedFlags([FLAG, 'Unsourced figures: 5'], '1. 120 plumbers contacted this week.', '- Plumbers contacted: 80', [])).toEqual([FLAG, 'Unsourced figures: 5']);
     expect(reachedFlags(['Unconfirmed: this reply claims an action no tool confirmed (sent, contacted).'], '1. I sent it. 80 plumbers contacted.', '- Plumbers contacted: 80', [])).toEqual(['Unconfirmed: this reply claims an action no tool confirmed (sent).']);
+  });
+});
+
+// Journey 19: the price went from €29 to €33.35 one evening, and the next morning's note never said so.
+describe('what moved in the brief since the last note', () => {
+  const brief = (price: string, cash = '€3,200') => `- Price: ${price} a month per plumber\n- Trial users: 22\n- Paying plumbers: 14\n- Cash: ${cash}\n- Burn: €1,100 a month`;
+  it('lists each input that moved, old → new, and a count a Metrics line already said is not said twice', () => {
+    const seen = stateOf(brief('€29')).snapshot();
+    expect(briefMoves(seen, stateOf(brief('€33.35', '€4,000')))).toEqual(['In the brief: price €29 a month → €33.35 a month.', 'In the brief: cash €3,200 → €4,000.']);
+    expect(briefMoves(seen, stateOf(brief('€29')))).toEqual([]);
+    expect(briefMoves(undefined, stateOf(brief('€33.35')))).toEqual([]);
+    const fewer = stateOf(brief('€29').replace('Paying plumbers: 14', 'Paying plumbers: 12'));
+    expect(briefMoves(seen, fewer)).toEqual(['In the brief: paying plumbers 14 → 12.']);
+    expect(briefMoves(seen, fewer, ['Moved: Paying plumbers went from 14 to 12 (worse).'])).toEqual([]);
+  });
+  it('heads the next note and keeps the snapshot for the one after', async () => {
+    const note = await writeMorning({
+      sources: await sources({ seen: stateOf(brief('€29')).snapshot(), economics: async () => stateOf(brief('€33.35')) }), name: 'Sam', promptFor: async () => [{ role: 'system', content: 'You are Sam.' }],
+      ask: async () => 'Three things that matter today:\n1. a\n2. b\n3. c\nRisk: Maya priced it at $9\nQuestion: q?',
+    });
+    expect(note?.since?.[0]).toBe('In the brief: price €29 a month → €33.35 a month.');
+    expect(note?.snapshot?.price).toEqual({ value: 33.35, period: 'month' });
   });
 });
