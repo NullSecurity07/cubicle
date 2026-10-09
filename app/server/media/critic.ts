@@ -869,6 +869,10 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
   //     close that names nothing they wrote becomes their positioning line, or the film's first headline again.
   // The product, by name, for telling its lines from the problem's.
   const product = productName(want.sources?.facts ?? []);
+  // The product's line said without its name ("Neighbourhood repair café booking tool", journey 20's second live
+  // run) is the product's line, name and all.
+  const shorthand = (one: string) => !!want.close?.line && !!product && saysMostOf(one, want.close.line)
+    && want.close.line.includes(product) && !one.includes(product);
   const closing = scenes.at(-1);
   if (scenes.length >= 2 && closing && (closing.layout === 'cta' || closing.layout === 'outro')) {
     const asked = want.close?.asked ? want.close.line : undefined;
@@ -880,7 +884,7 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
     // live run closed on "Neighborhood repair booking tool". A close that opens a real door keeps it.
     const offPitch = !want.reel && !!want.close?.line && !opensADoor(`${closing.text ?? ''} ${closing.say ?? ''}`)
       && !saysMostOf(closing.say ?? closing.text ?? '', want.close.line) && !(want.sources && fromBrief(closing.say ?? closing.text ?? '', want.sources));
-    const plain = !asked && want.sources && (onProblem || offPitch || !namesTheBrief(closing, want.sources, want.reel)) ? (want.close?.line ?? firstHeadline(scenes, product) ?? title) : undefined;
+    const plain = !asked && want.sources && (onProblem || offPitch || shorthand(closing.say ?? closing.text ?? '') || !namesTheBrief(closing, want.sources, want.reel)) ? (want.close?.line ?? firstHeadline(scenes, product) ?? title) : undefined;
     // The founder's call to action is the whole close: no heading of the model's own ("Get started today") beside it.
     const line = asked && (!sameLine(closing.text, asked) || !!closing.heading) ? asked : plain;
     if (line) {
@@ -943,7 +947,7 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
     const closing = scenes.at(-1)!;
     if ((closing.layout !== 'cta' && closing.layout !== 'outro') || !closing.say?.trim()) {
       const title = spec.title && countWords(spec.title) <= HEADING_WORDS ? spec.title.trim() : undefined;
-      const own = [closing.text, closing.heading].map((one) => one?.trim()).find((one) => !!one && countWords(one) >= 2 && countWords(one) <= HEADING_WORDS && !problemLine(one, product));
+      const own = [closing.text, closing.heading].map((one) => one?.trim()).find((one) => !!one && countWords(one) >= 2 && countWords(one) <= HEADING_WORDS && !problemLine(one, product) && !shorthand(one));
       const line = ((want.close?.asked ? want.close.line : undefined) ?? own ?? want.close?.line ?? firstHeadline(scenes, product) ?? title)?.replace(/[.!\s]+$/, '');
       if (line) {
         note(`the film ended on a scene with nothing to say, so it closes on "${line}", said aloud`);
