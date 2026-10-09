@@ -359,7 +359,9 @@ const FILM_WORDS = new Set(['film', 'films', 'video', 'videos', 'clip', 'clips',
   'narration', 'voice', 'music', 'captions', 'vertical', 'wide', 'tall', 'square', 'cinematic', 'style', 'look', 'version']);
 export function topicOf(brief: string): string[] {
   const after = /\b(?:about|of|on|showing|featuring)\s+(.+?)(?:[,.;:!?]|\s+(?:with|for|in which|that|using|set to|and make|told)\b|$)/i.exec(brief ?? '')?.[1] ?? '';
-  const keep = (text: string) => thingsOf(text).filter((word) => !FILM_WORDS.has(word) && !ABSTRACT.has(word));
+  // "our quote tool" is about quotes: the tool is what the product is, not a thing in the film.
+  const kind = KIND_WORDS.exec(brief ?? '')?.[1]?.toLowerCase();
+  const keep = (text: string) => thingsOf(text).filter((word) => !FILM_WORDS.has(word) && !ABSTRACT.has(word) && word !== kind);
   const named = keep(after);
   return (named.length ? named : keep(brief ?? '')).slice(0, 3);
 }
@@ -392,7 +394,85 @@ export type World = {
   // What the product comes packed as, when the brief sells a box, a kit or a subscription: "sealed meal-prep
   // containers in a delivery box". Every picture of its food is drawn in it.
   product?: string;
+  // For a product nobody can photograph (a tool, an app, a service): its users and what they hold, each a picture
+  // (`castOf`). "A plumber at work beside a van", "a phone showing a photo of a boiler", "a printed quote on a
+  // clipboard". The first is the one with somebody in it.
+  cast?: string[];
 };
+
+// --- a product nobody can photograph -------------------------------------------------------------------------------
+//
+// Journey 18: "20 s explainer about our quote tool" for QuoteSnap, which turns a plumber's WhatsApp photos into a
+// written quote. The world kept "tool", lost "photos" (a film word) and the phone, and every picture rule forbade a
+// phone and a document, so the film was a toy van, an empty window, a box of fittings and "a tool, on a linen
+// cloth": no plumber, no phone, no quote. Software is never in a picture. Its users are, and so is what they hold
+// before it (the phone with the photo on it) and what it hands them (the quote on paper).
+const KIND_WORDS = /\b(?:our|my|their|the|this|a|an)\s+(?:[\p{L}-]+\s+){0,2}?(tools?|apps?|software|services?|platforms?|bots?|assistants?|systems?|products?|solutions?|websites?|portals?)\b/iu;
+// What a product's input arrives on: a phone, by what the brief says it is sent as.
+const ON_A_PHONE = /\b(?:whats\s?app|sms|text messages?|texts|imessage|telegram|signal|phones?|mobiles?|smartphones?|voice notes?|photos?|pictures?|snaps?)\b/i;
+const PHOTOS = /\b(?:photos?|pictures?|snaps?|images?)\b/i;
+// Who uses it: the person the brief writes with a possessive ("a plumber's photos"), else a trade written twice.
+const GENERIC_PEOPLE = /^(?:customers?|clients?|users?|people|persons?|owners?|buyers?|sellers?|members?|teams?|staff|others?|founders?)$/i;
+function userOf(facts: string): string | undefined {
+  const own = /\b(?:a|an|the|every|each|your|our)\s+([a-z]+)'s\b/i.exec(facts)?.[1]?.toLowerCase();
+  if (own && !GENERIC_PEOPLE.test(own) && !NOT_WORLD.has(own)) return own;
+  const counts = new Map<string, number>();
+  for (const word of facts.toLowerCase().match(/\b[a-z]+(?:er|ist|ian|or)s?\b/g) ?? []) {
+    const one = word.replace(/s$/, '');
+    if (!GENERIC_PEOPLE.test(one) && !NOT_CONCRETE.has(one) && !ABSTRACT.has(one)) counts.set(one, (counts.get(one) ?? 0) + 1);
+  }
+  return [...counts].filter(([, count]) => count >= 2).sort((a, b) => b[1] - a[1])[0]?.[0];
+}
+// What it hands back: "into a written quote", "writes a quote", "turns ... into invoices".
+function outputOf(facts: string): string | undefined {
+  const into = /\binto\s+(?:an?\s+|the\s+)?(?:[a-z-]+\s+)?([a-z]+)\b/i.exec(facts)?.[1];
+  const writes = /\b(?:writes|drafts|makes|builds|sends|produces)\s+(?:an?\s+|the\s+)?([a-z]+)\b/i.exec(facts)?.[1];
+  const word = (into ?? writes)?.toLowerCase();
+  return word && !NOT_CONCRETE.has(word) && !ABSTRACT.has(word) && !FILM_WORDS.has(word) ? word : undefined;
+}
+// The things of the user's work, as the brief listed them: "(a leaking pipe, a boiler, a bathroom)".
+function workOf(facts: string): string[] {
+  const listed = [...facts.matchAll(/\(([^)]*,[^)]*)\)/g)].flatMap((hit) => hit[1].split(/,|\bor\b|\band\b/))
+    .map((one) => one.trim().toLowerCase()).filter((one) => /^(?:an?|the)\s+[a-z]/.test(one) && one.split(/\s+/).length <= 4);
+  return [...new Set(listed)];
+}
+export function castOf(ask: string, facts: string): string[] {
+  const said = facts ?? '';
+  if (!said.trim() || !(KIND_WORDS.test(ask ?? '') || KIND_WORDS.test(said.split(/\n|(?<=\.)\s/)[0] ?? ''))) return [];
+  const user = userOf(said);
+  const out = outputOf(said);
+  const work = workOf(said);
+  const van = /\bvans?\b/i.test(said) ? ' beside a van' : '';
+  const cast: string[] = [];
+  if (user) cast.push(`a ${user} at work${van}, turned away from the camera`);
+  // Close, so the thing is the picture: "a phone on a van dashboard" came back as an empty van with a phone in a corner.
+  if (ON_A_PHONE.test(said)) cast.push(`a close-up of a smartphone in a${user ? ` ${user}'s` : ''} hand showing a photo of ${PHOTOS.test(said) && work[0] ? work[0] : 'a job'}`);
+  if (out) cast.push(`a close-up of a printed ${out} on a clipboard${user ? ` in a ${user}'s hand` : ''}`);
+  for (const thing of work.slice(0, 3)) cast.push(`a close-up of ${thing}`);
+  return cast;
+}
+// The cast picture a shot is drawn as when its subject has none of the cast in it: the one its line names (the
+// photo, the quote, the user), else the next one round the film.
+export function castFor(visual: Pick<Visual, 'line' | 'about' | 'subject' | 'scene'>, world?: World): string | undefined {
+  const cast = world?.cast ?? [];
+  if (!cast.length) return undefined;
+  const subject = (visual.subject ?? '').toLowerCase();
+  // Already drawn as one of them, or with the user in it.
+  if (cast.some((one) => subject.includes(one.split(/\s+/).slice(0, 5).join(' ').toLowerCase()))) return undefined;
+  const user = /^an? ([a-z]+) at work/.exec(cast[0])?.[1];
+  if (user && hasNoun(subject, [user])) return undefined;
+  const heads = cast.map((one) => thingsOf(one.replace(/\s(?:on|at|beside|in)\s.*$/, '').replace(/,.*$/, '')).filter((word) => !['camera', 'job', 'work', 'close', 'up', 'close-up'].includes(word)));
+  const line = `${visual.line ?? ''} ${visual.about ?? ''}`;
+  const named = heads.findIndex((words) => words.some((word) => hasNoun(line, [word])));
+  // What arrives on a phone is pictured on it first: "turns your WhatsApp photos into a written quote" is the photo.
+  const phone = PHOTOS.test(line) || ON_A_PHONE.test(line) ? cast.findIndex((one) => /phone\b/.test(one)) : -1;
+  const pick = phone >= 0 ? phone : named;
+  // Somebody only where the line names them: a film has one person in it.
+  const round = cast.filter((one) => !/turned away/.test(one));
+  return pick >= 0 ? cast[pick] : round.length ? round[(visual.scene ?? 0) % round.length] : cast[0];
+}
+// Whether a subject is the plain stand-by `visualFrom` builds out of a line: things on one of the bare surfaces.
+export const onABareSurface = (subject: string): boolean => PLACES.some((place) => (subject ?? '').endsWith(place));
 
 // --- what the product comes in ----------------------------------------------------------------------------------
 //
@@ -465,14 +545,17 @@ const NOT_WORLD = new Set(['people', 'person', 'persons', 'everyone', 'anyone', 
 export const NOT_CONCRETE = new Set(['close', 'closes', 'closed', 'begin', 'begins', 'start', 'starts', 'end', 'ends', 'ready',
   'shift', 'shifts', 'night', 'nights', 'morning', 'evening', 'delivery', 'deliveries', 'deliver', 'delivers', 'prep',
   'weekly', 'daily', 'monthly', 'plan', 'plans', 'order', 'orders', 'help', 'helps', 'work', 'works', 'time', 'times',
-  'week', 'weeks', 'day', 'days', 'subscription', 'subscriptions', 'booking', 'bookings', 'offer', 'offers', 'slot',
+  'week', 'weeks', 'day', 'days', 'job', 'jobs', 'subscription', 'subscriptions', 'booking', 'bookings', 'offer', 'offers', 'slot',
   'slots', 'call', 'calls', 'return', 'returns', 'returned', 'turn', 'turns', 'answer', 'answers', 'save', 'saves',
   'cost', 'costs', 'free', 'new', 'own', 'more', 'less', 'every', 'each', 'local', 'nearby']);
+
 
 // The film's world out of the founder's ask and, for a film about the company, the product's own facts.
 export function worldOf(ask: string, facts = ''): World {
   const keep = (text: string) => thingsOf(text).filter((word) => !FILM_WORDS.has(word) && !ABSTRACT.has(word) && !NOT_WORLD.has(word) && word.length > 2);
-  const own = keep(ask);
+  // "our quote tool": the tool is the product, a kind of thing and no thing of its own.
+  const kind = KIND_WORDS.exec(ask ?? '')?.[1]?.toLowerCase();
+  const own = keep(ask).filter((word) => word !== kind);
   // The product's own name is not a thing anybody can photograph: "a callback, at the front desk".
   // A word the facts only ever write with a capital is a name.
   const lower = new Set((facts ?? '').match(/\b[a-z][a-z'-]+\b/g) ?? []);
@@ -484,7 +567,9 @@ export function worldOf(ask: string, facts = ''): World {
     ...[...(facts ?? '').matchAll(/\b(?:it|nobody|somebody|someone|who|that|which|they|he|she)\s+([a-z]+s)\b/gi)].map((hit) => hit[1].toLowerCase()),
   ]);
   const product = keep(facts).filter((word) => !own.includes(word) && !names.has(word) && !does.has(word)).slice(0, 12);
-  const words = [...new Set([...topicOf(ask), ...own, ...product])];
+  const cast = castOf(ask, facts);
+  const phone = cast.some((one) => /phone\b/.test(one)) ? ['phone', 'smartphone'] : [];
+  const words = [...new Set([...topicOf(ask), ...own, ...product, ...phone])];
   const named = `${ask ?? ''} ${facts ?? ''}`;
   const kinds: Record<string, string> = {};
   for (const hit of named.matchAll(/\b(\d\s*[-‑–]?\s*d)\s+([a-z][a-z'-]+)/gi)) {
@@ -492,7 +577,7 @@ export function worldOf(ask: string, facts = ''): World {
     if (words.some((word) => THING_STEM(word) === thing)) kinds[thing] = kindOf(hit[1])[0];
   }
   const pack = packOf(named);
-  return { words, named, setting: settingOf(ask), ...(Object.keys(kinds).length ? { kinds } : {}), ...(pack ? { product: pack } : {}) };
+  return { words, named, setting: settingOf(ask), ...(Object.keys(kinds).length ? { kinds } : {}), ...(pack ? { product: pack } : {}), ...(cast.length ? { cast } : {}) };
 }
 
 // Objects that stand in for an idea rather than show the film's world, and the marks of a museum's or an archive's
@@ -751,7 +836,8 @@ export function repairVisuals(visuals: Visual[], world?: World): { visuals: Visu
       if (world && standInOf(one.subject, `${world.named} ${one.line}`)) return 'standin';
       if (!ofTheWorld(apart(one.subject), world)) return 'offworld';
       const filler = fillerShot(one.subject);
-      if (filler && !content(one.line).some((word) => filler.includes(word))) return 'generic';
+      // A phone is no filler in a film whose product arrives on one (`castOf`).
+      if (filler && !content(one.line).some((word) => filler.includes(word)) && !(world?.cast ?? []).some((cast) => content(filler).some((word) => cast.includes(word)))) return 'generic';
       if (countWords(one.subject) < 4 || listSubject(one.subject)) return 'thin';
       if (!aboutTheLine(one)) return 'unrelated';
       // The film's setting, which a rebuilt picture ends on, is where every picture is and not what it is of: two
@@ -820,7 +906,7 @@ export function visualsPrompt(slots: Visual[], bible: string, angle: string, wor
     '- It comes out of the line spoken under it. Use one of that line\'s own words, or say what the picture stands for in "metaphor".',
     ...(world ? [worldRule(world)] : []),
     '- No two pictures in this film may be of the same thing. Not the same subject, not the same place, not the same action.',
-    '- Never a hand holding a phone, a laptop on a desk, hands on a keyboard, a meeting room, a city street, an abstract background, a lightbulb or a rocket, unless the line itself is about one.',
+    '- Never a hand holding a phone, a laptop on a desk, hands on a keyboard, a meeting room, a city street, an abstract background, a lightbulb or a rocket, unless the line itself is about one or it is one of the film\'s own things above.',
     '- A picture model cannot write. Nothing in a picture may be a screen, a chart, a sign, a document, a logo or any other surface with words on it.',
     '- At most ONE picture in the whole film may have a person in it. Every other picture is a place, an object or a detail with nobody in it.',
     '- Nobody looks at the camera. Anybody in that one picture is at work and turned away.',
@@ -834,7 +920,8 @@ export function visualsPrompt(slots: Visual[], bible: string, angle: string, wor
 
 // The film's world, said to the model the way the critic will read it.
 export const worldRule = (world: World): string =>
-  `- Every picture is a real thing from the film's world${world.setting ? `, ${world.setting}` : ''}: ${world.words.slice(0, 10).map((word) => worldThing(word, world)).join(', ')}. `
+  (world.cast?.length ? `- The product is software, which no picture can show. Picture the people who use it and what they hold instead: ${world.cast.join('; ')}.\n` : '')
+  + `- Every picture is a real thing from the film's world${world.setting ? `, ${world.setting}` : ''}: ${world.words.slice(0, 10).map((word) => worldThing(word, world)).join(', ')}. `
   + 'Never a stand-in object for an idea: no paperweight, bell, anchor, sculpture, trophy, medal, coin, hourglass, antique or museum piece.';
 
 // What came back, read as loosely as it can honestly be read, with everything missing left for the repair.

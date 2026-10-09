@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   afforded, aboutTheLine, criticiseVisuals, drawnAs, fillerShot, kindFor, lineUnder, photoOfTheLine, repairVisuals, sceneLine, stockQueries, thingsOf, topicOf,
   shareOut, shares, slotsFor, somebodyIn, unlettered, visualFrom, visualsOf, visualsPrompt, type Visual, shotKey,
-  closeHolds, settingOf, standInOf, worldOf, worldScore, nounsOf, packOf, packedFor, liesDown,
+  closeHolds, settingOf, standInOf, worldOf, worldRule, worldScore, nounsOf, packOf, packedFor, liesDown,
 } from './visuals.ts';
 import { productFacts } from './gather.ts';
 import { foreignIn } from './places.ts';
+import { concreteOf, groundedFor } from './picture-policy.ts';
 import type { Scene } from './spec.ts';
 
 const BIBLE = 'bright high-contrast editorial photography, clean directional key light, shot on 35mm';
@@ -651,5 +652,54 @@ describe('Journey 17: the meal-prep film', () => {
     expect(liesDown(asleep.line)).toBe(true);
     expect(drawnAs(asleep, BIBLE)).not.toMatch(/upright/);
     expect(drawnAs(shotOf(LINES[1], 'five ready meals in a delivery box'), BIBLE)).not.toMatch(/upright/);
+  });
+});
+
+// Journey 18: "20 s explainer about our quote tool" drew a toy van, an empty window, a box of fittings and "a tool, on
+// a linen cloth". QuoteSnap is software: its film is of the plumber, the phone with the photo on it and the quote.
+describe('a film about a product nobody can photograph draws its users and what they hold', () => {
+  const ASK = '20 s explainer about our quote tool';
+  const BRIEF = [
+    '# Company brief', '',
+    "What the company does: QuoteSnap turns a plumber's WhatsApp photos of a job into a written quote they can send the customer.",
+    '', '## Idea', '', "A plumber forwards the photos of a job (a leaking pipe, a boiler, a bathroom) from WhatsApp to QuoteSnap. QuoteSnap writes a quote: parts, hours, price, in the plumber's own template, ready to send.",
+    '', '## Customer', '', 'Independent plumbers and small plumbing firms (1-5 people) who quote from their van and lose evenings writing quotes.',
+  ].join('\n');
+  const world = worldOf(ASK, productFacts(BRIEF));
+
+  it('builds the world from the ask and the product, without the tool', () => {
+    expect(world.words).not.toContain('tool');
+    expect(topicOf(ASK)).toEqual(['quote']);
+    expect(world.words).toEqual(expect.arrayContaining(['quote', 'plumber', 'phone', 'boiler', 'pipe', 'van']));
+    expect(world.cast).toEqual([
+      'a plumber at work beside a van, turned away from the camera',
+      "a close-up of a smartphone in a plumber's hand showing a photo of a leaking pipe",
+      "a close-up of a printed quote on a clipboard in a plumber's hand",
+      'a close-up of a leaking pipe', 'a close-up of a boiler', 'a close-up of a bathroom',
+    ]);
+    expect(concreteOf(world)).not.toContain('job');
+    expect(worldRule(world)).toContain('a smartphone in a plumber\'s hand showing a photo of a leaking pipe');
+  });
+
+  it("draws every shot of the journey with the plumber, the phone or the quote in it", () => {
+    const shots: [string, string][] = [
+      ['Plumbers lose their evenings writing quotes.', 'van, a quote, resting on a bare wooden table in first light'],
+      ['Forward the WhatsApp photos of the job.', 'quote, a job, on a windowsill on a grey afternoon'],
+      ['QuoteSnap writes the quote: parts, hours, price.', 'a tool, on a linen cloth in soft window light'],
+      ['Ready to send to the customer.', 'A metal toolbox containing sorted brass plumbing parts on a job workbench'],
+    ];
+    const drawn = shots.map(([line, subject], scene) => groundedFor({ scene, take: 0, at: scene, line, subject, kind: 'object', room: 'foot' } as Visual, world).subject);
+    for (const subject of drawn) expect(subject).toMatch(/\b(?:plumber|smartphone|printed quote|boiler|leaking pipe)\b/);
+    expect(drawn[0]).toMatch(/^a plumber at work/);
+    expect(drawn[1]).toMatch(/^a close-up of a smartphone in a plumber's hand showing a photo/);
+    expect(drawn[2]).toMatch(/^a close-up of a printed quote/);
+    expect(drawn[0]).not.toMatch(/wooden table/);
+    // Nothing a picture rule takes out again: a phone is the film's own thing here, not filler.
+    expect(repairVisuals([{ scene: 0, take: 0, at: 0, line: 'Forward the photos.', subject: 'a plumber holding a phone beside a boiler in a utility room', kind: 'medium', room: 'foot' } as Visual], world).notes.join(' ')).not.toMatch(/any sentence/);
+  });
+
+  it('leaves a film with a real product alone', () => {
+    expect(worldOf('20 s explainer about our meal-prep delivery', productFacts('ShiftMeals is a weekly meal-prep delivery for night-shift nurses. Five ready meals in a labelled box are delivered on Sunday.')).cast).toBeUndefined();
+    expect(worldOf('a 20 s explainer about our app').cast).toBeUndefined();
   });
 });

@@ -29,6 +29,9 @@ export type Sources = {
   // What the product is and does, sentence by sentence, as the material says it (`productFacts`). A line that says
   // it works otherwise is a contradiction (`against-brief.ts`).
   facts?: string[];
+  // Everything the founder wired, as written: line breaks and all, so a count is read beside what it counts
+  // ("Paying plumbers: 9"), which the flattened corpus runs together.
+  read?: string;
 };
 
 // What the product is and does, out of a company brief: the "What the company does" line and the first paragraph
@@ -60,7 +63,7 @@ export function sourcesOf(material: Material, brief: string): Sources {
   const body = parts.join('\n');
   const facts = [material.pitch ?? '', productFacts(material.lines.join('\n\n'))].join('\n')
     .split(/\n+|(?<=[.!?])\s+/).map((one) => one.trim()).filter((one) => one.split(/\s+/).length >= 4);
-  return { corpus: flat(body), brief: flat(brief), has: material.lines.length > 0, lines: sentencesIn(body).slice(0, 40), said: clausesOf(brief), facts: [...new Set(facts)] };
+  return { corpus: flat(body), read: body, brief: flat(brief), has: material.lines.length > 0, lines: sentencesIn(body).slice(0, 40), said: clausesOf(brief), facts: [...new Set(facts)] };
 }
 
 // The brief cut where the founder paused: sentences, and the clauses a semicolon or a colon sets apart. A clause

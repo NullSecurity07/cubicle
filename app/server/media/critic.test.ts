@@ -893,3 +893,57 @@ describe('a caption is the script\'s own line', () => {
     expect(criticise(spec, want()).filter((one) => one.rule === 'caption')).toEqual([]);
   });
 });
+
+// Journey 18: "20 s explainer about our quote tool" for QuoteSnap said and showed "9 parts in every kit", set on
+// screen as "9 9 parts in every kit". The 9 was the paying plumbers; no kit is in the brief.
+describe('a count in the film is a count the brief gives', () => {
+  const BRIEF = [
+    "What the company does: QuoteSnap turns a plumber's WhatsApp photos of a job into a written quote they can send the customer.",
+    '## Idea', 'A plumber forwards the photos of a job (a leaking pipe, a boiler, a bathroom) from WhatsApp to QuoteSnap. QuoteSnap writes a quote: parts, hours, price, in the plumber\'s own template, ready to send.',
+    '## Numbers', '- Trial users: 22', '- Paying plumbers: 9', '- Plumbers contacted: 80',
+  ].join('\n');
+  const sources = sourcesOf({ lines: [BRIEF], assets: [], using: ['the brief'] } as unknown as Parameters<typeof sourcesOf>[0], '20 s explainer about our quote tool');
+  const want = (over: Partial<Want> = {}): Want => ({
+    seconds: 20, pace: 'calm', purpose: 'explainer', captions: false,
+    bible: 'quiet documentary photography, soft window light', layouts: [...LAYOUTS], reel: false, sources, ...over,
+  });
+  const film = (third: Scene): Spec => ({
+    title: 'QuoteSnap',
+    scenes: [
+      { layout: 'statement', text: 'Photos in, quote out', say: "QuoteSnap turns a plumber's WhatsApp photos of a job into a written quote.", source: "QuoteSnap turns a plumber's WhatsApp photos of a job into a written quote" },
+      { layout: 'statement', text: 'Parts, hours, price', say: 'QuoteSnap writes a quote: parts, hours, price, in the plumber\'s own template.', source: 'QuoteSnap writes a quote: parts, hours, price' },
+      third,
+      { layout: 'cta', text: 'Nine plumbers already pay', say: 'Nine paying plumbers already use it.', source: 'Paying plumbers: 9' },
+    ],
+  });
+
+  it('says "9 parts in every kit" without the number, in words and on screen', () => {
+    const { spec, notes } = repair(film({ layout: 'stat', heading: '9', text: '9 parts in every kit', say: 'Nine parts in every kit.', source: 'parts' }), want());
+    const said = spec.scenes.map((one) => [one.say, one.heading, one.text, ...(one.bullets ?? [])].filter(Boolean).join(' ')).join(' | ');
+    expect(said).not.toMatch(/\b(?:9|nine)\s+parts\b/i);
+    expect(spec.scenes.some((one) => one.layout === 'stat' && one.heading === '9')).toBe(false);
+    expect(notes.join(' ')).toContain('without the number');
+    // The brief's own count stays: nine paying plumbers.
+    expect(spec.scenes.at(-1)!.say).toBe('Nine paying plumbers already use it.');
+  });
+
+  it('takes the number out of a line and keeps the rest of it', () => {
+    // A line the brief backs except for its count: the plumbers are the brief's, the 30 is nobody's.
+    const { spec } = repair(film({ layout: 'statement', text: 'Plumbers send photos of a boiler', say: '30 plumbers send photos of a boiler.', source: 'A plumber forwards the photos of a job' }), want());
+    expect(spec.scenes[2].say).toBe('Plumbers send photos of a boiler.');
+  });
+
+  it('sets a figure once: a line under a stat that says it again loses it', () => {
+    const { spec } = repair(film({ layout: 'stat', heading: '22', text: '22 plumbers on trial', say: '22 trial users are on it now.', source: 'Trial users: 22' }), want());
+    const stat = spec.scenes.find((one) => one.layout === 'stat');
+    const shown = spec.scenes.map((one) => [one.heading, one.text].filter(Boolean).join(' ')).join(' | ');
+    expect(shown).not.toMatch(/\b22 22\b/);
+    if (stat) expect(stat.text ?? '').not.toMatch(/\b22\b/);
+  });
+
+  it('never sets "9 9" when a stat is said instead of set', () => {
+    // No sources: the count pass is off, and the stat that counts the product's own parts is demoted to a statement.
+    const { spec } = repair(film({ layout: 'stat', heading: '9', text: '9 parts in every kit', say: 'Nine parts in every kit.' }), want({ sources: undefined }));
+    expect(spec.scenes.map((one) => one.text ?? '').join(' | ')).not.toMatch(/\b9 9\b/);
+  });
+});

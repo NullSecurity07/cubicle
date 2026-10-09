@@ -1,4 +1,4 @@
-import { hasNoun, NOT_CONCRETE, photoOfTheLine, stockQueries, THING_STEM, thingsOf, type Visual, type World } from './visuals.ts';
+import { castFor, hasNoun, NOT_CONCRETE, onABareSurface, photoOfTheLine, stockQueries, THING_STEM, thingsOf, type Visual, type World } from './visuals.ts';
 
 // Where a film's pictures come from first.
 //
@@ -87,7 +87,18 @@ export function decisionLine(how: 'photo' | 'drawn', why: { thing?: string; othe
 
 // A drawn picture's subject, held to its scene and its world: the scene's own things are in it, and so is where the
 // brief set the film. The director's subject is kept and only added to, so a picture written well is drawn as it was.
+//
+// A film of a product nobody can photograph draws its cast (`castOf`): a shot whose subject has none of the cast in
+// it is drawn as the one its line names, or the next one round. A stand-by of things on a bare surface ("van, a quote,
+// resting on a bare wooden table", which came back as a toy van) is replaced by it outright.
 export function groundedFor(visual: Visual, world?: World): Visual {
+  const cast = castFor(visual, world);
+  if (cast) {
+    const where = world?.setting && !cast.includes(world.setting) ? `, ${world.setting}` : '';
+    return { ...visual, subject: onABareSurface(visual.subject ?? '') || !(visual.subject ?? '').trim() ? `${cast}${where}` : `${cast}, ${visual.subject}${where}` };
+  }
+  // Drawn as one of the cast already: nothing more is put in front of it, least of all another person.
+  if (world?.cast?.length) return visual;
   const things = sceneThings(visual, world).filter((word) => !hasNoun(visual.subject ?? '', [word])).slice(0, 2);
   const where = world?.setting && !(visual.subject ?? '').toLowerCase().includes(world.setting.toLowerCase()) ? world.setting : '';
   if (!things.length && !where) return visual;
