@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { draftAsk, leadRecord, type Lead } from '../shared/leads.ts';
-import { productLine, unbackedPersonal, usedSources } from './opener.ts';
+import { namesIn, productLine, unbackedPersonal, usedSources } from './opener.ts';
 
 const BRIEF = '# Company\n\n## Idea\n\nQuoteSnap turns a plumber\'s WhatsApp photos into written quotes. It saves the evening.\n\n## Numbers\n- Price: €29 a month';
 const tom = (notes: string[] = []): Lead => ({
@@ -16,6 +16,14 @@ describe('a first message, held to what is on record about the person', () => {
     expect(unbackedPersonal('QuoteSnap turns WhatsApp photos into written quotes. Would a short call help?', row(tom()))).toEqual([]);
     expect(unbackedPersonal('I noticed you run Becker Sanitär.', row(tom()))).toEqual([]);
     expect(unbackedPersonal('Congrats on the new van fleet!', row(tom()))).toHaveLength(1);
+    // Journey 20: a line that frames what follows says nothing about them.
+    expect(unbackedPersonal('Hi Ines,\n\nRegarding your questions:\n- "Is there an iOS app?" We will check and come back to you.\n\nBest,\nSam', row(tom()))).toEqual([]);
+    expect(unbackedPersonal('About your question on Reddit:', row(tom()))).toEqual([]);
+    // Journey 20: their own name is who they are, not what they did.
+    const ines = [{ label: "Ines Vogel's row on the Leads card", text: 'Ines Vogel, Repair Café Kreuzberg' }];
+    expect(unbackedPersonal("I saw Repair Café Kreuzberg's work running community repair evenings.", ines, ['Ines Vogel', 'Repair Café Kreuzberg'])).toHaveLength(1);
+    expect(unbackedPersonal('I noticed you run Repair Café Kreuzberg.', ines, ['Ines Vogel', 'Repair Café Kreuzberg'])).toEqual([]);
+    expect(namesIn('Draft a first message to Ines Vogel at Repair Café Kreuzberg using the evidence-outreach skill. Nothing is on record.')).toEqual(['Ines Vogel', 'Repair Café Kreuzberg']);
   });
 
   it('takes a detail their notes give, and names where it came from', () => {

@@ -1,6 +1,7 @@
 import { isShape, SHAPE_NAMES, type Slide } from '../../shared/deck.ts';
 import { unbackedClaims, unbackedEnds } from '../tools/evidence.ts';
 import { hitsOutsideCodes, replaceOutsideCodes } from '../figures.ts';
+import { sameMetric } from '../partner/economics.ts';
 
 // What a deck may be made of: the founder's brief, the documents, notes and project wired to the card, and where
 // traction is read from: a wired Metrics card's block, else the Company brief's Numbers (`metrics`, named for which it
@@ -56,6 +57,21 @@ export function tractionLines(material: Material): string[] {
     // A line of json is no slide line (journey 18), whatever the source handed over.
     .filter((line) => /\d/.test(line) && !/^#/.test(line) && !/^[{[]|"\w+"\s*:/.test(line)).map((line) => words(line).slice(0, LINE_WORDS).join(' ')).slice(0, MOST_LINES);
 }
+
+// Each metric's reading in the traction source, as its rows give it: "Paying cafés: 9 on 2026-10-11" is 9.
+const FIGURE = /[$€£]?\s?\d[\d,]*(?:\.\d+)?\s?%?/;
+export function readingsOf(material: Material): { label: string; value: string }[] {
+  if (!material.metrics) return [];
+  const seen = new Set<string>();
+  return material.metrics.text.split('\n').flatMap((line) => {
+    const hit = /^\s*(?:[-*+]\s+)?([^:\n\d]{2,60}):\s*(.*)$/.exec(line.replace(/[*_`]/g, ''));
+    const value = hit ? FIGURE.exec(hit[2])?.[0].trim() : undefined;
+    if (!hit || !value || seen.has(hit[1].trim().toLowerCase())) return [];
+    seen.add(hit[1].trim().toLowerCase());
+    return [{ label: hit[1].trim(), value }];
+  });
+}
+const sameFigure = (a: string, b: string) => normal(FIGURE.exec(a)?.[0] ?? a) === normal(FIGURE.exec(b)?.[0] ?? b);
 
 // A claim of evidence on a slide or in its notes that nothing in the material backs, each as written: the doc guard's
 // claims ("customers love it", "early pilot results suggest they do"), held to the brief, the wired documents and
@@ -148,6 +164,8 @@ export function faults(slides: Slide[], material: Material): string[] {
     for (const number of numbersIn(textOf(slide))) {
       if (!sourceOf(number, material, only)) found.push(`${at}: ${number} is not in the material${only ? ` (a traction number must come from ${tractionFrom(material)})` : ''}; use only numbers the material states, or none`);
     }
+    const read = slide.figure ? readingsOf(material).find((one) => sameMetric(one.label, slide.figure!.label)) : undefined;
+    if (read && FIGURE.test(slide.figure!.value) && !sameFigure(slide.figure!.value, read.value)) found.push(`${at}: the figure says ${slide.figure!.value} ${slide.figure!.label} and ${tractionFrom(material)} reads ${read.value}; a figure says the same reading as the rows`);
     for (const text of [slide.headline, ...slide.lines]) {
       for (const hit of invented(text, material)) found.push(`${at}: "${short(hit)}" is not on record in the material; take it out or put it as an open question`);
     }
@@ -182,6 +200,35 @@ export function mend(given: Slide[], material: Material): { slides: Slide[]; sai
     const sourced = (text: string) => numbersIn(text).every((number) => !!sourceOf(number, material, only))
       && (slide.shape !== 'ask' || moneyIn(text).every((amount) => !!sourceOf(amount, material, 'brief')));
 
+    // Journey 20: the traction rows said "Paying cafés: 9 on 2026-10-11" and the big figure beside them "6 paying
+    // cafés", a count too small to need a source. A figure, a line or a headline that names a metric the traction
+    // source reads says that reading.
+    const readings = readingsOf(material);
+    const reading = (label: string) => readings.find((one) => sameMetric(one.label, label));
+    if (slide.figure) {
+      const one = reading(slide.figure.label);
+      if (one && FIGURE.test(slide.figure.value) && !sameFigure(slide.figure.value, one.value)) {
+        aside.push(`The figure said ${slide.figure.value} ${slide.figure.label}; ${tractionFrom(material)} reads ${one.value}.`);
+        slide.figure = { ...slide.figure, value: slide.figure.value.replace(FIGURE, one.value) };
+        said.push(`${at}: the figure now reads ${one.value} ${slide.figure.label}, as ${tractionFrom(material)} does`);
+      }
+    }
+    slide.lines = slide.lines.map((line) => {
+      const hit = /^([^:\n\d]{2,60}):\s*/.exec(line);
+      const one = hit ? reading(hit[1]) : undefined;
+      const value = hit ? FIGURE.exec(line.slice(hit[0].length)) : null;
+      if (!one || !value || value.index !== 0 || sameFigure(value[0], one.value)) return line;
+      said.push(`${at}: ${hit![1]} now reads ${one.value}, as ${tractionFrom(material)} does`);
+      return `${hit![0]}${one.value}${line.slice(hit![0].length + value[0].length).replace(/^(?=\S)/, ' ')}`;
+    });
+    for (const one of readings) {
+      const named = new RegExp(`(^|[^\\d.,])(\\d[\\d,]*(?:\\.\\d+)?)(\\s+${one.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'i');
+      const hit = named.exec(slide.headline);
+      if (hit && !sameFigure(hit[2], one.value)) {
+        slide.headline = slide.headline.replace(named, `$1${FIGURE.exec(one.value)![0].replace(/^[$€£]\s?/, '')}$3`);
+        said.push(`${at}: the headline now reads ${one.value} ${one.label.toLowerCase()}, as ${tractionFrom(material)} does`);
+      }
+    }
     if (!sourced(slide.headline)) {
       const kept = words(replaceOutsideCodes(slide.headline, NUMBER, (hit) => (claim(hit) ? ' ' : hit))).join(' ').replace(/^[^\p{L}\d]+|[\s,;:–-]+$/gu, '');
       aside.push(`Headline had a number with no source: "${slide.headline}"`);

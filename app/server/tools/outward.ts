@@ -7,7 +7,7 @@ import { wired, wiredCards } from '../prompt.ts';
 import { findCompanyDoc } from '../../shared/partner.ts';
 import { leadsCardIds, leadsFor } from '../leads/store.ts';
 import { leadRecord } from '../../shared/leads.ts';
-import { productLine, unbackedPersonal, usedSources, type Labelled } from '../opener.ts';
+import { namesIn, productLine, unbackedPersonal, usedSources, type Labelled } from '../opener.ts';
 import { filledIn } from '../partner/unasked.ts';
 import { productClaimsIn } from '../productclaim.ts';
 import { runCode } from '../sandbox.ts';
@@ -142,7 +142,11 @@ export function outwardTools(mail: Mail, filesDir: string, drafting?: Drafting, 
         // No "[Founder Name]" goes to Gmail: filled from the brief, or the line dropped (server/partner/unasked.ts).
         const company = findCompanyDoc(context.stage.docs);
         const brief = company ? await context.store.readDoc(company.id).catch(() => '') : '';
-        const draft = { to: text(args, 'to', 500), subject: text(args, 'subject', 300), body: filledIn(text(args, 'body', 20_000), brief, context.stage.rooms.map((room) => room.name)) };
+        const written = text(args, 'body', 20_000);
+        const draft = { to: text(args, 'to', 500), subject: text(args, 'subject', 300), body: filledIn(written, brief, context.stage.rooms.map((room) => room.name)) };
+        // Journey 20: the draft went out signed right while the chat still showed "Best, Sam". Say what it ends with.
+        const tail = (body: string) => body.trim().split('\n').slice(-2).join('\n');
+        const signed = tail(written) !== tail(draft.body) ? ` The sign-off was put right: the email ends "${tail(draft.body).replace(/\n/g, ' ')}" (the founder and the company, never a colleague); say so, not the old one.` : '';
         const to = draft.to.split(/[,;\s]+/).filter(Boolean);
         const bad = to.filter((address) => !ADDRESS.test(address));
         if (bad.length) throw new Error(`not an email address: ${bad.join(', ')}`);
@@ -174,13 +178,14 @@ export function outwardTools(mail: Mail, filesDir: string, drafting?: Drafting, 
           ...(context.query && !/^\/tool\s/.test(context.query) ? [{ label: 'your message', text: context.query }] : []),
           ...(evidence?.said ?? []).filter((one) => one !== context.query && !/^\/tool\s/.test(one)).map((text) => ({ label: 'what was read this turn', text })),
         ];
-        const invented = unbackedPersonal(draft.body, about);
+        const names = [...them.flatMap((one) => [one.name, one.company]), ...(context.query ? namesIn(context.query) : [])];
+        const invented = unbackedPersonal(draft.body, about, names);
         if (invented.length) {
           const ours = productLine(brief);
           throw new Error(`the email says "${invented[0].slice(0, 160)}" about them, and nothing on record says it (not their row on the Leads card, `
             + `nothing read this turn, no founder message). Take it out and open with what we do${ours ? `, from the Company brief: "${ours}"` : ' from the Company brief'}, then draft again.`);
         }
-        const used = usedSources(draft.body, about, brief ? { label: 'Company brief', text: brief } : null);
+        const used = usedSources(draft.body, about, brief ? { label: 'Company brief', text: brief } : null, names);
         const room = speaker(context);
         const url = gmailLink(draft);
         const cardId = drafting?.open ? await drafting.open(context.stage, context.roomId, url).catch(() => null) : null;
@@ -194,7 +199,7 @@ export function outwardTools(mail: Mail, filesDir: string, drafting?: Drafting, 
         const cut = draftBody(draft.body).cut ? ` The body was longer than ${DRAFT_BODY_MOST} characters, so the draft holds only the first ${DRAFT_BODY_MOST}; tell the founder the rest has to be pasted in.` : '';
         const keyed = mail.ready() ? ' send_email can also send it for you, with the founder\'s yes.' : '';
         const from = used.length ? ` What it rests on: ${used.join(' ')}.` : '';
-        return { text: `${where} It is in Needs you as well. Say it is drafted, never that it was sent.${from}${cut}${keyed}`, ...(cardId ? { effect: { kind: 'browser-moved' as const, id: cardId } } : {}) };
+        return { text: `${where} It is in Needs you as well. Say it is drafted, never that it was sent.${from}${signed}${cut}${keyed}`, ...(cardId ? { effect: { kind: 'browser-moved' as const, id: cardId } } : {}) };
       },
     },
     {

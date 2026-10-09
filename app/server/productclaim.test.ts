@@ -80,4 +80,40 @@ describe('a claim about the product, held to the record', () => {
     expect(productClaimsIn('It works on any Android phone, and I will check the VAT part.', sources)).toEqual(['Android']);
     expect(productClaimsIn('Yes, the quote shows VAT separately; I will confirm the layout.', sources)).toEqual(['VAT']);
   });
+
+  // Journey 20: Sam's ready reply to Ines invented a web app and a refund policy.
+  const FIXSLOT = 'What the company does: FixSlot is a pop-up repair café booking tool for neighbourhoods: visitors book a repair slot online, the café sees who is coming with what.\n\n## Numbers\n- Price: €4 per booking';
+  const INES = 'Our Thursday evenings are chaos. Is there an iOS app for our volunteers? If a visitor cancels, do they get the €4 back?';
+
+  it('takes out journey 20\'s "web-based ... any browser" and "non-refundable", and answers each question honestly', () => {
+    const web = 'We do not have an iOS app for volunteers; FixSlot is web-based and works on any phone or tablet browser so volunteers can view the list without downloading an app.';
+    const refund = 'If a visitor cancels, the €4 booking fee is non-refundable.';
+    expect(unbackedProductClaims(web, [FIXSLOT, INES])).toEqual(['the browser', 'the web', 'no app needed']);
+    expect(unbackedProductClaims(refund, [FIXSLOT, INES])).toEqual(['our refund policy']);
+    const draft = `Hi Ines,\n\nThanks for getting in touch. To answer your questions:\n\n${web}\n\n${refund}\n\nBest,`;
+    const held = guardUnasked(draft, [FIXSLOT, INES]);
+    expect(held.text).not.toMatch(/web-based|browser|refundable/);
+    expect(held.left).toEqual(expect.arrayContaining(['the web', 'the browser', 'no app needed', 'our refund policy']));
+    const built = answerQuestions(held.text, INES, { name: 'Ines Vogel', today: '2026-10-07' });
+    expect(built.body).toContain('I will check whether there is an iOS app for your volunteers and come back to you by Friday.');
+    expect(built.body).toContain('I will check our refund policy and come back to you by Friday.');
+    expect(guardUnasked(built.body, [FIXSLOT, INES]).left).toEqual([]);
+  });
+
+  it('holds policy, fee, pricing and where-it-runs words however they are said', () => {
+    const none = [FIXSLOT];
+    expect(unbackedProductClaims('The booking fee is not refundable.', none)).toEqual(['our refund policy']);
+    expect(unbackedProductClaims('Visitors can cancel for free up to a day before.', none)).toEqual(['our cancellation policy']);
+    expect(unbackedProductClaims('It runs in any browser, no app needed.', none)).toEqual(['the browser', 'no app needed']);
+    expect(unbackedProductClaims('It is available on the App Store.', none)).toEqual(['App Store']);
+    expect(unbackedProductClaims('It works offline.', none)).toEqual(['offline use']);
+    expect(unbackedProductClaims('Every café starts on a free trial, billed monthly after.', none)).toEqual(['free trial', 'billed monthly']);
+    // Said on record, either way, it stands; said as undecided or still to check, it claims nothing.
+    expect(unbackedProductClaims('The booking fee is non-refundable.', [`${FIXSLOT}\n- Bookings are not refundable.`])).toEqual([]);
+    expect(unbackedProductClaims('It runs in any browser.', [`${FIXSLOT}\n- Runs in any browser, nothing to install.`])).toEqual([]);
+    expect(unbackedProductClaims('We have not decided a refund policy yet.', none)).toEqual([]);
+    expect(unbackedProductClaims('I will check our refund policy and come back to you by Friday.', none)).toEqual([]);
+    expect(productTopic('If a visitor cancels, do they get the €4 back?')?.name).toBe('our refund policy');
+    expect(productTopic('Is there a cancellation fee?')?.name).toBe('our cancellation policy');
+  });
 });

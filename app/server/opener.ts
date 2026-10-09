@@ -31,25 +31,51 @@ const words = (text: string) => (text.toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{
   .map((one) => one.replace(/(?:'s|’s)$/, '').replace(/(?:ing|ed|es|s)$/, ''));
 
 const sentencesOf = (text: string) => text.split('\n').flatMap((line) => line.split(/(?<=[.!?])\s+/)).map((one) => one.trim()).filter(Boolean);
-const isPersonal = (sentence: string) => !/\?\s*$/.test(sentence) && PERSONAL.some((pattern) => pattern.test(sentence));
+// Journey 20: "Regarding your questions:" was refused twice as a thing said about Ines. A line that only frames what
+// follows says nothing about anyone: a short header ending in a colon, a greeting, a sign-off, a name under it.
+const HEADER = /^(?:[-*]\s+)?[^.!?:\n]{1,60}:\s*$/;
+const GREETING = /^(?:hi|hello|hey|dear|good\s+(?:morning|afternoon|evening))\b[\p{L}\s'.-]{0,40}[,!]?$/iu;
+const SIGN_OFF = /^(?:best|kind|warm|many|all the best|regards|thanks|thank you|cheers|sincerely|yours)(?:\s+(?:regards|wishes|thanks|truly))?\s*[,.!]?$/i;
+const NAME = /^\p{Lu}[\p{L}'.&-]*(?:(?:\s*[/|,–—]\s*|\s+)\p{Lu}[\p{L}'.&-]*){0,4}$/u;
+export const isFraming = (line: string) => {
+  const said = line.trim();
+  return !!said && (HEADER.test(said) && said.split(/\s+/).length <= 8 || GREETING.test(said) || SIGN_OFF.test(said) || NAME.test(said));
+};
+const isPersonal = (sentence: string) => !/\?\s*$/.test(sentence) && !isFraming(sentence) && PERSONAL.some((pattern) => pattern.test(sentence));
+
+// Words that say only that they are who their row says they are: "you run Becker Sanitär", "your work at ...".
+const LIGHT = new Set(['run', 'runn', 'work', 'lead', 'own', 'manag', 'found', 'team', 'company', 'business', 'shop', 'place']);
 
 // The source a personal sentence rests on, or null: the place it names is in the source, and two words of substance
-// are (one, when the sentence has only one).
-function restsOn(sentence: string, about: Labelled[]): Labelled | null {
-  const own = [...new Set(words(sentence))];
+// are (one, when the sentence has only one). Journey 20: "I saw Repair Café Kreuzberg's work running community repair
+// evenings" rested on Ines's row because the row holds her café's name. Their own name and company are who they are,
+// not what they did: those words never count as substance, and a sentence with nothing else needs only one of them.
+function restsOn(sentence: string, about: Labelled[], names: string[] = []): Labelled | null {
+  const named = new Set(names.flatMap(words));
+  const all = [...new Set(words(sentence))];
+  const own = all.filter((one) => !named.has(one) && !LIGHT.has(one));
+  const theirs = all.filter((one) => named.has(one));
   const places = [...sentence.matchAll(PLACES)].map((hit) => hit[1].toLowerCase());
   const need = Math.min(2, own.length);
   return about.find((source) => {
     const low = source.text.toLowerCase();
     if (places.some((place) => !low.includes(place))) return false;
-    const theirs = new Set(words(source.text));
-    return need === 0 ? places.length > 0 : own.filter((one) => theirs.has(one)).length >= need;
+    const said = new Set(words(source.text));
+    if (need === 0) return places.length > 0 || theirs.some((one) => said.has(one));
+    return own.filter((one) => said.has(one)).length >= need;
   }) ?? null;
 }
 
-// The sentences about the person that nothing about them backs, as written.
-export function unbackedPersonal(body: string, about: Labelled[]): string[] {
-  return sentencesOf(body).filter((sentence) => isPersonal(sentence) && !restsOn(sentence, about));
+// The sentences about the person that nothing about them backs, as written. `names` are their name and company.
+export function unbackedPersonal(body: string, about: Labelled[], names: string[] = []): string[] {
+  return sentencesOf(body).filter((sentence) => isPersonal(sentence) && !restsOn(sentence, about, names));
+}
+
+// Who a first message is for, from the ask "Draft a first message to Ines Vogel at Repair Café Kreuzberg ...", so a
+// room the Leads card is not wired to holds the opener to the same rule.
+export function namesIn(ask: string): string[] {
+  const hit = /\bfirst message to\s+(.+?)\s+at\s+(.+?)(?:\s+using\b|[.]\s|[.]?$)/i.exec(ask);
+  return hit ? [hit[1], hit[2]] : [];
 }
 
 // The line of the brief that says what we do: the first line under its Idea (or Product) heading.
@@ -61,11 +87,11 @@ export function productLine(brief: string): string {
 
 // What a draft used, one "(from: ...)" line each: the source of each sentence about the person, and the Company brief
 // when the body says what we do in its words.
-export function usedSources(body: string, about: Labelled[], brief: Labelled | null): string[] {
+export function usedSources(body: string, about: Labelled[], brief: Labelled | null, names: string[] = []): string[] {
   const used: string[] = [];
   for (const sentence of sentencesOf(body)) {
     if (!isPersonal(sentence)) continue;
-    const source = restsOn(sentence, about);
+    const source = restsOn(sentence, about, names);
     if (source) used.push(source.label);
   }
   if (brief?.text.trim()) {

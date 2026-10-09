@@ -21,7 +21,8 @@ export type Period = 'week' | 'month' | 'year' | 'day';
 export type Field = 'price' | 'cost' | 'burn' | 'net' | 'cash' | 'subscribers' | 'paying';
 // Where an input came from: the Company brief, the founder in chat, or a Metrics reading.
 export type Source = 'brief' | 'founder' | 'reading';
-export type Input = { value: number; period?: Period; label: string; source: Source; said: string; day?: string };
+// `per`: what the brief's row says the money is paid per ("booking"), kept under a founder's correction.
+export type Input = { value: number; period?: Period; label: string; source: Source; said: string; day?: string; per?: string };
 // A founder's correction of one input: a value, a period or both. `over`: what the brief said when they corrected it,
 // so a brief edited since (a new figure) stands over the older correction.
 export type InputFix = { field: Field; value?: number; period?: Period; said: string; day: string; over?: { value?: number; period?: Period } };
@@ -143,7 +144,8 @@ export function stateOf(numbers: string, given: { fixes?: InputFix[]; readings?:
   const fromRow = (field: Field, row: Row | undefined, money = true) => {
     if (!row) return;
     const one = money ? valueOf(row) : { value: row.amounts[0].value };
-    inputs[field] = { value: one.value, ...('period' in one && one.period ? { period: one.period } : {}), label: row.label, source: 'brief', said: `${row.label}: ${row.line}` };
+    const per = money ? perOf({ said: row.line }) : undefined;
+    inputs[field] = { value: one.value, ...('period' in one && one.period ? { period: one.period } : {}), label: row.label, source: 'brief', said: `${row.label}: ${row.line}`, ...(per ? { per } : {}) };
   };
   fromRow('price', priceRow); fromRow('cost', costRow); fromRow('burn', burnRow); fromRow('net', netRow);
   fromRow('cash', cashRow, false); fromRow('paying', payingRow, false);
@@ -305,7 +307,18 @@ function calculate(expression: string, values: string) {
   return out;
 }
 const money = (value: number, currency = '') => `${value < 0 ? '-' : ''}${currency}${Math.abs(Math.round(value * 100) / 100).toLocaleString('en-US')}`;
-const shown = (field: Field, one: Input, currency = '') => (isMoney(field) ? `${money(one.value, currency)} ${periodName(one.period)}` : String(one.value));
+// Journey 20: the brief said "Price: €4 per booking" and the refresh and the morning note said "price €4 a month →
+// €4.6 a month". A money row with no period is said with what the brief says it is paid per ("per booking"), never
+// a month nobody gave.
+const PER_SAID = /\d[\d,]*(?:\.\d+)?\s*k?\s*(?:[$€£])?\s*(?:per|each|\/)\s*([a-z][a-z-]*)/i;
+export function perOf(one: { period?: Period; said?: string; per?: string } | undefined): string | undefined {
+  if (!one || one.period) return undefined;
+  if (one.per) return one.per;
+  const word = PER_SAID.exec((one.said ?? '').replace(/\([^)]*\)/g, ' '))?.[1].toLowerCase();
+  return word && !PERIOD_OR_PAYER.test(word) ? `per ${word}` : undefined;
+}
+const periodSaid = (period: Period | undefined, per?: string) => (!period && per ? per : periodName(period));
+const shown = (field: Field, one: Input, currency = '') => (isMoney(field) ? `${money(one.value, currency)} ${periodSaid(one.period, perOf(one))}` : String(one.value));
 
 // The working from the Company brief's Numbers section, or nothing when it does not hold enough to work anything out.
 export function economicsOf(numbers: string, given: Parameters<typeof stateOf>[1] = {}): Economics | null {
@@ -313,7 +326,7 @@ export function economicsOf(numbers: string, given: Parameters<typeof stateOf>[1
 }
 
 // What moved between the inputs a call was made on and the inputs now: any change of a value or a period.
-export type Changed = { field: Field; label: string; from?: { value: number; period?: Period }; to?: { value: number; period?: Period }; said?: string };
+export type Changed = { field: Field; label: string; from?: { value: number; period?: Period }; to?: { value: number; period?: Period }; said?: string; per?: string };
 export function changedSince(then: Snapshot, state: EconomicsState): Changed[] {
   const now = state.snapshot();
   return (Object.keys(LABELS) as Field[]).flatMap((field): Changed[] => {
@@ -321,12 +334,13 @@ export function changedSince(then: Snapshot, state: EconomicsState): Changed[] {
     if (!a && !b) return [];
     if (a && b && Math.abs(a.value - b.value) < 1e-9 && (a.period ?? 'month') === (b.period ?? 'month')) return [];
     const one = state.inputs[field];
-    return [{ field, label: one?.label.toLowerCase() ?? LABELS[field], ...(a ? { from: a } : {}), ...(b ? { to: b } : {}), ...(one?.source === 'founder' ? { said: one.said } : {}) }];
+    const per = isMoney(field) ? perOf(one) : undefined;
+    return [{ field, label: one?.label.toLowerCase() ?? LABELS[field], ...(a ? { from: a } : {}), ...(b ? { to: b } : {}), ...(one?.source === 'founder' ? { said: one.said } : {}), ...(per ? { per } : {}) }];
   });
 }
 // "paying subscribers 14 → 11 (founder: "...")", "price €59 a month → €59 a week".
 export function changedLine(one: Changed, currency = ''): string {
-  const say = (it?: { value: number; period?: Period }) => (!it ? 'not given' : isMoney(one.field) ? `${money(it.value, currency)} ${periodName(it.period)}` : String(it.value));
+  const say = (it?: { value: number; period?: Period }) => (!it ? 'not given' : isMoney(one.field) ? `${money(it.value, currency)} ${periodSaid(it.period, one.per)}` : String(it.value));
   return `${one.label} ${say(one.from)} → ${say(one.to)}${one.said ? ` (founder: "${one.said.slice(0, 120)}")` : ''}`;
 }
 

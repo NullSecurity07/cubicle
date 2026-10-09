@@ -40,13 +40,13 @@ const PROMISES: Promised[] = [
     backs: (hit) => new RegExp(`\\b${word(hit[1])}[-\\s]?free\\b|\\bno ${word(hit[1])}s?\\b|\\bwithout ${word(hit[1])}s?\\b`, 'i'),
     about: (hit) => `${hit[1].toLowerCase()}-free`,
   },
-  // Safety, guarantees, certificates, money back, a price cut.
+  // Safety, guarantees, certificates, a price cut. Money back is a policy (server/productclaim.ts).
   {
-    pattern: /\b(?:allerg(?:en|y)[- ]safe|safe\s+(?:to eat|for (?:you|everyone|anyone|people|allerg\w*|kids|children))|eat\s+(?:it\s+|them\s+)?safely|(?:completely|totally|perfectly|entirely|100%)\s+safe|hypoallergenic|guarantee[sd]?|certified|money[- ]back|refund(?:s|ed)?|free\s+(?:of charge|delivery|trial|week|month|meal|sample)s?|discount(?:s|ed)?|\d+%\s+off)\b/i,
+    pattern: /\b(?:allerg(?:en|y)[- ]safe|safe\s+(?:to eat|for (?:you|everyone|anyone|people|allerg\w*|kids|children))|eat\s+(?:it\s+|them\s+)?safely|(?:completely|totally|perfectly|entirely|100%)\s+safe|hypoallergenic|guarantee[sd]?|certified|free\s+(?:of charge|delivery|trial|week|month|meal|sample)s?|discount(?:s|ed)?|\d+%\s+off)\b/i,
     backs: (hit) => {
       const low = hit[0].toLowerCase();
       return /safe|allerg/.test(low) ? /\bsafe|\ballerg/i : /guarant/.test(low) ? /\bguarant/i : /certif/.test(low) ? /\bcertif/i
-        : /refund|money/.test(low) ? /\brefund|\bmoney[- ]back/i : /discount|off$/.test(low) ? /\bdiscount|%\s+off\b/i : new RegExp(`\\b${word(low)}`, 'i');
+        : /discount|off$/.test(low) ? /\bdiscount|%\s+off\b/i : new RegExp(`\\b${word(low)}`, 'i');
     },
     about: (hit) => (/eat\s+(?:it\s+|them\s+)?safely|safe/i.test(hit[0]) ? 'allergen safety' : hit[0].toLowerCase()),
   },
@@ -152,10 +152,25 @@ export function filledIn(body: string, brief: string, colleagues: string[] = [])
 
 // Journey 18: Lea signed the founder's email "Best, Sam / QuoteSnap", the partner's name on the founder's mail. The
 // name under the sign-off is the founder's, and only when the brief names them; the company's name stands only when
-// the brief names it; any other name (a colleague's, a made-up one) goes. With nothing left, the email ends "Best,".
+// the brief names it; any other name (a colleague's, a made-up one) goes. Journey 20: Lea signed "Best,\nSam" and a
+// first message "Best,\nFounder"; a role is no name either. A sign-off put right is the founder's name and the
+// company, each when the brief gives it; with neither, the email ends "Best,".
 const NAMES = "\\p{Lu}[\\p{L}'.&-]*(?:(?:\\s*[/|,–—]\\s*|\\s+)\\p{Lu}[\\p{L}'.&-]*)*";
 const CLOSING = new RegExp(`^((?:best|kind|warm|many|all the best|regards|thanks|thank you|cheers|sincerely|yours)(?:\\s+(?:regards|wishes|thanks|truly))?)\\s*([,.!]?)\\s*(${NAMES})?\\s*$`, 'iu');
 const NAME_LINE = new RegExp(`^${NAMES}$`, 'u');
+const ROLE = /^(?:the\s+)?(?:founders?|co-?founders?|founding team|team|ceo|cto|owner|sender|your name|name)$/i;
+// Words a brief's sentence opens with that are no company: "Everyone on the stage reads this", "Customers are ...".
+const NOT_COMPANY = /^(?:it|the|we|our|this|that|a|an|and|but|so|what|everyone|everybody|customers?|users?|people|visitors?|price|cash|goal|stage|how|who|when|one|two|nobody|they|you|i)$/i;
+// The company's name in the brief: a "Company:" line, or the name a sentence of it opens with ("FixSlot is ...").
+export function companyOf(brief: string): string | null {
+  const named = /^\s*(?:[-*]\s*)?(?:\*\*)?(?:company(?:\s+name)?|product(?:\s+name)?|name)(?:\*\*)?\s*:\s*(?:\*\*)?\s*(\p{Lu}[\p{L}\d]*(?:\s+\p{Lu}[\p{L}\d]*)?)(?=\s*(?:[,.(—–-]|$))/imu.exec(brief);
+  if (named && !NOT_COMPANY.test(named[1])) return named[1];
+  for (const line of brief.split('\n')) {
+    const hit = /^\s*(?:[-*]\s*)?(?:[Ww]hat the company does:\s*)?(\p{Lu}[\p{L}\d]*)(?=,|\s+(?:is|turns|helps|makes|lets|builds|gives|books|sells|connects|matches|finds|runs|takes|puts|brings|delivers)\b)/u.exec(line);
+    if (hit && !NOT_COMPANY.test(hit[1])) return hit[1];
+  }
+  return null;
+}
 function signedAs(body: string, brief: string, founder: string | null, colleagues: string[]): string {
   const lines = body.split('\n');
   const at = lines.findLastIndex((line) => CLOSING.test(line.trim()));
@@ -164,18 +179,20 @@ function signedAs(body: string, brief: string, founder: string | null, colleague
   const tail = [head[3] ?? '', ...lines.slice(at + 1)].map((line) => line.trim()).filter(Boolean);
   // Only a short block of names: a closing with a paragraph after it is no sign-off.
   if (tail.some((line) => !NAME_LINE.test(line) || line.split(/\s+/).length > 6) || tail.length > 3) return body;
+  const same = (a: string, b: string | null) => !!b && a.toLowerCase() === b.toLowerCase();
   const ours = (part: string) => {
-    const low = part.toLowerCase();
-    if (founder && low === founder.toLowerCase()) return true;
-    if (colleagues.some((one) => one.trim() && low.includes(one.trim().toLowerCase()))) return false;
+    if (ROLE.test(part)) return false;
+    if (same(part, founder)) return true;
+    if (colleagues.some((one) => one.trim() && part.toLowerCase().includes(one.trim().toLowerCase()))) return false;
     return new RegExp(`(?:^|[^\\p{L}])${part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:$|[^\\p{L}])`, 'iu').test(brief);
   };
   const parts = tail.flatMap((line) => line.split(/\s*(?:\/|\||,|–|—|\bfrom\b|\bat\b)\s*/i)).map((one) => one.trim()).filter(Boolean);
   const keep = parts.filter(ours);
-  if (keep.length === parts.length && (!founder || keep.some((one) => one.toLowerCase() === founder.toLowerCase()))) return body;
-  if (founder && !keep.some((one) => one.toLowerCase() === founder.toLowerCase())) keep.unshift(founder);
+  if (keep.length === parts.length && (!founder || keep.some((one) => same(one, founder)))) return body;
+  const company = companyOf(brief) ?? keep.find((one) => !same(one, founder)) ?? null;
+  const sign = [founder, company].filter((one): one is string => !!one);
   const closing = `${head[1]}${head[2] || ','}`;
-  return [...lines.slice(0, at), closing, ...(keep.length ? [keep.join(' / ')] : [])].join('\n').trim();
+  return [...lines.slice(0, at), closing, ...(sign.length ? [sign.join(' / ')] : [])].join('\n').trim();
 }
 
 // ---------------------------------------------------------------- a reply built from the lead's questions

@@ -289,6 +289,11 @@ const yesTo = (said: string) => said.split(/(?<=[.!?])\s+/).filter((one) => one.
   const plain = question.trim().replace(/^(?:and|also|so)\s+/i, '').replace(/\?$/, '');
   const can = /^(?:can|could|will|would) you (.+)$/i.exec(plain);
   if (can) return `Yes, we can ${can[1]}.`;
+  // Journey 20: "Is there an iOS app for our volunteers?" → a made-up web app; "... do they get the €4 back?" → a
+  // made-up refund policy.
+  const there = /^is there an? (.+)$/i.exec(plain);
+  if (there) return `We do not have ${there[1].replace(/\bour\b/gi, 'your')}; it is web-based and works in any browser, no app needed.`;
+  if (/\bget (?:the|their|my|our|a) .*\bback$/i.test(plain)) return 'The booking fee is non-refundable.';
   // "Does it work with photos from my old Android phone?" → "Yes, it works with photos from any Android phone."
   const does = /^does it (\p{L}+) (.+)$/iu.exec(plain);
   if (does) return `Yes, it ${does[1]}s ${does[2].replace(/\bmy(?: old)?\b/gi, 'any')}.`;
