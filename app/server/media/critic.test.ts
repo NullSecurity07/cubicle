@@ -947,3 +947,23 @@ describe('a count in the film is a count the brief gives', () => {
     expect(spec.scenes.map((one) => one.text ?? '').join(' | ')).not.toMatch(/\b9 9\b/);
   });
 });
+
+// Live check for journey 19: Maya's three-scene storyboard came back as twenty-four scenes, twenty of them empty. A
+// short first sentence and a long second put the middle of the line in the second, and the cut was made after it.
+describe('a long line cut in two', () => {
+  it('cuts between its sentences, never after the last, and adds no empty scene', () => {
+    const want: Want = { seconds: 20, pace: 'punchy', purpose: 'explainer', captions: true, reel: false, bible: 'clean photograph', layouts: [...LAYOUTS] };
+    const spec: Spec = {
+      title: 'QuoteSnap',
+      scenes: [
+        { layout: 'hook', text: 'Evenings back', say: 'Stop spending your evenings writing quotes.' },
+        { layout: 'statement', text: 'Fully automated', say: 'Just forward your photos. Parts, hours, and prices are filled in using your own template.' },
+        { layout: 'cta', text: 'Start your trial', say: 'Start your trial today and win more jobs.' },
+      ],
+    };
+    const scenes = repair(spec, want).spec.scenes;
+    expect(scenes.length).toBeLessThanOrEqual(5);
+    expect(scenes.every((one) => !!one.say?.trim())).toBe(true);
+    expect(scenes.map((one) => one.say)).toContain('Just forward your photos.');
+  });
+});

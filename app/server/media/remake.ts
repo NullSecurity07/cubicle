@@ -9,7 +9,7 @@ import {
 import { editFilm, cuttingFor, type Take } from './editor.ts';
 import { ffReady } from './ff.ts';
 import { atRate, joinPcm, pcmSeconds, readPcm, recordOf, silence, slicePcm, wavOfPcm, type Pcm } from './film-record.ts';
-import { finishPicture, looking } from './finish.ts';
+import { finishPicture, looking, redrawMark } from './finish.ts';
 import { fitStill } from './footage.ts';
 import { cachedImages } from './image.ts';
 import type { Piece } from './jobs.ts';
@@ -269,11 +269,14 @@ export async function remakeFilm(film: { path: string; record: FilmRecord }, ops
         const piece = await drawing.make({ prompt: drawnAs(visual, bible), shape }, { report: () => {}, signal });
         const file = `frame-e${index}-${take}.${piece.ext}`;
         await writeFile(join(at, 'assets', file), piece.bytes);
+        // Each redraw its own file: a picture may be drawn again for more than one fault, and a later one written
+        // over an earlier one's file would swap the picture that was kept for one nobody compared.
+        let drawn = 0;
         const done = await finishPicture({
           dir: join(at, 'assets'), file, visual, scene, pack, paint, sight: deps.sight, state, stop: signal, report,
           redraw: async (again) => {
             const second = await drawing.make({ prompt: drawnAs(again, bible), shape }, { report: () => {}, signal });
-            const name = `frame-e${index}-${take}-b.${second.ext}`;
+            const name = `frame-e${index}-${take}-${redrawMark(drawn++)}.${second.ext}`;
             await writeFile(join(at, 'assets', name), second.bytes);
             return name;
           },

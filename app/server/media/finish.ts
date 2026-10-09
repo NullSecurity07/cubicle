@@ -1,10 +1,10 @@
 import { join } from 'node:path';
 import { blankness, isBlank, liftFor, lighten, meanLight, scrimFor } from './contrast.ts';
 import { SUBJECT_PRESENT } from './picture-policy.ts';
-import { ASKS, facesLens, fault, isLettered, type Plies, type Sight } from './sight.ts';
+import { ASKS, FACING, facesLens, fault, isLettered, SURFACE_LETTERED, type Plies, type Seen, type Sight } from './sight.ts';
 import type { Scene } from './spec.ts';
 import { PACK, type Pack } from './templates/index.ts';
-import { liesDown, redrawnFor, uprightFor, type Visual } from './visuals.ts';
+import { liesDown, redrawnFor, surfaceIn, unlettered, uprightFor, wordlessFor, type Visual } from './visuals.ts';
 
 // What happens to one picture between arriving and going on screen, for a new film and for a film remade from
 // notes alike. It used to live inside the first render only, so a remake in a new look redrew every picture with
@@ -18,7 +18,7 @@ export type Finished = { file: string; visual: Visual; hold?: number; lift?: num
 
 // What one film's pictures share while they are finished: how many have been drawn a second time, and which
 // faults the card has already been told about.
-export type Looking = { redrawn: number; told: Set<string>; absent?: number; posed?: number };
+export type Looking = { redrawn: number; told: Set<string>; absent?: number; posed?: number; written?: number };
 export const looking = (): Looking => ({ redrawn: 0, told: new Set(), absent: 0 });
 
 // Twice a film at most: a redraw is most of a minute, and a studio that doubts every picture it draws is a studio
@@ -30,6 +30,11 @@ export const ABSENT_REDRAWS = 3;
 // A drawn picture seen as somebody lying on the floor, under a line that has nobody lying down, is drawn once more
 // standing up, up to this many a film.
 export const POSE_REDRAWS = 2;
+// A drawn picture with a screen or a page in it that came back written on is drawn once more, each, up to this many a
+// film: the cast of an app is a phone and a page, and every one of them is a place a picture model writes nonsense.
+export const WRITTEN_REDRAWS = 4;
+// The mark on a picture's nth redraw: b, c, d…, so each one is a file of its own.
+export const redrawMark = (nth: number): string => String.fromCharCode(98 + Math.min(nth, 23));
 
 export async function finishPicture(one: {
   // The folder the picture sits in, and its name there.
@@ -61,7 +66,11 @@ export async function finishPicture(one: {
   // model does what it likes: a proof film came back with two strangers looking straight at the viewer and a
   // sheet of handwriting. One that breaks a rule is drawn once more, as a place rather than a person and from
   // further off, and the better of the two is kept.
-  const seen = await sight?.look(join(dir, file)).catch(() => null);
+  // A picture with a screen or a page in it is held to its own line for writing, at the end, and redrawn as the same
+  // picture rather than stepped back from: a phone drawn wide is no longer the phone the line is about.
+  const surface = surfaceIn(unlettered(visual.subject));
+  const looked = await sight?.look(join(dir, file)).catch(() => null);
+  const seen: Seen | null | undefined = surface && looked ? { ...looked, lettered: 0 } : looked;
   if (fault(seen) > 0 && !stop?.aborted && state.redrawn < REDRAWS && one.redraw) {
     state.redrawn += 1;
     const why = facesLens(seen) ? 'somebody looking straight at the camera' : 'writing on it';
@@ -106,6 +115,21 @@ export async function finishPicture(one: {
         const after = await sight.versus(join(dir, second), labels).catch(() => null);
         if (!after || after[1] < before[1]) { file = second; kept = again; }
         one.report(`scene ${visual.scene + 1}: the picture had somebody lying on the floor (${before[1].toFixed(2)}), so it was drawn again standing${after ? ` (${after[1].toFixed(2)})` : ''}`);
+      } catch { /* the first picture stands */ }
+    }
+  }
+  // And whether the screen or page in it was written on. The picture model is told the screen shows only a photo
+  // (`drawnAs`); this is whether it listened. Looked at again only if a step above changed the picture.
+  if (surface && sight && one.redraw && !stop?.aborted && (state.written ?? 0) < WRITTEN_REDRAWS) {
+    const now = file === one.file && looked ? looked : await sight.look(join(dir, file)).catch(() => null);
+    if (now && now.lettered >= SURFACE_LETTERED) {
+      state.written = (state.written ?? 0) + 1;
+      const again = wordlessFor(kept);
+      try {
+        const second = await one.redraw(again);
+        const after = await sight.look(join(dir, second)).catch(() => null);
+        if (after && after.lettered < now.lettered && after.facing < Math.max(now.facing, FACING)) { file = second; kept = again; }
+        one.report(`scene ${visual.scene + 1}: the ${surface === 'screen' ? 'screen' : 'page'} in the picture had writing on it (${now.lettered.toFixed(2)}), so it was drawn again${after ? ` (${after.lettered.toFixed(2)})` : ''}`);
       } catch { /* the first picture stands */ }
     }
   }

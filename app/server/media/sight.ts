@@ -61,6 +61,11 @@ export const FACING = 0.45;
 export const LETTERED = 0.70;
 export const facesLens = (seen: Seen | null | undefined): boolean => !!seen && seen.facing >= FACING;
 export const isLettered = (seen: Seen | null | undefined): boolean => !!seen && seen.lettered >= LETTERED;
+// A picture drawn with a screen or a page in it is held to a lower line, because the screen or page is small in the
+// frame and its writing is a small share of the picture. Journey 19's phone filled with model-made words scored 0.55,
+// under the line above, and went on screen; its quote sheets scored 0.80 and 0.95. Its photographs with nothing
+// written in them scored 0.04 and 0.05.
+export const SURFACE_LETTERED = 0.40;
 // The one number a redraw is judged by: how far over either line a picture is. Nought is a picture to keep.
 export const fault = (seen: Seen | null | undefined): number =>
   (!seen ? 0 : Math.max(0, seen.facing - FACING) + Math.max(0, seen.lettered - LETTERED));

@@ -760,8 +760,12 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
       let half = 0;
       let run = 0;
       for (const [index, sentence] of sentences.entries()) { run += countWords(sentence); if (run >= spoken / 2) { half = index + 1; break; } }
-      const first = sentences.slice(0, Math.max(1, half)).join(' ');
-      const rest = sentences.slice(Math.max(1, half)).join(' ');
+      // Never after the last sentence: a short first sentence and a long second put the middle in the second, and a
+      // cut there left the whole line as the first half and nothing as the rest. Requeued, it did the same again
+      // until the film was out of scenes: a three-scene storyboard came back as twenty-four, twenty of them empty.
+      const cut = Math.min(Math.max(1, half), sentences.length - 1);
+      const first = sentences.slice(0, cut).join(' ');
+      const rest = sentences.slice(cut).join(' ');
       note('a scene that ran for half the film is cut in two');
       // Both halves go back in the queue: one cut is rarely enough for a model that wrote a paragraph.
       waiting.unshift({ ...scene, say: first }, { layout: can('picture') ? 'picture' : 'statement', say: rest, image_prompt: can('picture') ? `${want.bible}. ${subjectOf(scene)}` : undefined, text: can('picture') ? undefined : headlineOf(rest, 5) });

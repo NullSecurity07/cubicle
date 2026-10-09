@@ -223,3 +223,60 @@ describe('somebody lying on the floor', () => {
     expect(done.file).toBe('one.png');
   });
 });
+
+// Journey 19: the phone in a plumber's hand came back reading "Let your meat leaking pipe" and scored 0.55 for
+// writing, under the line every picture is held to, so it went on screen.
+describe('a picture with a screen or a page in it', () => {
+  const phone: Visual = { ...visual, line: 'QuoteSnap turns WhatsApp photos into a quote', subject: "a close-up of a smartphone in a plumber's hand showing a photo of a leaking pipe", kind: 'detail' };
+  const written: Seen = { facing: 0.2, lettered: 0.55 };
+  const clean: Seen = { facing: 0.2, lettered: 0.1 };
+
+  it('is drawn again as the same picture, said harder, when its screen came back written on', async () => {
+    const lines: string[] = [];
+    const asked: Visual[] = [];
+    const done = await finishPicture({
+      dir: '/nowhere', file: 'phone.png', visual: phone, scene, pack: 'clean', paint, state: looking(), report: (line) => lines.push(line),
+      sight: sightOf({ 'phone.png': written, 'phone-b.png': clean }),
+      redraw: async (again) => { asked.push(again); return 'phone-b.png'; },
+    });
+    expect(asked).toEqual([{ ...phone, plain: true }]);
+    expect(done.file).toBe('phone-b.png');
+    expect(done.visual.plain).toBe(true);
+    expect(lines).toEqual(['scene 1: the screen in the picture had writing on it (0.55), so it was drawn again (0.10)']);
+  });
+
+  it('keeps the first when the second is written on as much, and never steps back from the phone', async () => {
+    const asked: Visual[] = [];
+    const done = await finishPicture({
+      dir: '/nowhere', file: 'phone.png', visual: phone, scene, pack: 'clean', paint, state: looking(), report: () => {},
+      sight: sightOf({ 'phone.png': { facing: 0.2, lettered: 0.9 }, 'phone-b.png': { facing: 0.2, lettered: 0.9 } }),
+      redraw: async (again) => { asked.push(again); return 'phone-b.png'; },
+    });
+    expect(done.file).toBe('phone.png');
+    // Once, and as the phone: the old writing rule drew it wide, where the phone is a speck.
+    expect(asked.map((one) => one.kind)).toEqual(['detail']);
+  });
+
+  it('is left alone when its screen is clean, and a picture with no screen keeps the old line', async () => {
+    let redraws = 0;
+    await finishPicture({
+      dir: '/nowhere', file: 'phone.png', visual: phone, scene, pack: 'clean', paint, state: looking(), report: () => {},
+      sight: sightOf({ 'phone.png': { facing: 0.2, lettered: 0.3 } }), redraw: async () => { redraws += 1; return 'x.png'; },
+    });
+    await finishPicture({
+      dir: '/nowhere', file: 'desk.png', visual, scene, pack: 'clean', paint, state: looking(), report: () => {},
+      sight: sightOf({ 'desk.png': { facing: 0.2, lettered: 0.55 } }), redraw: async () => { redraws += 1; return 'x.png'; },
+    });
+    expect(redraws).toBe(0);
+  });
+
+  it('a printed quote is held to the same line', async () => {
+    const quote: Visual = { ...visual, subject: "a close-up of a printed quote on a clipboard in a plumber's hand" };
+    const done = await finishPicture({
+      dir: '/nowhere', file: 'q.png', visual: quote, scene, pack: 'clean', paint, state: looking(), report: () => {},
+      sight: sightOf({ 'q.png': { facing: 0.2, lettered: 0.8 }, 'q-b.png': { facing: 0.2, lettered: 0.3 } }),
+      redraw: async () => 'q-b.png',
+    });
+    expect(done.file).toBe('q-b.png');
+  });
+});

@@ -58,6 +58,9 @@ export type Visual = {
   // The size and lens the storyboard gave this scene, carried onto its first shot. The size has already decided the
   // framing above; the lens is said in the picture's own words.
   size?: Size; lens?: Lens;
+  // Drawn a second time because its screen or page came back with writing on it: the words that keep a surface
+  // wordless are said harder (`WORDLESS_AGAIN`).
+  plain?: boolean;
 };
 
 export type Finding = { rule: string; at: number; says: string };
@@ -156,6 +159,31 @@ export function uprightFor(visual: Visual): Visual {
   const subject = (visual.subject ?? '').replace(LAID, ' ').replace(/\s{2,}/g, ' ').replace(/\s+([,.;])/g, '$1').replace(/[\s,.;]+$/, '').trim();
   return { ...visual, subject: `${subject || visual.subject}, standing upright at work` };
 }
+
+// --- a screen or a page in the picture ----------------------------------------------------------------------
+//
+// Journey 19: the cast of an app nobody can photograph is a phone with the photo on it and the quote on paper, and the
+// picture model filled the phone with "Let your meat leaking pipe lenking thipes" and headed the quote "EVINATE".
+// Nothing asked it for writing; a screen or a page left unsaid is filled with what a screen or a page usually holds.
+// So a picture with one in it says what is on it, which is a photo or faint lines and never a word, and the studio's
+// eyes hold it to that (`finish.ts`). It is said after the lettering is scrubbed out of the subject, because the
+// scrubber takes "screen", "text" and "letters" out of anything it is handed.
+const SCREENS = /\b(?:smart ?phones?|phones?|mobiles?|tablets?|ipads?|laptops?|monitors?|screens?|displays?|computers?)\b/i;
+const PAPERS = /\b(?:clipboards?|papers?|sheets?|forms?|quotes?|invoices?|estimates?|receipts?|documents?|pages?|letters?|notebooks?|notepads?|signs?|posters?|menus?|whiteboards?|reports?|contracts?|leaflets?|flyers?)\b/i;
+export type Surface = 'screen' | 'paper';
+export const surfaceIn = (subject: string): Surface | null =>
+  (SCREENS.test(subject ?? '') ? 'screen' : PAPERS.test(subject ?? '') ? 'paper' : null);
+export const WORDLESS: Record<Surface, string> = {
+  screen: 'the screen shows only a photo, no text, no letters',
+  paper: 'the page seen from behind or at a steep angle, no readable text, no letters',
+};
+// The second time, said as what is there rather than only what is not: a picture model reads a "no" loosely.
+export const WORDLESS_AGAIN: Record<Surface, string> = {
+  screen: 'one photo fills the whole screen edge to edge with nothing written over it, the screen shows only a photo, no text, no letters',
+  paper: 'only the plain blank back of the page is seen, its printed side facing away from the camera, no text, no letters',
+};
+// What a picture whose screen or page came back written on is drawn again from: the same picture, said harder.
+export const wordlessFor = (visual: Visual): Visual => ({ ...visual, plain: true });
 
 // --- is this picture of what is being said? ------------------------------------------------------------------
 
@@ -447,7 +475,10 @@ export function castOf(ask: string, facts: string): string[] {
   if (user) cast.push(`a ${user} at work${van}, turned away from the camera`);
   // Close, so the thing is the picture: "a phone on a van dashboard" came back as an empty van with a phone in a corner.
   if (ON_A_PHONE.test(said)) cast.push(`a close-up of a smartphone in a${user ? ` ${user}'s` : ''} hand showing a photo of ${PHOTOS.test(said) && work[0] ? work[0] : 'a job'}`);
-  if (out) cast.push(`a close-up of a printed ${out} on a clipboard${user ? ` in a ${user}'s hand` : ''}`);
+  // Folded in an envelope: journey 19's quote sheets came back headed "EVINATE" and "Cebsis lafad antiaf Plumming",
+  // and a page asked to face away from the camera was still drawn as a full form headed "Choctice". An envelope is
+  // the quote on its way to the customer, and drawn plain white every time it was tried.
+  if (out) cast.push(`a close-up of a printed ${out} folded inside a plain white envelope${user ? ` in a ${user}'s hand` : ''}`);
   for (const thing of work.slice(0, 3)) cast.push(`a close-up of ${thing}`);
   return cast;
 }
@@ -1025,7 +1056,10 @@ export function drawnAs(visual: Visual, bible: string): string {
   // was given behind, and a close-up's long lens on what is now a wide is two instructions that disagree.
   const holds = !visual.size || SIZES_OF[visual.kind].includes(visual.size);
   const lens = holds ? [visual.size ? SIZE_PHRASE[visual.size] : '', lensPhrase(visual.lens)].filter(Boolean).join(', ') : '';
-  return `${bible}. ${FRAMING[visual.kind]}${lens ? `, ${lens}` : ''}: ${body}, ${ROOM[visual.room]}${who}`
+  // A screen or a page still in it once the lettering is scrubbed says what is on it: a photo, faint lines, never a word.
+  const surface = surfaceIn(body);
+  const plain = surface ? `, ${(visual.plain ? WORDLESS_AGAIN : WORDLESS)[surface]}` : '';
+  return `${bible}. ${FRAMING[visual.kind]}${lens ? `, ${lens}` : ''}: ${body}${plain}, ${ROOM[visual.room]}${who}`
     .replace(/\s{2,}/g, ' ').replace(/\s+([,.])/g, '$1');
 }
 

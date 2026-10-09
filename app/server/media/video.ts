@@ -10,7 +10,7 @@ import { type Credit, type Mood as MusicMood } from './music.ts';
 import { noClips } from './clips.ts';
 import { closesOnGround, headlineOf, mendShots, repair, trimTo, type Want } from './critic.ts';
 import { lensPhrase } from './moves.ts';
-import { finishPicture, looking } from './finish.ts';
+import { finishPicture, looking, redrawMark } from './finish.ts';
 import { hands } from './turns.ts';
 import type { Sight } from './sight.ts';
 import {
@@ -546,7 +546,7 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
           });
           // How long the film really runs: as long as its reading and a short beat to close on, never padded to the
           // length asked for with a caption frozen on screen. `media/length.ts` says why.
-          const settled = settleLength(takes, heard, target);
+          const settled = settleLength(takes, heard, target, voice?.seconds ?? 0);
           if (tell && settled) report(settled);
 
           return { takes, edit: editFilm(takes, heard, style, { sfxOn: sfx }) };
@@ -644,12 +644,14 @@ export function hyperframesVideos(deps: VideoDeps): Maker {
             }
             // Looked at, drawn again once if it broke a rule, lifted, cut into planes and measured for its scrim:
             // the same steps a remade film's pictures go through, in `finish.ts`.
+            // Each redraw its own file: a later redraw written over an earlier one's would swap the kept picture.
+            let drawn = 0;
             const done = await finishPicture({
               dir: join(at, 'assets'), file, visual: file.startsWith('stock-') ? visual : drawnFrom, scene, pack, paint, sight: deps.sight, state: lookingAt, stop, report,
               ...(file.startsWith('stock-') ? {} : { subject: { label, closer: closerFor(drawnFrom, world) } }),
               redraw: async (again) => {
                 const piece = await drawing.make({ prompt: drawnAs(again, bible), shape, ...(draft ? { size: 'draft' } : {}) }, { report: fromMaker, signal: stop });
-                const second = `frame-${name}-b.${piece.ext}`;
+                const second = `frame-${name}-${redrawMark(drawn++)}.${piece.ext}`;
                 await writeFile(join(at, 'assets', second), piece.bytes);
                 return second;
               },

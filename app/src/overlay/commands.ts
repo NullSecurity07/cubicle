@@ -148,6 +148,13 @@ export function suggest(input: string, known: Known, extra: Command[] = sliceCom
     else if (!extra.some((one) => one.when?.(low))) found.push({ section: 'Do', label: `Add a person: ${sentence(what)}`, hint: 'You name them and write their brief', action: { do: 'add', kind: 'room', data: { role: sentence(what) } } });
   }
 
+  // A studio named on its own ("video studio", "image studio") is asked for too: journey 19 typed "video studio" and
+  // was offered nothing. Only names with "studio" in them, so a bare "note" or "pitch" still searches.
+  if (!adding && /\bstudio$/.test(low)) {
+    const card = CARD_WORDS.find(([pattern]) => pattern.test(low.replace(/^(?:an?|the)\s+/, '')));
+    if (card) found.push({ section: 'Do', label: card[2], action: { do: 'add', kind: card[1] } });
+  }
+
   const opening = /^(?:focus|open|show|go to)\s+(?:on\s+)?(.+)$/.exec(low);
   const named = (text: string) => known.cards.filter((card) => card.label.toLowerCase().includes(text) || card.role?.toLowerCase().includes(text));
   if (opening) for (const card of named(opening[1]).slice(0, 3)) found.push({ section: 'On the stage', label: `Focus ${card.label}`, action: { do: 'focus', id: card.id } });
