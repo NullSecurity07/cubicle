@@ -58,6 +58,13 @@ function wholeLine(sentence: string): string | undefined {
     const line = tidy(one);
     if (countWords(line) <= room && countWords(line) >= 3 && content(line).length >= 3) return line;
   }
+  // Journey 20's pitch was "FixSlot is a pop-up repair café booking tool for neighbourhoods: visitors book a repair
+  // slot online, the café sees who is coming with what". Nothing above fits that, and the film closed on its problem
+  // line instead. The writer's own colon ended a whole thought: the first clause that is one is the close.
+  for (const clause of said.split(/\s*[:;\u2013\u2014]\s+/).slice(0, 2)) {
+    const line = tidy(clause);
+    if (line !== said && countWords(line) <= room && countWords(line) >= 3 && content(line).length >= 3) return line;
+  }
   // A headline the cutter made is kept only where the writer ended a clause; a cut in the middle of one is not a close.
   const cut = headlineOf(said, HEADING_WORDS);
   const rest = cut && said.startsWith(cut) ? said.slice(cut.length) : null;
@@ -136,11 +143,34 @@ export function closeScene(scene: Scene, line: string): Scene {
 // The headings the critic writes itself when a recast needs one. They are furniture, not the film's first headline.
 const STOCK = new Set(['what you get', 'what matters', 'keep watching', 'watch this', 'follow for more', 'watch it again']);
 
-// The film's first headline, for a close with nothing else to say.
-export function firstHeadline(scenes: Scene[]): string | undefined {
+// The problem a film opens on, which is never what it ends on. Journey 20 closed on "People queue without knowing":
+// its first headline, said again, because the product's line was too long to close on. A line that says what goes
+// wrong — somebody not knowing, waiting, losing, missing — and does not name the product is the problem.
+const PROBLEM = /\b(?:not|never|don't|doesn't|didn't|can't|cannot|won't|isn't|aren't|without|nobody|miss(?:es|ed|ing)?|lose|loses|losing|lost|queue\w*|wait(?:s|ing)?|chaos|chaotic|mess|messy|stuck|late|forget\w*|forgot\w*|guess\w*|struggl\w*|problems?|pain\w*|wast\w*|frustrat\w*|confus\w*|overwhelm\w*|too (?:many|much|long))\b/i;
+const escaped = (word: string) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+export function problemLine(line: string | undefined, product?: string | null): boolean {
+  const said = line?.trim() ?? '';
+  if (!said || !PROBLEM.test(said)) return false;
+  return !(product && new RegExp(`\\b${escaped(product)}\\b`, 'i').test(said));
+}
+// Whether a line is the product's: it names it, or says most of its own line.
+// The product's own lines are its close and every fact that names it ("FixSlot lets a visitor book a slot").
+export function productLine(line: string | undefined, product?: string | null, pitch: (string | undefined)[] = []): boolean {
+  const said = line?.trim() ?? '';
+  if (!said) return false;
+  if (product && new RegExp(`\\b${escaped(product)}\\b`, 'i').test(said)) return true;
+  const mine = content(said).map(stem);
+  return mine.length > 0 && pitch.some((one) => {
+    const theirs = new Set(content(one ?? '').map(stem));
+    return mine.filter((word) => theirs.has(word)).length / mine.length >= 0.6;
+  });
+}
+
+// The film's first headline, for a close with nothing else to say. Never a problem line: a film ends on the product.
+export function firstHeadline(scenes: Scene[], product?: string | null): string | undefined {
   for (const scene of scenes.slice(0, -1)) {
     for (const line of [scene.text?.trim(), scene.heading?.trim()]) {
-      if (line && !STOCK.has(tidy(line).toLowerCase()) && countWords(line) >= 2 && countWords(line) <= HEADING_WORDS) return tidy(line);
+      if (line && !STOCK.has(tidy(line).toLowerCase()) && countWords(line) >= 2 && countWords(line) <= HEADING_WORDS && !problemLine(line, product)) return tidy(line);
     }
   }
   return undefined;

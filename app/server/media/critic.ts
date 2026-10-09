@@ -4,10 +4,10 @@ import {
 } from './spec.ts';
 import type { Pace } from './templates/looks.ts';
 import type { Pack } from './templates/packs.ts';
-import { contradictions, factLine, factsIn, factSteps } from './against-brief.ts';
+import { contradictions, factLine, factsIn, factSteps, productName } from './against-brief.ts';
 import { claimsOf, figureSaid, spellOut, fillerIn, flat, fromBrief, madeUpNames, preciseFigures, realLine, saysMostOf, unfill, ungrounded, unscripted, type Sources } from './grounding.ts';
 import { inStyle, offStyle, photographic } from './style.ts';
-import { closeScene, firstHeadline, namesTheBrief, type Close } from './close.ts';
+import { closeScene, firstHeadline, namesTheBrief, problemLine, productLine, type Close } from './close.ts';
 import { freshHeadlines, phraseFor, repeatsCaptions, type Phrases } from './headlines.ts';
 import {
   carriesVisual, CODEY, contrasty, DATA, ECHO_FINE, EMPHASIS_WORDS, facesCamera, figureIn, hasNumber, headlineOf, keywords,
@@ -867,12 +867,24 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
 
   // 11. The close is the founder's line. Their call to action, word for word, whenever they named one; otherwise a
   //     close that names nothing they wrote becomes their positioning line, or the film's first headline again.
+  // The product, by name, for telling its lines from the problem's.
+  const product = productName(want.sources?.facts ?? []);
+  // The product's line said without its name ("Neighbourhood repair café booking tool", journey 20's second live
+  // run) is the product's line, name and all.
+  const shorthand = (one: string) => !!want.close?.line && !!product && saysMostOf(one, want.close.line)
+    && want.close.line.includes(product) && !one.includes(product);
   const closing = scenes.at(-1);
   if (scenes.length >= 2 && closing && (closing.layout === 'cta' || closing.layout === 'outro')) {
     const asked = want.close?.asked ? want.close.line : undefined;
     // The film's own title is its first headline when no scene is left with one.
     const title = spec.title && countWords(spec.title) <= HEADING_WORDS ? spec.title.trim() : undefined;
-    const plain = !asked && want.sources && !namesTheBrief(closing, want.sources, want.reel) ? (want.close?.line ?? firstHeadline(scenes) ?? title) : undefined;
+    // A close on the problem names the brief and still leaves the viewer holding the problem: it is the product's line.
+    const onProblem = problemLine(closing.say ?? closing.text, product) && !!want.close?.line;
+    // And a film that is not a reel ends on the product's own line, not the model's shorthand for it: journey 20's
+    // live run closed on "Neighborhood repair booking tool". A close that opens a real door keeps it.
+    const offPitch = !want.reel && !!want.close?.line && !opensADoor(`${closing.text ?? ''} ${closing.say ?? ''}`)
+      && !saysMostOf(closing.say ?? closing.text ?? '', want.close.line) && !(want.sources && fromBrief(closing.say ?? closing.text ?? '', want.sources));
+    const plain = !asked && want.sources && (onProblem || offPitch || shorthand(closing.say ?? closing.text ?? '') || !namesTheBrief(closing, want.sources, want.reel)) ? (want.close?.line ?? firstHeadline(scenes, product) ?? title) : undefined;
     // The founder's call to action is the whole close: no heading of the model's own ("Get started today") beside it.
     const line = asked && (!sameLine(closing.text, asked) || !!closing.heading) ? asked : plain;
     if (line) {
@@ -911,6 +923,23 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
     return { ...scene, bullets: lines as string[], heading };
   });
 
+  // 12c. Problem, then product, then close. Journey 20's booking film said what FixSlot is and then went back to
+  //      the queue at the door, and ended there. A problem line said after the product's first line goes back up
+  //      in front of it, so the film argues one way and ends on what the product does.
+  if (scenes.length >= 3) {
+    const pitch = [want.close?.line, ...(want.sources?.facts ?? []).filter((one) => !!product && one.includes(product))];
+    const said = (scene: Scene) => scene.say ?? scene.text ?? '';
+    const body = scenes.slice(0, -1);
+    const first = body.findIndex((scene) => productLine(said(scene), product, pitch));
+    const late = first < 0 ? [] : body.filter((scene, index) => index > first && problemLine(said(scene), product) && !productLine(said(scene), product, pitch));
+    if (late.length) {
+      const kept = body.filter((scene) => !late.includes(scene));
+      const at = Math.max(first, 1);
+      scenes = [...kept.slice(0, at), ...late, ...kept.slice(at), scenes.at(-1)!];
+      note('a problem was said after the product, so it is said before it and the film ends on what the product does');
+    }
+  }
+
   // 13. A film ends on its close, and the close is said. The site's hero film ended on a picture with nothing said
   //     over it: a wordmark, a title card or a close with no line is the film stopping rather than ending. Whatever
   //     is last becomes the close (`close.ts`), with the founder's line when they gave one and its own words when not.
@@ -918,8 +947,8 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
     const closing = scenes.at(-1)!;
     if ((closing.layout !== 'cta' && closing.layout !== 'outro') || !closing.say?.trim()) {
       const title = spec.title && countWords(spec.title) <= HEADING_WORDS ? spec.title.trim() : undefined;
-      const own = [closing.text, closing.heading].map((one) => one?.trim()).find((one) => !!one && countWords(one) >= 2 && countWords(one) <= HEADING_WORDS);
-      const line = ((want.close?.asked ? want.close.line : undefined) ?? own ?? want.close?.line ?? firstHeadline(scenes) ?? title)?.replace(/[.!\s]+$/, '');
+      const own = [closing.text, closing.heading].map((one) => one?.trim()).find((one) => !!one && countWords(one) >= 2 && countWords(one) <= HEADING_WORDS && !problemLine(one, product) && !shorthand(one));
+      const line = ((want.close?.asked ? want.close.line : undefined) ?? own ?? want.close?.line ?? firstHeadline(scenes, product) ?? title)?.replace(/[.!\s]+$/, '');
       if (line) {
         note(`the film ended on a scene with nothing to say, so it closes on "${line}", said aloud`);
         scenes = [...scenes.slice(0, -1), closeScene(closing, line)];
@@ -966,6 +995,16 @@ export function repair(spec: Spec, want: Want): { spec: Spec; notes: string[] } 
         scenes = [...scenes.slice(0, -1), { layout: 'statement', text, say: said, source: said }, scenes.at(-1)!];
         note(`the brief asked to end on "${pin}", so the film says it just before the close`);
       }
+    }
+  }
+
+  // 14b. Whatever put it there, the last thing said is never the problem: a close still on it is the product's line.
+  {
+    const closing = scenes.at(-1);
+    const line = want.close?.line ?? firstHeadline(scenes, product);
+    if (scenes.length >= 2 && closing && !want.close?.asked && line && problemLine(closing.say ?? closing.text, product) && !problemLine(line, product)) {
+      note(`the film ended on its problem, so it closes on "${line}"`);
+      scenes = [...scenes.slice(0, -1), closeScene(closing, line)];
     }
   }
 
