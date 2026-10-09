@@ -1,6 +1,6 @@
 import type { Stage } from '../../shared/model.ts';
 import type { Deps, Installed, Slice } from '../install.ts';
-import { againstNo, answerNos, asksSaidNo, chatNo, promptLine, proposalOf, recallNos, saidNoFor, standingNosIn, suggestionIn, type Proposal } from '../partner/saidno.ts';
+import { againstNo, answerNos, asksSaidNo, chatNo, holdWaiting, promptLine, proposalOf, recallNos, sameProposal, saidNoFor, standingNosIn, suggestionIn, type Proposal, type SaidNoEntry } from '../partner/saidno.ts';
 import { now as clockNow } from '../clock.ts';
 import { withSystem, type Handler } from '../seams.ts';
 import { leadAddresses } from '../tools/outward.ts';
@@ -162,6 +162,20 @@ export default {
         }
       }
       if (count !== undefined && count === 0) text = holdRuleClaims(text, payload.query, count);
+      // "Already proposed and waiting in your list" said of a decision the founder declined, or of one this turn's
+      // proposal was held by: the no is said instead (journey 21).
+      try {
+        const nos = await book.list();
+        const gated: SaidNoEntry[] = [];
+        for (const tool of payload.reply.tools) {
+          if (tool.name !== 'propose_decision' || (tool.ok !== false && !/Already declined|You said no to this/.test(tool.result ?? ''))) continue;
+          const proposal = await proposalNow(tool.name, tool.args ?? {});
+          const no = proposal ? nos.find((one) => sameProposal(one, proposal)) : undefined;
+          if (no) gated.push(no);
+        }
+        const open = (await deps.decisions.list().catch(() => [])).filter((one) => one.status === 'proposed').map((one) => one.title);
+        text = holdWaiting(text, open, nos, gated);
+      } catch (error) { console.error(`said no: ${(error as Error).message}`); }
       // "What have I said no to?": the record answers, all of it (journey 19).
       if (asksSaidNo(payload.query) && !payload.reply.stopped) text = answerNos(text, payload.query, recallNos(await book.list().catch(() => []), clockNow()));
       return next(text === payload.reply.text ? payload : { ...payload, reply: { ...payload.reply, text } });

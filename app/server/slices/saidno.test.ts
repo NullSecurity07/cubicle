@@ -160,3 +160,21 @@ describe('a recall that asks for the nos among other things', () => {
     await part.close?.();
   });
 });
+
+// Journey 21: declined in the panel, asked again, and told it "is already proposed and waiting in your list".
+describe('a decision declined in the panel and asked about again', () => {
+  it('is said to be declined, never waiting, when no decision by that name waits', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'saidno-slice-'));
+    const deps = stubDeps(workspace, ROOT);
+    const part = (await saidno.install(deps)) as Installed;
+    const roomId = (await deps.store.loadStage()).rooms[0].id;
+    const made = await deps.decisions.propose({ title: 'First Three Months Free for New Cafés', options: ['Give new cafés three months free', 'Keep the full price'], recommendation: 'Give three months free' } as never);
+    await deps.decisions.remove(made.id);
+    await saidNoFor(workspace).record({ tool: 'propose_decision', subject: made.title, options: made.options, reason: 'cafés that join for free leave when the free months end' });
+    const query = 'Should we give new cafés their first three months free? Propose it as a decision.';
+    const reply = { text: 'The decision "First Three Months Free for New Cafés" is already proposed and waiting in your list.', tools: [], provider: 'fake', model: 'fake', usage: { inputTokens: 0, outputTokens: 0 }, stopped: false } as never;
+    const out = await deps.seams.run('turn:reply', { roomId, query, reply });
+    expect(out.reply.text).toMatch(/^You declined "First Three Months Free for New Cafés" on \d+ \w+ \('cafés that join for free leave when the free months end'\), so it is not waiting in your list\./);
+    await part.close?.();
+  });
+});
