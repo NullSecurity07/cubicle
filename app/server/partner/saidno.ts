@@ -25,11 +25,14 @@ export type SaidNoEntry = {
   // The latest no; the window counts from here.
   at: number;
   reason?: string;
+  // A decision's options and the pick its proposer made: what it would do, whatever its title says.
+  options?: string[];
+  pick?: string;
   // How often it has been put to the founder again since the first no: once is all it gets.
   asked: number;
 };
 
-export type Proposal = { tool: string; subject: string; key?: string; to?: string; who?: string };
+export type Proposal = { tool: string; subject: string; key?: string; to?: string; who?: string; options?: string[]; pick?: string };
 export type SaidNoCheck = { verdict: 'fresh' } | { verdict: 'reask' | 'declined'; entry: SaidNoEntry; line: string };
 
 export const SAID_NO_MOST = 50;
@@ -69,7 +72,56 @@ export function sameProposal(entry: Pick<SaidNoEntry, 'tool' | 'subject' | 'key'
   }
   if (entry.key && proposal.key && entry.key.toLowerCase() === proposal.key.toLowerCase()) return true;
   if (entry.to && proposal.to && entry.to !== proposal.to) return false;
-  return overlap(entry.subject, proposal.subject) >= SAID_NO_OVERLAP;
+  if (overlap(entry.subject, proposal.subject) >= SAID_NO_OVERLAP) return true;
+  // Journey 18: a decision declined twice came back a third time as "Referral program with a free month for two
+  // referrals", and the partner said the new title "bypasses the duplicate block". A decision is the same decision when
+  // it does the same thing: the same effect and most of the same words in its title, options and pick.
+  if (DECIDES.has(proposal.tool) && DECIDES.has(entry.tool)) return sameDecision(entry, proposal);
+  // Journey 18: the standing no "discounts" let "20% discount for trial user conversion" through. A no said in chat
+  // stands against a decision, bet or task that does what it ruled out.
+  if (entry.tool === 'chat' && DECIDES.has(proposal.tool)) return againstNo(entry.subject, proposal.subject) || ruledEffect(entry.subject, proposal);
+  return false;
+}
+
+// The tools whose proposal is a thing to do, matched by what it does rather than what it is called.
+const DECIDES = new Set(['propose_decision', 'propose_bet', 'propose_task', 'propose_tasks']);
+// What a proposal does, in a few kinds: a price cut is a discount whatever it is called, a free month is free, a reward
+// for bringing others is a referral.
+const EFFECTS: [string, RegExp][] = [
+  ['discount', /\bdiscount\w*|\d+\s*%\s*(?:off|discount|cheaper|reduction)|\bpercent\s+off\b|\bcheaper\b|\bprice\s+cut|\b(?:cut|lower|reduce|drop)\w*\s+(?:the\s+|our\s+)?prices?\b|\bcoupon|\bpromo\s+code/i],
+  ['free', /\bfree\s+(?:month|months|week|weeks|period|plan|tier|access|seat|seats)\b|\bfor\s+free\b|\bcomplimentary\b|\bon\s+the\s+house\b/i],
+  ['referral', /\brefer(?:s|red|ring|ral|rals)?\b|\bword\s+of\s+mouth\b|\binvite\s+(?:friends|colleagues|others)\b/i],
+  ['raise', /\b(?:raise|increase|lift)\w*\s+(?:the\s+|our\s+)?prices?\b|\bprice\s+(?:rise|increase|hike)\b/i],
+  ['outreach', /\boutreach\b|\bcold\s+(?:email|emails|call|calls|message|messages|dm)\b|\breach\s+out\b/i],
+  ['ads', /\b(?:paid|google|facebook|meta|linkedin|instagram)\s+ads?\b|\bad\s+(?:spend|campaign)\b/i],
+  ['hire', /\bhir(?:e|ing)\b|\bcontractor\b|\bfreelancer\b/i],
+];
+// What a proposal does by its title and its pick; what it says it will do without does not count.
+export function effectsOf(text: string): Set<string> {
+  const doing = text.replace(WITHOUT, ' ');
+  return new Set(EFFECTS.filter(([, test]) => test.test(doing)).map(([name]) => name));
+}
+const decisionText = (one: Pick<Proposal, 'subject' | 'options' | 'pick'>) => [one.subject, one.pick ?? '', ...(one.options ?? [])].join('\n');
+// How much of the shorter of two word sets is in the longer, from 0 to 1, on words that say the same act as one.
+export function shareOf(a: string, b: string): number {
+  const left = actWords(a);
+  const right = actWords(b);
+  if (!left.size || !right.size) return 0;
+  return [...left].filter((word) => right.has(word)).length / Math.min(left.size, right.size);
+}
+export const DECISION_SHARE = 0.5;
+export function sameDecision(entry: Pick<Proposal, 'subject' | 'options' | 'pick'>, proposal: Pick<Proposal, 'subject' | 'options' | 'pick'>): boolean {
+  const was = effectsOf(`${entry.subject}\n${entry.pick ?? ''}`);
+  const now = effectsOf(`${proposal.subject}\n${proposal.pick ?? ''}`);
+  if (!was.size || was.size !== now.size || [...was].some((one) => !now.has(one))) return false;
+  return shareOf(entry.subject, proposal.subject) >= DECISION_SHARE || shareOf(decisionText(entry), decisionText(proposal)) >= DECISION_SHARE;
+}
+// A standing no on a kind of move ("discounts", "free months") stands against any proposal of that kind.
+function ruledEffect(no: string, proposal: Pick<Proposal, 'subject' | 'pick'>): boolean {
+  const ruled = effectsOf(no);
+  if (!ruled.size) return false;
+  const doing = effectsOf(`${proposal.subject}\n${proposal.pick ?? ''}`);
+  return [...ruled].every((one) => doing.has(one));
 }
 
 const short = (text: string, most: number) => { const one = text.replace(/\s+/g, ' ').trim(); return one.length > most ? `${one.slice(0, most - 1)}…` : one; };
@@ -84,7 +136,12 @@ export function proposalOf(tool: string, args: Record<string, unknown>, leads: I
   const lead = new Set([...leads].map((one) => one.toLowerCase()));
   switch (tool) {
     case 'propose_bet': return { tool, subject: short(string(args.what) || string(args.hypothesis), 160) };
-    case 'propose_decision': case 'propose_task': case 'propose_tasks': return { tool, subject: short(string(args.title), 160) };
+    case 'propose_decision': {
+      const options = Array.isArray(args.options) ? args.options.filter((one): one is string => typeof one === 'string' && !!one.trim()).map((one) => short(one, 160)).slice(0, 5) : [];
+      const pick = short(string(args.recommendation), 200);
+      return { tool, subject: short(string(args.title), 160), ...(options.length ? { options } : {}), ...(pick ? { pick } : {}) };
+    }
+    case 'propose_task': case 'propose_tasks': return { tool, subject: short(string(args.title), 160) };
     case 'propose_source': return { tool, subject: short(`${string(args.about)} ${string(args.url)}`, 160), ...(string(args.url) ? { key: string(args.url) } : {}) };
     case 'propose_target': return { tool, subject: short(`${string(args.key)} target ${String(args.value ?? '')}`, 160), ...(string(args.key) ? { key: `target:${string(args.key)}` } : {}) };
     case 'draft_email': case 'send_email': {
@@ -158,7 +215,8 @@ export function createSaidNo(workspace: string, now: () => number = clockNow) {
           return { ...held };
         }
         const entry: SaidNoEntry = { id: `no-${at.toString(36)}-${Math.random().toString(36).slice(2, 6)}`, tool: proposal.tool, subject: short(proposal.subject, 160), at, asked: 0,
-          ...(proposal.key ? { key: proposal.key } : {}), ...(proposal.to ? { to: proposal.to } : {}), ...(proposal.who ? { who: proposal.who } : {}), ...(reason ? { reason } : {}) };
+          ...(proposal.key ? { key: proposal.key } : {}), ...(proposal.to ? { to: proposal.to } : {}), ...(proposal.who ? { who: proposal.who } : {}), ...(reason ? { reason } : {}),
+          ...(proposal.options?.length ? { options: proposal.options.slice(0, 5) } : {}), ...(proposal.pick ? { pick: proposal.pick } : {}) };
         entries.push(entry);
         return entry;
       });
@@ -239,11 +297,12 @@ export function standingNosIn(text: string): { subject: string; reason?: string 
 const SAME_ACT: Record<string, string> = {
   contact: 'reach', contacting: 'reach', contacted: 'reach', outreach: 'reach', reach: 'reach', reaching: 'reach', email: 'reach', emailing: 'reach',
   message: 'reach', messaging: 'reach', ping: 'reach', dm: 'reach', call: 'call', calls: 'call', calling: 'call', meeting: 'call', meet: 'call',
-  discount: 'discount', discounts: 'discount', discounting: 'discount', cut: 'cut', cutting: 'cut', lower: 'cut', lowering: 'cut',
+  discount: 'discount', discounts: 'discount', discounting: 'discount', discounted: 'discount',
+  refer: 'refer', refers: 'refer', referred: 'refer', referring: 'refer', referral: 'refer', referrals: 'refer', month: 'month', months: 'month', cut: 'cut', cutting: 'cut', lower: 'cut', lowering: 'cut',
 };
 const NOT_THE_ACT = new Set(['propose', 'suggest', 'task', 'tasks', 'week', 'today', 'again', 'move', 'moves', 'idea', 'thing', 'things']);
 const canon = (word: string) => SAME_ACT[word] ?? SAME_ACT[word.replace(/s$/, '')] ?? (word.length > 4 ? word.replace(/(?:ing|s)$/, '') : word);
-const actWords = (text: string) => new Set(subjectWords(text).filter((word) => !NOT_THE_ACT.has(word) && !/^\d/.test(word)).map(canon));
+const actWords = (text: string) => new Set(subjectWords(text.replace(/\d+(?:[.,]\d+)?\s*%\s*(?:off\b)?|\bpercent\s+off\b/gi, ' discount ')).filter((word) => !NOT_THE_ACT.has(word) && !/^\d/.test(word)).map(canon));
 const WITHOUT = /\b(?:without|instead of|rather than|not|no|never|avoid(?:ing)?|skip(?:ping)?|stop(?:ping)?)\b[^.,;]*/gi;
 export function againstNo(no: string, move: string): boolean {
   const ruled = actWords(no);

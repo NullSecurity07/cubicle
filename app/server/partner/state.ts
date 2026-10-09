@@ -4,6 +4,7 @@ import type { MorningNote, PlanProposal } from '../../shared/partner.ts';
 import type { KillSignal, PartnerCall } from './call.ts';
 import type { Correction } from './corrections.ts';
 import type { InputFix, Inputs, Snapshot } from './economics.ts';
+import type { Crossing } from './refresh.ts';
 import { writeAtomic } from '../fsx.ts';
 import { readBook } from '../rescue.ts';
 
@@ -39,8 +40,13 @@ export type PartnerState = {
   // Needs you, `killProposal`), never moves it.
   call?: PartnerCall & { at: number; day: string; roomId: string; snapshot?: Snapshot; basis?: Inputs; signalBy?: 'founder' | 'partner' };
   killProposal?: { decisionId: string; signal: KillSignal; roomId: string };
-  // The day the partner last tried to refresh its verdict unasked: one try a day.
+  // The day the partner last tried to refresh its verdict unasked, and the inputs it tried on (`refreshSeen`, the
+  // snapshot as JSON): one try a day on the same numbers; a brief edit later that day is looked at on the next tick.
   refreshTried?: string;
+  refreshSeen?: string;
+  // A reading that crossed a line the call stands on (break-even, three months of runway), waiting to hold for a second
+  // reading or a second day before the call is made again (refresh.ts `Crossing`).
+  crossing?: Crossing;
   // The last slip on the brief's goal a refresh answered, without its count of days: a slip is looked at once.
   slipSeen?: string;
   // What the founder corrected in chat ("50 print jobs a month, not 50 paying hosts"), newest last: what they said is

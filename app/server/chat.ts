@@ -137,6 +137,8 @@ export function createChat(deps: Deps) {
       // The partner answers on the strongest free models unless the founder pinned one for them.
       const { order, notice } = turnRoute(room, clients, usage, { promptChars: promptSize(messages), tools: true, vision }, { query: text });
       if (vision && !order[0]?.vision) send({ notice: 'No model that can see images is set up (Gemini can), so the picture is described to the model only by its file name.' });
+      // A pinned model passed over is said under the reply for good, not only while it streams (journey 17).
+      let pinNotice = room.model && room.model !== 'auto' && notice ? notice : '';
       if (notice) send({ notice });
       if (slim && order[0]) send({ notice: slimNotice(order[0]) });
       // The reply is kept as it stands after every step a tool finishes, marked stopped, and the finished reply is
@@ -167,7 +169,7 @@ export function createChat(deps: Deps) {
         events: {
           token: (token) => { kept.text += token; send({ token }); roomFeed.tell({ roomId, turn, token }); },
           tool: (tool) => { keepSoFar(tool); send({ tool }); roomFeed.tell({ roomId, turn, tool }); },
-          notice: (text) => send({ notice: text }),
+          notice: (text) => { if (room.model && room.model !== 'auto' && (!order[0] || text !== slimNotice(order[0]))) pinNotice = text; send({ notice: text }); },
           // A model broke off part way and the next one answers from the start: every window empties the bubble.
           restart: () => { kept.text = ''; send({ restart: true }); roomFeed.tell({ roomId, turn, restart: true }); },
         },
@@ -225,7 +227,7 @@ export function createChat(deps: Deps) {
       if (held !== reply.text) reply = { ...reply, text: held };
       const message = {
         id: replyId, role: 'assistant' as const, text: reply.text, at: Date.now(), provider: reply.provider, model: reply.model,
-        usage: reply.usage, ...(reply.tools.length ? { tools: reply.tools } : {}), ...(reply.stopped ? { stopped: true } : {}),
+        usage: reply.usage, ...(reply.tools.length ? { tools: reply.tools } : {}), ...(reply.stopped ? { stopped: true } : {}), ...(pinNotice ? { notice: pinNotice } : {}),
       };
       await kept.writes;
       if (reply.text.trim() || reply.tools.length || kept.tools.length) await store.putMessage(roomId, message);

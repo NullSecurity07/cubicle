@@ -8,7 +8,7 @@ import type { ModelMessage } from '../prompt.ts';
 import type { FounderPromise } from './promises.ts';
 import { saidNoFor } from './saidno.ts';
 import { NOTHING_CHANGED } from './since.ts';
-import { attributed, confirmedFix, gatherMorning, MORNING_ASK, morningDue, morningInputs, morningMessage, MOST_TRIES, RETRY_AFTER, writeMorning, type MorningSources } from './morning.ts';
+import { attributed, confirmedFix, gatherMorning, MORNING_ASK, morningDue, morningInputs, morningMessage, MOST_TRIES, reachedFlags, RETRY_AFTER, writeMorning, type MorningSources } from './morning.ts';
 
 const at = (text: string) => new Date(text).getTime();
 const NINE = at('2026-09-27T09:00');
@@ -404,5 +404,17 @@ describe('journey 17\'s morning notes', () => {
     expect(attributed('Otto says the cash is €6,000.', [{ name: 'Otto', text: '' }], { brief: company, worked: [] }).text).toBe('Otto says the cash is €6,000 (from the brief).');
     expect(attributed('Otto put MRR at €2,812.33.', [{ name: 'Otto', text: '' }], { brief: company, worked: [2812.333333] }).text).toBe('Otto put MRR at €2,812.33 (calc).');
     expect(attributed('Otto put MRR at €2,556.67.', [{ name: 'Otto', text: '' }], { brief: company, worked: [2812.333333] })).toEqual({ text: '', left: ['€2,556.67, which Otto never gave'] });
+  });
+});
+
+// Journey 18: "Unconfirmed ... (contacted)" under every note, for a row of the brief and for a lead whose email was opened.
+describe('outreach in the note', () => {
+  const FLAG = 'Unconfirmed: this reply claims an action no tool confirmed (contacted).';
+  const tom = { person: { name: 'Tom Becker' }, thread: [{ kind: 'sent' as const, at: new Date('2026-10-07T09:00').getTime() }, { kind: 'opened' as const, at: new Date('2026-10-07T15:00').getTime() }] };
+  it('drops the flag for a count the brief gives, says a lead\'s outreach as its thread has it, and keeps any other', () => {
+    expect(reachedFlags([FLAG], '1. Follow up the 80 plumbers contacted so far.', '- Plumbers contacted: 80', [])).toEqual([]);
+    expect(reachedFlags([FLAG], '1. Tom Becker was contacted, so call him.', '', [tom])).toEqual(['Tom Becker: Contacted (opened in Gmail, 7 Oct).']);
+    expect(reachedFlags([FLAG, 'Unsourced figures: 5'], '1. 120 plumbers contacted this week.', '- Plumbers contacted: 80', [])).toEqual([FLAG, 'Unsourced figures: 5']);
+    expect(reachedFlags(['Unconfirmed: this reply claims an action no tool confirmed (sent, contacted).'], '1. I sent it. 80 plumbers contacted.', '- Plumbers contacted: 80', [])).toEqual(['Unconfirmed: this reply claims an action no tool confirmed (sent).']);
   });
 });

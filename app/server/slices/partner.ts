@@ -19,8 +19,8 @@ import { chaseLine, keptPromiseLine, promiseLine, promisesAttention, promisesBoo
 import { gatherSince, metricsOnDisk, sinceHeadline } from '../partner/since.ts';
 import { partnerState, type PartnerStateBook } from '../partner/state.ts';
 import { createReviews, granted } from '../partner/review.ts';
-import { FAKE_REFRESH, holdStop, readRefresh, refreshAsk, refreshDue, refreshOpening, refreshText, staleOf } from '../partner/refresh.ts';
-import { killAskIn, killMovedLine, pastLine } from '../partner/kill.ts';
+import { FAKE_REFRESH, holdStop, keepCall, loosens, readRefresh, refreshAsk, refreshDue, refreshOpening, refreshText, staleOf } from '../partner/refresh.ts';
+import { crossedRefusal, killAskIn, killMovedLine, pastLine } from '../partner/kill.ts';
 import { goalsIn } from '../partner/goal.ts';
 import { correctionLines, correctionsIn, fixesLine, inputFixesIn, keepCorrections, keepFixes, unitFix, unitsFix } from '../partner/corrections.ts';
 import { markClaims } from '../tools/evidence.ts';
@@ -261,8 +261,11 @@ export function createPartner(options: PartnerOptions = {}) {
     };
     // A kill line the founder set is theirs (journey 16: the refresh moved the founder's "below 12" to "below 7"). The
     // partner may only propose moving it, as a decision in Needs you; the line stands until the founder chooses.
-    const protectSignal = async (held: { signal?: KillSignal; signalBy?: 'founder' | 'partner' } | undefined, fresh: PartnerCall, roomId: string, who: string): Promise<{ call: PartnerCall; line?: string }> => {
+    // `unasked`: a refresh, which never proposes loosening the founder's line to get away from a trend (journey 18:
+    // "Shall it move to below 6?" as paying fell from 9 to 8 toward the founder's 7).
+    const protectSignal = async (held: { signal?: KillSignal; signalBy?: 'founder' | 'partner' } | undefined, fresh: PartnerCall, roomId: string, who: string, unasked = false): Promise<{ call: PartnerCall; line?: string }> => {
       if (held?.signalBy !== 'founder' || !held.signal || !fresh.signal || (fresh.signal.what === held.signal.what && fresh.signal.by === held.signal.by)) return { call: fresh };
+      if (unasked && loosens(held.signal, fresh.signal, thresholdOf)) return { call: { ...fresh, signal: held.signal } };
       const decision = await deps.decisions.propose({
         title: `Move your kill line from "${held.signal.what}" to "${fresh.signal.what}"?`,
         context: `You set the kill signal "${held.signal.what}" by ${held.signal.by}. The numbers moved since, and ${who} would move it to "${fresh.signal.what}" by ${fresh.signal.by}. It stays yours until you choose.`,
@@ -742,7 +745,6 @@ export function createPartner(options: PartnerOptions = {}) {
       const held = await state.read();
       if (!held.call) return;
       const today = localDay(now());
-      if (held.refreshTried === today) return;
       const stage = await deps.store.loadStage();
       const partner = partnerOf(stage);
       if (!partner || deps.busy.has(partner.id)) return;
@@ -751,13 +753,25 @@ export function createPartner(options: PartnerOptions = {}) {
       // The one picture of the numbers: the call is due a look only when an input it was made on changed (stale), the
       // brief's goal day passed, or a week went by (server/partner/refresh.ts).
       const numbers = doc ? await stateFrom(stage, company) : null;
+      // One try a day on the same numbers; a brief edit after it is looked at on the next tick (journey 18: a price
+      // edit at 18:00 waited for the next morning).
+      const seen = JSON.stringify(numbers?.snapshot() ?? {});
+      if (held.refreshTried === today && held.refreshSeen === seen) return;
       const economics = numbers?.economics() ?? null;
       const goal = goalsIn(company, today)[0];
-      const due = refreshDue(held.call, numbers, today, { goal });
-      if (!due) return;
+      const due = refreshDue(held.call, numbers, today, { goal, ...(held.crossing ? { crossing: held.crossing } : {}) });
+      // A reading that crossed a line once waits for a second reading or a second day; one that crossed none clears it.
+      if (due?.wait) {
+        if (JSON.stringify(due.wait) !== JSON.stringify(held.crossing)) await state.change((draft) => { draft.crossing = due.wait; });
+        return;
+      }
+      if (!due) {
+        if (held.crossing) await state.change((draft) => { delete draft.crossing; });
+        return;
+      }
       const taken = await granted(budget, 'verdict refresh');
       if (!taken.ok) return;
-      await state.change((draft) => { draft.refreshTried = today; });
+      await state.change((draft) => { draft.refreshTried = today; draft.refreshSeen = seen; delete draft.crossing; });
       const opening = refreshOpening(held.call, numbers, due.changed);
       const messages: ModelMessage[] = [...await deps.promptFor(stage, partner.id, [], true), { role: 'user', content: refreshAsk(held.call, opening, economics, today, { ...due, goal }) }];
       // No model answered: the turn never ran, so it goes back to the day's budget, and tomorrow tries again.
@@ -770,19 +784,22 @@ export function createPartner(options: PartnerOptions = {}) {
       const marked = fresher.why ? { ...fresher, why: markClaims(fresher.why, [company, ...(fresher.working ?? [])]) } : fresher;
       // No stop and no wind-down for a company that is cash-positive or has more than six months, unless the founder's
       // own words asked for it (journey 16: "plan an orderly wind-down" at 11 paying against a break-even of 8).
-      const stopHeld = holdStop(marked, numbers, await founderWords(partner.id), held.call.decision);
+      // The call changes only when the numbers crossed a line it stands on; a move the founder can see in a trend row
+      // is not a new call (journey 18).
+      const kept = keepCall(held.call, marked, numbers, due.why);
+      const stopHeld = holdStop(kept.call, numbers, await founderWords(partner.id), held.call.decision);
       // The week's move is held to what the founder ruled out (journey 15: "Contact 40 more makers" minutes after "no
       // cold outreach"): one set against a standing no is dropped, and the refresh says which no it kept to.
       const ruled = stopHeld.call.move ? await saidNoFor(deps.workspace).ruledOut(stopHeld.call.move).catch(() => undefined) : undefined;
       const unguarded = ruled ? { ...stopHeld.call, move: undefined } : stopHeld.call;
-      const guarded = await protectSignal(held.call, unguarded, partner.id, partner.name);
+      const guarded = await protectSignal(held.call, unguarded, partner.id, partner.name, true);
       const call = guarded.call;
       const at = now();
       // A kill line that moves is never silent: old → new, and a number already past the new line raises the check now.
       const moves = call.signal && (call.signal.what !== held.call.signal?.what || call.signal.by !== held.call.signal?.by);
       const killLine = moves && call.signal ? await keepSignal(held.call.signal, call.signal, partner.id, stage) : '';
       const body = breakEvenFix(figuresFix(refreshText(opening, held.call.decision, call), economics), numbers);
-      const text = `${body}${stopHeld.note ? `\n\n${stopHeld.note}` : ''}${killLine ? `\n\n*${killLine}*` : ''}${guarded.line ? `\n\n*${guarded.line}*` : ''}${ruled ? `\n\n*${ruledOutLine(ruled)}, so the move "${stopHeld.call.move}" was dropped.*` : ''}`;
+      const text = `${body}${kept.note ? `\n\n${kept.note}` : ''}${stopHeld.note ? `\n\n${stopHeld.note}` : ''}${killLine ? `\n\n*${killLine}*` : ''}${guarded.line ? `\n\n*${guarded.line}*` : ''}${ruled ? `\n\n*${ruledOutLine(ruled)}, so the move "${stopHeld.call.move}" was dropped.*` : ''}`;
       await deps.store.appendChat(partner.id, { id: newMessageId(), role: 'assistant', text, at, ...(reply.provider ? { provider: reply.provider } : {}), ...(reply.model ? { model: reply.model } : {}) });
       await state.change((draft) => { draft.call = keptCall(call, at, today, partner.id, numbers, guarded.line || (held.call!.signalBy === 'founder' && !killLine) ? 'founder' : 'partner'); });
       markVerdict(partner.id, at);
@@ -813,7 +830,13 @@ export function createPartner(options: PartnerOptions = {}) {
         if (!asked) return next(payload);
         const old = held.call?.signal;
         if (old && old.what === asked.signal.what && old.by === asked.signal.by) return next({ ...payload, answer: `The kill signal is already "${old.what}" by ${old.by}: nothing to change.` });
+        // A line crossed already is refused, as the partner's own is, with the line that would be taken.
+        const refused = crossedRefusal(asked.signal, await readingOf(stage, asked.signal).catch(() => null));
+        if (refused) return next({ ...payload, answer: refused });
         const at = now();
+        // The partner's proposal to move the line the founder just replaced is answered by this: it leaves Needs you.
+        const proposal = held.killProposal;
+        if (proposal && (await deps.decisions.list().catch(() => [])).some((one) => one.id === proposal.decisionId && one.status === 'proposed')) await deps.decisions.remove(proposal.decisionId).catch(() => {});
         await state.change((draft) => { draft.call = { ...(draft.call ?? { day: today, roomId: me.id, at }), signal: asked.signal, signalBy: 'founder' }; delete draft.killProposal; });
         const line = await keepSignal(old, asked.signal, me.id, stage);
         standing = null;

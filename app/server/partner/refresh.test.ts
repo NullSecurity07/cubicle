@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { stateOf } from './economics.ts';
-import { holdStop, readRefresh, refreshAsk, refreshDue, refreshOpening, refreshText, slipOn, snapshotOfBasis, staleOf, type Held } from './refresh.ts';
+import { crossedLine, holdStop, keepCall, loosens, readRefresh, refreshAsk, refreshDue, refreshOpening, refreshText, slipOn, snapshotOfBasis, staleOf, type Held } from './refresh.ts';
 
 const brief = (paying: number, price = 240) => `- Paying offices: ${paying}\n- Price: €${price} a month per office\n- Produce + delivery cost: €41 per box, about €178 a month per office\n- Cash: €12,000\n- Burn: €2,100 a month`;
 const OLD: Held = {
@@ -91,5 +91,49 @@ describe('journey 16: the refresh of a cash-positive company', () => {
     ] });
     const due = refreshDue(call, fixed, '2026-10-07')!;
     expect(refreshOpening(call, fixed, due.changed)).toBe('On 6 Oct I said keep going at 14 paying subscribers; now break-even is 8 paying subscribers and the company has 11, cash-positive. Since then: price €59 a month → €59 a week (founder: "€59 is per week, not per month"); paying subscribers 14 → 11 (founder: "No, 14 subscribers is not 14 paying, 11 pay").');
+  });
+});
+
+// Journey 18: 9 paying on day 1, a reading of 8 on day 2 flipped "keep going" to "change course", and 10 flipped it back.
+describe('a call that holds through one reading', () => {
+  const QUOTESNAP = (cash = 3200) => `- Price: €29 a month per plumber\n- Paying plumbers: 9\n- Cash: €${cash.toLocaleString('en-US')}\n- Burn: €1,100 a month`;
+  const read = (value: number, day: string, cash?: number) => stateOf(QUOTESNAP(cash), { readings: [{ label: 'Paying plumbers', value, day }] });
+  const call = (cash?: number): Held => ({ decision: 'keep going', at: 0, day: '2026-10-09', roomId: 'sam', snapshot: stateOf(QUOTESNAP(cash)).snapshot() });
+
+  it('a reading that crosses no line is no refresh, back up or down', () => {
+    expect(refreshDue(call(), read(8, '2026-10-10'), '2026-10-10')).toBeNull();
+    expect(refreshDue(call(), read(10, '2026-10-10'), '2026-10-10')).toBeNull();
+    expect(refreshDue(call(), read(8, '2026-10-10'), '2026-10-16')).toEqual({ why: 'week', changed: expect.any(Array) });
+  });
+
+  it('a reading that crosses three months of runway waits for a second reading or a second day', () => {
+    // €2,600 cash: 9 paying is 3.1 months, 8 is 2.99.
+    expect(crossedLine(call(2600).snapshot!, read(8, '2026-10-10', 2600).snapshot())).toBe('runway fell under 3 months');
+    const first = refreshDue(call(2600), read(8, '2026-10-10', 2600), '2026-10-10')!;
+    expect(first.wait).toEqual({ what: 'runway fell under 3 months', since: '2026-10-10', seen: '8@2026-10-10' });
+    // The same reading, the same day: still waiting.
+    expect(refreshDue(call(2600), read(8, '2026-10-10', 2600), '2026-10-10', { crossing: first.wait })?.wait).toEqual(first.wait);
+    // A second day, or a second reading still past it: the call is made again.
+    expect(refreshDue(call(2600), read(8, '2026-10-10', 2600), '2026-10-11', { crossing: first.wait })).toMatchObject({ why: 'moved' });
+    expect(refreshDue(call(2600), read(7, '2026-10-10', 2600), '2026-10-10', { crossing: first.wait })?.wait).toBeUndefined();
+    // Back above the line: nothing waits.
+    expect(refreshDue(call(2600), read(9, '2026-10-10', 2600), '2026-10-10', { crossing: first.wait })).toBeNull();
+  });
+
+  it('a call remade on a move that crossed nothing keeps its decision; a price the founder edits still remakes it at once', () => {
+    const fresh = { decision: 'change course' as const, why: 'one plumber left', move: 'Test a €49 tier.' };
+    const kept = keepCall(call(), fresh, read(8, '2026-10-10'), 'moved');
+    expect(kept.call).toEqual({ decision: 'keep going', move: 'Test a €49 tier.' });
+    expect(kept.note).toContain('The call stays "keep going"');
+    expect(keepCall(call(2600), fresh, read(8, '2026-10-11', 2600), 'moved').call).toBe(fresh);
+    expect(keepCall(call(), fresh, read(8, '2026-10-10'), 'goal').call).toBe(fresh);
+    expect(refreshDue(call(), stateOf(QUOTESNAP().replace('€29', '€33.35')), '2026-10-11')).toMatchObject({ why: 'moved' });
+  });
+
+  it('never loosens a line: a "below" line only moves up', () => {
+    const threshold = (what: string) => ({ metric: 'paying', below: /below/.test(what), value: Number(/\d+/.exec(what)![0]) });
+    expect(loosens({ what: 'Paying plumbers below 7' }, { what: 'Paying plumbers below 6' }, threshold)).toBe(true);
+    expect(loosens({ what: 'Paying plumbers below 7' }, { what: 'Paying plumbers below 9' }, threshold)).toBe(false);
+    expect(loosens({ what: 'MRR above 5000' }, { what: 'MRR above 6000' }, threshold)).toBe(true);
   });
 });

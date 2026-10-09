@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { LEAD_STAGES, leadName, noteKey, sameLead, type Lead, type LeadsEvent, type LeadStage, type ThreadEvent } from '../../shared/leads.ts';
 import type { Stage } from '../../shared/model.ts';
+import { now as clockNow } from '../clock.ts';
 import { newId } from '../slice-kit.ts';
 
 // The ids of the Leads cards on the stage: the leads slice, the Twenty mirror and the dashboard all read them this way.
@@ -31,7 +32,8 @@ export const isStage = (value: unknown): value is LeadStage => (LEAD_STAGES as r
 
 // Leads live beside the stage, one file per leads card, the way a board's tasks do. The server owns them: people and
 // the founder's window both only ask for changes, and every change is said to whoever listens.
-export function createLeads(dir: string, tell: (cardId: string, event: LeadsEvent) => void = () => {}, now: () => number = Date.now) {
+// `now` is the app's clock (server/clock.ts), so a check run living a later day stamps its events on that day.
+export function createLeads(dir: string, tell: (cardId: string, event: LeadsEvent) => void = () => {}, now: () => number = clockNow) {
   const path = (cardId: string) => join(dir, 'leads', `${safe(cardId)}.json`);
   const cache = new Map<string, Lead[]>();
   const revs = new Map<string, number>();

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Stage } from '../../shared/model.ts';
 import { calculate } from '../tools/calc.ts';
-import { createReviews, dailyBudget, fixAsk, granted, phrasingHolds, reviewDoc, reviewLine } from './review.ts';
+import { createReviews, dailyBudget, fixAsk, granted, phrasingHolds, reviewDoc, reviewLine, senseFlags } from './review.ts';
 import { stateOf } from './economics.ts';
 
 // The Numbers of journey 13's Company brief, as the founder wrote them.
@@ -200,5 +200,26 @@ describe('a figure is worked by its value, never by its words', () => {
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }
+  });
+});
+
+// Journey 18: Otto's Runway said "1,100 / 29 = 37.9 (rounded up to 38 plumbers) (calc)" and was flagged "38, not 37.9".
+describe('a break-even written with its rounding', () => {
+  const QUOTESNAP = '- Price: €29 a month per plumber\n- Paying plumbers: 9\n- Cash: €3,200\n- Burn: €1,100 a month';
+  const ASKED = 'Write the runway';
+  const read = [ASKED, 'ceil(1100 / 29) = 38', '1100 / 29 = 37.93'];
+  const review = (line: string) => senseFlags(`# Runway\n\n${line}`, QUOTESNAP).flags;
+
+  it('takes the quotient to its written places, or a line that says it was rounded to the right count', () => {
+    expect(review('- Break-even paying plumbers = Gross burn / Price = 1,100 / 29 = 37.9 (rounded up to 38 plumbers) (calc)')).toEqual([]);
+    expect(review('- Break-even: 37.93 paying plumbers')).toEqual([]);
+    expect(review('- Break-even: 37 paying plumbers, rounded to 38')).toEqual([]);
+    expect(reviewDoc({ text: '# Runway\n\n- Break-even paying plumbers = 1,100 / 29 = 37.9 (rounded up to 38 plumbers) (calc)', numbers: QUOTESNAP, read, said: [ASKED] }).flags.filter((one) => one.kind === 'sense')).toEqual([]);
+  });
+
+  it('still flags a figure off by more than its places, or rounded to the wrong count', () => {
+    expect(review('- Break-even: 37.1 paying plumbers')[0]?.short).toBe('break-even is 38 paying plumbers, not 37.1');
+    expect(review('- Break-even: 37 paying plumbers')[0]?.short).toBe('break-even is 38 paying plumbers, not 37');
+    expect(review('- Break-even: 37.9, rounded to 37 paying plumbers')).toHaveLength(1);
   });
 });

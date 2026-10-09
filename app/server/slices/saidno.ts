@@ -36,6 +36,22 @@ export function holdRuleClaims(reply: string, query: string, kept: number): stri
   }).replace(/[ \t]{2,}/g, ' ');
 }
 
+// "so it bypasses the duplicate block", "a new title gets it past your no": a person saying they went round the
+// founder's no. Journey 18: Sam retitled a decision declined twice and said so. Never said; the proposal is held.
+const BYPASS = /\b(?:bypass\w*|circumvent\w*|sidestep\w*|(?:get(?:s|ting)?|got)\s+(?:it\s+|this\s+|that\s+|them\s+)?(?:a?round|past)|work(?:s|ed|ing)?\s+around|slip\w*\s+(?:past|through)|dodg\w*|evad\w*)\b[^.!?\n]*\b(?:block\w*|duplicate|gate|check|said no|your no|refus\w*|declin\w*|filter)\b|\b(?:new|different|another)\s+(?:title|name|wording)\b[^.!?\n]*\b(?:so|to)\b[^.!?\n]*\b(?:block\w*|duplicate|gate|check|no)\b/i;
+export const HELD_BYPASS = 'It was not put to you again: you said no to it before, and a new title does not make it a new proposal.';
+export function holdBypassClaims(reply: string): { text: string; claimed: boolean } {
+  let claimed = false;
+  const text = reply.replace(/[^.!?\n]+[.!?]*/g, (sentence) => {
+    if (!BYPASS.test(sentence)) return sentence;
+    const lead = /^\s*/.exec(sentence)![0];
+    if (claimed) return '';
+    claimed = true;
+    return `${lead}${HELD_BYPASS}`;
+  }).replace(/[ \t]{2,}/g, ' ');
+  return { text, claimed };
+}
+
 export default {
   name: 'saidno',
   install(deps: Deps): Installed {
@@ -121,8 +137,23 @@ export default {
     const onReply: Handler<'turn:reply'> = async (payload, next) => {
       const count = kept.get(payload.roomId);
       kept.delete(payload.roomId);
-      if (count === undefined || count > 0) return next(payload);
-      const text = holdRuleClaims(payload.reply.text, payload.query, count);
+      let text = payload.reply.text;
+      // A reply that says it went round a no: the claim goes, and what the turn proposed under a new name is taken
+      // back off the founder's list and kept as the same no.
+      const bypass = holdBypassClaims(text);
+      if (bypass.claimed) {
+        text = bypass.text;
+        for (const tool of payload.reply.tools) {
+          if (tool.name !== 'propose_decision' || tool.ok === false) continue;
+          const title = typeof tool.args?.title === 'string' ? tool.args.title.trim().toLowerCase() : '';
+          const held = (await deps.decisions.list().catch(() => [])).find((one) => one.status === 'proposed' && one.title.trim().toLowerCase() === title);
+          if (!held) continue;
+          await deps.decisions.remove(held.id).catch(() => {});
+          const proposal = await proposalNow(tool.name, tool.args ?? {});
+          if (proposal) await book.record({ ...proposal, who: held.proposedBy }).catch(() => {});
+        }
+      }
+      if (count !== undefined && count === 0) text = holdRuleClaims(text, payload.query, count);
       return next(text === payload.reply.text ? payload : { ...payload, reply: { ...payload.reply, text } });
     };
 

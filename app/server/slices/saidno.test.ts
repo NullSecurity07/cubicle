@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { Installed } from '../install.ts';
 import { saidNoFor } from '../partner/saidno.ts';
 import { stubDeps } from '../slice-stubs.ts';
-import saidno, { holdRuleClaims, NOT_KEPT } from './saidno.ts';
+import saidno, { HELD_BYPASS, holdBypassClaims, holdRuleClaims, NOT_KEPT } from './saidno.ts';
 
 const ROOT = resolve(import.meta.dirname, '../../..');
 
@@ -63,5 +63,30 @@ describe('a reply that says a no was recorded', () => {
     expect(holdRuleClaims('I have recorded the meeting.', 'Log the meeting with Anna.', 0)).toBe('I have recorded the meeting.');
     expect(holdRuleClaims('That was not recorded as a rule.', 'Never mind.', 0)).toBe('That was not recorded as a rule.');
     expect(holdRuleClaims('Noted. I have recorded that rule.', 'Never mind.', 0)).toBe(NOT_KEPT);
+  });
+});
+
+// Journey 18: "I have proposed the decision under a new title so it successfully bypasses the duplicate block."
+describe('a reply that says it went round a no', () => {
+  it('drops the claim and takes the retitled decision back off the list', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'saidno-bypass-'));
+    const deps = stubDeps(workspace, ROOT);
+    const part = (await saidno.install(deps)) as Installed;
+    const roomId = (await deps.store.loadStage()).rooms[0].id;
+    const args = { title: 'Referral program with a free month for two referrals', context: 'x', options: ['Launch it', 'Wait'] };
+    await deps.decisions.propose({ ...args, proposedBy: 'Sam' });
+    const text = 'I have proposed the decision under a new title ("Referral program with a free month for two referrals") so it successfully bypasses the duplicate block, and it now waits in your list. My call: keep going.';
+    const reply = { text, tools: [{ id: 't', name: 'propose_decision', args, ok: true, result: 'Proposed' }], provider: 'fake', model: 'fake', usage: { inputTokens: 0, outputTokens: 0 }, stopped: false } as never;
+    const out = await deps.seams.run('turn:reply', { roomId, query: 'Sam, put the referral month to me again.', reply });
+    expect(out.reply.text).toBe(`${HELD_BYPASS} My call: keep going.`);
+    expect((await deps.decisions.list()).filter((one) => one.status === 'proposed')).toEqual([]);
+    expect((await saidNoFor(workspace).list()).map((one) => one.subject)).toEqual(['Referral program with a free month for two referrals']);
+    await part.close?.();
+  });
+
+  it('leaves a reply that only talks about blocks alone', () => {
+    expect(holdBypassClaims('The leak blocks the kitchen drain.').claimed).toBe(false);
+    expect(holdBypassClaims('We get past 12 paying plumbers by Friday.').claimed).toBe(false);
+    expect(holdBypassClaims('A new title gets it past your no.').claimed).toBe(true);
   });
 });

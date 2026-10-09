@@ -100,3 +100,29 @@ describe('what changed since yesterday', () => {
     expect(slipped).toEqual(['Slipped: you said you would call 5 beta users (due 2026-10-06), now 1 day late.']);
   });
 });
+
+// Journey 18: day 3's note left out Tom's reply and the meeting set with him for that day.
+describe('a lead in the note', () => {
+  const DAY3 = at('2026-10-11T06:30');
+  const tom = (thread: Lead['thread']) => ({ person: { name: 'Tom Becker' }, thread });
+  it('puts a reply and a meeting before what was drafted or opened, and says a meeting on today\'s date whenever it was set', () => {
+    const lines = sinceYesterday({ now: DAY3, promises: [], tasks: [], metrics: [], leads: [tom([
+      { kind: 'opened', at: at('2026-10-09T15:00') },
+      { kind: 'replied', at: at('2026-10-10T07:00'), text: 'Hi, interesting. Two of my lads would use it too.' },
+      { kind: 'drafted', at: at('2026-10-10T07:40'), subject: 'Re: QuoteSnap' },
+      { kind: 'drafted', at: at('2026-10-10T08:10'), subject: 'Re: Android and VAT' },
+      { kind: 'opened', at: at('2026-10-10T08:20') },
+      { kind: 'meeting', at: at('2026-10-10T09:00'), day: '2026-10-11', time: '15:00' },
+    ])] });
+    expect(lines).toEqual([
+      'Meeting today: with Tom Becker at 15:00.',
+      'Lead: Tom Becker replied: "Hi, interesting. Two of my lads would use it too.".',
+      'Lead: a meeting with Tom Becker was set for 2026-10-11.',
+      'Lead: the email to Tom Becker was opened in Gmail.',
+    ]);
+    // A meeting set days before is still said on its day; once its notes are written, it is not.
+    const early = [{ kind: 'meeting' as const, at: at('2026-10-05T09:00'), day: '2026-10-11' }];
+    expect(sinceYesterday({ now: DAY3, promises: [], tasks: [], metrics: [], leads: [tom(early)] })).toEqual(['Meeting today: with Tom Becker.']);
+    expect(sinceYesterday({ now: at('2026-10-11T18:00'), promises: [], tasks: [], metrics: [], leads: [tom([...early, { kind: 'notes', at: at('2026-10-11T17:00') }])] })).not.toContain('Meeting today: with Tom Becker.');
+  });
+});

@@ -260,6 +260,8 @@ export type ChatMessage = {
   provider?: string; model?: string; usage?: Usage; tools?: ToolEvent[]; stopped?: boolean; attachments?: Attachment[];
   // A turn that failed: kept so a reload shows why the question has no answer, and never shown to a model again.
   failed?: boolean;
+  // Why another model answered than the one the founder pinned, kept in the reply's foot so a reload still says it.
+  notice?: string;
 };
 // `turn` names the turn this stream is; the same name goes out on the rooms feed, so the window that asked for a
 // reply can tell its own turn from one it is only watching.

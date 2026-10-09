@@ -73,3 +73,15 @@ export function onLine(signal: KillSignal, reading?: { value: number; said: stri
   if (!reading || !said || reading.value !== said.value) return '';
   return ` ${reading.said}, right on the line: ${said.below ? 'losing one trips it' : 'any rise trips it'}.`;
 }
+
+// Journey 18: the founder's "below 12" with 9 paying was taken with "already past the new line", while the partner's
+// own crossed line is refused with a retry. One rule for both: a kill line crossed the moment it is set is no kill line.
+// The founder is told so, with the line that would be taken: today's value, or any floor under it.
+export function crossedRefusal(fresh: KillSignal, reading?: { value: number; said: string } | null): string | null {
+  const said = thresholdOf(fresh.what);
+  if (!reading || !said || !pastLine(reading.value, said.value, said.below)) return null;
+  const metric = fresh.what.replace(/\s+(?:below|under|above|over)\s+[\d,.]+\s*$/i, '').trim() || said.metric;
+  const value = reading.value.toLocaleString('en-US');
+  return `Not set: "${fresh.what}" is crossed already (${reading.said}), so its check would fire today. The kill line stays as it was. `
+    + `Say "replace the kill signal: ${metric} ${said.below ? 'below' : 'above'} ${value} by ${fresh.by}", or a line ${said.below ? 'under' : 'over'} ${value}, and I will set it.`;
+}

@@ -336,11 +336,44 @@ export async function writeMorning(input: {
   // The flagged block is left out: its figures are the ones nothing backed, and stripping them from the one message
   // that holds every fact would take the founder's own words about the same figures with them.
   const checked = messages.map((message, index) => (index === messages.length - 1 ? { ...message, content: `${MORNING_ASK}\n\n${withoutFlagged(facts)}` } : message));
-  const flags = checkReply({ reply: morningText(read), receipts: [], sources: turnSources(checked) });
+  const leadsNow = (await Promise.all((sources.stage.cards ?? []).filter((card) => card.kind === 'leads').map((card) => sources.leads(card.id).catch(() => [] as Lead[])))).flat();
+  const flags = reachedFlags(checkReply({ reply: morningText(read), receipts: [], sources: turnSources(checked) }), morningText(read), sources.company ?? '', leadsNow);
   if (fault) flags.push(`Note check: ${fault.split(':')[0].replace(/^The /, 'the ')}, even when asked again.`);
   for (const one of dropped) flags.push(`${ruledOutLine(one)}, so a move that proposed it was dropped.`);
   if (left.length) flags.push(leftOutLine([...new Set(left)]));
   return { ...read, since, day: localDay(sources.now), at: sources.now, roomId: sources.partnerId, who: input.name, ...(flags.length ? { flags } : {}), ...(provider ? { provider } : {}), ...(model ? { model } : {}) };
+}
+
+// Journey 18: every note ended "Unconfirmed: this reply claims an action no tool confirmed (contacted)" for "80 plumbers
+// contacted", a row of the Company brief, and for Tom, whose email the founder sent and Tom opened. Outreach the brief
+// records is no claim of the note's; outreach a lead's thread records is said as what it is: "Tom Becker: Contacted
+// (opened in Gmail, 7 Oct)". Anything else stays unconfirmed.
+const REACH_VERBS = /^(?:contacted|emailed|messaged|reached out)$/;
+const DAY_SAID = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' });
+export function reachedFlags(flags: string[], note: string, company: string, leads: Pick<Lead, 'person' | 'thread'>[]): string[] {
+  const at = flags.findIndex((one) => /^Unconfirmed: this reply claims an action no tool confirmed \(/.test(one));
+  if (at < 0) return flags;
+  const verbs = /\((.+?)\)\.?$/.exec(flags[at])?.[1].split(/,\s*/) ?? [];
+  if (!verbs.some((verb) => REACH_VERBS.test(verb))) return flags;
+  const told: string[] = [];
+  const backed = (verb: string) => {
+    // A count reached that the brief gives beside the same verb ("Plumbers contacted: 80").
+    const counts = [...note.matchAll(new RegExp(`\\b(\\d[\\d,]*)\\s+(?:[\\w-]+\\s+){0,4}?${verb}\\b`, 'gi'))].map((hit) => hit[1].replace(/,/g, ''));
+    const brief = company.split('\n').filter((line) => new RegExp(`\\b${verb}\\b`, 'i').test(line)).join('\n').replace(/(?<=\d),(?=\d{3}\b)/g, '');
+    const fromBrief = counts.length > 0 && counts.every((count) => new RegExp(`(?<![\\d.])${count}(?![\\d.])`).test(brief));
+    // A lead named in the note whose thread shows the email went out or was opened.
+    const reached = leads.flatMap((lead) => {
+      const name = lead.person.name?.trim();
+      const event = (lead.thread ?? []).filter((one) => one.kind === 'opened' || one.kind === 'sent').at(-1);
+      return name && event && note.includes(name) ? [`${name}: Contacted (${event.kind === 'opened' ? 'opened in Gmail' : 'sent'}, ${DAY_SAID.format(new Date(event.at))}).`] : [];
+    });
+    told.push(...reached);
+    return fromBrief || reached.length > 0;
+  };
+  const left = verbs.filter((verb) => !(REACH_VERBS.test(verb) && backed(verb)));
+  const out = [...flags];
+  out.splice(at, 1, ...(left.length ? [`Unconfirmed: this reply claims an action no tool confirmed (${left.join(', ')}).`] : []), ...[...new Set(told)]);
+  return out;
 }
 
 // How the note reads in the partner's own conversation.
