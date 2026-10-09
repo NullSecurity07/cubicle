@@ -113,7 +113,7 @@ export function outwardTools(mail: Mail, filesDir: string, drafting?: Drafting, 
         // No "[Founder Name]" goes to Gmail: filled from the brief, or the line dropped (server/partner/unasked.ts).
         const company = findCompanyDoc(context.stage.docs);
         const brief = company ? await context.store.readDoc(company.id).catch(() => '') : '';
-        const draft = { to: text(args, 'to', 500), subject: text(args, 'subject', 300), body: filledIn(text(args, 'body', 20_000), brief) };
+        const draft = { to: text(args, 'to', 500), subject: text(args, 'subject', 300), body: filledIn(text(args, 'body', 20_000), brief, context.stage.rooms.map((room) => room.name)) };
         const to = draft.to.split(/[,;\s]+/).filter(Boolean);
         const bad = to.filter((address) => !ADDRESS.test(address));
         if (bad.length) throw new Error(`not an email address: ${bad.join(', ')}`);
