@@ -481,6 +481,15 @@ export function proseToolCall(reply: string, names: string[] = []): boolean {
 export const CALL_THE_TOOL = 'You wrote a tool call as text. Call the tool, do not write it as text. If you meant to answer, answer in plain words.';
 export const ANSWER_IN_WORDS = 'You wrote a tool call as text, but no tool can be called here. Answer in plain words.';
 export const HELD_BACK = 'This reply wrote a tool call out as text twice instead of making it, so it was held back. Ask again, or ask for a plain answer.';
+// Journey 19: Maya's reply said "held back ... Ask again" while the doc she had been asked for was on the stage. When
+// steps that change something worked before the words went wrong, the line says what they did, and asks for nothing.
+export function heldAfterWork(made: { name: string; result?: string }[]): string {
+  const lines = made.map((event) => {
+    const first = (event.result ?? '').split('\n').map((line) => line.trim()).find(Boolean) ?? '';
+    return `- ${event.name.replace(/_/g, ' ')}: done${first ? `. ${first.slice(0, 200)}` : ''}`;
+  });
+  return `What this turn did:\n\n${lines.join('\n')}\n\nThe words meant to come after that came back as a tool call written out, so they were left out. The work above is done; ask for a summary if you want one.`;
+}
 
 // A reply with the truth net's lines taken off again, for a reader that grades only the person's own words.
 export function withoutFlags(text: string, flags: string[] = []): string {

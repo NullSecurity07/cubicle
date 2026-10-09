@@ -12,7 +12,7 @@ import { readsOf } from './tools/unread.ts';
 import { calcTagsHeld } from './calctag.ts';
 import { holdDraftClaims, holdFileLinks, notDone } from './draftclaim.ts';
 import { holdProductClaims } from './productclaim.ts';
-import { ANSWER_IN_WORDS, CALL_THE_TOOL, checkReply, HELD_BACK, proseToolCall, turnEvidence, turnSources } from './truth.ts';
+import { ANSWER_IN_WORDS, CALL_THE_TOOL, checkReply, HELD_BACK, heldAfterWork, proseToolCall, turnEvidence, turnSources } from './truth.ts';
 import type { UsageBook } from './usage.ts';
 import { needsSlim, slimNotice } from './slim.ts';
 import { localDay } from './clock.ts';
@@ -236,7 +236,8 @@ export async function runTurn(input: {
         continue;
       }
       held = true;
-      const line = `${text.trim() ? '\n\n' : ''}${HELD_BACK}`;
+      const made = done.filter((event) => event.ok && !READS.test(event.name));
+      const line = `${text.trim() ? '\n\n' : ''}${made.length ? heldAfterWork(made) : HELD_BACK}`;
       text += line;
       events.token(line);
       break;
