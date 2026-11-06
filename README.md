@@ -99,3 +99,7 @@ Active prototype, built solo: 1,830 commits on main between 2 September and 9 Oc
 ## Built by
 
 Built by [Adithya Poojary](https://adithyapoojary.is-a.dev), founder of ThreatScope. [More projects](https://adithyapoojary.is-a.dev/work/) · [LinkedIn](https://www.linkedin.com/in/adithyapoojary/)
+
+## License
+
+All rights reserved. The code is public to read and learn from; ask before reusing it.
